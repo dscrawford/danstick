@@ -212,8 +212,8 @@ FocusScope {
                 anchors.top: parent.top
                 anchors.topMargin: 22
                 visible: root.mappingSuggested
-                text: "Buttons feel wrong? Prev-page maps them again, and "
-                      + "asks which console the controller is."
+                text: "Buttons feel wrong? Prev-page maps them again — for "
+                      + "every game, one console, or the game you just played."
                 color: colors.textFaint
                 font.pixelSize: 13
             }
@@ -242,7 +242,7 @@ FocusScope {
         anchors.bottom: parent.bottom
         anchors.bottomMargin: 22
         text: "hold again to continue     ·     Filters reset"
-              + "     ·     Details recalibrate     ·     Prev-page map buttons"
+              + "     ·     Details recalibrate     ·     Prev-page map for…"
               + "     ·     Next-page gamepad editor     ·     Cancel back"
         color: colors.textFaint
         font.pixelSize: 13
@@ -270,6 +270,7 @@ FocusScope {
         choosing: api.padmap.layoutChoiceActive
         choices: api.padmap.layoutChoices
         choiceIndex: api.padmap.layoutChoiceIndex
+        chooseTitle: api.padmap.layoutChoiceTitle
 
         layout: api.padmap.mappingLayout
         player: choosing ? api.padmap.layoutChoicePlayer
@@ -314,15 +315,23 @@ FocusScope {
             api.padmap.openGamepadEditor();
             root.closed();
         } else if (api.keys.isPrevPage(event)) {
-            // Map (or re-map) the last controller to claim a slot, choosing
-            // the console first. The only route to a *different* layout for a
-            // pad that has already been set up -- otherwise the first
-            // capture's layout is the one it keeps forever, and a pad set up
-            // as a gamepad can never be told it is an N64 controller.
+            // Map (or re-map) the last controller to claim a slot, asking
+            // what the mapping is *for* first. The only route to a mapping
+            // that is not this controller's default -- and still the only
+            // route to a different layout, since choosing "any game" leads
+            // straight on to the console question.
+            //
+            // Deliberately not what the automatic first-run flow does. Someone
+            // who has just plugged a controller in wants it to work, not to
+            // be asked to think about scopes; that flow still goes straight
+            // to "which controller is this?" and files the result as the
+            // default. This is the deliberate route, for when the default
+            // turns out not to be enough -- a GameCube pad that needs
+            // different buttons for N64 games, say.
             event.accepted = true;
             var claimed = api.padmap.players;
             if (claimed.length > 0)
-                api.padmap.chooseLayout(claimed[claimed.length - 1].player);
+                api.padmap.chooseScope(claimed[claimed.length - 1].player);
         } else if (api.keys.isDetails(event)) {
             // Re-run setup for the most recently assigned controller, so a
             // wrong icon or a bad calibration is fixable without unplugging.

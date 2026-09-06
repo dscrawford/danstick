@@ -212,7 +212,8 @@ def derive_profile(
 
 
 def install_profiles(
-    assignments: list[Assignment], dest: Path | None = None
+    assignments: list[Assignment], dest: Path | None = None,
+    console: str = "", game: str = "", context: str = "",
 ) -> list[Path]:
     """Write a profile per virtual pad. Returns the paths written.
 
@@ -220,6 +221,22 @@ def install_profiles(
     at -- see runtime_autoconfig_dir. The `udev` subdirectory matters:
     RetroArch looks in `<dir>/<driver>` first and only falls back to the base
     directory when that is empty.
+
+    `console` (a layout id) and `game` (a `profiles.game_key`) select which of
+    a controller's mappings is written. Both empty is the no-context case,
+    which uses each controller's default -- and that is what the daemon
+    passes, because at republish time nothing knows what is about to run.
+    `padmap.launch` calls this again with the real context immediately before
+    RetroArch starts, overwriting this directory in place.
+
+    Rewriting the same directory rather than pre-building one per console is
+    deliberate. The launch override names exactly one `joypad_autoconfig_dir`
+    and RetroArch scans exactly one, so a per-console directory would have to
+    be selected by editing the override at launch too -- two files to keep in
+    step instead of one, for a directory that is per-session runtime state
+    and is cleared on every write anyway. It also degrades the right way: if
+    the launch-time pass fails or never runs, what is on disk is the default
+    mapping, which is what padmap did before scopes existed.
     """
     target = dest or (runtime_autoconfig_dir() / "udev")
     target.mkdir(parents=True, exist_ok=True)
@@ -239,7 +256,9 @@ def install_profiles(
         )
         path = target / f"{virtual_name(assignment.player)}.cfg"
 
-        bindings = controllercfg.stored_bindings(assignment.pad)
+        scope, resolved = controllercfg.resolved_mapping(
+            assignment.pad, console, game)
+        bindings = dict(resolved.buttons)
         if bindings:
             # The user pressed these buttons themselves. Copying libretro's
             # entry instead would give two sets of bindings for one
@@ -247,10 +266,13 @@ def install_profiles(
             path.write_text(controllercfg.retroarch_profile(
                 assignment.player, assignment.pad, bindings,
                 source=source.name if source else "",
-                # Re-resolved here rather than at capture time, so a
-                # correction to a console's key table reaches controllers
-                # already mapped under it.
-                layout=controllercfg.stored_layout(assignment.pad),
+                # The layout comes from the capture that won, not from the
+                # console asked about, and is re-resolved here rather than
+                # baked in at capture time so that a correction to a
+                # console's key table reaches controllers already mapped
+                # under it.
+                layout=resolved.layout,
+                scope=scope, context=context,
             ))
         else:
             # The ids the pad will actually advertise, not the physical

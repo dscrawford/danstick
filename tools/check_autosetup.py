@@ -140,7 +140,8 @@ def main() -> int:
     from padmap.mapping import Binding
     profiles.save(profiles.Profile(
         signature=profiles.signature(known), name=known.name, icon="", axes={},
-        buttons={"a": Binding("button", 1)}))
+        mappings={profiles.SCOPE_UNIVERSAL: profiles.Mapping(
+            buttons={"a": Binding("button", 1)})}))
     check("stays silent, it is just republished", Harness([known]),
           expect_begin=False)
 

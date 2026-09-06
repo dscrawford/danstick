@@ -18,7 +18,8 @@ sys.path.insert(0, str(REPO / "src"))
 
 from padmap import layouts  # noqa: E402
 from padmap.capture import (CAPTURE_GAP_SECONDS, EV_ABS, EV_KEY,  # noqa: E402
-                            SKIP_HOLD_SECONDS, LayoutChoice, MappingRun)
+                            SKIP_HOLD_SECONDS, Chooser, MappingRun,
+                            layout_options, scope_options)
 
 
 class Event:
@@ -83,11 +84,12 @@ def tap(r, code, seconds=0.05):
     return r.feed(release(code))
 
 
-def choice(held=(), index=0):
+def choice(held=(), index=0, options=None):
     CLOCK["t"] = 0.0
-    return LayoutChoice(pad=None, player=1, choices=list(layouts.ALL),
-                        index=index, axes=dict(AXES), held=set(held),
-                        now=lambda: CLOCK["t"])
+    return Chooser(pad=None, player=1,
+                   options=options if options is not None else layout_options(),
+                   index=index, axes=dict(AXES), held=set(held),
+                   now=lambda: CLOCK["t"])
 
 
 def check_layout_choice() -> None:
@@ -164,10 +166,72 @@ def check_layout_choice() -> None:
         raise SystemExit(
             f"FAIL: the front-end would be offered {offered}, not "
             f"{list(layouts.ALL)}")
-    if not payload["choices"][2]["controls"]:
+    if not payload["choices"][2]["layout"]["controls"]:
         raise SystemExit(
             "FAIL: no controls sent, so the picker has nothing to draw")
     print(f"  ok  {len(offered)} consoles, drawable, matching layouts.ALL")
+
+
+def check_scope_choice() -> None:
+    """The same picker asking what a mapping is *for*.
+
+    Worth its own check rather than trusting the shared mechanism, because
+    the two questions differ in the one place a shared mechanism can still go
+    wrong: what the selected entry *means*. A scope option's id is a scope
+    string while the thing drawn beside it is a console's layout, and getting
+    those the same way round is what stops "GameCube games" being mapped as
+    an N64 pad.
+    """
+    print("\nchoosing what a mapping is for:")
+    options = scope_options(
+        scopes={"console:n64"}, default_layout="gamecube",
+        last_game=("n64", "n64/super-mario-64", "Super Mario 64"))
+    c = choice(options=options)
+    if c.chosen != "":
+        raise SystemExit(
+            f"FAIL: the strip does not start on the default scope "
+            f"({c.chosen!r}). The commonest answer must be one hold away.")
+    payload = c.to_event()
+    if payload["choices"][0]["layout"]["id"] != "gamecube":
+        raise SystemExit(
+            "FAIL: 'any game' is not drawn as the pad's best guess, so the "
+            "picker opens on a picture of a controller nobody has")
+
+    # Walk to the N64 console entry and check the id/picture pair.
+    while not c.chosen.startswith("console:n64"):
+        if not c.feed(axis(0x10, 1)):
+            raise SystemExit("FAIL: could not reach the N64 scope")
+        c.feed(axis(0x10, 0))
+    entry = c.to_event()["choices"][c.index]
+    if entry["layout"]["id"] != "n64":
+        raise SystemExit(
+            f"FAIL: the N64 scope draws {entry['layout']['id']!r}. The picture "
+            f"and the mapping the wizard walks must be the same pad.")
+    if not entry["mapped"]:
+        raise SystemExit(
+            "FAIL: a scope that already has a capture is not marked, so "
+            "re-mapping it would silently destroy what is there")
+    print(f"  ok  {entry['label']!r} -> {c.chosen!r}, drawn as n64, marked")
+
+    game = c.to_event()["choices"][-1]
+    if not game["id"].startswith("game:") or game["label"] != "Super Mario 64":
+        raise SystemExit(
+            f"FAIL: the game just played is not offered as a scope ({game})")
+    if game["layout"]["id"] != "n64":
+        raise SystemExit(
+            "FAIL: the per-game scope is not drawn as its console's pad")
+    print(f"  ok  {game['label']!r} -> {game['id']!r}")
+
+    print("\nno recent game, no per-game scope:")
+    plain = scope_options(scopes=set(), default_layout="")
+    if any(o.id.startswith("game:") for o in plain):
+        raise SystemExit(
+            "FAIL: a per-game scope was offered with no game to attach it to")
+    if any(o.id == "console:generic" for o in plain):
+        raise SystemExit(
+            "FAIL: 'generic' was offered as a console. No core ever reports "
+            "it, so that scope could never resolve.")
+    print(f"  ok  {[o.id for o in plain]}")
 
 
 def main() -> int:
@@ -414,6 +478,7 @@ def main() -> int:
     print("  ok  further presses ignored")
 
     check_layout_choice()
+    check_scope_choice()
 
     print("\nall checks passed")
     return 0

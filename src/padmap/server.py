@@ -203,7 +203,16 @@ class Server:
         self._mapping: capture.MappingRun | None = None
         # Which console the user says this pad is. Modal like the two above,
         # and for the same reason: it is answered with the pad itself.
-        self._choice: capture.LayoutChoice | None = None
+        self._choice: capture.Chooser | None = None
+        # Which scope the wizard that a picker is about to start will file
+        # its capture under. Set when the scope picker is answered and read
+        # when the mapping finishes; "" is this controller's default, which
+        # is what every flow that never asks produces.
+        self._pending_scope = ""
+        # The SDL lines last written, so a front-end connecting later can be
+        # handed them without the daemon recomputing an assignment it may no
+        # longer have.
+        self._sdl_lines: list[str] = []
         self._running = False
 
         # Controller models already offered a setup screen. Keyed by profile
@@ -353,9 +362,12 @@ class Server:
             self._cancel()
         elif command == "map":
             self._begin_mapping(
-                int(message.get("player", 0)), str(message.get("layout", "")))
+                int(message.get("player", 0)), str(message.get("layout", "")),
+                scope=str(message.get("scope", "")))
         elif command == "choose_layout":
             self._begin_layout_choice(int(message.get("player", 0)))
+        elif command == "choose_scope":
+            self._begin_scope_choice(int(message.get("player", 0)))
         elif command == "skip_control":
             self._skip_control()
         elif command == "calibrate":
@@ -375,6 +387,13 @@ class Server:
             )
         elif command == "status":
             self._send(client, self._state_event())
+            # Every connect, not only after a capture. Pegasus reads
+            # sdl_controllers.txt once at startup, so a front-end that
+            # started before the daemon last wrote it -- or reconnected after
+            # a daemon restart -- is running on whatever the file said at the
+            # time. Re-sending is idempotent: SDL replaces a mapping for a
+            # GUID it already has.
+            self._send(client, self._sdl_mapping_event())
         else:
             self._send(client, {"event": "error",
                                 "message": f"unknown command {command!r}"})
@@ -537,12 +556,7 @@ class Server:
         if choice is not None and pad.path == choice.pad.path:
             if choice.feed(event):
                 if choice.confirmed:
-                    # Straight into the wizard, with no confirmation step
-                    # between: the hold that chose is itself the confirmation,
-                    # and an extra prompt would be answered by the release of
-                    # the very button that got here.
-                    self._end_layout_choice()
-                    self._begin_mapping(choice.player, choice.chosen)
+                    self._choice_confirmed(choice)
                 else:
                     self._broadcast(choice.to_event())
 
@@ -672,6 +686,20 @@ class Server:
             return
         log.info("wrote %d SDL mapping(s) to %s", len(lines), path)
 
+        # Writing the file is not enough, and this is the whole of the
+        # reported bug: Pegasus loads sdl_controllers.txt once, in
+        # GamepadManagerSDL2::start, and never looks at it again. A mapping
+        # captured mid-session therefore does nothing until the front-end is
+        # relaunched -- which is the worst possible moment for it, because it
+        # is immediately after finishing the wizard. Handing the lines over
+        # lets the client apply them with SDL_GameControllerAddMapping, which
+        # replaces a mapping for an already-open controller in place.
+        self._sdl_lines = [lines[player] for player in sorted(lines)]
+        self._broadcast(self._sdl_mapping_event())
+
+    def _sdl_mapping_event(self) -> dict[str, Any]:
+        return {"event": "sdl_mapping", "lines": list(self._sdl_lines)}
+
     # -- choosing a layout ------------------------------------------------
 
     def _begin_layout_choice(self, player: int) -> None:
@@ -703,8 +731,11 @@ class Server:
         # A stored layout wins: it is what the user chose last time.
         guess = (controllercfg.stored_layout(pad)
                  or icons.for_pad(pad, self._icon_overrides))
-        self._choice = capture.LayoutChoice(
-            pad=pad, player=player, choices=list(layouts.ALL),
+        options = capture.layout_options(self._mapped_layouts(pad))
+        self._choice = capture.Chooser(
+            pad=pad, player=player, options=options,
+            kind=capture.KIND_LAYOUT,
+            title="Which controller is this?",
             index=layouts.index_of(guess),
             axes=axes, held=self._active_keys(device),
         )
@@ -712,6 +743,109 @@ class Server:
         # resume a confirm hold when the modal flow ends.
         self._confirm_started.clear()
         self._broadcast(self._choice.to_event())
+
+    def _begin_scope_choice(self, player: int) -> None:
+        """Ask what a mapping is *for* before asking where the buttons are.
+
+        The case this exists for, reported verbatim: a GameCube controller
+        used to play N64 games, wanting "the mapping that my gamecube
+        controller uses for n64 games, and then a universal configuration in
+        general". One mapping per controller cannot express that -- the
+        console decides which controls exist and which RetroArch key each is
+        emitted under, so there is no single answer to "where is A".
+
+        Not offered on a controller's first run. Someone who has just plugged
+        a pad in wants it to work, not to be asked to think about scopes; the
+        automatic flow still goes straight to "which controller is this?" and
+        files the result as the default. This is the deliberate route, for
+        when the default is not enough.
+        """
+        if self._assigner is None:
+            self._broadcast({"event": "error",
+                             "message": "choosing a scope needs an open session"})
+            return
+        pad = self._pad_for_player(player)
+        if pad is None:
+            self._broadcast({"event": "error",
+                             "message": f"no controller assigned to player {player}"})
+            return
+        device = self._assigner.device_for(pad)
+        if device is None:
+            self._broadcast({"event": "error",
+                             "message": "controller is no longer open"})
+            return
+
+        profile = profiles.load(pad)
+        guess = (controllercfg.stored_layout(pad)
+                 or icons.for_pad(pad, self._icon_overrides))
+        last = protocol.read_last_game()
+        options = capture.scope_options(
+            scopes=set(profile.mappings) if profile else set(),
+            default_layout=guess,
+            last_game=(
+                (last["console"], last["key"], last["title"])
+                if last.get("key") else None
+            ),
+        )
+        # Asking the question again abandons whatever the last answer was.
+        # Otherwise a scope chosen for a run that never reached the wizard --
+        # the pad was unplugged, the overlay was dismissed -- would still be
+        # sitting here to file the *next* capture under.
+        self._pending_scope = ""
+        self._choice = capture.Chooser(
+            pad=pad, player=player, options=options,
+            kind=capture.KIND_SCOPE,
+            title="What is this mapping for?",
+            axes=self._absolute_ranges(device),
+            held=self._active_keys(device),
+        )
+        self._confirm_started.clear()
+        self._broadcast(self._choice.to_event())
+
+    def _mapped_layouts(self, pad: Pad) -> set[str]:
+        """Layout ids this controller already has a capture under.
+
+        Shown on the layout strip so re-mapping is not a blind act: the
+        picker is the only route to a different layout, and choosing one that
+        already has bindings replaces them.
+        """
+        profile = profiles.load(pad)
+        if profile is None:
+            return set()
+        return {m.layout for m in profile.mappings.values() if m.buttons}
+
+    def _choice_confirmed(self, choice: capture.Chooser) -> None:
+        """Act on a picker the user just held a button to accept.
+
+        Straight into the next step with no confirmation between: the hold
+        that chose is itself the confirmation, and an extra prompt would be
+        answered by the release of the very button that got here.
+        """
+        player = choice.player
+        chosen = choice.chosen
+        kind = choice.kind
+        layout = choice.chosen_layout
+        self._end_layout_choice()
+
+        if kind == capture.KIND_LAYOUT:
+            self._begin_mapping(player, chosen, scope=self._pending_scope)
+            return
+
+        # A scope answer. Every scope but the default names a console, and
+        # the console *is* the control set -- a mapping for N64 games has to
+        # be captured against the N64 layout whatever the pad physically is,
+        # because those are the controls the core reads. So asking which
+        # layout afterwards could only produce a contradiction, and is
+        # skipped.
+        #
+        # The default scope is the exception, and there the layout question
+        # is the real one: "any game" says nothing about the shape of the
+        # controller, so the picker runs and the user answers it.
+        self._pending_scope = chosen
+        if chosen == profiles.SCOPE_UNIVERSAL:
+            self._begin_layout_choice(player)
+        else:
+            self._begin_mapping(player, layout, scope=chosen)
 
     def _end_layout_choice(self) -> None:
         """Leave the picker without starting a wizard."""
@@ -723,6 +857,8 @@ class Server:
             "event": "layout_choice", "active": False,
             "player": run.player if run else 0,
             "index": run.index if run else 0,
+            "kind": run.kind if run else capture.KIND_LAYOUT,
+            "title": run.title if run else "",
             "chosen": run.chosen if run else "",
             "choices": [],
         })
@@ -755,7 +891,8 @@ class Server:
 
     # -- button mapping ---------------------------------------------------
 
-    def _begin_mapping(self, player: int, layout_id: str = "") -> None:
+    def _begin_mapping(self, player: int, layout_id: str = "",
+                       scope: str = "") -> None:
         if self._assigner is None:
             self._broadcast({"event": "error",
                              "message": "mapping needs an open session"})
@@ -801,9 +938,15 @@ class Server:
             pad=pad, player=player, layout=layout, keys=keys,
             axes=self._absolute_ranges(device),
             held=self._active_keys(device),
+            scope=scope,
         )
+        # Consumed: the pending scope belongs to the run now, and leaving it
+        # set would file the *next* wizard -- possibly for a different
+        # controller -- under a scope nobody chose for it.
+        self._pending_scope = ""
         self._confirm_started.clear()
-        log.info("mapping %s as %s", _clean(pad.name), layout.id)
+        log.info("mapping %s as %s for scope %r",
+                 _clean(pad.name), layout.id, scope)
         self._emit_mapping()
 
     def _skip_control(self) -> None:
@@ -831,9 +974,11 @@ class Server:
         self._mapping = None
         self._confirm_started.clear()
         self._last_confirm = 0.0
+        self._pending_scope = ""
 
         if run is not None and store and run.bindings:
-            self._store_mapping(run.pad, run.layout.id, run.bindings)
+            self._store_mapping(run.pad, run.layout.id, run.bindings,
+                                run.scope)
 
         self._broadcast({
             "event": "mapping", "done": True, "stored": bool(store),
@@ -845,41 +990,57 @@ class Server:
         })
         self._broadcast(self._state_event())
 
-    def _store_mapping(self, pad: Pad, layout_id: str, bindings: dict) -> None:
-        """Keep the capture against the *controller*, not the player slot."""
+    def _store_mapping(self, pad: Pad, layout_id: str, bindings: dict,
+                       scope: str = "") -> None:
+        """Keep the capture against the *controller*, under one scope.
+
+        Everything else on the profile is carried over rather than rebuilt:
+        recording an N64 mapping is not a reason to forget the calibration,
+        the icon, or the mapping for every other console.
+        """
         existing = profiles.load(pad)
+        # Only layout ids that are also icon names, which is all of them bar
+        # "generic": the icon is a filename in the theme, and generic.svg
+        # does not exist, so storing it would leave the pad with no picture
+        # at all rather than the fallback one.
+        #
+        # And only from a capture with no scope. A GameCube controller mapped
+        # *for N64 games* is captured against the N64 layout, and taking the
+        # icon from it would relabel the pad as an N64 controller -- which it
+        # is not, and which is the picture the user then sees on the setup
+        # screen forever after. Only "this is what my controller is", which
+        # is what the unscoped flow asks, may say what it looks like.
+        icon = existing.icon if existing else ""
+        if not icon and not scope and layout_id in icons.ICON_NAMES:
+            icon = layout_id
         profile = profiles.Profile(
             signature=profiles.signature(pad),
             name=_clean(pad.name),
-            # Only layout ids that are also icon names, which is all of them
-            # bar "generic": the icon is a filename in the theme, and
-            # generic.svg does not exist, so storing it would leave the pad
-            # with no picture at all rather than the fallback one.
-            icon=existing.icon if existing else (
-                layout_id if layout_id in icons.ICON_NAMES else ""
-            ),
-            # The console this capture is for. Emission needs it to pick the
-            # RetroArch keys the core actually reads; without it every pad
-            # gets the gamepad table and the console-specific buttons are
-            # bound to controls their core never looks at.
-            layout=layout_id,
+            icon=icon,
             axes=existing.axes if existing else {},
-            buttons=dict(bindings),
+            mappings=dict(existing.mappings) if existing else {},
         )
+        # The console this capture is for travels with it. Emission needs it
+        # to pick the RetroArch keys the core actually reads; without it every
+        # pad gets the gamepad table and the console-specific buttons are
+        # bound to controls their core never looks at.
+        profile.record(scope, profiles.Mapping(
+            buttons=dict(bindings), layout=layout_id))
         profiles.save(profile)
-        log.info("mapped %s: %d control(s)", _clean(pad.name), len(bindings))
+        log.info("mapped %s for scope %r: %d control(s)",
+                 _clean(pad.name), scope, len(bindings))
 
     def _store_profile(self, pad: Pad, axes: dict[int, Any]) -> None:
         """Write a profile, preserving any icon already chosen for this pad."""
         existing = profiles.load(pad)
         profile = profiles.Profile(
-            # Buttons survive a re-calibration: measuring the sticks again is
+            # Mappings survive a re-calibration: measuring the sticks again is
             # not a reason to forget where every button is. The layout goes
             # with them -- it is what says which RetroArch keys those buttons
             # are emitted under, so dropping it silently degrades a mapped
-            # console pad to the generic key table.
-            buttons=dict(existing.buttons) if existing else {},
-            layout=existing.layout if existing else "",
+            # console pad to the generic key table -- and so does every scope
+            # beyond the default.
+            mappings=dict(existing.mappings) if existing else {},
             signature=profiles.signature(pad),
             name=_clean(pad.name),
             icon=existing.icon if existing else "",
@@ -913,8 +1074,7 @@ class Server:
             # both: it still counts as configured, so the pad is never
             # offered for mapping again, and every console-specific button
             # quietly reverts to a key its core does not read.
-            buttons=dict(existing.buttons) if existing else {},
-            layout=existing.layout if existing else "",
+            mappings=dict(existing.mappings) if existing else {},
             axes=existing.axes if existing else {},
         )
         profiles.save(profile)
@@ -1195,9 +1355,23 @@ class Server:
                 # up before anyone had told padmap where its buttons were,
                 # and the wizard was offered exactly once and never again.
                 "configured": controllercfg.has_mapping(a.pad),
+                # Which scopes this controller has a capture under, so a
+                # front-end can say what already exists rather than making
+                # re-mapping a blind, destructive act. Scope strings, not
+                # labels: the labels are built where the picker is built, and
+                # a second set here would be a second thing to keep in step.
+                "mappings": self._mapping_scopes(a.pad),
             }
             for a in source
         ]
+
+    def _mapping_scopes(self, pad: Pad) -> list[str]:
+        profile = profiles.load(pad)
+        if profile is None:
+            return []
+        return sorted(
+            scope for scope, m in profile.mappings.items() if m.buttons
+        )
 
     def _state_event(self) -> dict[str, Any]:
         return {

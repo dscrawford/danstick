@@ -25,6 +25,7 @@ more than a drawing:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 
 
 @dataclass(frozen=True)
@@ -66,6 +67,12 @@ class Layout:
     id: str
     label: str
     controls: tuple[Control, ...]
+    # How to name this console inside a sentence, when `label` does not read
+    # as one. "Arcade stick games" describes the controller rather than the
+    # games; "Arcade games" is what the scope actually covers. Data rather
+    # than a rule, because the exceptions are per-console and there is no
+    # rule that produces them.
+    console_label: str = ""
     shapes: tuple[Shape, ...] = field(default_factory=tuple)
     # Optional artwork, as a filename the front-end resolves against its own
     # directory. Drawn behind the control dots in place of `shapes`.
@@ -252,6 +259,7 @@ N64 = Layout(
 ARCADE = Layout(
     id="arcade",
     label="Arcade stick",
+    console_label="Arcade",
     shapes=(Shape("rect", (0.08, 0.24, 0.84, 0.50), radius=0.05),),
     controls=(
         Control("x", "Top-left button", 0.50, 0.40, retroarch="input_a_btn"),
@@ -325,6 +333,89 @@ ALL: dict[str, Layout] = {
 }
 
 DEFAULT = GENERIC.id
+
+# The layouts that name an actual console, in catalogue order.
+#
+# `generic` is a layout but not a console: "my pad, when playing generic
+# games" is not a thing anyone can mean, and offering it as a mapping scope
+# would produce a scope that never resolves because no core ever reports it.
+CONSOLES: list[str] = [
+    layout_id for layout_id in ALL if layout_id != GENERIC.id
+]
+
+
+# libretro core name -> the layout whose key table that core reads.
+#
+# This is the launch-time half of the console-specific mapping: padmap-play is
+# handed `-L <core.so>`, and the core is the only thing at that moment that
+# says which console is about to run. Matched on the core's *file* name with
+# the `_libretro` suffix stripped, which is stable across store paths and
+# platforms.
+#
+# The four entries carrying a comment are the ones already verified against
+# the core's own source while building the layouts above -- the same reading
+# that established the RetroArch key overrides. The rest are near neighbours
+# of those, taken from the core names libretro ships; a wrong entry here
+# resolves a mapping the user did not intend rather than corrupting anything,
+# and an *absent* one simply falls through to the universal mapping, which is
+# the behaviour before any of this existed.
+CORE_LAYOUTS: dict[str, str] = {
+    # emulate_game_controller_via_libretro.c, inputGetKeys_default -- the
+    # reading that produced N64's input_y_btn override.
+    "mupen64plus_next": N64.id,
+    "mupen64plus": N64.id,
+    "parallel_n64": N64.id,
+    # libretro.cpp, MAP_BUTTON(MAKE_BUTTON(PAD_1, BTN_A), "Joypad1 A") -- the
+    # reading that established SNES needs no overrides at all.
+    "snes9x": SNES.id,
+    "snes9x2010": SNES.id,
+    "snes9x2005": SNES.id,
+    "snes9x2002": SNES.id,
+    "bsnes": SNES.id,
+    "bsnes_mercury_accuracy": SNES.id,
+    "bsnes_mercury_balanced": SNES.id,
+    "bsnes_mercury_performance": SNES.id,
+    "mesen_s": SNES.id,
+    # src/osd/retro/retromain.c, the P1_state block -- the reading that
+    # produced the arcade layout's five overrides.
+    "mame2010": ARCADE.id,
+    "mame2003": ARCADE.id,
+    "mame2003_plus": ARCADE.id,
+    "mame2000": ARCADE.id,
+    "mame": ARCADE.id,
+    "fbalpha": ARCADE.id,
+    "fbalpha2012": ARCADE.id,
+    "fbneo": ARCADE.id,
+    # Source/Core/DolphinLibretro/Input.cpp,
+    # retro_set_controller_port_device_gc -- the reading that produced the
+    # GameCube layout's identity face-button mapping.
+    "dolphin": GAMECUBE.id,
+}
+
+
+def for_core(core: str) -> str:
+    """The console a libretro core plays, as a layout id, or "".
+
+    Empty rather than `generic` for a core nothing is known about. The two
+    are not the same answer: `generic` is a layout somebody could deliberately
+    map to, while "" means "no console context", which resolution has to treat
+    as "skip the console scope" rather than "look for a mapping filed under
+    the generic pad".
+    """
+    if not core:
+        return ""
+    name = Path(core).name
+    # Strip the platform's library suffix, however it is spelled, then the
+    # libretro marker: `mupen64plus_next_libretro.so` -> `mupen64plus_next`.
+    for suffix in (".so", ".dll", ".dylib"):
+        if name.endswith(suffix):
+            name = name[: -len(suffix)]
+            break
+    for marker in ("_libretro", "-libretro"):
+        if name.endswith(marker):
+            name = name[: -len(marker)]
+            break
+    return CORE_LAYOUTS.get(name.lower(), "")
 
 
 def catalogue() -> list[dict]:

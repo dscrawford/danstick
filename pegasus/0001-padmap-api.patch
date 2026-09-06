@@ -1,6 +1,6 @@
 diff -ruN orig/src/backend/model/Api.h edited/src/backend/model/Api.h
---- orig/src/backend/model/Api.h	2026-09-05 21:02:00.193492280 -0400
-+++ edited/src/backend/model/Api.h	2026-09-05 21:02:00.241159380 -0400
+--- orig/src/backend/model/Api.h	2026-09-05 22:00:36.130054130 -0400
++++ edited/src/backend/model/Api.h	2026-09-05 22:00:36.177608176 -0400
 @@ -23,6 +23,7 @@
  #include "model/device/DeviceInfo.h"
  #include "model/keys/Keys.h"
@@ -18,8 +18,8 @@ diff -ruN orig/src/backend/model/Api.h edited/src/backend/model/Api.h
      Q_PROPERTY(ObjectListModel* allGames READ allGames CONSTANT)
  
 diff -ruN orig/src/backend/model/CMakeLists.txt edited/src/backend/model/CMakeLists.txt
---- orig/src/backend/model/CMakeLists.txt	2026-09-05 21:02:00.193492280 -0400
-+++ edited/src/backend/model/CMakeLists.txt	2026-09-05 21:02:00.242159375 -0400
+--- orig/src/backend/model/CMakeLists.txt	2026-09-05 22:00:36.130054130 -0400
++++ edited/src/backend/model/CMakeLists.txt	2026-09-05 22:00:36.178950118 -0400
 @@ -54,6 +54,8 @@
      keys/Keys.h
      memory/Memory.cpp
@@ -30,8 +30,8 @@ diff -ruN orig/src/backend/model/CMakeLists.txt edited/src/backend/model/CMakeLi
  
  
 diff -ruN orig/src/backend/model/model.pri edited/src/backend/model/model.pri
---- orig/src/backend/model/model.pri	2026-09-05 21:02:00.194646773 -0400
-+++ edited/src/backend/model/model.pri	2026-09-05 21:02:00.242340721 -0400
+--- orig/src/backend/model/model.pri	2026-09-05 22:00:36.131306284 -0400
++++ edited/src/backend/model/model.pri	2026-09-05 22:00:36.179037478 -0400
 @@ -8,3 +8,4 @@
  include(internal/internal.pri)
  include(keys/keys.pri)
@@ -39,8 +39,8 @@ diff -ruN orig/src/backend/model/model.pri edited/src/backend/model/model.pri
 +include(padmap/padmap.pri)
 diff -ruN orig/src/backend/model/padmap/Padmap.cpp edited/src/backend/model/padmap/Padmap.cpp
 --- orig/src/backend/model/padmap/Padmap.cpp	1969-12-31 19:00:00.000000000 -0500
-+++ edited/src/backend/model/padmap/Padmap.cpp	2026-09-05 21:02:16.772937332 -0400
-@@ -0,0 +1,325 @@
++++ edited/src/backend/model/padmap/Padmap.cpp	2026-09-05 22:01:01.012349583 -0400
+@@ -0,0 +1,409 @@
 +// Pegasus Frontend -- padmap integration
 +//
 +// This program is free software: you can redistribute it and/or modify
@@ -58,6 +58,15 @@ diff -ruN orig/src/backend/model/padmap/Padmap.cpp edited/src/backend/model/padm
 +#include <QJsonObject>
 +#include <QJsonParseError>
 +#include <QProcessEnvironment>
++
++// WITH_SDL_GAMEPAD is defined for the whole pegasus-backend target whenever
++// the SDL2 gamepad backend is built, which is where this file lives too --
++// so SDL is already linked and already initialised by GamepadManagerSDL2.
++// Guarded rather than assumed because the Qt Gamepad backend is still a
++// supported build, and there is nothing to apply a mapping to in that one.
++#ifdef WITH_SDL_GAMEPAD
++#include <SDL.h>
++#endif
 +
 +
 +namespace {
@@ -259,6 +268,15 @@ diff -ruN orig/src/backend/model/padmap/Padmap.cpp edited/src/backend/model/padm
 +        m_layout_choice_active = message[QStringLiteral("active")].toBool();
 +        m_layout_choice_index = message[QStringLiteral("index")].toInt();
 +        m_layout_choice_player = message[QStringLiteral("player")].toInt();
++        // The heading travels with the question rather than being a string
++        // the theme keeps per kind. One picker mechanism now asks two things
++        // -- which console this controller is, and what a mapping is for --
++        // and a theme holding its own titles would be a second place that
++        // has to learn about a third.
++        m_layout_choice_kind = message[QStringLiteral("kind")].toString();
++        const QString title = message[QStringLiteral("title")].toString();
++        if (!title.isEmpty())
++            m_layout_choice_title = title;
 +
 +        // Kept from the last message that carried any, like the mapping
 +        // layout above: the closing message has an empty list, and clearing
@@ -271,12 +289,73 @@ diff -ruN orig/src/backend/model/padmap/Padmap.cpp edited/src/backend/model/padm
 +        return;
 +    }
 +
++    if (event == QLatin1String("sdl_mapping")) {
++        applyMappings(message[QStringLiteral("lines")].toArray());
++        return;
++    }
++
 +    if (event == QLatin1String("error")) {
 +        const QString text = message[QStringLiteral("message")].toString();
 +        Log::warning(LOG_TAG, text);
 +        emit errorReported(text);
 +        return;
 +    }
++}
++
++void Padmap::applyMappings(const QJsonArray& lines)
++{
++    // Why this exists at all: Pegasus reads sdl_controllers.txt exactly once,
++    // in GamepadManagerSDL2::start, and never looks at it again. A mapping
++    // padmap writes mid-session therefore does nothing until the frontend is
++    // relaunched -- which is precisely the wrong moment, because it is the
++    // instant after finishing the mapping wizard, and the reported symptom is
++    // "the new controller config isn't immediately loaded into Pegasus, and
++    // it just uses the old SDL default".
++    //
++    // SDL_GameControllerAddMapping is not merely a registration: for a GUID
++    // that already has a mapping it *replaces* it and refreshes every open
++    // SDL_GameController bound to it, emitting SDL_CONTROLLERDEVICEREMAPPED.
++    // So this works whether the pad was opened before or after the capture,
++    // which matters because padmap creates the virtual pads and writes their
++    // mappings within milliseconds of each other and the order is not fixed.
++    //
++    // The mapping is still written to the file as well. This is the running
++    // process; the file is what the *next* one starts from.
++#ifdef WITH_SDL_GAMEPAD
++    for (const QJsonValue& value : lines) {
++        const QString line = value.toString();
++        if (line.isEmpty())
++            continue;
++
++        const QByteArray utf8 = line.toUtf8();
++        const int result = SDL_GameControllerAddMapping(utf8.constData());
++        if (result < 0) {
++            Log::warning(LOG_TAG, QStringLiteral("SDL rejected mapping: %1")
++                .arg(QLatin1String(SDL_GetError())));
++            continue;
++        }
++
++        // Read back rather than trusting the return code. A mapping stored
++        // under a GUID nothing will ever look up is indistinguishable from a
++        // working one from the caller's side -- SDL reports success either
++        // way and says nothing later -- and that exact class of silent
++        // mismatch has cost this project more than once.
++        const QString guid = line.left(32);
++        const SDL_JoystickGUID parsed =
++            SDL_JoystickGetGUIDFromString(guid.toUtf8().constData());
++        char* const stored = SDL_GameControllerMappingForGUID(parsed);
++        Log::info(LOG_TAG, QStringLiteral("mapping %1 for %2: %3")
++            .arg(result == 1 ? QStringLiteral("added")
++                             : QStringLiteral("replaced"),
++                 guid,
++                 stored ? QLatin1String(stored)
++                        : QStringLiteral("<not readable back!>")));
++        if (stored)
++            SDL_free(stored);
++    }
++#else
++    Q_UNUSED(lines)
++#endif
 +}
 +
 +void Padmap::send(const QString& command, const QVariantMap& extra)
@@ -324,6 +403,11 @@ diff -ruN orig/src/backend/model/padmap/Padmap.cpp edited/src/backend/model/padm
 +    send(QStringLiteral("choose_layout"), {{QStringLiteral("player"), player}});
 +}
 +
++void Padmap::chooseScope(int player)
++{
++    send(QStringLiteral("choose_scope"), {{QStringLiteral("player"), player}});
++}
++
 +void Padmap::startMapping(int player, const QString& layout)
 +{
 +    QVariantMap args {{ QStringLiteral("player"), player }};
@@ -368,8 +452,8 @@ diff -ruN orig/src/backend/model/padmap/Padmap.cpp edited/src/backend/model/padm
 +} // namespace model
 diff -ruN orig/src/backend/model/padmap/Padmap.h edited/src/backend/model/padmap/Padmap.h
 --- orig/src/backend/model/padmap/Padmap.h	1969-12-31 19:00:00.000000000 -0500
-+++ edited/src/backend/model/padmap/Padmap.h	2026-09-05 21:02:16.772800790 -0400
-@@ -0,0 +1,197 @@
++++ edited/src/backend/model/padmap/Padmap.h	2026-09-05 22:01:17.774331232 -0400
+@@ -0,0 +1,217 @@
 +// Pegasus Frontend -- padmap integration
 +//
 +// Exposes the padmap controller-assignment daemon to QML as `Api.padmap`.
@@ -387,6 +471,7 @@ diff -ruN orig/src/backend/model/padmap/Padmap.h edited/src/backend/model/padmap
 +
 +#pragma once
 +
++#include <QJsonArray>
 +#include <QLocalSocket>
 +#include <QObject>
 +#include <QTimer>
@@ -435,6 +520,14 @@ diff -ruN orig/src/backend/model/padmap/Padmap.h edited/src/backend/model/padmap
 +    Q_PROPERTY(QVariantList layoutChoices READ layoutChoices NOTIFY layoutChoiceChanged)
 +    Q_PROPERTY(int layoutChoiceIndex READ layoutChoiceIndex NOTIFY layoutChoiceChanged)
 +    Q_PROPERTY(int layoutChoicePlayer READ layoutChoicePlayer NOTIFY layoutChoiceChanged)
++    // The same picker now asks two questions -- which console this controller
++    // is, and what a mapping is for -- so the heading and the kind travel
++    // with it. Each entry of `layoutChoices` is
++    // {id, label, mapped, layout: <layout>}: `layout` is what to draw,
++    // `id` is what the daemon will act on, and they differ for a scope
++    // (id "console:n64", drawn as the N64 pad).
++    Q_PROPERTY(QString layoutChoiceKind READ layoutChoiceKind NOTIFY layoutChoiceChanged)
++    Q_PROPERTY(QString layoutChoiceTitle READ layoutChoiceTitle NOTIFY layoutChoiceChanged)
 +
 +public:
 +    explicit Padmap(QObject* parent = nullptr);
@@ -460,6 +553,8 @@ diff -ruN orig/src/backend/model/padmap/Padmap.h edited/src/backend/model/padmap
 +    const QVariantList& layoutChoices() const { return m_layout_choices; }
 +    int layoutChoiceIndex() const { return m_layout_choice_index; }
 +    int layoutChoicePlayer() const { return m_layout_choice_player; }
++    const QString& layoutChoiceKind() const { return m_layout_choice_kind; }
++    const QString& layoutChoiceTitle() const { return m_layout_choice_title; }
 +
 +    /// Start an assignment session. Grabs the pads until accepted or cancelled.
 +    Q_INVOKABLE void begin(int players = 4);
@@ -475,6 +570,11 @@ diff -ruN orig/src/backend/model/padmap/Padmap.h edited/src/backend/model/padmap
 +    /// layout chosen. The daemon reads the pad directly for both, so this
 +    /// works while the pads are grabbed.
 +    Q_INVOKABLE void chooseLayout(int player);
++    /// Ask what a mapping is *for* -- every game, one console, or the game
++    /// last played -- and then map the buttons under it. Driven from the pad
++    /// exactly as chooseLayout is, and for the same reason: the daemon holds
++    /// EVIOCGRAB, so no controller input reaches the frontend.
++    Q_INVOKABLE void chooseScope(int player);
 +    /// Walk a controller's buttons, one prompt at a time. An empty layout
 +    /// lets the daemon pick from what it already knows about the pad.
 +    Q_INVOKABLE void startMapping(int player, const QString& layout = QString());
@@ -535,6 +635,8 @@ diff -ruN orig/src/backend/model/padmap/Padmap.h edited/src/backend/model/padmap
 +    void send(const QString& command, const QVariantMap& extra = {});
 +    void handleMessage(const QJsonObject& message);
 +    void setConnected(bool);
++    /// Hand SDL a mapping for a controller that may already be open.
++    void applyMappings(const QJsonArray& lines);
 +
 +    QLocalSocket m_socket;
 +    QTimer m_reconnect_timer;
@@ -564,18 +666,20 @@ diff -ruN orig/src/backend/model/padmap/Padmap.h edited/src/backend/model/padmap
 +    QVariantList m_layout_choices;
 +    int m_layout_choice_index = 0;
 +    int m_layout_choice_player = 0;
++    QString m_layout_choice_kind;
++    QString m_layout_choice_title;
 +};
 +
 +} // namespace model
 diff -ruN orig/src/backend/model/padmap/padmap.pri edited/src/backend/model/padmap/padmap.pri
 --- orig/src/backend/model/padmap/padmap.pri	1969-12-31 19:00:00.000000000 -0500
-+++ edited/src/backend/model/padmap/padmap.pri	2026-09-05 21:02:00.242573307 -0400
++++ edited/src/backend/model/padmap/padmap.pri	2026-09-05 22:00:36.179289689 -0400
 @@ -0,0 +1,2 @@
 +SOURCES += $$PWD/Padmap.cpp
 +HEADERS += $$PWD/Padmap.h
 diff -ruN orig/src/frontend/main.qml edited/src/frontend/main.qml
---- orig/src/frontend/main.qml	2026-09-05 21:02:00.198159583 -0400
-+++ edited/src/frontend/main.qml	2026-09-05 21:02:00.242729026 -0400
+--- orig/src/frontend/main.qml	2026-09-05 22:00:36.135217428 -0400
++++ edited/src/frontend/main.qml	2026-09-05 22:00:36.179531859 -0400
 @@ -127,10 +127,37 @@
              source: "MenuLayer.qml"
              asynchronous: true

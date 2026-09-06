@@ -1462,3 +1462,292 @@ the daemon being broken -- the fake pad's buttons stop at 0x13f. And run
 against the old behaviour, where the wizard used the *inferred* layout, it
 fails with `chose n64, wizard walks generic`, which is the reported bug
 stated in one line.
+
+## One controller is not one mapping
+
+Reported from real use: an N64 game played with a GameCube controller. padmap
+stored exactly one binding set per controller (`profiles.Profile.buttons` plus
+a single `layout`), so there was no way to say "these buttons when I play N64,
+those the rest of the time". Asked for, verbatim: "the ability to specify the
+mapping that my gamecube controller uses for n64 games, and then a universal
+configuration in general", plus overrides for a single game.
+
+The thing that makes this more than a preference is that the console decides
+which controls *exist* and which RetroArch key each one is emitted under.
+mupen64plus-next reads N64 B from RetroPad **Y**; dolphin reads GC A from
+RetroPad **A**; the N64 layout has no X or Y at all and four C-buttons that
+are a right stick. So "where is A on this pad" genuinely has more than one
+answer, and a single stored answer has to be wrong for one of the consoles.
+
+### Storage: a dict of scopes, not three fields
+
+A profile now holds `mappings: dict[str, Mapping]`, where a `Mapping` is a
+capture plus the layout it was taken under, and the key is a scope string:
+
+    game:<console>/<stem>     this controller, this game
+    console:<layout id>       this controller, this console
+    ""                        this controller, everything else
+
+Resolution is `scope_order()` -- a list of candidate keys, most specific first
+-- and one loop that takes the first hit. Two shapes were rejected:
+
+- **Three named fields** (`buttons`, `console_buttons`, `game_buttons`).
+  Precedence then lives in every caller that reads them, which is exactly the
+  kind of rule that gets implemented twice and diverges silently.
+- **A layer of indirection** -- named binding sets, plus a scope-to-name table
+  so one set could serve several scopes. It answers "controller profiles saved
+  to each controller" more directly, and it is genuinely more expressive, but
+  the expressiveness buys a second consistency problem (a scope pointing at a
+  name that no longer exists) for a case nobody has yet described wanting. A
+  `Mapping` carries a `name` field so a set can be labelled; sharing one across
+  two scopes costs a duplicate entry, which is a few hundred bytes.
+
+Console identity is a `layouts.ALL` id rather than a new enum, because the
+console is precisely what decides the control set and the key table, and that
+is what a layout already is. A parallel console list would be a second thing to
+keep in step -- the failure `layouts.catalogue()` was introduced to avoid.
+
+The game key is `<console>/<normalised filename stem>`, not the ROM path and
+not a content hash. The path is what the front-end happens to hold today and
+changes when a library moves or a drive is remounted, and a per-game mapping
+that silently stops applying is worse than one never made. A hash means reading
+hundreds of megabytes at launch, and makes a patched dump a different game to
+padmap while being the same game to the person holding the controller. The
+console prefix is what stops `Sonic` on an arcade board sharing a mapping with
+`Sonic` on a console.
+
+### Migration is a read, not a pass
+
+`Profile.from_json` folds a legacy flat `buttons`/`layout` into the universal
+scope when no `mappings` key is present. In place rather than as a one-shot
+upgrade, so a profile is migrated the first time it is looked at -- including
+one restored from a backup later -- and there is no separate path to forget.
+`to_json` still writes the flat pair as well, mirroring the universal scope:
+nothing padmap ships reads it, but a profile store is user data that outlives
+any one version, and a rollback then finds the controller mapped instead of
+finding it blank and offering the wizard again.
+
+Verified against the actual profile on this machine (`0079:1879 USB GamePad`,
+n64, 14 bindings): it comes back with the capture under `""`, still reporting
+`configured`, and rewrites with the flat mirror intact.
+
+### The first capture is also the default
+
+Someone whose first act is "map this pad for N64 games" would otherwise have no
+universal mapping at all -- so no SDL line for Pegasus to navigate with, and a
+guess on every other console. `Profile.record` seeds the default from the first
+capture and never touches it again: saying "and for N64, this instead" must not
+change what every other console does. Both halves are checked, because they
+fail in opposite directions and each looks fine on its own.
+
+An empty capture under a scope is skipped during resolution rather than
+matched. It would otherwise shadow the more general mapping that does have
+bindings -- the one case where "most specific wins" is not what anybody means.
+
+### Where resolution happens, and why it is not in the daemon
+
+The daemon writes RetroArch autoconfig profiles at republish time, which is
+long before anything knows what will be played. `padmap-play` is handed
+`-L <core.so>` and the ROM, and is the only place both are available.
+
+So: the daemon writes each controller's **default** mapping into
+`$XDG_RUNTIME_DIR/padmap/autoconfig` exactly as before, and `padmap.launch`
+rewrites *that same directory* immediately before RetroArch starts, with
+whichever mapping resolved. Considered and rejected: pre-building one directory
+per console at accept time and picking between them at launch. The launch
+override names exactly one `joypad_autoconfig_dir` and RetroArch scans exactly
+one, so selecting a directory means editing the override too -- two files that
+have to agree instead of one, for a directory that is per-session runtime state
+and is cleared on every write anyway.
+
+Rewriting in place also degrades the right way. If `padmap.launch` never runs
+-- padmap-play bypassed, an unrecognised core, a Python that will not start --
+what is on disk is the default mapping, which is what padmap did before any of
+this existed. It never fails a launch; it prints and returns 0.
+
+`padmap-play` calls Python rather than doing it in shell. Deciding a console
+from a core name and a key from a ROM path are table lookups that already exist
+on the padmap side, and a copy in the launcher would be a table with nothing to
+notice when it fell behind -- the failure this project has already had with the
+launcher path, the theme symlink and the daemon itself.
+
+The core table (`layouts.CORE_LAYOUTS`) is only as good as its entries. The
+four consoles padmap draws were each verified against their core's source when
+the layouts were built, and those four core names carry that provenance in a
+comment; the rest are near neighbours from libretro's own naming. A wrong entry
+resolves a mapping the user did not intend; an **absent** one falls through to
+the default, which is the pre-existing behaviour. Neither corrupts anything.
+
+### The SDL-is-universal hypothesis held
+
+Worth stating because it removed a whole half of the problem. Checked rather
+than assumed, in Pegasus's own source:
+
+- `GamepadManagerSDL2` loads `sdl_controllers.txt` once and holds one global
+  mapping per device. There is no per-collection or per-game gamepad
+  configuration anywhere in the frontend -- `GamepadButtonNavigation` and
+  `GamepadAxisNavigation` are single objects owned by `GamepadManager`.
+- RetroArch's udev joypad driver does not read SDL's database at all; its
+  bindings come from `joypad_autoconfig_dir`, which is the thing padmap
+  overrides.
+- The virtual pads themselves are console-agnostic: `virtual.Republisher`
+  forwards events one-for-one and applies only axis calibration. Nothing about
+  a mapping is baked into the device, so all of the console specificity lives
+  in the files.
+
+So the SDL line is written from the universal mapping alone, and only the
+RetroArch autoconfig varies per launch. If it had gone the other way, the
+virtual pad would have had to be republished differently per game, which would
+mean tearing down and recreating uinput devices at launch and shifting every
+pad index -- a much larger and much worse design.
+
+### Asking what a mapping is *for*
+
+The layout picker already solves the hard input problem: during a session the
+daemon holds EVIOCGRAB and republishing is stopped, so the front-end receives
+no controller input at all, and nothing is mapped yet so no gesture may name a
+button. Push left/right, hold any button. A scope picker needed the same two
+gestures, so `capture.LayoutChoice` became `capture.Chooser` over a list of
+`Option(id, label, layout, mapped)` and both questions use it. One mechanism,
+one set of gestures, one overlay -- and the entry drawn while an option is
+selected is the pad the wizard will then ask about, which is what stops the
+picture and the questions disagreeing.
+
+The flows are deliberately different:
+
+- **First run** is unchanged: claim a slot, "which controller is this?", map,
+  filed as the default. Someone who has just plugged a pad in wants it to
+  work, not to be asked to think about scopes.
+- **Prev-page** now asks "what is this mapping for?" -- Any game, one of the
+  four consoles, or the game last played. That is the deliberate route, for
+  when the default turns out not to be enough.
+
+A console scope does not then ask which layout to walk. The console *is* the
+control set: a mapping for N64 games has to be captured against the N64
+layout whatever the pad physically is, because those are the controls the core
+reads. Asking afterwards could only produce a contradiction. "Any game" is the
+exception, and there the layout question is the real one, so the layout picker
+follows.
+
+Options carry `mapped`, drawn as a tick. Re-mapping a scope replaces it, and
+without a mark there is no way to tell which ones that would destroy.
+
+The per-game scope exists only because `padmap.launch` records what it just
+started in `$XDG_RUNTIME_DIR/padmap/lastgame.json`. The setup screen is reached
+from the front-end and never from inside a game, so nothing there otherwise
+knows which game is meant -- and "the controls were wrong in the game I just
+played" is exactly when someone wants a per-game mapping.
+
+`generic` is offered as a *layout* and never as a console scope. No core
+reports it, so `console:generic` could never resolve.
+
+### The icon had to stop following the layout
+
+`_store_mapping` used to take the controller's icon from the layout id when
+none was set. With scopes that is wrong in a way that lasts: a GameCube pad
+mapped *for N64 games* is captured against the N64 layout, and the pad would
+have relabelled itself an N64 controller on the setup screen forever after.
+Only an unscoped capture -- the flow that actually asks "this is what my
+controller is" -- may now say what it looks like.
+
+## A mapping written mid-session never reached the running front-end
+
+Reported: "the new controller config isn't immediately loaded into Pegasus, and
+it just uses the old SDL default." True, with a precise cause:
+`GamepadManagerSDL2::start` calls `load_user_gamepaddb` once and nothing reads
+`sdl_controllers.txt` again. Everything padmap writes after that is for the
+*next* process -- and the moment it matters most is the instant after finishing
+the wizard.
+
+The daemon now broadcasts `{"event": "sdl_mapping", "lines": [...]}` whenever it
+writes those lines, and on every client connect (a front-end that started before
+the last write is running on whatever the file said then). The C++ client feeds
+each line to `SDL_GameControllerAddMapping`. The file is still written: this is
+the running process, the file is what the next one starts from.
+
+### Which needed measuring, not assuming
+
+The whole fix rests on `SDL_GameControllerAddMapping` re-binding a controller
+that is **already open**, rather than only affecting ones opened later. If it
+did the latter the code would compile, run, log success and change nothing --
+the shape of failure this project has hit four times.
+
+`tools/check_sdl_live.py` measures it against real SDL with a real uinput pad:
+give the pad a mapping with `a` on b0, open it, replace the mapping with one
+putting `a` on b7, and then *press buttons*. The final assertion is an event,
+not SDL describing its own state: raw b7 arrives as `SDL_CONTROLLER_BUTTON_A`
+and raw b0 no longer does.
+
+It runs twice, because SDL has two paths and only one of them is what actually
+happens:
+
+| before state | SDL's answer to AddMapping | live pad re-binds? |
+|---|---|---|
+| a stored line (Pegasus's blind default) | 0, "replaced" | **yes** |
+| no stored line, SDL auto-generated one | 1, "added" | **yes** |
+
+The second row was found by running the real frontend and noticing the log said
+*added*. The cause: SDL never registered anything for that pad because it
+already considered it a game controller -- it manufactures a mapping from the
+standard `BTN_SOUTH`/`BTN_EAST`/... codes the device advertises, which is
+exactly what padmap's virtual pads carry, since they clone their source's evdev
+key set. So the common case is the *add* path, and it had to be measured
+separately. It behaves identically, but nothing about the API said so.
+
+The return code is therefore not the observable and nothing asserts on it. What
+matters is which line SDL uses afterwards.
+
+### And it was read back, not trusted
+
+`Padmap::applyMappings` asks `SDL_GameControllerMappingForGUID` what SDL now
+holds and logs it. A mapping stored under a GUID nothing will ever look up is
+indistinguishable from a working one from the caller's side -- SDL reports
+success either way and never mentions it again.
+
+`tools/e2e_sdl_reload.py` runs the patched Pegasus under Xvfb with a uinput pad
+that exists *before* the frontend starts, so the frontend opens it -- the exact
+state the bug report describes -- then a stub daemon sends one `sdl_mapping`
+event, and the frontend's own log is read back:
+
+    [i] padmap: mapping added for 03008703091200000400000001000000:
+        03008703091200000400000001000000,PADMAP RELOADTEST,a:b7,...,crc:0387,
+
+`crc:0387` is SDL's own doing: it moves the name checksum out of the GUID into a
+field. Its presence is a second confirmation that the line went in under the
+GUID SDL computes for that device rather than one padmap merely believes in.
+
+### New tools
+
+- `tools/check_scopes.py` -- storage, migration of a real legacy profile,
+  resolution order, core and game keys, launch argument parsing, and what
+  actually lands in the `.cfg` for four different launches. The two captures
+  are told apart by keys only one of them can produce (`input_a_btn` cannot
+  appear in an N64 profile at all), not by "something was written".
+- `tools/check_sdl_live.py` -- SDL's live re-binding, both paths, proved with
+  presses.
+- `tools/e2e_sdl_reload.py` -- the patched frontend applying a mapping it is
+  handed mid-session.
+- `tools/e2e_picker.py` gained a second half: re-open setup, choose "Nintendo 64
+  games", walk the N64 layout, and then run `padmap.launch` with a real N64 core
+  name and a real ROM path and check the emitted profile changed -- and that a
+  SNES launch afterwards puts the default back. Both processes, as they run.
+- `tools/preview_mapping.py --scopes` renders the scope picker, built from the
+  daemon's own option builder rather than a hand-written payload. A preview that
+  constructs its own data can look perfect while the daemon sends something else.
+
+### What is not covered
+
+- The core-to-console table is verified for four core names and plausible for
+  the rest. Nothing exercises a core absent from it beyond confirming that it
+  resolves to the default.
+- There is no way to *delete* a scoped mapping. Re-mapping replaces it, which
+  covers "I got it wrong"; it does not cover "I want this console to fall back
+  to my default again". Worth adding when someone wants it.
+- The per-game scope is only offered for a game launched through padmap-play in
+  the current login session, since `lastgame.json` lives in XDG_RUNTIME_DIR.
+  Choosing a game from the library directly would need the theme's own game
+  selection, which is a different screen.
+- `e2e_sdl_reload.py` proves the patched frontend puts padmap's line into SDL
+  and that SDL resolves the pad's GUID to it. That Pegasus's *navigation* then
+  follows is inferred from `check_sdl_live.py`, which measures the same SDL
+  call delivering re-bound events -- it is not driven through Pegasus's UI.

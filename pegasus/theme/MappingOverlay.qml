@@ -31,19 +31,35 @@ FocusScope {
     // list of console names could offer a console whose layout says something
     // different, and nothing would notice.
     property bool choosing: false
-    // Whole layouts from the daemon (layouts.catalogue), not names. The theme
-    // holds no console list of its own -- one here would silently fall behind
-    // the daemon's, and a console added there would simply never appear.
+    // Options from the daemon, each {id, label, mapped, layout: <layout>}.
+    // The theme holds no list of its own -- one here would silently fall
+    // behind the daemon's, and a console (or a scope) added there would
+    // simply never appear.
+    //
+    // `layout` is a whole layout, not a name, so the picture the user chooses
+    // from is drawn from the very coordinates the wizard will point its arrow
+    // at. It is separate from `id` because the two differ for a scope: the
+    // entry "Nintendo 64 games" acts as `console:n64` and is drawn as an N64
+    // pad.
     property var choices: []
     property int choiceIndex: 0
+    // The question being asked, as the daemon words it. One picker mechanism
+    // asks two things now; a title kept here would be a second place to
+    // teach about a third.
+    property string chooseTitle: ""
 
     signal skipRequested()
     signal cancelRequested()
 
     readonly property var shownLayout: {
         if (root.choosing && root.choices && root.choiceIndex >= 0
-                && root.choiceIndex < root.choices.length)
-            return root.choices[root.choiceIndex];
+                && root.choiceIndex < root.choices.length) {
+            // `.layout`, not the entry itself: an option is what is being
+            // chosen, and the layout is only the picture of it.
+            var picked = root.choices[root.choiceIndex];
+            if (picked && picked.layout)
+                return picked.layout;
+        }
         return root.layout;
     }
 
@@ -69,9 +85,10 @@ FocusScope {
 
         Text {
             anchors.horizontalCenter: parent.horizontalCenter
-            text: root.choosing ? qsTr("Which controller is this?")
-                                : root.finished ? qsTr("All set")
-                                                : qsTr("Set up your controller")
+            text: root.choosing
+                  ? (root.chooseTitle || qsTr("Which controller is this?"))
+                  : root.finished ? qsTr("All set")
+                                  : qsTr("Set up your controller")
             color: colors.text
             font.pixelSize: 28
             font.bold: true
@@ -235,19 +252,27 @@ FocusScope {
 
                 Rectangle {
                     readonly property bool isCurrent: index === root.choiceIndex
+                    // Something is already recorded under this entry, so
+                    // choosing it replaces that. Marked rather than hidden:
+                    // re-mapping is the point of the picker, but it should
+                    // not be a blind act.
+                    readonly property bool isMapped: modelData.mapped === true
                     width: label.width + 28
                     height: 38
                     radius: colors.radius
                     color: isCurrent ? colors.accentDim : colors.surface
                     border.width: isCurrent ? 2 : 1
-                    border.color: isCurrent ? colors.accent : colors.outline
+                    border.color: isCurrent ? colors.accent
+                                            : (isMapped ? colors.accentDim
+                                                        : colors.outline)
 
                     Behavior on color { ColorAnimation { duration: 120 } }
 
                     Text {
                         id: label
                         anchors.centerIn: parent
-                        text: modelData.label
+                        text: parent.isMapped
+                              ? modelData.label + " ✓" : modelData.label
                         color: parent.isCurrent ? colors.text : colors.textDim
                         font.pixelSize: 15
                         font.bold: parent.isCurrent
@@ -282,8 +307,13 @@ FocusScope {
                     // constraint: the daemon holds the pads, so no controller
                     // input reaches this screen, and nothing is mapped yet
                     // for a named button to refer to.
+                    //
+                    // The same two gestures for both questions, deliberately.
+                    // Whatever is being chosen, the way to choose it must not
+                    // change -- there is nothing on screen to teach a second
+                    // one with.
                     return qsTr("Push the stick or D-pad left and right to choose.\n"
-                                + "Hold any button to start mapping it.");
+                                + "Hold any button to continue.");
                 if (root.finished)
                     return qsTr("Every control recorded.");
                 return qsTr("Not on this controller? Hold any button to skip it.");

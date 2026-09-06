@@ -18,7 +18,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-from . import layouts
+from . import layouts, profiles
 from .layouts import Layout
 from .mapping import (Binding, axis_index, retroarch_button_index,
                       sdl_button_index)
@@ -70,16 +70,59 @@ SKIP_HOLD_SECONDS = 0.8
 CAPTURE_GAP_SECONDS = 0.35
 
 
-@dataclass
-class LayoutChoice:
-    """Choosing which console a controller is, before mapping its buttons.
+# What a chooser is asking about. Sent to the front-end so a theme holds no
+# list of its own -- one there would silently fall behind, and a console (or a
+# scope) added on this side would simply never appear.
+KIND_LAYOUT = "layout"
+KIND_SCOPE = "scope"
 
-    Necessary because the layout decides *which prompts the wizard shows*, and
-    a wrong one cannot be answered: an N64 pad walked through the generic
-    layout is asked for an X, a Y and two analogue triggers it does not have,
-    and the natural response -- pressing the stick, since nothing else is left
-    -- binds face buttons to axes. That is how a real mapping ended up with
-    cancel on `-a3`.
+
+@dataclass(frozen=True)
+class Option:
+    """One entry on a chooser's strip.
+
+    `layout` is what gets *drawn* while this entry is selected, which is the
+    entire reason the two pickers share one overlay: the pad shown is the pad
+    the wizard will then ask about, from one set of coordinates. A separate
+    list of names could offer an entry whose layout says something else, and
+    nothing would notice.
+    """
+
+    # What the daemon acts on: a layout id for the layout picker, a
+    # `profiles` scope string for the scope picker.
+    id: str
+    # What the user reads.
+    label: str
+    # Layout id to draw. May differ from `id` -- a scope option's id is
+    # "console:n64" while the picture is the N64 pad.
+    layout: str = ""
+    # Whether something is already recorded here. Shown, because otherwise
+    # there is no way to tell which scopes a controller already has a mapping
+    # for, and re-mapping one is destructive.
+    mapped: bool = False
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "label": self.label,
+            "mapped": self.mapped,
+            "layout": layouts.get(self.layout).to_json(),
+        }
+
+
+@dataclass
+class Chooser:
+    """A strip of options worked from the pad, before mapping its buttons.
+
+    Two questions use it. Which console a controller is -- necessary because
+    the layout decides *which prompts the wizard shows*, and a wrong one
+    cannot be answered: an N64 pad walked through the generic layout is asked
+    for an X, a Y and two analogue triggers it does not have, and the natural
+    response (pressing the stick, since nothing else is left) binds face
+    buttons to axes. That is how a real mapping ended up with cancel on
+    `-a3`. And what a mapping is *for* -- every game, one console, or one
+    game -- which is the same shape of question and had no reason to be a
+    second mechanism.
 
     It has to be driven from the pad itself, and that is the whole difficulty.
     The daemon holds EVIOCGRAB for the duration of a session and republishing
@@ -100,9 +143,12 @@ class LayoutChoice:
 
     pad: Any
     player: int
-    # Layout ids, in catalogue order. Kept as ids rather than Layout objects
-    # so the front-end and the daemon are agreeing about the same list.
-    choices: list[str]
+    options: list[Option]
+    # Which question this is, so the front-end can title it. Sent rather than
+    # inferred: a theme guessing from the option ids would be a third place
+    # that has to know what a scope string looks like.
+    kind: str = KIND_LAYOUT
+    title: str = ""
     index: int = 0
     axes: dict[int, tuple[int, int]] = field(default_factory=dict)
     held: set[int] = field(default_factory=set)
@@ -124,12 +170,16 @@ class LayoutChoice:
 
     @property
     def chosen(self) -> str:
-        return self.choices[self.index] if self.choices else ""
+        return self.options[self.index].id if self.options else ""
+
+    @property
+    def chosen_layout(self) -> str:
+        return self.options[self.index].layout if self.options else ""
 
     def move(self, delta: int) -> bool:
-        if not self.choices:
+        if not self.options:
             return False
-        self.index = (self.index + delta) % len(self.choices)
+        self.index = (self.index + delta) % len(self.options)
         return True
 
     def feed(self, event: Any) -> bool:
@@ -199,16 +249,84 @@ class LayoutChoice:
 
     def to_event(self) -> dict[str, Any]:
         return {
+            # Kept as `layout_choice` although it now carries both questions.
+            # The event name is part of the C++ client and the theme, and
+            # renaming it would buy nothing but a wider patch.
             "event": "layout_choice",
             "active": not self.confirmed,
             "player": self.player,
+            "kind": self.kind,
+            "title": self.title,
             "index": self.index,
             "chosen": self.chosen,
-            # Built from the same ids the daemon will act on, so the picture
-            # the user chose from and the layout the wizard walks cannot
-            # disagree about which entry index 2 is.
-            "choices": [layouts.get(name).to_json() for name in self.choices],
+            # Built from the same options the daemon will act on, so the
+            # picture the user chose from and what the daemon does next
+            # cannot disagree about which entry index 2 is.
+            "choices": [option.to_json() for option in self.options],
         }
+
+
+def layout_options(mapped_layouts: set[str] | None = None) -> list[Option]:
+    """"Which controller is this?", as a strip of every layout padmap knows.
+
+    Whole layouts travel to the front-end (see `Option.to_json`) rather than
+    names, so the theme holds no console list of its own: one there would
+    silently fall behind, and a layout added to `layouts.ALL` would simply
+    never appear.
+    """
+    already = mapped_layouts or set()
+    return [
+        Option(id=layout.id, label=layout.label, layout=layout.id,
+               mapped=layout.id in already)
+        for layout in layouts.ALL.values()
+    ]
+
+
+def scope_options(
+    scopes: set[str], default_layout: str = "",
+    last_game: tuple[str, str, str] | None = None,
+) -> list[Option]:
+    """"What is this mapping for?", as a strip of scopes.
+
+    `scopes` is what the controller already has a capture under, so the strip
+    can show it -- re-mapping a scope replaces it, and without a mark there is
+    no way to tell which ones that would destroy.
+
+    `default_layout` is the pad's best guess, drawn beside the "any game"
+    entry only so the strip has a picture there; it is not a promise about
+    which layout the wizard will walk, because that entry leads to the layout
+    picker.
+
+    `last_game` is (console layout id, game key, title) for the game most
+    recently launched through padmap-play, or None. That is the only way a
+    per-game scope can be offered at all: the setup screen is reached from
+    the front-end, never from inside a game, so nothing else on this screen
+    knows which game the user means. "The controls were wrong in the game I
+    just played, let me fix them for that game" is also exactly the moment
+    someone wants one.
+    """
+    options = [
+        Option(id=profiles.SCOPE_UNIVERSAL, label="Any game",
+               layout=default_layout,
+               mapped=profiles.SCOPE_UNIVERSAL in scopes),
+    ]
+    for layout_id in layouts.CONSOLES:
+        scope = profiles.console_scope(layout_id)
+        console = layouts.get(layout_id)
+        options.append(Option(
+            id=scope,
+            label=f"{console.console_label or console.label} games",
+            layout=layout_id, mapped=scope in scopes,
+        ))
+    if last_game is not None:
+        game_console, key, title = last_game
+        if key:
+            scope = profiles.game_scope(key)
+            options.append(Option(
+                id=scope, label=title or key, layout=game_console,
+                mapped=scope in scopes,
+            ))
+    return options
 
 
 @dataclass
@@ -219,6 +337,12 @@ class MappingRun:
     player: int
     layout: Layout
     keys: list[int]
+    # Which scope the result will be filed under -- see profiles.scope_order.
+    # Carried on the run rather than remembered beside it, because the answer
+    # is needed at the *end*, and a wizard that can be abandoned, restarted,
+    # or opened for a different player in between is exactly the shape of
+    # thing that loses a value parked elsewhere.
+    scope: str = ""
     # Absolute axis ranges, as {code: (minimum, maximum)}, for deciding when
     # an axis has been pushed rather than nudged.
     axes: dict[int, tuple[int, int]] = field(default_factory=dict)

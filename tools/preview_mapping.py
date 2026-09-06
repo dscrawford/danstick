@@ -25,7 +25,7 @@ from PySide6.QtQuick import QQuickView
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "src"))
 
-from padmap import layouts  # noqa: E402
+from padmap import capture, layouts  # noqa: E402
 
 THEME = REPO / "pegasus" / "theme"
 
@@ -55,7 +55,13 @@ class StubApi(QObject):
 def main() -> int:
     argv = sys.argv[1:]
     choosing = "--choose" in argv
-    argv = [a for a in argv if a != "--choose"]
+    # The same picker, asking what a mapping is *for* instead of which
+    # controller this is. Worth rendering separately: the entries are scopes
+    # while the picture is a console's layout, and the whole risk in sharing
+    # one overlay is those two coming apart -- which a screenshot settles and
+    # a passing test does not.
+    scoping = "--scopes" in argv
+    argv = [a for a in argv if a not in ("--choose", "--scopes")]
     shot = None
     if "--shot" in argv:
         at = argv.index("--shot")
@@ -89,18 +95,35 @@ def main() -> int:
     state = {"layout": 0, "control": 0,
              "choice": layouts.index_of(args[0]) if args else 0}
 
+    # Built through the daemon's own option builders, not hand-written here.
+    # A preview that constructs its own payload can look perfect while the
+    # daemon sends something else entirely.
+    if scoping:
+        options = [
+            option.to_json()
+            for option in capture.scope_options(
+                scopes={"console:n64"}, default_layout="gamecube",
+                last_game=("n64", "n64/super-mario-64", "Super Mario 64"))
+        ]
+        title = "What is this mapping for?"
+    else:
+        options = [option.to_json() for option in capture.layout_options()]
+        title = "Which controller is this?"
+
     def show():
         layout = layouts.get(order[state["layout"]])
-        if choosing:
-            # Exactly what the daemon sends: whole layouts, and an index into
-            # them. The overlay draws the highlighted one.
+        if choosing or scoping:
+            # Exactly what the daemon sends: options carrying whole layouts,
+            # and an index into them. The overlay draws the highlighted one's
+            # layout.
             root.setProperty("choosing", True)
-            root.setProperty("choices", layouts.catalogue())
-            root.setProperty("choiceIndex", state["choice"])
+            root.setProperty("choices", options)
+            root.setProperty("chooseTitle", title)
+            root.setProperty("choiceIndex", state["choice"] % len(options))
             root.setProperty("padName", "Preview Pad")
             root.setProperty("player", 1)
-            chosen = layouts.catalogue()[state["choice"]]
-            view.setTitle(f"padmap console picker — {chosen['label']}")
+            chosen = options[state["choice"] % len(options)]
+            view.setTitle(f"padmap picker — {chosen['label']}")
             return
         root.setProperty("layout", layout.to_json())
         root.setProperty("padName", "Preview Pad")
@@ -117,8 +140,8 @@ def main() -> int:
                       f"({state['control'] + 1}/{len(layout.controls)})")
 
     def step(delta):
-        if choosing:
-            state["choice"] = (state["choice"] + delta) % len(layouts.ALL)
+        if choosing or scoping:
+            state["choice"] = (state["choice"] + delta) % len(options)
             show()
             return
         layout = layouts.get(order[state["layout"]])

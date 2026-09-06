@@ -28,14 +28,15 @@ import sys
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from pathlib import Path
 
-from PySide6.QtCore import Property, QObject, QUrl, Signal, Slot
-from PySide6.QtGui import QGuiApplication
+from PySide6.QtCore import (Property, QEvent, QObject, Qt, QUrl, Signal,  # noqa: E402
+                            Slot)
+from PySide6.QtGui import QGuiApplication, QKeyEvent
 from PySide6.QtQml import QQmlComponent, QQmlEngine
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "src"))
 
-from padmap import layouts  # noqa: E402
+from padmap import capture, layouts  # noqa: E402
 
 THEME = REPO / "pegasus" / "theme"
 
@@ -67,9 +68,13 @@ class StubPadmap(QObject):
         self.editor_calls = 0
         self.map_calls = []
         self.choose_calls = []
+        self.scope_calls = []
         self.skip_calls = 0
         self._mapping_active = False
         self._choice_active = False
+        self._choice_kind = ""
+        self._choice_title = ""
+        self._options = []
 
     # -- properties the theme reads --------------------------------------
     @Property(bool, notify=connectedChanged)
@@ -146,7 +151,19 @@ class StubPadmap(QObject):
 
     @Property("QVariantList", notify=layoutChoiceChanged)
     def layoutChoices(self):
-        return [dict(layout) for layout in layouts.catalogue()]
+        # Built from the daemon's own option builder rather than from a list
+        # written here, so the shape the theme is fed is the shape the daemon
+        # actually sends -- the whole point of the stub is that it cannot
+        # quietly disagree with the thing it stands in for.
+        return [option.to_json() for option in self._options]
+
+    @Property(str, notify=layoutChoiceChanged)
+    def layoutChoiceKind(self):
+        return self._choice_kind
+
+    @Property(str, notify=layoutChoiceChanged)
+    def layoutChoiceTitle(self):
+        return self._choice_title
 
     @Property(int, notify=layoutChoiceChanged)
     def layoutChoiceIndex(self):
@@ -181,6 +198,20 @@ class StubPadmap(QObject):
     def chooseLayout(self, player):
         self.choose_calls.append(player)
         self._choice_active = True
+        self._choice_kind = capture.KIND_LAYOUT
+        self._choice_title = "Which controller is this?"
+        self._options = capture.layout_options()
+        self.layoutChoiceChanged.emit()
+
+    @Slot(int)
+    def chooseScope(self, player):
+        self.scope_calls.append(player)
+        self._choice_active = True
+        self._choice_kind = capture.KIND_SCOPE
+        self._choice_title = "What is this mapping for?"
+        self._options = capture.scope_options(
+            scopes=set(), default_layout="n64",
+            last_game=("n64", "n64/super-mario-64", "Super Mario 64"))
         self.layoutChoiceChanged.emit()
 
     # Two decorators, because QML calls this with one argument and the real
@@ -222,6 +253,17 @@ class StubPadmap(QObject):
 
 
 class StubKeys(QObject):
+    """Answers False to everything, unless a test says which key it is sending.
+
+    The theme asks `api.keys.isPrevPage(event)` rather than looking at key
+    codes, so a harness cannot press a key without standing in for that
+    question too. `wanted` is the one gesture currently being sent.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.wanted = ""
+
     @Slot("QVariant", result=bool)
     def isAccept(self, event):
         return False
@@ -244,7 +286,7 @@ class StubKeys(QObject):
 
     @Slot("QVariant", result=bool)
     def isPrevPage(self, event):
-        return False
+        return self.wanted == "prevpage"
 
     @Slot("QVariant", result=bool)
     def isLeft(self, event):
@@ -399,6 +441,50 @@ def main() -> int:
             f"FAIL: the picker is missing consoles the daemon offers: "
             f"{offered}")
     print(f"  ok  offers {', '.join(offered)}, drawing {shown['id']}")
+
+    print("\nPrev-page asks what a mapping is FOR, not which console:")
+    # The deliberate re-map route. It must not be the layout picker any more:
+    # that question cannot express "this pad, but only for N64 games", which
+    # is the whole reported need.
+    api._keys.wanted = "prevpage"
+    setup.forceActiveFocus()
+    QGuiApplication.sendEvent(
+        setup, QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_PageUp,
+                         Qt.KeyboardModifier.NoModifier))
+    app.processEvents()
+    api._keys.wanted = ""
+    if pad.scope_calls != [1]:
+        raise SystemExit(
+            f"FAIL: Prev-page did not open the scope picker ({pad.scope_calls}; "
+            f"layout picker calls {pad.choose_calls})")
+    print(f"  ok  chooseScope({pad.scope_calls[0]})")
+
+    print("\nand the overlay draws the scope's console, not its scope string:")
+    overlay_shown = mapping_overlay_of(setup)
+    if not overlay_shown.property("choosing"):
+        raise SystemExit("FAIL: the overlay is not in choose mode")
+    if overlay_shown.property("chooseTitle") != "What is this mapping for?":
+        raise SystemExit(
+            f"FAIL: the heading is the daemon's, or should be "
+            f"({overlay_shown.property('chooseTitle')!r})")
+    entries = pad.layoutChoices
+    n64 = next(i for i, e in enumerate(entries) if e["id"] == "console:n64")
+    overlay_shown.setProperty("choiceIndex", n64)
+    app.processEvents()
+    shown = overlay_shown.property("shownLayout")
+    if not shown or shown.get("id") != "n64":
+        raise SystemExit(
+            f"FAIL: the N64 scope draws {shown and shown.get('id')!r}. The "
+            f"picture and the pad the wizard asks about must be the same one.")
+    if not any(e["id"].startswith("game:") for e in entries):
+        raise SystemExit("FAIL: the game last played is not offered")
+    print(f"  ok  {len(entries)} scopes, 'console:n64' drawn as the N64 pad")
+
+    # Back to where the rest of this test expects to be.
+    pad._choice_active = False
+    pad._options = []
+    pad.layoutChoiceChanged.emit()
+    app.processEvents()
 
     print("\nthe capture finishes:")
     pad.mappingFinished.emit(True)

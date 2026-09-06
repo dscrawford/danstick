@@ -222,11 +222,31 @@
         # about padmap still gets the assigned controller order.
         packages.padmap-play = pkgs.writeShellApplication {
           name = "padmap-play";
-          runtimeInputs = [ pkgs.retroarch ];
+          runtimeInputs = [ pkgs.retroarch pythonEnv ];
           text = ''
             state="''${XDG_RUNTIME_DIR:-/tmp}/padmap"
             config="$state/launch.cfg"
             argsfile="$state/launch.args"
+
+            # This wrapper is the only place that knows what is about to be
+            # played: it is handed `-L <core.so>` and the ROM path, and the
+            # daemon wrote its autoconfig profiles long before, when nothing
+            # could know either. So the mapping a controller uses for *this*
+            # console or *this* game is resolved here, rewriting the same
+            # autoconfig directory the launch override already points at.
+            #
+            # Python rather than shell. Deciding a console from a core name
+            # and a stable key from a ROM path are both table lookups that
+            # already exist on the padmap side, and a second copy in shell
+            # would be a table with nothing to notice when it fell behind --
+            # the failure this project has hit with the launcher path, the
+            # theme link and the daemon itself.
+            #
+            # Never fatal: the default profiles are already on disk, so the
+            # worst case is the mapping padmap wrote before scopes existed.
+            PYTHONPATH="${./src}''${PYTHONPATH:+:$PYTHONPATH}" \
+              python3 -m padmap.launch -- "$@" \
+              || echo "padmap: mapping resolution failed; using defaults" >&2
 
             # Flags that cannot be expressed as config settings, one token
             # per line. Emptying an unassigned core port is the only thing

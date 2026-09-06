@@ -200,6 +200,155 @@ def release_live_daemon() -> None:
     path.write_text("".join(f"{line}\n" for line in kept))
 
 
+def check_scoped_mapping(daemon, pad, profile_dir: str, runtime: str) -> None:
+    """A second mapping for one console only, and the launch that picks it.
+
+    The reported case: one controller, a default mapping, and a different one
+    for N64 games. Everything below goes through the real daemon and the real
+    launch path, because the two halves are written by different processes at
+    different times and a check that exercised either alone would pass while
+    they disagreed -- which is invisible, since both produce a plausible file.
+    """
+    before = json.loads(
+        next(Path(profile_dir).glob("*.json")).read_text())["mappings"][""]
+
+    # Back to the setup screen, exactly as a user reaches it: accepting ended
+    # the session, and the daemon refuses a picker without one because a
+    # picker is driven by a pad it does not currently hold.
+    print("\nre-opening setup and claiming again:")
+    daemon.send(cmd="begin", players=4)
+    pad.hold(FIRST_KEY)
+    daemon.pump(0.6)
+    claim = daemon.last("claim")
+    if not claim or not claim["configured"]:
+        raise SystemExit(
+            f"FAIL: the pad should now report as configured ({claim})")
+    print(f"  ok  player {claim['player']}, configured")
+
+    print("\nasking what a second mapping is FOR:")
+    daemon.send(cmd="choose_scope", player=1)
+    choice = daemon.last("layout_choice")
+    if not choice or not choice["active"] or choice.get("kind") != "scope":
+        raise SystemExit(f"FAIL: the scope picker did not open ({choice})")
+    scopes = [entry["id"] for entry in choice["choices"]]
+    if scopes[0] != "" or "console:n64" not in scopes:
+        raise SystemExit(f"FAIL: unexpected scopes offered: {scopes}")
+    if not choice["choices"][0]["mapped"]:
+        raise SystemExit(
+            "FAIL: the default scope is not marked as already captured, so "
+            "re-mapping it would look like a fresh choice")
+    print(f"  ok  {choice['title']!r}: {', '.join(s or 'default' for s in scopes)}")
+
+    target = scopes.index("console:n64")
+    print(f"\nmoving to {choice['choices'][target]['label']!r}:")
+    for _ in range(target):
+        pad.push(0x10, 1)
+        daemon.pump(0.3)
+    choice = daemon.last("layout_choice")
+    if choice["chosen"] != "console:n64":
+        raise SystemExit(f"FAIL: landed on {choice['chosen']!r}")
+    print(f"  ok  {choice['chosen']}")
+
+    print("\nholding a button goes straight to the wizard, on the N64 pad:")
+    # No second question: a console scope *is* the control set. Asking which
+    # layout afterwards could only produce a contradiction.
+    pad.hold(FIRST_KEY + 1)
+    daemon.pump(0.8)
+    if daemon.last("layout_choice")["active"]:
+        raise SystemExit("FAIL: a second picker opened")
+    walking = daemon.last("mapping")
+    if walking["layout"]["id"] != "n64":
+        raise SystemExit(
+            f"FAIL: chose the N64 scope, wizard walks "
+            f"{walking['layout']['id']!r}")
+    print(f"  ok  {walking['total']} N64 controls to press")
+
+    # A different physical button per control from the first pass, so the two
+    # captures cannot be confused for one another downstream.
+    for step in range(walking["total"]):
+        time.sleep(GAP_SECONDS)
+        pad.tap(FIRST_KEY + (KEY_COUNT - 1 - step) % KEY_COUNT)
+        daemon.pump(0.3)
+    daemon.pump(1.0)
+    finished = daemon.last("mapping")
+    if not finished.get("done") or not finished.get("stored"):
+        raise SystemExit(
+            f"FAIL: the second wizard stopped at {finished.get('index')}")
+
+    stored = json.loads(next(Path(profile_dir).glob("*.json")).read_text())
+    if "console:n64" not in stored["mappings"]:
+        raise SystemExit(
+            f"FAIL: nothing filed under console:n64 "
+            f"({sorted(stored['mappings'])})")
+    if stored["mappings"][""]["buttons"] != before["buttons"]:
+        raise SystemExit(
+            "FAIL: the N64 capture overwrote the controller's default. "
+            "Saying 'and for N64, this instead' must not change what every "
+            "other console does.")
+    if stored["mappings"]["console:n64"]["buttons"] == before["buttons"]:
+        raise SystemExit(
+            "FAIL: the two captures came out identical, so nothing here "
+            "actually distinguishes them")
+    print(f"  ok  profile now holds {sorted(stored['mappings'])}")
+
+    print("\nand the launch picks between them:")
+    daemon.send(cmd="accept")
+    daemon.pump(1.5)
+    autoconfig = Path(runtime) / "padmap" / "autoconfig" / "udev"
+    written = next(autoconfig.glob("*.cfg"))
+    default_text = written.read_text()
+    if "Mapping scope: default" not in default_text:
+        raise SystemExit(
+            f"FAIL: accept did not write the default mapping:\n{default_text}")
+
+    # The real launch path, as padmap-play runs it: the core decides the
+    # console, the ROM decides the game.
+    roms = Path(tempfile.mkdtemp())
+    rom = roms / "GoldenEye 007 (USA).z64"
+    rom.write_text("")
+    core = roms / "mupen64plus_next_libretro.so"
+    core.write_text("")
+    result = subprocess.run(
+        [sys.executable, "-m", "padmap.launch", "--",
+         "-L", str(core), str(rom)],
+        env=daemon.environment, capture_output=True, text=True, timeout=60,
+    )
+    n64_text = written.read_text()
+    if "Mapping scope: console:n64" not in n64_text:
+        raise SystemExit(
+            f"FAIL: an N64 launch left the default mapping in place.\n"
+            f"stderr: {result.stderr}\n{n64_text}")
+    if n64_text == default_text:
+        raise SystemExit(
+            "FAIL: the file did not change, so both consoles get the same "
+            "bindings and the whole feature does nothing")
+    if "Layout: Nintendo 64" not in n64_text:
+        raise SystemExit(f"FAIL: wrong layout emitted:\n{n64_text}")
+    print(f"  ok  {result.stderr.strip().splitlines()[-2]}")
+
+    last = json.loads(
+        (Path(runtime) / "padmap" / "lastgame.json").read_text())
+    if last["console"] != "n64" or "goldeneye" not in last["key"]:
+        raise SystemExit(f"FAIL: the game was not recorded ({last})")
+    print(f"  ok  recorded {last['title']!r} for the scope picker")
+
+    print("\nand a launch on another console goes back to the default:")
+    snes_core = roms / "snes9x_libretro.so"
+    snes_core.write_text("")
+    snes_rom = roms / "Super Metroid (USA).sfc"
+    snes_rom.write_text("")
+    subprocess.run(
+        [sys.executable, "-m", "padmap.launch", "--",
+         "-L", str(snes_core), str(snes_rom)],
+        env=daemon.environment, capture_output=True, text=True, timeout=60,
+    )
+    if "Mapping scope: default" not in written.read_text():
+        raise SystemExit(
+            "FAIL: a SNES launch used the N64 mapping, so a per-console "
+            "capture leaks into every other console")
+    print("  ok  default mapping restored")
+
+
 def main() -> int:
     config = tempfile.mkdtemp()
     profiles = tempfile.mkdtemp()
@@ -234,7 +383,7 @@ def main() -> int:
         if not choice or not choice["active"]:
             raise SystemExit(f"FAIL: the picker did not open ({choice})")
         offered = [entry["id"] for entry in choice["choices"]]
-        if not choice["choices"][0].get("controls"):
+        if not choice["choices"][0].get("layout", {}).get("controls"):
             raise SystemExit("FAIL: no controls sent, nothing to draw")
         print(f"  ok  on {choice['chosen']}, offering {', '.join(offered)}")
 
@@ -327,6 +476,8 @@ def main() -> int:
                 "FAIL: the RetroArch profile claims ids the pad does not "
                 "advertise")
         print(f"  ok  {profiles_written[0].name}, ids matching the pad")
+
+        check_scoped_mapping(daemon, pad, profiles, runtime)
 
         print("\nall checks passed")
         return 0

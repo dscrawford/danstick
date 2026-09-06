@@ -494,8 +494,9 @@ def check_stored_layout_survives(layouts) -> None:
     bindings = {"a": Binding("button", 1), "b": Binding("button", 2),
                 "rightstick_up": Binding("button", 11)}
     stored = profiles.Profile(
-        signature=profiles.signature(pad), name=pad.name,
-        icon="n64", layout=layouts.N64.id, buttons=dict(bindings),
+        signature=profiles.signature(pad), name=pad.name, icon="n64",
+        mappings={profiles.SCOPE_UNIVERSAL: profiles.Mapping(
+            buttons=dict(bindings), layout=layouts.N64.id)},
     )
     reloaded = profiles.Profile.from_json(json.loads(json.dumps(stored.to_json())))
     if reloaded.layout != layouts.N64.id:

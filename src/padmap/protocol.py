@@ -19,7 +19,10 @@ Commands (client -> daemon)
 {"cmd": "calibrate", "player": 1} measure that player's pad: centre, then reach
 {"cmd": "set_icon", "player": 1, "icon": "n64"}   remember the chosen icon
 {"cmd": "choose_layout", "player": 1}   pick a console, then map its buttons
-{"cmd": "map", "player": 1, "layout": "n64"}   map buttons under a layout
+{"cmd": "choose_scope", "player": 1}    pick what a mapping is *for*, then map
+{"cmd": "map", "player": 1, "layout": "n64", "scope": "console:n64"}
+                                  map buttons under a layout, filed under a
+                                  scope ("" = this controller's default)
 {"cmd": "skip_control"}           move past a control this pad does not have
 {"cmd": "configure_end"}          leave a modal flow without finishing it
 
@@ -39,7 +42,18 @@ Events (daemon -> client)
  "player": 1}                          progress of a calibration in flight
 {"event": "confirm", "frac": 0.4}              confirm-hold in flight
 {"event": "layout_choice", "active": true, "player": 1, "index": 2,
- "chosen": "n64", "choices": [<layout>, ...]}  console picker in flight
+ "kind": "layout"|"scope", "title": "Which controller is this?",
+ "chosen": "n64",
+ "choices": [{"id", "label", "mapped", "layout": <layout>}, ...]}
+                                 picker in flight -- console, or what a
+                                 mapping is for; one mechanism, two questions
+{"event": "sdl_mapping", "lines": ["03000000...,padmap Player 1,a:b1,...",
+ ...]}                           SDL database lines padmap has just written.
+                                 Pegasus reads sdl_controllers.txt once at
+                                 startup, so a mapping written mid-session
+                                 does nothing until it is relaunched; the
+                                 client feeds these to
+                                 SDL_GameControllerAddMapping instead.
 {"event": "mapping", "player": 1, "layout": <layout>, "index": 3, "total": 14,
  "control": "y", "label": "Y (top face)", "done": false, "captured": {...}}
 {"event": "accepted", "players": [...], "launch_config": "/run/..."}
@@ -198,6 +212,50 @@ def game_is_running() -> bool:
     # Stale: the launcher died without running its trap.
     marker.unlink(missing_ok=True)
     return False
+
+
+def last_game_path() -> Path:
+    """The game most recently launched through padmap-play.
+
+    Written by `padmap.launch`, read by the daemon so the scope picker can
+    offer "...for this game". It is the only way a per-game scope can be
+    offered at all: the controller setup screen is reached from the
+    front-end, never from inside a game, so nothing on that screen otherwise
+    knows which game the user means -- and "the controls were wrong in the
+    game I just played" is exactly when someone wants a per-game mapping.
+
+    In XDG_RUNTIME_DIR beside the other launch state, so it cannot outlive
+    the session that produced it and offer a scope for a game whose ROM has
+    since been removed.
+    """
+    return runtime_dir() / "lastgame.json"
+
+
+def read_last_game() -> dict[str, str]:
+    """{"console", "key", "title"} for the last launch, or {}.
+
+    Never raises: this decorates a picker, and a missing or malformed file
+    means one fewer option rather than a failure.
+    """
+    try:
+        raw = json.loads(last_game_path().read_text())
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    return {
+        "console": str(raw.get("console", "")),
+        "key": str(raw.get("key", "")),
+        "title": str(raw.get("title", "")),
+    }
+
+
+def write_last_game(console: str, key: str, title: str) -> Path:
+    path = last_game_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(
+        {"console": console, "key": key, "title": title}, indent=2))
+    return path
 
 
 def socket_path() -> Path:
