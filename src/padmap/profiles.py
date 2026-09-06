@@ -466,6 +466,22 @@ def save(profile: Profile, directory: Path | None = None) -> Path:
     return path
 
 
+def forget(pad: "Pad", directory: Path | None = None) -> bool:
+    """Delete a controller's stored profile. True if there was one.
+
+    Every scope goes with it, since the file holds them all. That is the
+    intent: "reset this controller" meaning "reset some of this controller"
+    leaves someone re-running the wizard and still meeting old behaviour from
+    a per-console mapping they had forgotten was there.
+    """
+    target = (directory or profile_dir()) / _filename(signature(pad))
+    try:
+        target.unlink()
+        return True
+    except OSError:
+        return False
+
+
 def is_known(pad: "Pad", directory: Path | None = None) -> bool:
     """Has this model of controller been set up before?
 

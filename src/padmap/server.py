@@ -368,6 +368,8 @@ class Server:
             self._begin_layout_choice(int(message.get("player", 0)))
         elif command == "choose_scope":
             self._begin_scope_choice(int(message.get("player", 0)))
+        elif command == "forget_pad":
+            self._forget_pad(int(message.get("player", 0)))
         elif command == "skip_control":
             self._skip_control()
         elif command == "calibrate":
@@ -748,6 +750,47 @@ class Server:
         # resume a confirm hold when the modal flow ends.
         self._confirm_started.clear()
         self._broadcast(self._choice.to_event())
+
+    def _forget_pad(self, player: int) -> None:
+        """Throw away a controller's stored config and map it again, now.
+
+        The recovery path for a mapping that is wrong in a way the wizard
+        cannot be talked out of -- a control bound to the wrong axis, a layout
+        chosen by mistake -- where the only thing to do is start over.
+
+        Keyboard-driven from the front-end, and it has to be: the daemon holds
+        EVIOCGRAB for the whole session, so no controller input reaches the
+        front-end while the setup screen is open. A gesture on the pad could
+        not reach this, for the same reason "press Select to skip" could never
+        have worked.
+
+        Every scope goes, not just the default one. "Reset this controller"
+        meaning "reset some of this controller" is the kind of half-measure
+        that leaves someone re-running the wizard and still seeing the old
+        behaviour from a per-console mapping they had forgotten about.
+
+        The `prompted` record goes too. It exists to stop padmap re-offering
+        setup for a model the user has already declined, and leaving it would
+        make a freshly forgotten controller one that is never asked about.
+        """
+        pad = self._pad_for_player(player)
+        if pad is None:
+            self._broadcast({"event": "error",
+                             "message": f"no controller assigned to player {player}"})
+            return
+
+        removed = profiles.forget(pad)
+        signature = profiles.signature(pad)
+        if signature in self._prompted:
+            self._prompted.discard(signature)
+            self._save_prompted()
+        log.info("player %d: forgot %s (%s)", player, _clean(pad.name),
+                 "profile removed" if removed else "nothing stored")
+
+        # Straight into the wizard rather than back to the setup screen. The
+        # request is "this is wrong, fix it", and an extra step between the
+        # key and the first prompt is one the user has to discover.
+        self._begin_layout_choice(player)
 
     def _begin_scope_choice(self, player: int) -> None:
         """Ask what a mapping is *for* before asking where the buttons are.

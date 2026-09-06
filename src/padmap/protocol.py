@@ -20,6 +20,11 @@ Commands (client -> daemon)
 {"cmd": "set_icon", "player": 1, "icon": "n64"}   remember the chosen icon
 {"cmd": "choose_layout", "player": 1}   pick a console, then map its buttons
 {"cmd": "choose_scope", "player": 1}    pick what a mapping is *for*, then map
+{"cmd": "forget_pad", "player": 1}     throw away everything stored for that
+                                  player's controller and open the wizard
+                                  again; keyboard-driven, because the daemon
+                                  holds EVIOCGRAB and no pad input reaches
+                                  the front-end while a session is open
 {"cmd": "map", "player": 1, "layout": "n64", "scope": "console:n64"}
                                   map buttons under a layout, filed under a
                                   scope ("" = this controller's default)
@@ -168,6 +173,18 @@ def daemon_pids(runtime: str | None = None) -> list[int]:
         if env.get("XDG_RUNTIME_DIR", "/tmp") == wanted:
             pids.append(pid)
     return pids
+
+
+def daemon_log_path() -> Path:
+    """Where a daemon started by `ensure-daemon` writes its log.
+
+    Beside the socket, so it shares the socket's lifetime and a fresh login
+    starts a fresh log. The daemon is the only process that watches a
+    controller being claimed, a mapping being captured, or a launch config
+    being written; without this its output went to /dev/null and none of that
+    was recoverable after the fact.
+    """
+    return runtime_dir() / "padmap.log"
 
 
 def prompted_path() -> Path:

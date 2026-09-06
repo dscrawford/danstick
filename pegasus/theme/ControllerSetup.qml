@@ -243,6 +243,12 @@ FocusScope {
         anchors.bottomMargin: 22
         text: "hold again to continue     ·     Filters reset"
               + "     ·     Details recalibrate     ·     Prev-page map for…"
+              // Only advertised once a slot is filled, since that is exactly
+              // when the key does anything.
+              + (api.padmap.players.length > 0
+                 ? "     ·     1-" + api.padmap.players.length
+                   + " start a controller over"
+                 : "")
               + "     ·     Next-page gamepad editor     ·     Cancel back"
         color: colors.textFaint
         font.pixelSize: 13
@@ -343,6 +349,33 @@ FocusScope {
                 // reach the button editor deliberately.
                 calibration.start(last.player, last.name, false);
             }
+        } else if (root.resetSlotFor(event) > 0) {
+            // Number keys throw that slot's controller away and start the
+            // wizard over. By slot number rather than "the last one claimed",
+            // which every other shortcut here uses: with two controllers
+            // assigned, "the last one" is precisely the ambiguity someone is
+            // trying to resolve when they reach for this.
+            event.accepted = true;
+            api.padmap.forgetPad(root.resetSlotFor(event));
         }
+    }
+
+    /// Which player slot a key press asks to reset, or 0 for none.
+    ///
+    /// Only slots that actually hold a controller: forgetting an empty one is
+    /// an error the daemon would have to reject, and a key that silently does
+    /// nothing is worse than one that is simply not bound.
+    ///
+    /// Keyboard-only, and that is forced rather than chosen. The daemon holds
+    /// EVIOCGRAB on every pad while this screen is open, so no controller
+    /// input reaches the frontend at all -- the same constraint that stopped
+    /// "press Select to skip" from ever working in the wizard.
+    function resetSlotFor(event) {
+        if (event.modifiers !== Qt.NoModifier)
+            return 0;
+        var slot = event.key - Qt.Key_0;
+        if (slot < 1 || slot > api.padmap.slotCount)
+            return 0;
+        return slot <= api.padmap.players.length ? slot : 0;
     }
 }

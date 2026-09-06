@@ -27,6 +27,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import re
+
 from .devices import Pad
 
 RULES_PATH = Path("/etc/udev/rules.d/99-padmap.rules")
@@ -72,6 +74,48 @@ def generate_rules(pads: list[Pad]) -> str:
             f'ATTRS{{idProduct}}=="{pad.pid:04x}", ENV{{ID_INPUT_JOYSTICK}}=""'
         )
     return "\n".join(lines) + "\n"
+
+
+def unhidden(pads: list[Pad]) -> list[Pad]:
+    """Pads padmap republishes that the installed rules do not cover.
+
+    The rules are generated from whatever was plugged in at the time and then
+    left alone, so a controller bought or connected afterwards is simply not
+    in them. Nothing notices: padmap goes on working, and RetroArch quietly
+    sees the physical adapter *as well as* the virtual pad padmap made from
+    it. Measured here after a GameCube adapter was added to a file listing
+    only a Fightstick and a USB pad -- RetroArch saw four extra controllers.
+
+    Reads the installed file rather than remembering what was written, for
+    the usual reason: what is on disk is what udev applies, and a rebuild, a
+    reboot or an edit can all put those two out of step.
+    """
+    for path in (RUNTIME_RULES_PATH, RULES_PATH):
+        try:
+            text = path.read_text()
+            break
+        except OSError:
+            continue
+    else:
+        # No rules installed at all. Not this function's business to complain
+        # -- that is a setup step the user may simply not have taken.
+        return []
+
+    covered = {
+        (int(m.group(1), 16), int(m.group(2), 16))
+        for m in re.finditer(
+            r'ATTRS\{idVendor\}=="([0-9a-fA-F]{4})",\s*'
+            r'ATTRS\{idProduct\}=="([0-9a-fA-F]{4})"', text)
+    }
+    missing: list[Pad] = []
+    seen: set[tuple[int, int]] = set()
+    for pad in pads:
+        key = (pad.vid, pad.pid)
+        if not pad.vid or not pad.pid or key in covered or key in seen:
+            continue
+        seen.add(key)
+        missing.append(pad)
+    return missing
 
 
 def nix_module_snippet(pads: list[Pad]) -> str:

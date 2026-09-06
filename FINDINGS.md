@@ -1886,3 +1886,91 @@ recorded that ABS_RX rests at 24, and padmap would have gone on publishing
 that axis as `rightx`. The bug was never in the measurement, it was in
 deciding what the axis *is*. Calibration remains worth having for a stick that
 genuinely drifts; nothing here is evidence for it.
+
+## Resetting a controller, and why the key has to be on the keyboard
+
+Asked for: "I should be able to reset a controller config with a keyboard
+binding".
+
+Keyboard is not a stylistic choice here, it is the only thing that can work.
+The daemon holds EVIOCGRAB on every pad for the duration of an assignment
+session and republishing is stopped, so the front-end receives no controller
+input at all while the setup screen is open. This is the same constraint that
+killed "press Select to skip" in the wizard.
+
+Bound to the **number keys**, one per slot, rather than to a single key acting
+on "the last controller claimed" -- which is what every other shortcut on that
+screen does. With two controllers assigned, "the last one" is precisely the
+ambiguity someone is trying to resolve when they reach for a reset. A slot
+that holds no controller is not bound at all: the daemon would only reject it,
+and a key that fails silently is worse than one that does nothing visible.
+
+`forget_pad` removes **every** scope, not just the default. "Reset this
+controller" meaning "reset some of this controller" leaves someone re-running
+the wizard and still meeting old behaviour from a per-console mapping they had
+forgotten was there. The `prompted` record goes too, or a freshly forgotten
+controller becomes one padmap never offers to set up again.
+
+The patch is a unified diff whose new-file hunks carry explicit line counts
+(`@@ -0,0 +1,409 @@`). Adding a method to Padmap.h/.cpp without correcting
+those makes the patch fail to apply, and nothing says so until the Pegasus
+build breaks. Both counts were recomputed and the frontend was rebuilt to
+prove it applies.
+
+## Two player: what was checked, and what was actually wrong
+
+Reported: "two-player seems to have issues... P1 seemed to have issues when p2
+was added".
+
+Verified *correct*, so these can be ruled out:
+
+* both virtual pads exist -- `padmap Player 1` on event26, `padmap Player 2`
+  on event31
+* the pad indices are right. `visible_order()` predicts RetroArch will
+  enumerate the four physical GameCube ports at 0-3 and the two virtual pads
+  at 4 and 5, and `compute_pad_indices` returns exactly the `{1: 4, 2: 5}`
+  that launch.cfg contains. The virtual pads sort *after* the physical ones
+  despite lower event numbers, because libudev sorts by syspath.
+* both autoconfig profiles are written, with the right layouts and the
+  crossed N64 keys for the pad mapped as an N64 controller
+
+What is wrong is that **the installed udev rules had fallen behind the
+hardware**:
+
+    /run/udev/rules.d/99-padmap.rules
+      0079:1830   MAYFLASH Arcade Fightstick F300
+      0079:1879   USB GamePad
+      (no 0079:1843 -- the GameCube adapter)
+
+`padmap hide` generates the rules once from whatever is plugged in at the
+time. The GameCube adapter arrived later, so it is absent, so RetroArch sees
+its four physical ports *as well as* the virtual pads padmap builds from them
+-- six pads where there should be two. Nothing anywhere noticed, which is the
+recurring shape of every bug in this file: padmap generates a thing, the
+system drifts, and the two are never compared again.
+
+`hide.unhidden` now reads the installed file and reports adapters padmap
+republishes that it does not cover, and `ensure-daemon` prints it. Reading the
+file rather than remembering what was written, for the usual reason.
+
+Not proven to be the cause of the P1 regression -- it is a real defect found
+while looking, and it is the only discrepancy found between what padmap
+intends and what the system is actually doing.
+
+### The daemon had no log
+
+Every diagnosis above had to be reconstructed from files on disk, because
+`_spawn_daemon` sent stdout and stderr to `/dev/null`. The daemon is the only
+process that sees a controller claimed, a mapping captured or a launch config
+written, and all of it was being discarded -- in a project where "use the
+logs" has been the instruction twice.
+
+It now writes to `$XDG_RUNTIME_DIR/padmap/padmap.log`, truncated per daemon so
+the file describes the current run.
+
+One trap avoided while doing it: the obvious `serve --verbose` cannot be used.
+`--verbose` belongs to the main parser, so it would have to precede the
+subcommand, and `protocol.daemon_pids` matches argv *structurally* on
+`argv[-2:] == ["padmap.cli", "serve"]`. A flag there makes every running
+daemon invisible to `ensure-daemon`, which would then start a second one
+beside the first.

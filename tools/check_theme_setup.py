@@ -69,6 +69,7 @@ class StubPadmap(QObject):
         self.map_calls = []
         self.choose_calls = []
         self.scope_calls = []
+        self.forget_calls = []
         self.skip_calls = 0
         self._mapping_active = False
         self._choice_active = False
@@ -239,6 +240,10 @@ class StubPadmap(QObject):
     @Slot()
     def openGamepadEditor(self):
         self.editor_calls += 1
+
+    @Slot(int)
+    def forgetPad(self, player):
+        self.forget_calls.append(player)
 
     # -- driving the stub from Python -------------------------------------
     def set_state(self, state, players=None):
@@ -539,6 +544,53 @@ def main() -> int:
     if overlay.property("step") == "problem":
         raise SystemExit("FAIL: tore down a measurement in progress")
     print("  ok  measurement left alone")
+
+    print("\nthe keyboard reset, which is the only kind that can work:")
+    # The daemon holds EVIOCGRAB for the whole session, so the front-end sees
+    # no controller input at all while this screen is open -- a pad gesture
+    # could not reach this. By slot number rather than "the last one claimed":
+    # with two controllers assigned, "the last one" is exactly the ambiguity
+    # someone is trying to resolve when they reach for it.
+    pad.forget_calls.clear()
+    pad.set_state("assigning", [player(1, "First Pad", True),
+                                player(2, "Second Pad", True)])
+    setup.setProperty("focus", True)
+    app.processEvents()
+
+    for key, slot in ((Qt.Key.Key_2, 2), (Qt.Key.Key_1, 1)):
+        QGuiApplication.sendEvent(
+            setup, QKeyEvent(QEvent.Type.KeyPress, key,
+                             Qt.KeyboardModifier.NoModifier))
+        app.processEvents()
+    if pad.forget_calls != [2, 1]:
+        raise SystemExit(
+            f"FAIL: number keys reset {pad.forget_calls}, wanted [2, 1] -- "
+            f"the key must name the slot, not the most recent claim")
+    print(f"  ok  forgetPad{tuple(pad.forget_calls)} from pressing 2 then 1")
+
+    print("\n...but not a slot that holds no controller:")
+    pad.forget_calls.clear()
+    QGuiApplication.sendEvent(
+        setup, QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_3,
+                         Qt.KeyboardModifier.NoModifier))
+    app.processEvents()
+    if pad.forget_calls:
+        raise SystemExit(
+            f"FAIL: reset an empty slot ({pad.forget_calls}) -- the daemon "
+            f"would only reject it, and a key that fails silently is worse "
+            f"than one that is not bound")
+    print("  ok  slot 3 is empty, so 3 does nothing")
+
+    print("\n...and a modified press is left for whatever else wants it:")
+    pad.forget_calls.clear()
+    QGuiApplication.sendEvent(
+        setup, QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_1,
+                         Qt.KeyboardModifier.ControlModifier))
+    app.processEvents()
+    if pad.forget_calls:
+        raise SystemExit(
+            f"FAIL: Ctrl+1 was treated as a reset ({pad.forget_calls})")
+    print("  ok  Ctrl+1 ignored")
 
     print("\nall checks passed")
     return 0

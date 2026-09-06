@@ -540,12 +540,35 @@ def _spawn_daemon() -> None:
     launcher, typically, which would otherwise take the controllers down with
     it when it exits.
     """
+    from . import protocol
+
+    # Into a file rather than /dev/null. The daemon is the only thing that
+    # sees a controller being claimed, a mapping being captured or a launch
+    # config being written, and discarding all of it meant the answer to
+    # "what happened when the second controller was added" was simply gone.
+    # Truncated per daemon rather than appended to, so the log describes this
+    # run and does not have to be searched for where the last one ended.
+    log_path = protocol.daemon_log_path()
+    try:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        handle = open(log_path, "w")
+    except OSError:
+        handle = subprocess.DEVNULL  # type: ignore[assignment]
+
     subprocess.Popen(
+        # argv stays exactly ["-m", "padmap.cli", "serve"]. protocol.
+        # daemon_pids matches it structurally on the last two elements, so
+        # slipping a flag in here makes every running daemon invisible to
+        # `ensure-daemon` -- which would then start a second one beside it.
         [sys.executable, "-m", "padmap.cli", "serve"],
         start_new_session=True,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stdout=handle,
+        stderr=subprocess.STDOUT,
     )
+    if handle is not subprocess.DEVNULL:
+        # The child holds its own copy; keeping this one open would pin the
+        # descriptor for as long as the launching process lives.
+        handle.close()
 
 
 def _wait_for_daemon(deadline: float) -> dict | None:
@@ -590,6 +613,20 @@ def cmd_ensure_daemon(args: argparse.Namespace) -> int:
             for path in stale[:3]:
                 print(f"  {path}")
             print("  re-export them with:  padmap export-pegasus")
+
+    # Rules are generated once from whatever was plugged in at the time, so a
+    # controller added later is not in them -- and then RetroArch sees the
+    # physical adapter as well as the virtual pad padmap made from it. Silent
+    # until someone wonders why there are extra controllers.
+    from . import hide as hide_rules
+
+    missing = hide_rules.unhidden(devices.discover())
+    if missing:
+        print(f"warning: {len(missing)} adapter(s) padmap republishes are "
+              f"still visible to RetroArch:")
+        for target in missing:
+            print(f"  {target.vid:04x}:{target.pid:04x}  {target.name}")
+        print("  regenerate the udev rules with:  padmap hide")
 
     ours = protocol.build_id()
     state = _daemon_state()

@@ -40,7 +40,7 @@ diff -ruN orig/src/backend/model/model.pri edited/src/backend/model/model.pri
 diff -ruN orig/src/backend/model/padmap/Padmap.cpp edited/src/backend/model/padmap/Padmap.cpp
 --- orig/src/backend/model/padmap/Padmap.cpp	1969-12-31 19:00:00.000000000 -0500
 +++ edited/src/backend/model/padmap/Padmap.cpp	2026-09-05 22:01:01.012349583 -0400
-@@ -0,0 +1,409 @@
+@@ -0,0 +1,414 @@
 +// Pegasus Frontend -- padmap integration
 +//
 +// This program is free software: you can redistribute it and/or modify
@@ -408,6 +408,11 @@ diff -ruN orig/src/backend/model/padmap/Padmap.cpp edited/src/backend/model/padm
 +    send(QStringLiteral("choose_scope"), {{QStringLiteral("player"), player}});
 +}
 +
++void Padmap::forgetPad(int player)
++{
++    send(QStringLiteral("forget_pad"), {{QStringLiteral("player"), player}});
++}
++
 +void Padmap::startMapping(int player, const QString& layout)
 +{
 +    QVariantMap args {{ QStringLiteral("player"), player }};
@@ -453,7 +458,7 @@ diff -ruN orig/src/backend/model/padmap/Padmap.cpp edited/src/backend/model/padm
 diff -ruN orig/src/backend/model/padmap/Padmap.h edited/src/backend/model/padmap/Padmap.h
 --- orig/src/backend/model/padmap/Padmap.h	1969-12-31 19:00:00.000000000 -0500
 +++ edited/src/backend/model/padmap/Padmap.h	2026-09-05 22:01:17.774331232 -0400
-@@ -0,0 +1,217 @@
+@@ -0,0 +1,225 @@
 +// Pegasus Frontend -- padmap integration
 +//
 +// Exposes the padmap controller-assignment daemon to QML as `Api.padmap`.
@@ -575,6 +580,14 @@ diff -ruN orig/src/backend/model/padmap/Padmap.h edited/src/backend/model/padmap
 +    /// exactly as chooseLayout is, and for the same reason: the daemon holds
 +    /// EVIOCGRAB, so no controller input reaches the frontend.
 +    Q_INVOKABLE void chooseScope(int player);
++    /// Throw away everything stored for a player's controller and start the
++    /// wizard again from the console question.
++    ///
++    /// Keyboard-driven by necessity, not by choice: the daemon holds
++    /// EVIOCGRAB on every pad for the duration of a session, so the frontend
++    /// receives no controller input at all while the setup screen is open. A
++    /// gesture on the pad could never reach this.
++    Q_INVOKABLE void forgetPad(int player);
 +    /// Walk a controller's buttons, one prompt at a time. An empty layout
 +    /// lets the daemon pick from what it already knows about the pad.
 +    Q_INVOKABLE void startMapping(int player, const QString& layout = QString());
