@@ -113,6 +113,19 @@ FocusScope {
         return found;
     }
 
+    // MAME grades every driver, and "preliminary" is the grade behind its own
+    // red "THIS GAME DOES NOT WORK" screen. `x-mame-status` carries it through
+    // the collection file into `game.extra`; anything without a grade -- which
+    // is nearly everything outside arcade -- must read as fine rather than as
+    // broken.
+    function driverStatus(game) {
+        return (game && game.extra && game.extra["mame-status"]) || "";
+    }
+
+    function isBroken(game) {
+        return driverStatus(game) === "preliminary";
+    }
+
     function favoriteIndices(index) {
         if (index < 0 || index >= collectionCount)
             return [];
@@ -622,12 +635,18 @@ FocusScope {
                         // tile's corner floats in dead space next to a narrow
                         // one instead of sitting on the picture.
                         favorite: modelData.favorite === true
+                        // Same reasoning as the badge: dim the picture rather
+                        // than hide the tile, so a set that does not run is
+                        // still findable.
+                        dimmed: root.isBroken(modelData)
                     }
 
                     Text {
                         width: parent.width
-                        text: modelData.title
-                        color: colors.text
+                        text: root.isBroken(modelData)
+                              ? qsTr("⚠ ") + modelData.title : modelData.title
+                        color: root.isBroken(modelData)
+                               ? colors.danger : colors.text
                         font.pixelSize: 13
                         horizontalAlignment: Text.AlignHCenter
                         wrapMode: Text.WordWrap
@@ -697,15 +716,46 @@ FocusScope {
             }
 
             Text {
+                id: rowTitle
                 anchors.left: star.right
                 anchors.leftMargin: 6
+                anchors.right: broken.left
+                anchors.rightMargin: 10
+                anchors.verticalCenter: parent.verticalCenter
+                text: modelData.title
+                // Dimmed rather than hidden. A MAME set that does not run is
+                // still worth seeing -- it is why the ROM is there -- but it
+                // should not read the same as one that works.
+                color: root.isBroken(modelData) ? colors.textFaint : colors.text
+                font.pixelSize: 17
+                elide: Text.ElideRight
+            }
+
+            // Words, not an icon: "does not work" is the whole message, and
+            // an unlabelled glyph next to a dimmed title is a puzzle.
+            Rectangle {
+                id: broken
+                visible: root.isBroken(modelData)
                 anchors.right: meta.left
                 anchors.rightMargin: 20
                 anchors.verticalCenter: parent.verticalCenter
-                text: modelData.title
-                color: colors.text
-                font.pixelSize: 17
-                elide: Text.ElideRight
+                // Zero-width when absent, so the title simply extends into
+                // the space instead of the two of them anchoring to each
+                // other conditionally.
+                width: visible ? brokenLabel.implicitWidth + 14 : 0
+                height: 22
+                radius: 4
+                color: "transparent"
+                border.width: 1
+                border.color: colors.danger
+
+                Text {
+                    id: brokenLabel
+                    anchors.centerIn: parent
+                    text: qsTr("not working")
+                    color: colors.danger
+                    font.pixelSize: 12
+                }
             }
 
             // Right-aligned rather than stacked under the title: it keeps the

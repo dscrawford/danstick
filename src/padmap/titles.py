@@ -32,6 +32,16 @@ _GAME = re.compile(r'<game name="([^"]+)"')
 _DESCRIPTION = re.compile(r"<description>(.*?)</description>", re.S)
 _YEAR = re.compile(r"<year>(.*?)</year>")
 _MANUFACTURER = re.compile(r"<manufacturer>(.*?)</manufacturer>")
+# MAME grades each driver: "good", "imperfect", or "preliminary". Preliminary
+# means the game does not really run -- it is the status behind MAME's own red
+# "THIS GAME DOES NOT WORK" warning. Deliberately matched on `<driver ` and
+# not on `status="..."` anywhere: ROM elements carry their own status
+# ("baddump", "nodump") and there are thousands of those per file.
+_DRIVER = re.compile(r'<driver\s+status="([a-z]+)"')
+
+STATUS_GOOD = "good"
+STATUS_IMPERFECT = "imperfect"
+STATUS_PRELIMINARY = "preliminary"
 
 
 @dataclass(frozen=True)
@@ -39,6 +49,19 @@ class Title:
     title: str
     year: str = ""
     manufacturer: str = ""
+    # MAME's driver grade: "good", "imperfect", "preliminary", or "" when the
+    # set is not in the table at all. Only meaningful for arcade.
+    status: str = ""
+
+    @property
+    def working(self) -> bool:
+        """False only when MAME says the driver does not work.
+
+        An unknown status counts as working: most of the library is not MAME,
+        and marking every console game as broken because it has no driver
+        grade would be worse than saying nothing.
+        """
+        return self.status != STATUS_PRELIMINARY
 
 
 def parse_mame_xml(path: Path) -> dict[str, Title]:
@@ -63,10 +86,12 @@ def parse_mame_xml(path: Path) -> dict[str, Title]:
             continue
         year = _YEAR.search(block)
         manufacturer = _MANUFACTURER.search(block)
+        driver = _DRIVER.search(block)
         out[name] = Title(
             title=description.group(1).strip(),
             year=year.group(1).strip() if year else "",
             manufacturer=manufacturer.group(1).strip() if manufacturer else "",
+            status=driver.group(1) if driver else "",
         )
     return out
 
@@ -74,15 +99,24 @@ def parse_mame_xml(path: Path) -> dict[str, Title]:
 def dump_json(titles: dict[str, Title], path: Path) -> None:
     """Write the compact form the runtime actually loads."""
     path.write_text(json.dumps(
-        {name: [t.title, t.year, t.manufacturer] for name, t in titles.items()},
+        {
+            name: [t.title, t.year, t.manufacturer, t.status]
+            for name, t in titles.items()
+        },
         separators=(",", ":"),
     ))
 
 
 def load_json(path: Path) -> dict[str, Title]:
     raw = json.loads(path.read_text())
+    # Tolerates the three-element rows written before driver status was
+    # recorded, so an already-built table keeps working rather than making
+    # every arcade entry fall back to its raw set name.
     return {
-        name: Title(title=value[0], year=value[1], manufacturer=value[2])
+        name: Title(
+            title=value[0], year=value[1], manufacturer=value[2],
+            status=value[3] if len(value) > 3 else "",
+        )
         for name, value in raw.items()
     }
 

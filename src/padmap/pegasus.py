@@ -63,6 +63,10 @@ class Entry:
     path: str
     year: str = ""
     manufacturer: str = ""
+    # MAME driver grade, "" for anything not in the table. Surfaced to the
+    # theme rather than acted on here: whether a preliminary driver is worth
+    # hiding, dimming or just labelling is a presentation decision.
+    status: str = ""
     # Pegasus asset key -> absolute image path, for whatever art was found.
     assets: dict[str, str] = field(default_factory=dict)
 
@@ -192,6 +196,7 @@ def read_playlist(
             path=rom,
             year=info.year,
             manufacturer=info.manufacturer,
+            status=info.status,
             assets=entry_assets(label, rom, art),
         ))
 
@@ -333,6 +338,17 @@ def render(collection: Collection) -> str:
             lines.append(f"release: {entry.year}")
         if entry.manufacturer:
             lines.append(f"developer: {entry.manufacturer}")
+        # `x-` is Pegasus's own extension escape hatch: PegasusMetadata.cpp
+        # keeps any key starting with it and exposes the rest of the name
+        # under `game.extra`. Nothing built in carries "this driver does not
+        # work", and inventing a use for `genre` or `description` would put
+        # it somewhere a user might reasonably want to edit.
+        #
+        # Only emitted when MAME actually graded the set. Absent means
+        # unknown, which the theme must not read as broken -- almost nothing
+        # outside arcade has a grade at all.
+        if entry.status:
+            lines.append(f"x-mame-status: {entry.status}")
         # Emitted only when the file exists, so the theme can treat "has a
         # boxFront" as "has art to show" and pick its layout from that.
         for _, asset in ART_KINDS:

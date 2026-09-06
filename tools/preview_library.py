@@ -77,6 +77,16 @@ class StubGame(QObject):
     def assets(self):
         return self._assets
 
+    @Property("QVariantMap", constant=True)
+    def extra(self):
+        """Pegasus's `x-` passthrough, where MAME's driver grade arrives.
+
+        A map even when empty, matching `Game::extraMap` -- the theme reads
+        `extra["mame-status"]` and an absent map would exercise only the
+        guard, never the marker.
+        """
+        return {"mame-status": self._entry.status} if self._entry.status else {}
+
     @Slot()
     def launch(self):
         self.launched = True
@@ -97,6 +107,19 @@ class ObjectListModel(QAbstractListModel):
     def __init__(self, items):
         super().__init__()
         self._items = items
+        # Parent every item to the model, exactly as Pegasus does
+        # (`Api.cpp` calls `game->setParent(this)`).
+        #
+        # Without a C++ parent, QML takes JavaScriptOwnership of anything
+        # returned from `get()` and the garbage collector is free to delete
+        # it. Nothing here holds a Python reference either, so a screen that
+        # touches a few thousand games -- a search over 8302 rows, or a
+        # per-delegate property read -- starts finding deleted objects:
+        # rows render blank, and a filter that should match reports zero.
+        # That is a bug in this harness, not in the theme, and it looks
+        # exactly like a bug in the theme.
+        for item in items:
+            item.setParent(self)
 
     def roleNames(self):
         return {Qt.ItemDataRole.UserRole: QByteArray(b"modelData")}
@@ -123,6 +146,9 @@ class StubCollection(QObject):
         super().__init__()
         self._name = name
         self._games = ObjectListModel(games)
+        # Same reason as the games: an unparented model is collectable, and
+        # a whole collection can vanish several tabs later.
+        self._games.setParent(self)
 
     @Property(str, constant=True)
     def name(self):

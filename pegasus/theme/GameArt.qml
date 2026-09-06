@@ -13,6 +13,11 @@ Item {
     property url art: ""
     property int titleSize: 15
     property bool favorite: false
+    // Drawn over the artwork when MAME says the driver does not work. A
+    // veil rather than a lower opacity on the image: reducing opacity lets
+    // the background through and makes pale covers look washed out instead
+    // of deliberately greyed.
+    property bool dimmed: false
 
     // Decoding is deferred to the Image, but the *decision* is here: an
     // Image with an empty source still occupies a texture slot and reports a
@@ -81,6 +86,20 @@ Item {
         sourceSize.height: height > 120 ? 512 : 128
         source: root.art
         visible: root.hasArt
+    }
+
+    // Sized and placed against the artwork, not the item, for the same reason
+    // as the badge: a veil filling the slot greys the letterbox margins too
+    // and reads as a broken tile rather than a marked one.
+    Rectangle {
+        visible: root.dimmed
+        width: root.artWidth
+        height: root.artHeight
+        x: (root.width - root.artWidth) / 2
+        y: (root.height - root.artHeight) / 2
+        radius: colors.radius - 6
+        color: colors.background
+        opacity: 0.55
     }
 
     // Opaque disc rather than a bare glyph: the star has to survive landing on
