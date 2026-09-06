@@ -248,14 +248,68 @@ STICK_AXES: dict[int, str] = {
 }
 
 
-def stick_fields(axis_codes: list[int]) -> dict[str, str]:
-    """SDL stick entries for the axes a pad actually reports."""
+# One axis's declared travel plus where it sits untouched: minimum, maximum,
+# rest. Read from the driver's absinfo -- see Server._absolute_ranges.
+AxisSpan = tuple[int, int, int]
+
+
+# How far from the middle of its range an axis may rest and still be called a
+# stick, as a fraction of half that range. A real stick centres within a few
+# percent; the pads measured here sit inside 4%. Anything near an end is a
+# trigger, and this is a wide berth around that distinction.
+STICK_REST_TOLERANCE = 0.5
+
+
+def rests_centred(span: AxisSpan) -> bool:
+    """Whether an axis sits near the middle of its travel when untouched."""
+    minimum, maximum, rest = span
+    if maximum <= minimum:
+        return False
+    offset = (rest - (minimum + maximum) / 2) / ((maximum - minimum) / 2)
+    return abs(offset) <= STICK_REST_TOLERANCE
+
+
+def stick_fields(
+    axis_codes: list[int],
+    bindings: dict[str, Binding] | None = None,
+    axes: dict[int, AxisSpan] | None = None,
+) -> dict[str, str]:
+    """SDL stick entries for the axes a pad actually reports.
+
+    The map above is a guess by evdev code, and on the Mayflash GameCube
+    adapter that guess is wrong in the worst possible way: its analogue
+    triggers are ABS_RX and ABS_RY, so declaring them the right stick told SDL
+    the stick was jammed 80% to the upper-left and held there forever. The
+    reported symptom was the pad being "stuck to the left" in the front-end.
+
+    So two axes are refused:
+
+    * one that does not rest near the middle of its range. A stick centres and
+      a trigger does not, which is the difference the code number cannot
+      express. This needs `axes`; without it the old guess stands, since a
+      caller with no absinfo is no worse off than before.
+    * one a capture already claims. Nothing good comes of an axis being both a
+      stick and a button: at best the two disagree about what is pressed, and
+      the front-end believes whichever it reads first.
+
+    Deliberately not the same test as capture.deflection, which asks how far
+    an axis has moved *from* rest. This asks where rest is.
+    """
+    taken = {
+        binding.index for binding in (bindings or {}).values()
+        if binding.kind == "axis"
+    }
     fields = {}
     for code, field in STICK_AXES.items():
-        if code in axis_codes:
-            index = axis_index(axis_codes, code)
-            if index is not None:
-                fields[field] = f"a{index}"
+        if code not in axis_codes:
+            continue
+        index = axis_index(axis_codes, code)
+        if index is None or index in taken:
+            continue
+        span = (axes or {}).get(code)
+        if span is not None and not rests_centred(span):
+            continue
+        fields[field] = f"a{index}"
     return fields
 
 

@@ -74,6 +74,7 @@ def virtual_guid(player: int, pad: Pad | None = None) -> str:
 def sdl_line_for(
     player: int, bindings: dict[str, Binding],
     axis_codes: list[int] | None = None, pad: Pad | None = None,
+    axes: dict[int, mapping.AxisSpan] | None = None,
 ) -> str:
     """The SDL database line for a player's virtual pad.
 
@@ -81,11 +82,16 @@ def sdl_line_for(
     not part of the capture -- see mapping.stick_fields -- but a line without
     them leaves SDL believing the pad has no sticks, and a front-end with no
     way to navigate but the d-pad.
+
+    `axes` adds where each of those axes rests, which is what separates a
+    stick from a trigger. Optional, because a caller without it is no worse
+    off than before; supplying it is what stops an analogue trigger being
+    declared a stick that is permanently pushed over.
     """
     name = virtual_name(player)
     return mapping.sdl_mapping(
         virtual_guid(player, pad), name, bindings,
-        sticks=mapping.stick_fields(axis_codes or []),
+        sticks=mapping.stick_fields(axis_codes or [], bindings, axes),
     )
 
 
@@ -185,7 +191,10 @@ ABS_HAT0Y = 0x11
 _IDENTITY_FIELDS = frozenset({"platform", "crc", "hint", "sdk", "type"})
 
 
-def _stick_and_dpad_fields(axis_codes: list[int], keys: list[int]) -> dict[str, str]:
+def _stick_and_dpad_fields(
+    axis_codes: list[int], keys: list[int],
+    axes: dict[int, mapping.AxisSpan] | None = None,
+) -> dict[str, str]:
     """Directions, from what the pad actually reports rather than a guess.
 
     These are the ones that decide whether a front-end can be navigated at
@@ -203,11 +212,14 @@ def _stick_and_dpad_fields(axis_codes: list[int], keys: list[int]) -> dict[str, 
             index = mapping.sdl_button_index(keys, code)
             if index is not None:
                 fields[field] = f"b{index}"
-    fields.update(mapping.stick_fields(axis_codes))
+    fields.update(mapping.stick_fields(axis_codes, axes=axes))
     return fields
 
 
-def guessed_fields(keys: list[int], axis_codes: list[int]) -> dict[str, str]:
+def guessed_fields(
+    keys: list[int], axis_codes: list[int],
+    axes: dict[int, mapping.AxisSpan] | None = None,
+) -> dict[str, str]:
     """A mapping for a pad nothing knows anything about.
 
     The face buttons really are a guess -- which physical button is A is
@@ -225,7 +237,7 @@ def guessed_fields(keys: list[int], axis_codes: list[int]) -> dict[str, str]:
     for index, field in enumerate(GUESS_BUTTON_ORDER):
         if index < len(ordered):
             fields[field] = f"b{index}"
-    fields.update(_stick_and_dpad_fields(axis_codes, keys))
+    fields.update(_stick_and_dpad_fields(axis_codes, keys, axes))
     return fields
 
 
@@ -373,7 +385,8 @@ def sdl_builtin_fields(guid: str) -> dict[str, str]:
 
 
 def fallback_line_for(
-    player: int, pad: Pad, keys: list[int], axis_codes: list[int]
+    player: int, pad: Pad, keys: list[int], axis_codes: list[int],
+    axes: dict[int, mapping.AxisSpan] | None = None,
 ) -> tuple[str, str] | None:
     """A usable SDL line for a pad that has never been mapped, plus its source.
 
@@ -388,13 +401,45 @@ def fallback_line_for(
         fields, source = carried
         source = f"carried over from {source}"
     else:
-        fields = guessed_fields(keys, axis_codes)
+        fields = guessed_fields(keys, axis_codes, axes)
         source = "guessed from the controller's own capabilities"
     return (
         mapping.sdl_line(virtual_guid(player, pad), virtual_name(player),
                          fields),
         source + "; run the mapping wizard to replace it",
     )
+
+
+def pad_axis_spans(pad: Pad) -> dict[int, mapping.AxisSpan]:
+    """(minimum, maximum, rest) per ABS code, straight from the driver.
+
+    Read when the SDL line is written rather than remembered, for the same
+    reason pad_capabilities is: the answer belongs to whatever hardware is
+    plugged in right now. Empty on any failure, which puts stick_fields back
+    on its old guess rather than dropping sticks a pad really has.
+    """
+    try:
+        device = devices.open_device(pad)
+    except OSError:
+        return {}
+    try:
+        caps: dict[int, Any] = device.capabilities()
+        spans: dict[int, mapping.AxisSpan] = {}
+        for entry in (caps.get(EV_ABS) or []):
+            if not isinstance(entry, tuple) or len(entry) != 2:
+                continue
+            code, info = entry
+            minimum = int(getattr(info, "min", 0))
+            maximum = int(getattr(info, "max", 0))
+            rest = int(getattr(info, "value", 0))
+            if not minimum <= rest <= maximum:
+                rest = (minimum + maximum) // 2
+            spans[int(code)] = (minimum, maximum, rest)
+        return spans
+    except OSError:
+        return {}
+    finally:
+        device.close()
 
 
 def pad_capabilities(pad: Pad) -> tuple[list[int], list[int]]:

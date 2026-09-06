@@ -279,6 +279,7 @@ def main() -> int:
     check_stored_layout_survives(layouts)
     check_identity_modes()
     check_unmapped_fallback()
+    check_triggers_are_not_sticks()
 
     print("\nall checks passed")
     return 0
@@ -563,6 +564,90 @@ FIGHTSTICK_LINE = (
     "guide:b12,leftshoulder:b4,lefttrigger:b6,leftx:a0,lefty:a1,"
     "rightshoulder:b5,righttrigger:b7,start:b9,x:b0,y:b3,platform:Linux,"
 )
+
+
+def check_triggers_are_not_sticks() -> None:
+    """An analogue trigger must never be declared a stick.
+
+    Reported as a controller "stuck to the left" in the front-end. padmap
+    declared the pad's sticks from a table keyed on evdev code -- ABS_RX and
+    ABS_RY are the right stick -- and on the Mayflash GameCube adapter those
+    two codes are the analogue L and R triggers. A trigger rests at one end of
+    its travel, so SDL was told the right stick was pushed 80% to the upper
+    left and never let go.
+
+    The numbers below are this adapter's, read from its absinfo:
+
+        a0 ABS_X  rest 127     a3 ABS_RX rest 24   <- L trigger
+        a1 ABS_Y  rest 130     a4 ABS_RY rest 25   <- R trigger
+    """
+    from padmap import controllercfg, mapping
+
+    codes = [0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x10, 0x11]
+    spans = {0x00: (0, 255, 127), 0x01: (0, 255, 130), 0x02: (0, 255, 132),
+             0x03: (0, 255, 24), 0x04: (0, 255, 25), 0x05: (0, 255, 131),
+             0x10: (-1, 1, 0), 0x11: (-1, 1, 0)}
+
+    print("\nan axis that rests at an end is not a stick:")
+    fields = mapping.stick_fields(codes, axes=spans)
+    if fields.get("leftx") != "a0" or fields.get("lefty") != "a1":
+        raise SystemExit(
+            f"FAIL: the real stick was dropped ({fields}) -- the front-end "
+            f"now has no way to navigate but the d-pad")
+    if "rightx" in fields or "righty" in fields:
+        raise SystemExit(
+            f"FAIL: the triggers were declared the right stick ({fields}) -- "
+            f"SDL reads that stick as held hard over, for good")
+    print(f"  ok  {fields}")
+
+    print("\n...and a real right stick is still declared:")
+    centred = dict(spans)
+    centred[0x03] = (0, 255, 128)
+    centred[0x04] = (0, 255, 127)
+    fields = mapping.stick_fields(codes, axes=centred)
+    if fields.get("rightx") != "a3" or fields.get("righty") != "a4":
+        raise SystemExit(
+            f"FAIL: a centred right stick was dropped too ({fields}) -- the "
+            f"test is refusing sticks, not triggers")
+    print(f"  ok  {fields}")
+
+    print("\nan axis a capture already claims is not a stick either:")
+    # No absinfo here at all: this is the second, independent guard. Nothing
+    # good comes of one axis being both a stick and a button -- they disagree
+    # about what is pressed and the front-end believes whichever it reads.
+    bound = {"leftshoulder": Binding("axis", 3, 1),
+             "rightshoulder": Binding("axis", 4, 1)}
+    fields = mapping.stick_fields(codes, bound)
+    if "rightx" in fields or "righty" in fields:
+        raise SystemExit(
+            f"FAIL: a3/a4 are bound to the shoulders and were still declared "
+            f"a stick ({fields})")
+    if fields.get("leftx") != "a0":
+        raise SystemExit(f"FAIL: the unclaimed stick went missing ({fields})")
+    print(f"  ok  {fields}")
+
+    print("\nthe whole line for the adapter as it is really configured:")
+    line = controllercfg.sdl_line_for(
+        1, {"a": Binding("button", 1), "leftshoulder": Binding("axis", 3, 1),
+            "rightshoulder": Binding("axis", 4, 1)},
+        axis_codes=codes, axes=spans)
+    if "rightx:" in line or "righty:" in line:
+        raise SystemExit(f"FAIL: the published line still has a right stick:\n"
+                         f"  {line}")
+    if "leftx:a0" not in line or "lefty:a1" not in line:
+        raise SystemExit(f"FAIL: the published line lost the real stick:\n"
+                         f"  {line}")
+    print("  ok  leftx/lefty kept, rightx/righty gone")
+
+    print("\nwithout absinfo the old guess still stands:")
+    # A caller that cannot read the driver is no worse off than before. Worth
+    # pinning: the alternative -- dropping every stick when unsure -- would
+    # cost navigation on pads that were working.
+    fields = mapping.stick_fields(codes)
+    if fields.get("rightx") != "a3":
+        raise SystemExit(
+            f"FAIL: sticks vanished when no absinfo was supplied ({fields})")
+    print(f"  ok  {fields}")
 
 
 def check_unmapped_fallback() -> None:

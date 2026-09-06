@@ -663,6 +663,11 @@ class Server:
         for assignment in self._assignments:
             player = assignment.player
             keys, axis_codes = controllercfg.pad_capabilities(assignment.pad)
+            # Where each axis rests, so a trigger is not declared a stick --
+            # the Mayflash GameCube adapter puts its triggers on ABS_RX/RY,
+            # and calling those the right stick left the front-end reading a
+            # stick held hard over that nobody was touching.
+            axes = controllercfg.pad_axis_spans(assignment.pad)
             bindings = controllercfg.stored_bindings(assignment.pad)
             if bindings:
                 # The pad, because the virtual one mirrors its identity by
@@ -671,10 +676,10 @@ class Server:
                 # SDL nor the front-end says anything about it.
                 lines[player] = controllercfg.sdl_line_for(
                     player, bindings, axis_codes=axis_codes,
-                    pad=assignment.pad)
+                    pad=assignment.pad, axes=axes)
                 continue
             fallback = controllercfg.fallback_line_for(
-                player, assignment.pad, keys, axis_codes)
+                player, assignment.pad, keys, axis_codes, axes)
             if fallback is not None:
                 lines[player], notes[player] = fallback
                 log.info("player %d: no capture yet, SDL mapping %s",

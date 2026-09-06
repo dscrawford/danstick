@@ -1831,3 +1831,58 @@ load-bearing.
 
 The other two mutations -- measuring from the midpoint, and dropping `_rearm`
 inside the gap -- both fail their checks, so those two guards are real.
+
+## The "stuck to the left" stick was a trigger padmap called a stick
+
+Reported after the trigger fix above: "it may actually be the analog stick.
+seems to be stuck to the left".
+
+It was not the analogue stick, and it was not a calibration problem. The
+published SDL line for the pad read:
+
+    ...,leftshoulder:+a3,rightshoulder:+a4,...,leftx:a0,lefty:a1,
+    rightx:a3,righty:a4,platform:Linux,
+
+`a3` and `a4` are ABS_RX and ABS_RY, which on this adapter are the analogue L
+and R triggers -- the same two axes the previous finding was about. Computing
+what SDL reads from the virtual pad while nothing is touched:
+
+    a0 ABS_X  value=126  ->  SDL   -385  (-1%)     leftx   fine
+    a1 ABS_Y  value=130  ->  SDL   +642  (+2%)     lefty   fine
+    a3 ABS_RX value=27   ->  SDL -25828  (-79%)    rightx  hard left, always
+    a4 ABS_RY value=26   ->  SDL -26085  (-80%)    righty  hard up, always
+
+So the front-end saw a right stick shoved into its corner and held there. The
+left stick -- the one the user reasonably suspected -- was centred to within
+2% the whole time.
+
+`mapping.STICK_AXES` mapped evdev code to SDL stick field as a fixed table:
+ABS_X/ABS_Y are the left stick, ABS_RX/ABS_RY the right. The first half is
+safe; `_stick_and_dpad_fields` even says so, "ABS_X is the left stick's X on
+every pad ever made". The second half is a guess, and this adapter breaks it.
+An axis code does not say what the control is.
+
+`stick_fields` now refuses two kinds of axis:
+
+* one that does not rest near the middle of its range (`rests_centred`,
+  tolerance 0.5 of half-range -- the measured pads sit inside 0.04). A stick
+  centres, a trigger does not, and that is the distinction the code number
+  cannot carry. Needs absinfo, threaded through as `axes`; without it the old
+  guess stands, since dropping sticks when unsure would cost navigation on
+  pads that work today.
+* one a capture already claims, which is independent of absinfo and catches
+  the same pad by a different route. `leftshoulder:+a3` and `rightx:a3` in one
+  line means the two disagree about what is pressed.
+
+RetroArch was never affected: `retroarch_profile` emits only `input_l_x_*` and
+`input_l_y_*` from axes 0 and 1, and no right stick at all.
+
+### Calibration would not have fixed this
+
+Worth recording, because it was the natural next guess. `profiles.axes` is
+empty for this pad, and calibration measures rest and reach per axis -- which
+sounds exactly like the fix. It is not: calibration would have faithfully
+recorded that ABS_RX rests at 24, and padmap would have gone on publishing
+that axis as `rightx`. The bug was never in the measurement, it was in
+deciding what the axis *is*. Calibration remains worth having for a stick that
+genuinely drifts; nothing here is evidence for it.

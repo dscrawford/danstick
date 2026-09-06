@@ -20,8 +20,8 @@ from typing import Any, Callable
 
 from . import layouts, profiles
 from .layouts import Layout
-from .mapping import (Binding, axis_index, retroarch_button_index,
-                      sdl_button_index)
+from .mapping import (AxisSpan, Binding, axis_index,
+                      retroarch_button_index, sdl_button_index)
 
 # evdev constants, spelled out rather than imported: this module is pure logic
 # and importing evdev drags in a device library for the sake of five numbers.
@@ -76,12 +76,6 @@ SKIP_HOLD_SECONDS = 0.8
 # Long enough to outlast a release and its bounce, short enough that someone
 # working quickly does not notice it.
 CAPTURE_GAP_SECONDS = 0.35
-
-
-# One axis's declared travel plus where it sits untouched: minimum, maximum,
-# rest. Built by the daemon from the driver's absinfo when a picker or wizard
-# opens -- see Daemon._absolute_ranges.
-AxisSpan = tuple[int, int, int]
 
 
 def deflection(span: AxisSpan, value: int) -> float:
