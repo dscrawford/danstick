@@ -1751,3 +1751,83 @@ GUID SDL computes for that device rather than one padmap merely believes in.
   and that SDL resolves the pad's GUID to it. That Pegasus's *navigation* then
   follows is inferred from `check_sdl_live.py`, which measures the same SDL
   call delivering re-bound events -- it is not driven through Pegasus's UI.
+
+## An analogue trigger rests at one end, and the wizard measured from the middle
+
+Reported: "when I registered a gamecube controller, pressing R causes it to
+stay stuck in the interface".
+
+`capture.MappingRun._feed_abs` decided whether an axis had been pushed by
+normalising it about the **centre of its declared range** and taking the
+absolute value:
+
+    centre = (minimum + maximum) / 2
+    position = (event.value - centre) / ((maximum - minimum) / 2)
+    if abs(position) < AXIS_THRESHOLD: return False
+
+The comment directly above it claimed "a trigger that rests at its minimum
+reads as fully negative, so only a push *towards* an end counts" -- which is
+what `abs()` prevents. The comment described the intent and the code did the
+opposite; nothing tested the case, so the two sat there disagreeing.
+
+An analogue trigger does not rest in the middle of its range. Reading the
+absinfo of everything plugged in here:
+
+    mayflash MAYFLASH GameCube Controller Adapter   ABS_RX rest=24  of 0-255
+    (all four ports)                                ABS_RY rest=25  of 0-255
+    MAYFLASH Arcade Fightstick F300                 all axes centred
+    USB GamePad (x2)                                all axes centred
+
+So on the GameCube adapter -- and only there, which is why nothing else showed
+it -- the untouched L and R triggers read as **81% deflected**. Note they are
+`ABS_RX`/`ABS_RY` on this adapter, not the `ABS_Z`/`ABS_RZ` the name would
+suggest; assuming which codes the triggers live on would have found nothing.
+
+Three faults followed, in the order the user would meet them:
+
+1. The first event of a press captured while the trigger was still *low*,
+   recording sign -1: the direction it was travelling away from, not towards.
+2. A resting report -- drivers emit them -- could answer a shoulder prompt
+   with nothing touched at all.
+3. It could never re-arm. Re-arming wanted the axis back within `AXIS_RELEASE`
+   of *centre*, and a trigger at rest is a full range away from centre. After
+   one press the trigger was dead, and every later press was dropped in
+   silence. That is the "stuck".
+
+The fix is one function, `capture.deflection`, measuring from a **rest** value
+carried alongside the range. `Server._absolute_ranges` now reads it from the
+driver (`AbsInfo.value`) as a picker or wizard opens -- the best moment there
+is, since nothing is being held yet -- and falls back to the midpoint when the
+value is outside the range, which is the old behaviour.
+
+### The capture gap was swallowing releases
+
+Found while writing the regression check, not by the report. `feed()` refuses
+everything for `CAPTURE_GAP_SECONDS` after a capture, and it was refusing
+*without* updating the arming state. A release takes roughly a tenth as long
+as the gap lasts, so essentially every release landed inside one and was
+dropped -- leaving the axis disarmed with nothing left to re-arm it, because
+an axis that has settled stops reporting entirely.
+
+It survived until now only by accident: a push always starts near rest, so the
+early events of the *next* press re-armed the axis a moment before the later
+ones captured. That is a coincidence of dense event streams, not a design.
+
+Re-arming is now split into `_rearm` and runs during the gap. The two rules
+stay independent -- the gap blocks captures, arming blocks a spring-back --
+and a spring-back overshoot is still caught, because it happens well inside
+the 0.35s gap.
+
+### A change no test could fail is not a change
+
+While fixing this I raised `AXIS_RELEASE` from 0.30 to 0.40, reasoning that an
+adapter reporting a stale resting value (the N64 one here reads 36% off true
+centre) needed the headroom. Mutation-testing the new checks showed the 0.30
+mutation still passed: a release reports every value on the way back, so it
+passes *through* whatever the driver called rest whether or not it settles
+there. The bump bought nothing measurable, so it went back to 0.30 and the
+comment now records why the headroom is unnecessary rather than implying it is
+load-bearing.
+
+The other two mutations -- measuring from the midpoint, and dropping `_rearm`
+inside the gap -- both fail their checks, so those two guards are real.

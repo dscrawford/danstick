@@ -875,10 +875,23 @@ class Server:
         except OSError:
             return set()
 
-    def _absolute_ranges(self, device: Any) -> dict[int, tuple[int, int]]:
-        """Declared travel per axis, for deciding a push from a nudge."""
+    def _absolute_ranges(self, device: Any) -> dict[int, capture.AxisSpan]:
+        """Declared travel per axis plus where each one is sitting right now.
+
+        Rest is read from the driver rather than assumed to be the middle of
+        the range, because on plenty of hardware it is not. An analogue
+        trigger rests at its minimum -- a GameCube pad's L and R were unusable
+        in the wizard until this was measured -- and an uncalibrated stick can
+        rest well off centre. capture.deflection measures from this value.
+
+        Read once, as a picker or wizard opens, which is the best moment
+        available: nothing is being pressed yet. It is not a guarantee, since
+        an adapter may report a stale power-on default until the stick is
+        physically moved, so capture's release threshold leaves room for rest
+        to be somewhat wrong.
+        """
         caps: dict[int, Any] = device.capabilities()
-        ranges: dict[int, tuple[int, int]] = {}
+        ranges: dict[int, capture.AxisSpan] = {}
         for entry in caps.get(capture.EV_ABS) or []:
             # evdev reports EV_ABS as (code, AbsInfo) pairs; EV_KEY as bare
             # codes. Guard rather than trust, since a stub device can report
@@ -886,7 +899,15 @@ class Server:
             if not isinstance(entry, tuple) or len(entry) != 2:
                 continue
             code, info = entry
-            ranges[int(code)] = (getattr(info, "min", 0), getattr(info, "max", 0))
+            minimum = int(getattr(info, "min", 0))
+            maximum = int(getattr(info, "max", 0))
+            rest = int(getattr(info, "value", 0))
+            if not minimum <= rest <= maximum:
+                # Nonsense from the driver, or a stub that reports no current
+                # value. The midpoint is the old behaviour: right for a stick,
+                # and no worse than before for anything else.
+                rest = (minimum + maximum) // 2
+            ranges[int(code)] = (minimum, maximum, rest)
         return ranges
 
     # -- button mapping ---------------------------------------------------

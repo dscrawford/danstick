@@ -42,8 +42,15 @@ def axis(code, value):
 
 
 KEYS = list(range(0x120, 0x130))
-AXES = {0: (0, 255), 1: (0, 255), 2: (0, 255), 5: (0, 255),
-        0x10: (-1, 1), 0x11: (-1, 1)}
+# {code: (minimum, maximum, rest)}. A stick-shaped pad: everything rests in
+# the middle of its range.
+AXES = {0: (0, 255, 128), 1: (0, 255, 128), 2: (0, 255, 128), 5: (0, 255, 128),
+        0x10: (-1, 1, 0), 0x11: (-1, 1, 0)}
+
+# The same pad with analogue triggers on ABS_Z and ABS_RZ, which rest at their
+# *minimum* rather than the middle. Measured on the GameCube adapter here.
+TRIGGER_AXES = {0: (0, 255, 128), 1: (0, 255, 128), 2: (0, 255, 0),
+                5: (0, 255, 0), 0x10: (-1, 1, 0), 0x11: (-1, 1, 0)}
 
 
 CLOCK = {"t": 0.0}
@@ -53,23 +60,27 @@ def tick(seconds=0.05):
     CLOCK["t"] += seconds
 
 
-def run(layout_id="snes", held=()):
+def run(layout_id="snes", held=(), axes=None):
     CLOCK["t"] = 0.0
     return MappingRun(pad=None, player=1, layout=layouts.get(layout_id),
-                      keys=KEYS, axes=dict(AXES), held=set(held),
-                      now=lambda: CLOCK["t"])
+                      keys=KEYS, axes=dict(AXES if axes is None else axes),
+                      held=set(held), now=lambda: CLOCK["t"])
 
 
-def to_dpad(r):
-    """Skip to the first d-pad prompt.
+def to_kind(r, kind):
+    """Skip forward to the first prompt of a given kind.
 
-    Axis input is only accepted for controls that can be an axis. The SNES
-    layout opens with four face buttons, so an axis test has to get past them.
+    Axis input is only accepted for controls that can be an axis. Every layout
+    opens with face buttons, so an axis test has to get past them first.
     """
-    while r.current is not None and r.current.kind != "dpad":
+    while r.current is not None and r.current.kind != kind:
         r.skip()
         tick(CAPTURE_GAP_SECONDS)
     return r
+
+
+def to_dpad(r):
+    return to_kind(r, "dpad")
 
 
 def tap(r, code, seconds=0.05):
@@ -232,6 +243,97 @@ def check_scope_choice() -> None:
             "FAIL: 'generic' was offered as a console. No core ever reports "
             "it, so that scope could never resolve.")
     print(f"  ok  {[o.id for o in plain]}")
+
+
+def check_analogue_triggers() -> None:
+    """A trigger that rests at one end of its travel, not in the middle.
+
+    Reported verbatim: "when I registered a gamecube controller, pressing R
+    causes it to stay stuck in the interface". Deflection used to be measured
+    from the middle of the declared range, so an untouched trigger read as
+    fully deflected. Three things followed, and all three are checked here: it
+    could answer a prompt nobody had touched it for, it recorded the direction
+    it was travelling away *from*, and it could never come back near enough to
+    the middle to be re-armed -- so after one press the trigger was dead and
+    the wizard stopped responding to it.
+    """
+    print("\nan untouched analogue trigger is not a press:")
+    r = to_kind(run("gamecube", axes=TRIGGER_AXES), "shoulder")
+    at = r.index
+    for code in (2, 5, 2, 5):
+        r.feed(axis(code, 0))       # resting reports, as drivers emit them
+    if r.index != at:
+        raise SystemExit(
+            f"FAIL: a trigger sitting at rest answered a prompt "
+            f"({r.bindings})")
+    print("  ok  a trigger resting at its minimum reads as untouched")
+
+    print("\npressing one records the direction it was pushed:")
+    for value in (20, 90, 180, 255):
+        r.feed(axis(2, value))
+    if r.index != at + 1:
+        raise SystemExit("FAIL: pressing the trigger recorded nothing")
+    binding = r.bindings[r.layout.controls[at].canonical]
+    if binding.sdl() != "+a2":
+        raise SystemExit(
+            f"FAIL: recorded {binding.sdl()!r}, wanted '+a2' -- a trigger "
+            f"pushed towards its maximum is a positive deflection, and the "
+            f"first event of the press is the lowest, not the highest")
+    print("  ok  +a2, from a trigger travelling up from zero")
+
+    print("\n...and the other one still works afterwards:")
+    for value in (180, 60, 0):
+        r.feed(axis(2, value))      # let go
+    tick(CAPTURE_GAP_SECONDS)
+    for value in (20, 120, 255):
+        r.feed(axis(5, value))
+    if r.index != at + 2:
+        raise SystemExit(
+            "FAIL: the second trigger was ignored -- this is the pad going "
+            "dead partway through the wizard")
+    second = r.bindings[r.layout.controls[at + 1].canonical]
+    if second.sdl() != "+a3":
+        raise SystemExit(f"FAIL: recorded {second.sdl()!r}, wanted '+a3'")
+    print("  ok  +a3, distinct from the first")
+
+
+def check_stale_rest() -> None:
+    """An axis whose reported resting value is not where it actually rests.
+
+    Rest is read from the driver as the wizard opens, and an adapter can hold
+    a stale power-on default until the stick is physically moved: the N64
+    adapter here claims 174 on a 0-255 axis that really centres at 128, 36%
+    out. Every threshold has to tolerate that much error, or the axis re-arms
+    only sometimes -- which presents as a wizard that ignores every other
+    press. This is what AXIS_RELEASE's headroom above the real rest is for;
+    tightening it back to 0.30 fails here.
+    """
+    print("\na stick whose driver reports the wrong resting value:")
+    stale = dict(AXES)
+    stale[0] = (0, 255, 174)        # driver says 174; it really centres at 128
+    r = to_dpad(run("snes", axes=stale))
+    at = r.index
+    for value in (200, 255):
+        r.feed(axis(0, value))      # pushed hard right
+    if r.index != at + 1:
+        raise SystemExit("FAIL: a full deflection was not recorded")
+    for value in (200, 150, 128):
+        # Let go. A release takes far less time than the capture gap, so all
+        # of it lands inside one -- which is the only chance there is to
+        # notice, since the stick then sits still and stops reporting.
+        r.feed(axis(0, value))
+    tick(CAPTURE_GAP_SECONDS)
+    for value in (100, 40, 0):
+        r.feed(axis(0, value))      # a deliberate push the other way
+    if r.index != at + 2:
+        raise SystemExit(
+            "FAIL: the axis never re-armed, so the stick answered one prompt "
+            "and then went dead")
+    first = r.bindings[r.layout.controls[at].canonical]
+    second = r.bindings[r.layout.controls[at + 1].canonical]
+    if first.sdl() == second.sdl():
+        raise SystemExit(f"FAIL: both directions recorded as {first.sdl()!r}")
+    print(f"  ok  {first.sdl()} then {second.sdl()}, from a rest 36% out")
 
 
 def main() -> int:
@@ -477,6 +579,8 @@ def main() -> int:
         raise SystemExit("FAIL: kept recording past the end of the layout")
     print("  ok  further presses ignored")
 
+    check_analogue_triggers()
+    check_stale_rest()
     check_layout_choice()
     check_scope_choice()
 

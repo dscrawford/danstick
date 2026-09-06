@@ -36,11 +36,19 @@ ABS_HAT0Y = 0x11
 # control to a stick that merely leans.
 AXIS_THRESHOLD = 0.55
 
-# How close to centre an axis must come back before it may answer another
+# How close to rest an axis must come back before it may answer another
 # prompt. Without this, one push answers two controls: release a d-pad that is
 # wired to an analogue axis and it springs back *through* centre, overshooting
 # far enough to read as a deliberate push the other way. Pressing left then
 # filled in both left and right, which is exactly what it looked like.
+#
+# Measured from rest, like everything else here, and rest may itself be wrong:
+# it is read from the driver as the wizard opens, and an adapter can report a
+# stale power-on default until the stick is physically moved -- the N64 one
+# here reads 36% off true centre that way. That turns out not to need extra
+# tolerance, because a release reports every value on the way back and so
+# passes *through* whatever the driver called rest, whether or not the axis
+# settles there.
 AXIS_RELEASE = 0.30
 
 # SDL hat bits, which is also how a hat binding is written.
@@ -68,6 +76,38 @@ SKIP_HOLD_SECONDS = 0.8
 # Long enough to outlast a release and its bounce, short enough that someone
 # working quickly does not notice it.
 CAPTURE_GAP_SECONDS = 0.35
+
+
+# One axis's declared travel plus where it sits untouched: minimum, maximum,
+# rest. Built by the daemon from the driver's absinfo when a picker or wizard
+# opens -- see Daemon._absolute_ranges.
+AxisSpan = tuple[int, int, int]
+
+
+def deflection(span: AxisSpan, value: int) -> float:
+    """How far an axis has moved from rest, as a fraction of half its range.
+
+    Signed, because the direction of travel is what a binding records.
+
+    Measured from *rest* rather than from the middle of the declared range,
+    and that distinction is the entire point of this function. An analogue
+    trigger rests at its minimum, so measuring from the midpoint reports an
+    untouched trigger as fully deflected. On a GameCube pad that made L and R
+    unusable in the wizard: the first press recorded the direction the trigger
+    was travelling *from*, and afterwards the axis could never come back near
+    enough to the midpoint to be re-armed, so every later press was dropped
+    and the wizard looked frozen.
+
+    Scaled by half the declared range rather than by the travel actually
+    available in the direction of movement, so a trigger reads 0 at rest and
+    2.0 fully pressed. Every threshold in this module is a floor, so reading
+    high is harmless; normalising by the available travel would instead make
+    an off-centre stick need a bigger push on its long side than its short one.
+    """
+    minimum, maximum, rest = span
+    if maximum <= minimum:
+        return 0.0
+    return (value - rest) / ((maximum - minimum) / 2)
 
 
 # What a chooser is asking about. Sent to the front-end so a theme holds no
@@ -150,7 +190,7 @@ class Chooser:
     kind: str = KIND_LAYOUT
     title: str = ""
     index: int = 0
-    axes: dict[int, tuple[int, int]] = field(default_factory=dict)
+    axes: dict[int, AxisSpan] = field(default_factory=dict)
     held: set[int] = field(default_factory=set)
     now: Callable[[], float] = time.monotonic
 
@@ -226,11 +266,7 @@ class Chooser:
             span = self.axes.get(event.code)
             if event.code != ABS_X or span is None:
                 return False
-            minimum, maximum = span
-            if maximum <= minimum:
-                return False
-            centre = (minimum + maximum) / 2
-            position = (event.value - centre) / ((maximum - minimum) / 2)
+            position = deflection(span, event.value)
             direction = 0 if abs(position) < AXIS_THRESHOLD else (
                 1 if position > 0 else -1)
 
@@ -343,9 +379,10 @@ class MappingRun:
     # or opened for a different player in between is exactly the shape of
     # thing that loses a value parked elsewhere.
     scope: str = ""
-    # Absolute axis ranges, as {code: (minimum, maximum)}, for deciding when
-    # an axis has been pushed rather than nudged.
-    axes: dict[int, tuple[int, int]] = field(default_factory=dict)
+    # Absolute axis travel, as {code: (minimum, maximum, rest)}, for deciding
+    # when an axis has been pushed rather than nudged. Rest is measured, not
+    # assumed to be the centre -- an analogue trigger rests at its minimum.
+    axes: dict[int, AxisSpan] = field(default_factory=dict)
 
     index: int = 0
     bindings: dict[str, Binding] = field(default_factory=dict)
@@ -410,13 +447,22 @@ class MappingRun:
             return False
 
         if self.now() < self._blocked_until:
-            # Just recorded something. Track releases so a button held across
-            # the gap is not still considered down afterwards, but accept
-            # nothing.
+            # Just recorded something. Accept nothing -- but go on tracking
+            # what is *released*, or the gap leaves state behind that nothing
+            # afterwards can correct.
             if event.type == EV_KEY and event.value == 0:
+                # So a button held across the gap is not still considered down.
                 self._held.discard(event.code)
                 self._down_at.pop(event.code, None)
                 self.held.discard(event.code)
+            elif event.type == EV_ABS:
+                # An axis let go inside the gap has genuinely been let go, and
+                # a release takes about a tenth of the time the gap lasts, so
+                # this is where nearly every one of them lands. Dropping it
+                # leaves the axis disarmed with nothing left to re-arm it: a
+                # trigger settles at rest and stops reporting entirely, and
+                # the wizard then ignores it for good.
+                self._rearm(event)
             return False
 
         if event.type == EV_KEY:
@@ -466,7 +512,26 @@ class MappingRun:
             key,
         )
 
+    def _rearm(self, event: Any) -> None:
+        """Note an axis that has come back to rest, so it may answer again.
+
+        Separate from _feed_abs because it has to run in places that accept
+        nothing at all -- notably inside the capture gap, where the release of
+        whatever was just recorded arrives.
+        """
+        if event.code in (ABS_HAT0X, ABS_HAT0Y):
+            # A hat only reads 0 at rest, so this is unambiguous.
+            if event.value == 0:
+                self._axis_armed[event.code] = True
+            return
+        span = self.axes.get(event.code)
+        if span is None:
+            return
+        if abs(deflection(span, event.value)) < AXIS_RELEASE:
+            self._axis_armed[event.code] = True
+
     def _feed_abs(self, event: Any) -> bool:
+        self._rearm(event)
         if self.settling:
             return False
 
@@ -480,10 +545,7 @@ class MappingRun:
 
         if event.code in (ABS_HAT0X, ABS_HAT0Y):
             if event.value == 0:
-                # Released. A hat only reads 0 at rest, so this is the
-                # unambiguous re-arm point.
-                self._axis_armed[event.code] = True
-                return False
+                return False        # released; _rearm has already noted it
             if event.code == ABS_HAT0X:
                 bit = HAT_RIGHT if event.value > 0 else HAT_LEFT
             else:
@@ -499,19 +561,11 @@ class MappingRun:
         span = self.axes.get(event.code)
         if span is None:
             return False
-        minimum, maximum = span
-        if maximum <= minimum:
-            return False
-
-        # Normalised to -1..1 about the centre of the declared range. A
-        # trigger that rests at its minimum reads as fully negative, so only
-        # a push *towards* an end counts, and only past the threshold.
-        centre = (minimum + maximum) / 2
-        half = (maximum - minimum) / 2
-        position = (event.value - centre) / half
-        if abs(position) < AXIS_RELEASE:
-            # Back at rest: this axis may answer a prompt again.
-            self._axis_armed[event.code] = True
+        # Signed travel away from where this axis sat when the wizard opened.
+        # From *rest*, not from the middle of the declared range: see
+        # deflection, and the analogue trigger that made the difference.
+        # _rearm has already decided whether this reading counts as a release.
+        position = deflection(span, event.value)
         if abs(position) < AXIS_THRESHOLD:
             return False
 
