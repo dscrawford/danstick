@@ -1974,3 +1974,21 @@ subcommand, and `protocol.daemon_pids` matches argv *structurally* on
 `argv[-2:] == ["padmap.cli", "serve"]`. A flag there makes every running
 daemon invisible to `ensure-daemon`, which would then start a second one
 beside the first.
+
+### QC: the reset destroyed before it validated
+
+Caught reviewing the above, not by a test. `_forget_pad` deleted the stored
+profile and *then* called `_begin_layout_choice`, which has its own guards --
+so with no session open, or a device that had closed, the controller lost its
+configuration and got no wizard to build a new one. Strictly worse than the
+wrong mapping it started with, and the reset key is reached precisely when
+someone is already unhappy with their mapping.
+
+Reachable only from the setup screen, which always has a session, so it was
+latent rather than live. The order is now: resolve the pad, prove the wizard
+can open, and only then throw anything away. Mutation-tested by removing the
+guard, which fails the new check.
+
+The general form is worth stating, since this file has several instances of
+it: validate everything before performing the destructive half. A partial
+failure that leaves nothing behind is worse than doing nothing at all.

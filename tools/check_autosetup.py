@@ -234,6 +234,37 @@ def main() -> int:
             f"the key would do nothing and say nothing")
     print(f"  ok  routed; with no assignment it says {errors[-1]['message']!r}")
 
+    print("\nnothing is thrown away when the wizard could not open:")
+    # Deleting first and discovering afterwards that there is no session to
+    # map in leaves the controller with no configuration and no way to make
+    # one -- strictly worse than the wrong mapping it started with.
+    with tempfile.TemporaryDirectory() as tmp:
+        directory = Path(tmp)
+        target = pad("Session-less Pad")
+        profiles.save(profiles.Profile(
+            signature=profiles.signature(target), name=target.name,
+            mappings={"": profiles.Mapping(buttons={"a": Binding("button", 1)},
+                                           layout="n64")}), directory)
+        original_dir = profiles.profile_dir
+        profiles.profile_dir = lambda: directory  # type: ignore[assignment]
+        try:
+            h = Harness([target])
+            h.srv._assignments = [Assignment(player=1, pad=target, button=0)]
+            h.srv._assigner = None          # no session open
+            h.srv._handle_command(None, {"cmd": "forget_pad", "player": 1})
+            if profiles.load(target, directory) is None:
+                raise SystemExit(
+                    "FAIL: the profile was deleted even though the wizard "
+                    "could not open -- the pad is left with neither a "
+                    "mapping nor a way to make one")
+        finally:
+            profiles.profile_dir = original_dir  # type: ignore[assignment]
+    errors = [e for e in h.events if e.get("event") == "error"]
+    if not errors or "session" not in errors[-1]["message"]:
+        raise SystemExit(
+            f"FAIL: no explanation given ({errors[-1]['message'] if errors else None!r})")
+    print(f"  ok  kept, and says {errors[-1]['message']!r}")
+
     print("\nforgetting takes every scope, not just the default:")
     # "Reset this controller" meaning "reset some of this controller" leaves
     # someone re-running the wizard and still meeting old behaviour from a

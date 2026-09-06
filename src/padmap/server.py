@@ -778,6 +778,15 @@ class Server:
             self._broadcast({"event": "error",
                              "message": f"no controller assigned to player {player}"})
             return
+        # Check the wizard can actually open *before* throwing anything away.
+        # Deleting first and discovering afterwards that there is no session
+        # to map in leaves the controller with no configuration and no way to
+        # make one -- strictly worse than the wrong mapping it started with.
+        if self._assigner is None or self._assigner.device_for(pad) is None:
+            self._broadcast({
+                "event": "error",
+                "message": "resetting a controller needs an open session"})
+            return
 
         removed = profiles.forget(pad)
         signature = profiles.signature(pad)

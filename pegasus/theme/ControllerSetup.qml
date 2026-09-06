@@ -349,14 +349,20 @@ FocusScope {
                 // reach the button editor deliberately.
                 calibration.start(last.player, last.name, false);
             }
-        } else if (root.resetSlotFor(event) > 0) {
+        } else {
             // Number keys throw that slot's controller away and start the
             // wizard over. By slot number rather than "the last one claimed",
             // which every other shortcut here uses: with two controllers
             // assigned, "the last one" is precisely the ambiguity someone is
             // trying to resolve when they reach for this.
-            event.accepted = true;
-            api.padmap.forgetPad(root.resetSlotFor(event));
+            //
+            // Last in the chain, so every api.keys gesture above wins first
+            // -- those are user-configurable and could be bound to a digit.
+            var slot = root.resetSlotFor(event);
+            if (slot > 0) {
+                event.accepted = true;
+                api.padmap.forgetPad(slot);
+            }
         }
     }
 
