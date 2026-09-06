@@ -1,0 +1,423 @@
+"""Does the mapping capture record what was pressed, and refuse the rest?
+
+Reading events is easy; refusing them is the whole job. A pad streams axis
+noise, an analogue trigger rests at one end of its range rather than the
+middle, and the button that opened the wizard is usually still down when the
+first prompt appears. Each of those otherwise fills several controls in with
+one accidental input, and the user is left with a mapping that looks complete
+and is wrong.
+
+    python3 tools/check_capture.py
+"""
+
+import sys
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO / "src"))
+
+from padmap import layouts  # noqa: E402
+from padmap.capture import (CAPTURE_GAP_SECONDS, EV_ABS, EV_KEY,  # noqa: E402
+                            SKIP_HOLD_SECONDS, LayoutChoice, MappingRun)
+
+
+class Event:
+    def __init__(self, type_, code, value):
+        self.type = type_
+        self.code = code
+        self.value = value
+
+
+def press(code):
+    return Event(EV_KEY, code, 1)
+
+
+def release(code):
+    return Event(EV_KEY, code, 0)
+
+
+def axis(code, value):
+    return Event(EV_ABS, code, value)
+
+
+KEYS = list(range(0x120, 0x130))
+AXES = {0: (0, 255), 1: (0, 255), 2: (0, 255), 5: (0, 255),
+        0x10: (-1, 1), 0x11: (-1, 1)}
+
+
+CLOCK = {"t": 0.0}
+
+
+def tick(seconds=0.05):
+    CLOCK["t"] += seconds
+
+
+def run(layout_id="snes", held=()):
+    CLOCK["t"] = 0.0
+    return MappingRun(pad=None, player=1, layout=layouts.get(layout_id),
+                      keys=KEYS, axes=dict(AXES), held=set(held),
+                      now=lambda: CLOCK["t"])
+
+
+def to_dpad(r):
+    """Skip to the first d-pad prompt.
+
+    Axis input is only accepted for controls that can be an axis. The SNES
+    layout opens with four face buttons, so an axis test has to get past them.
+    """
+    while r.current is not None and r.current.kind != "dpad":
+        r.skip()
+        tick(CAPTURE_GAP_SECONDS)
+    return r
+
+
+def tap(r, code, seconds=0.05):
+    """A press and release short enough to count as a binding.
+
+    Waits out the settling gap first, as a person moving between prompts
+    unavoidably would.
+    """
+    tick(CAPTURE_GAP_SECONDS)
+    r.feed(press(code))
+    tick(seconds)
+    return r.feed(release(code))
+
+
+def choice(held=(), index=0):
+    CLOCK["t"] = 0.0
+    return LayoutChoice(pad=None, player=1, choices=list(layouts.ALL),
+                        index=index, axes=dict(AXES), held=set(held),
+                        now=lambda: CLOCK["t"])
+
+
+def check_layout_choice() -> None:
+    """The console picker, which has to be workable with nothing mapped."""
+    print("\nchoosing a console: pushing the d-pad right:")
+    c = choice()
+    c.feed(axis(0x10, 1))
+    if c.chosen != list(layouts.ALL)[1]:
+        raise SystemExit(f"FAIL: expected to move one along, got {c.chosen!r}")
+    print(f"  ok  moved to {c.chosen}")
+
+    print("\nholding it over does not keep moving:")
+    c.feed(axis(0x10, 1))
+    c.feed(axis(0x10, 1))
+    if c.chosen != list(layouts.ALL)[1]:
+        raise SystemExit(
+            f"FAIL: a held direction walked the list to {c.chosen!r}")
+    c.feed(axis(0x10, 0))
+    c.feed(axis(0x10, 1))
+    if c.chosen != list(layouts.ALL)[2]:
+        raise SystemExit("FAIL: releasing and pushing again did not move")
+    print("  ok  one move per push, and it moves again after a release")
+
+    print("\na stick that rests off centre can still be used repeatedly:")
+    # Measured on the N64 adapter here: it rests at 174 on a 0-255 axis, 36%
+    # deflected. The wizard's re-arming rule wants an axis back inside 30% of
+    # centre, which this pad never reaches -- so a picker sharing that rule
+    # would move once and then ignore the stick forever.
+    c = choice()
+    for _ in range(3):
+        c.feed(axis(0, 255))        # pushed fully right
+        c.feed(axis(0, 174))        # let go; springs back to its resting lean
+    if c.index != 3:
+        raise SystemExit(
+            f"FAIL: three pushes moved {c.index} place(s) -- an off-centre "
+            f"stick stopped being read")
+    print("  ok  three pushes, three moves, from a stick resting at 36%")
+
+    print("\nthe button that opened the picker is still held:")
+    c = choice(held={0x121})
+    CLOCK["t"] = 5.0                # it has been down a long time
+    c.feed(release(0x121))
+    if c.confirmed:
+        raise SystemExit(
+            "FAIL: the press that got here chose a console by itself")
+    print("  ok  ignored, as the release of something held from before")
+
+    print("\na tap does not confirm, a hold does:")
+    c = choice(index=2)
+    c.feed(press(0x121))
+    tick(0.1)
+    c.feed(release(0x121))
+    if c.confirmed:
+        raise SystemExit("FAIL: a tap confirmed -- a stray press would too")
+    c.feed(press(0x122))
+    tick(SKIP_HOLD_SECONDS + 0.05)
+    changed = c.feed(release(0x122))
+    if not (c.confirmed and changed):
+        raise SystemExit("FAIL: holding a button did not confirm")
+    if c.chosen != list(layouts.ALL)[2]:
+        raise SystemExit(f"FAIL: confirmed the wrong console: {c.chosen!r}")
+    print(f"  ok  tap ignored, hold chose {c.chosen}")
+
+    print("\nnothing moves after it is confirmed:")
+    c.feed(axis(0x10, 1))
+    if c.chosen != list(layouts.ALL)[2]:
+        raise SystemExit("FAIL: kept moving after the choice was made")
+    print("  ok  the selection is final")
+
+    print("\nthe event carries whole layouts, in the daemon's own order:")
+    payload = c.to_event()
+    offered = [entry["id"] for entry in payload["choices"]]
+    if offered != list(layouts.ALL):
+        raise SystemExit(
+            f"FAIL: the front-end would be offered {offered}, not "
+            f"{list(layouts.ALL)}")
+    if not payload["choices"][2]["controls"]:
+        raise SystemExit(
+            "FAIL: no controls sent, so the picker has nothing to draw")
+    print(f"  ok  {len(offered)} consoles, drawable, matching layouts.ALL")
+
+
+def main() -> int:
+    print("the button that opened the wizard is still held:")
+    r = run(held={0x121})
+    r.feed(release(0x121))          # let go of it
+    if r.index != 0:
+        raise SystemExit("FAIL: releasing the opening press answered a prompt")
+    tap(r, 0x121)
+    if r.index != 1:
+        raise SystemExit("FAIL: the first real press was ignored")
+    print("  ok  its release is swallowed, the next press counts")
+
+    print("\nnothing held at the start costs no press:")
+    r = run()
+    tap(r, 0x121)
+    if r.index != 1:
+        raise SystemExit(
+            "FAIL: the very first press was eaten even though nothing was held")
+    print("  ok  the first press binds straight away")
+
+    print("\nholding any button skips the control:")
+    r = run()
+    r.feed(press(0x121))
+    tick(1.0)                        # longer than SKIP_HOLD_SECONDS
+    r.feed(release(0x121))
+    if r.index != 1:
+        raise SystemExit("FAIL: a long hold did not skip")
+    if r.bindings:
+        raise SystemExit(f"FAIL: the hold was bound anyway ({r.bindings})")
+    print("  ok  skipped, and nothing bound")
+
+    print("\n...and the same button still binds when tapped:")
+    tap(r, 0x121)
+    if len(r.bindings) != 1:
+        raise SystemExit("FAIL: a tap after a skip did not bind")
+    print("  ok  a tap is a binding, a hold is a skip")
+
+    print("\nholding a button does not walk the wizard:")
+    r = run()
+    r.feed(press(0x121))
+    for _ in range(5):
+        r.feed(Event(EV_KEY, 0x121, 2))     # autorepeat
+    if r.index != 0:
+        raise SystemExit(f"FAIL: autorepeat advanced to {r.index}")
+    tick(0.05)
+    r.feed(release(0x121))
+    if r.index != 1:
+        raise SystemExit("FAIL: the release did not bind")
+    print("  ok  autorepeat ignored; the release is what binds")
+
+    print("\none button cannot answer two prompts:")
+    r = run()
+    tap(r, 0x121)
+    tap(r, 0x121)
+    if r.index != 1:
+        raise SystemExit(
+            "FAIL: the same button was accepted for a second control")
+    print("  ok  refused, so a stuck button cannot fill the whole layout")
+
+    print("\nresting axis noise is not a press:")
+    r = run()
+    r = to_dpad(run())
+    at = r.index
+    for value in (128, 130, 126, 131, 127):
+        r.feed(axis(0, value))
+    if r.index != at:
+        raise SystemExit("FAIL: idle stick jitter answered a prompt")
+    print("  ok  nothing within the deadband counts")
+
+    print("\na face button prompt refuses a stick:")
+    # Nudging the stick while being asked for a face button used to bind that
+    # button to an axis -- and since the axis is the stick, every later stick
+    # movement then pressed it. One mapping ended up with cancel on `-a3`.
+    r = run()
+    r.feed(axis(0, 255))
+    if r.index != 0 or r.bindings:
+        raise SystemExit(
+            f"FAIL: a stick answered a face-button prompt ({r.bindings})")
+    print("  ok  ignored -- a face button cannot be a stick")
+
+    print("\n...but a d-pad prompt accepts one:")
+    r = to_dpad(run())
+    at = r.index
+    r.feed(axis(0, 255))
+    if r.index != at + 1:
+        raise SystemExit("FAIL: a full deflection was ignored on a d-pad")
+    binding = r.bindings[r.layout.controls[at].canonical]
+    if binding.kind != "axis" or binding.sdl() != "+a0":
+        raise SystemExit(f"FAIL: recorded {binding.sdl()!r}, wanted '+a0'")
+    print("  ok  recorded as +a0")
+
+    print("\nan axis is recorded by index, not evdev code:")
+    r = to_dpad(run())
+    at = r.index
+    r.feed(axis(5, 255))            # ABS_RZ: code 5, but the fourth axis
+    binding = r.bindings[r.layout.controls[at].canonical]
+    if binding.sdl() != "+a3":
+        raise SystemExit(
+            f"FAIL: ABS_RZ recorded as {binding.sdl()!r}; code 5 is axis 3")
+    print("  ok  ABS_RZ is axis 3, not axis 5")
+
+    print("\nholding one input across the advance:")
+    # Reported: "there is no delay between buttons being set -- if I hold the
+    # d-pad too long it registers as two". Whatever a held input does next --
+    # an analogue oscillation, a hat bounce, a repeat on another code -- it
+    # must not land on the control that just became current.
+    r = to_dpad(run())
+    r.feed(axis(0, 0))                  # d-pad left, captured
+    after_first = r.index
+    tick(0.05)
+    r.feed(axis(0x11, -1))              # a different code, still mid-hold
+    if r.index != after_first:
+        raise SystemExit(
+            "FAIL: a second input answered the next prompt immediately")
+    tick(0.05)
+    r.feed(axis(1, 255))                # and another
+    if r.index != after_first:
+        raise SystemExit("FAIL: input during the settling gap was accepted")
+    print("  ok  nothing accepted while the gap is open")
+
+    print("\n...and the next control works once the gap passes:")
+    tick(CAPTURE_GAP_SECONDS)
+    r.feed(axis(0x11, -1))
+    if r.index != after_first + 1:
+        raise SystemExit("FAIL: the gap never closed, so the wizard is stuck")
+    print("  ok  accepted again after the gap")
+
+    print("\na button held across the gap is not still 'down' after it:")
+    r = run()
+    r.feed(press(0x121))
+    tick(0.05)
+    r.feed(release(0x121))              # binds control 1, opens the gap
+    first = r.index
+    r.feed(press(0x122))                # pressed during the gap
+    tick(CAPTURE_GAP_SECONDS + 0.05)
+    r.feed(release(0x122))              # released after it
+    if r.index != first:
+        raise SystemExit(
+            "FAIL: a press that began inside the gap was bound on release")
+    tap(r, 0x122)
+    if r.index != first + 1:
+        raise SystemExit("FAIL: the button is now permanently ignored")
+    print("  ok  ignored, and the button still works next time")
+
+    print("\na d-pad wired to an analogue axis, pressed once:")
+    # Reported from a real N64 adapter: pressing left filled in both left and
+    # right. The stick springs back through centre on release and overshoots
+    # far enough to read as a deliberate push the other way.
+    r = to_dpad(run())
+    r.feed(axis(0, 0))          # pushed left
+    first = r.index
+    tick(CAPTURE_GAP_SECONDS)   # the gap is not what is under test here
+    r.feed(axis(0, 255))        # spring-back overshoot, never touched
+    if r.index != first:
+        raise SystemExit(
+            "FAIL: the spring-back answered the next prompt -- one press "
+            "filled in two controls")
+    print("  ok  one press, one control")
+
+    print("\n...and it works again once it has settled:")
+    r.feed(axis(0, 128))        # back at rest
+    tick(CAPTURE_GAP_SECONDS)
+    r.feed(axis(0, 255))        # now a real push the other way
+    if r.index != first + 1:
+        raise SystemExit("FAIL: the axis never re-armed, so it is now dead")
+    left = r.bindings[r.layout.controls[first - 1].canonical]
+    right = r.bindings[r.layout.controls[first].canonical]
+    if left.sdl() == right.sdl():
+        raise SystemExit(
+            f"FAIL: both directions recorded as {left.sdl()!r}")
+    print(f"  ok  {left.sdl()} and {right.sdl()}, distinct")
+
+    print("\na hat springs back too:")
+    r = to_dpad(run())
+    r.feed(axis(0x10, -1))      # hat left
+    before = r.index
+    tick(CAPTURE_GAP_SECONDS)
+    r.feed(axis(0x10, 1))       # bounce the other way without releasing
+    if r.index != before:
+        raise SystemExit("FAIL: a hat bounce answered the next prompt")
+    r.feed(axis(0x10, 0))       # released
+    tick(CAPTURE_GAP_SECONDS)
+    r.feed(axis(0x10, 1))       # deliberate press right
+    if r.index != before + 1:
+        raise SystemExit("FAIL: the hat never re-armed")
+    print("  ok  bounce ignored, deliberate press after release accepted")
+
+    print("\nthe d-pad is a hat:")
+    r = to_dpad(run())
+    at = r.index
+    r.feed(axis(0x11, -1))
+    binding = r.bindings[r.layout.controls[at].canonical]
+    if binding.sdl() != "h0.1" or binding.retroarch() != "h0up":
+        raise SystemExit(f"FAIL: hat up recorded as {binding.sdl()!r}")
+    print("  ok  h0.1 for SDL, h0up for RetroArch")
+
+    print("\nboth button numberings are kept:")
+    odd = [0x100, 0x120, 0x121]
+    r = MappingRun(pad=None, player=1, layout=layouts.get("snes"),
+                   keys=odd, axes={})
+    r.now = lambda: CLOCK["t"]
+    CLOCK["t"] = 0.0
+    tap(r, 0x100)
+    binding = r.bindings["a"]
+    if binding.sdl() != "b2":
+        raise SystemExit(f"FAIL: SDL index {binding.sdl()!r}, wanted b2")
+    if binding.retroarch() != "0":
+        raise SystemExit(
+            f"FAIL: RetroArch index {binding.retroarch()!r}, wanted 0 -- "
+            f"storing one number for both silently shifts every binding")
+    print("  ok  b2 to SDL and 0 to RetroArch, from one press")
+
+    print("\nskipping a control the pad does not have:")
+    r = run()
+    r.skip()
+    tap(r, 0x121)
+    if "a" in r.bindings:
+        raise SystemExit("FAIL: the skipped control was bound anyway")
+    if r.bindings.get("b") is None:
+        raise SystemExit("FAIL: the next control was not captured")
+    print("  ok  skipped control left unbound, next one captured")
+
+    print("\nwalking a whole layout:")
+    r = run("snes")
+    total = len(layouts.get("snes").controls)
+    for n in range(total):
+        tap(r, 0x120 + n)
+    if not r.finished:
+        raise SystemExit(f"FAIL: stopped at {r.index} of {total}")
+    if len(r.bindings) != total:
+        raise SystemExit(
+            f"FAIL: {len(r.bindings)} bindings for {total} controls")
+    payload = r.to_event()
+    if not payload["done"] or payload["layout"]["id"] != "snes":
+        raise SystemExit("FAIL: the finished event is wrong")
+    print(f"  ok  {total} controls, {total} bindings, done reported")
+
+    print("\nnothing is recorded once it is finished:")
+    before = dict(r.bindings)
+    tap(r, 0x12f)
+    if r.bindings != before:
+        raise SystemExit("FAIL: kept recording past the end of the layout")
+    print("  ok  further presses ignored")
+
+    check_layout_choice()
+
+    print("\nall checks passed")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

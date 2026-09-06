@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none"
+     stroke="#00b8c4" stroke-width="2.5" stroke-linecap="round"
+     stroke-linejoin="round">
+  <!-- Drawn as a wide top bar plus three separate prongs rather than one
+       path: the trident is the whole point of recognising an N64 pad, and
+       a single path made the prongs merge at small sizes. -->
+  <rect x="5" y="18" width="54" height="16" rx="5"/>
+  <rect x="8"  y="32" width="13" height="22" rx="5"/>
+  <rect x="25.5" y="32" width="13" height="26" rx="5"/>
+  <rect x="43" y="32" width="13" height="22" rx="5"/>
+  <path d="M11.5 23 v6 M8.5 26 h6"/>
+  <circle cx="32" cy="44" r="4.5"/>
+  <circle cx="49.5" cy="25" r="2.8" fill="#00b8c4" stroke="none"/>
+  <circle cx="42" cy="25" r="2.8" fill="#00b8c4" stroke="none"/>
+</svg>

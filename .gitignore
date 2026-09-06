@@ -1,0 +1,13 @@
+# Nix build result symlink, repointed by every `nix build`.
+result
+result-*
+
+# mypy's cache is ~9MB and entirely reproducible.
+.mypy_cache/
+
+__pycache__/
+*.py[cod]
+
+# Renders and probe cores written by the preview/check tools.
+*.png
+*.so

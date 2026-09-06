@@ -1,0 +1,617 @@
+diff -ruN orig/src/backend/model/Api.h edited/src/backend/model/Api.h
+--- orig/src/backend/model/Api.h	2026-09-05 21:02:00.193492280 -0400
++++ edited/src/backend/model/Api.h	2026-09-05 21:02:00.241159380 -0400
+@@ -23,6 +23,7 @@
+ #include "model/device/DeviceInfo.h"
+ #include "model/keys/Keys.h"
+ #include "model/memory/Memory.h"
++#include "model/padmap/Padmap.h"
+ #include "providers/ProviderManager.h"
+ #include "utils/QmlHelpers.h"
+ 
+@@ -40,6 +41,7 @@
+     QML_CONST_PROPERTY(model::DeviceInfo, device)
+     QML_CONST_PROPERTY(model::Keys, keys)
+     QML_READONLY_PROPERTY(model::Memory, memory)
++    QML_CONST_PROPERTY(model::Padmap, padmap)
+     Q_PROPERTY(ObjectListModel* collections READ collections CONSTANT)
+     Q_PROPERTY(ObjectListModel* allGames READ allGames CONSTANT)
+ 
+diff -ruN orig/src/backend/model/CMakeLists.txt edited/src/backend/model/CMakeLists.txt
+--- orig/src/backend/model/CMakeLists.txt	2026-09-05 21:02:00.193492280 -0400
++++ edited/src/backend/model/CMakeLists.txt	2026-09-05 21:02:00.242159375 -0400
+@@ -54,6 +54,8 @@
+     keys/Keys.h
+     memory/Memory.cpp
+     memory/Memory.h
++    padmap/Padmap.cpp
++    padmap/Padmap.h
+ )
+ 
+ 
+diff -ruN orig/src/backend/model/model.pri edited/src/backend/model/model.pri
+--- orig/src/backend/model/model.pri	2026-09-05 21:02:00.194646773 -0400
++++ edited/src/backend/model/model.pri	2026-09-05 21:02:00.242340721 -0400
+@@ -8,3 +8,4 @@
+ include(internal/internal.pri)
+ include(keys/keys.pri)
+ include(memory/memory.pri)
++include(padmap/padmap.pri)
+diff -ruN orig/src/backend/model/padmap/Padmap.cpp edited/src/backend/model/padmap/Padmap.cpp
+--- orig/src/backend/model/padmap/Padmap.cpp	1969-12-31 19:00:00.000000000 -0500
++++ edited/src/backend/model/padmap/Padmap.cpp	2026-09-05 21:02:16.772937332 -0400
+@@ -0,0 +1,325 @@
++// Pegasus Frontend -- padmap integration
++//
++// This program is free software: you can redistribute it and/or modify
++// it under the terms of the GNU General Public License as published by
++// the Free Software Foundation, either version 3 of the License, or
++// (at your option) any later version.
++
++
++#include "Padmap.h"
++
++#include "Log.h"
++
++#include <QJsonArray>
++#include <QJsonDocument>
++#include <QJsonObject>
++#include <QJsonParseError>
++#include <QProcessEnvironment>
++
++
++namespace {
++
++/// Mirrors padmap.protocol.socket_path(): under XDG_RUNTIME_DIR so it is
++/// per-user and cleaned up on logout.
++QString socket_path()
++{
++    const QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
++    QString base = env.value(QStringLiteral("XDG_RUNTIME_DIR"));
++    if (base.isEmpty())
++        base = QStringLiteral("/tmp");
++
++    return base + QStringLiteral("/padmap/padmap.sock");
++}
++
++constexpr int RECONNECT_INTERVAL_MS = 2000;
++
++const QString LOG_TAG = QStringLiteral("padmap");
++
++} // namespace
++
++
++namespace model {
++
++Padmap::Padmap(QObject* parent)
++    : QObject(parent)
++{
++    connect(&m_socket, &QLocalSocket::connected, this, &Padmap::onConnected);
++    connect(&m_socket, &QLocalSocket::disconnected, this, &Padmap::onDisconnected);
++    connect(&m_socket, &QLocalSocket::readyRead, this, &Padmap::onReadyRead);
++
++    // The daemon may start after Pegasus, or be restarted under it, so keep
++    // retrying rather than failing once at startup. A theme that never uses
++    // the controller screen is unaffected either way.
++    m_reconnect_timer.setInterval(RECONNECT_INTERVAL_MS);
++    connect(&m_reconnect_timer, &QTimer::timeout, this, &Padmap::tryConnect);
++    m_reconnect_timer.start();
++
++    tryConnect();
++}
++
++void Padmap::tryConnect()
++{
++    if (m_socket.state() != QLocalSocket::UnconnectedState)
++        return;
++
++    m_socket.connectToServer(socket_path());
++}
++
++void Padmap::onConnected()
++{
++    m_reconnect_timer.stop();
++    setConnected(true);
++    send(QStringLiteral("status"));
++}
++
++void Padmap::onDisconnected()
++{
++    setConnected(false);
++    m_buffer.clear();
++    m_reconnect_timer.start();
++}
++
++void Padmap::setConnected(bool value)
++{
++    if (m_connected == value)
++        return;
++
++    m_connected = value;
++    emit connectedChanged();
++}
++
++void Padmap::onReadyRead()
++{
++    m_buffer.append(m_socket.readAll());
++
++    // Newline-delimited framing: a stream socket splits messages anywhere, so
++    // buffer until a full line is present rather than assuming one read is
++    // one message.
++    int newline;
++    while ((newline = m_buffer.indexOf('\n')) >= 0) {
++        const QByteArray line = m_buffer.left(newline);
++        m_buffer.remove(0, newline + 1);
++        if (line.trimmed().isEmpty())
++            continue;
++
++        QJsonParseError error {};
++        const QJsonDocument doc = QJsonDocument::fromJson(line, &error);
++        if (error.error != QJsonParseError::NoError || !doc.isObject()) {
++            // Skip the line, not the connection: framing is intact after the
++            // newline we already consumed.
++            Log::warning(LOG_TAG, QStringLiteral("could not parse message: %1")
++                .arg(error.errorString()));
++            continue;
++        }
++
++        handleMessage(doc.object());
++    }
++}
++
++void Padmap::handleMessage(const QJsonObject& message)
++{
++    const QString event = message[QStringLiteral("event")].toString();
++
++    if (event == QLatin1String("state")) {
++        m_state = message[QStringLiteral("state")].toString();
++        m_slot_count = message[QStringLiteral("slots")].toInt(4);
++
++        m_players.clear();
++        const QJsonArray players = message[QStringLiteral("players")].toArray();
++        for (const QJsonValue& value : players) {
++            const QJsonObject entry = value.toObject();
++            QVariantMap player;
++            player[QStringLiteral("player")] = entry[QStringLiteral("player")].toInt();
++            player[QStringLiteral("name")] = entry[QStringLiteral("name")].toString();
++            player[QStringLiteral("node")] = entry[QStringLiteral("node")].toString();
++            player[QStringLiteral("icon")] = entry[QStringLiteral("icon")].toString();
++            // False the first time a model of controller is seen, so a theme
++            // can offer calibration once instead of on every run.
++            player[QStringLiteral("configured")] =
++                entry[QStringLiteral("configured")].toBool();
++            m_players.append(player);
++        }
++        emit stateChanged();
++        return;
++    }
++
++    if (event == QLatin1String("progress")) {
++        m_hold = message[QStringLiteral("frac")].toDouble();
++        emit holdChanged();
++        return;
++    }
++
++    if (event == QLatin1String("confirm")) {
++        m_confirm_hold = message[QStringLiteral("frac")].toDouble();
++        emit confirmHoldChanged();
++        return;
++    }
++
++    if (event == QLatin1String("claim")) {
++        emit claimed(
++            message[QStringLiteral("player")].toInt(),
++            message[QStringLiteral("name")].toString(),
++            message[QStringLiteral("node")].toString());
++        return;
++    }
++
++    if (event == QLatin1String("accepted")) {
++        const QString config = message[QStringLiteral("launch_config")].toString();
++        if (config != m_launch_config) {
++            m_launch_config = config;
++            emit launchConfigChanged();
++        }
++        emit accepted();
++        return;
++    }
++
++    if (event == QLatin1String("calibration")) {
++        const QString phase = message[QStringLiteral("phase")].toString();
++        const bool finished = (phase == QLatin1String("done"));
++
++        // "done" is an end marker, not a state to sit in: clearing the phase
++        // is what tells a theme to dismiss its calibration overlay.
++        m_calibration_phase = finished ? QString() : phase;
++        m_calibration_progress = message[QStringLiteral("frac")].toDouble();
++        m_calibration_player = message[QStringLiteral("player")].toInt();
++        emit calibrationChanged();
++
++        if (finished)
++            emit calibrationFinished(m_calibration_player);
++        return;
++    }
++
++    if (event == QLatin1String("mapping")) {
++        const bool done = message[QStringLiteral("done")].toBool();
++
++        m_mapping_player = message[QStringLiteral("player")].toInt();
++        m_mapping_index = message[QStringLiteral("index")].toInt();
++        m_mapping_total = message[QStringLiteral("total")].toInt();
++        m_mapping_label = message[QStringLiteral("label")].toString();
++        m_mapping_captured = message[QStringLiteral("captured")].toObject().toVariantMap();
++
++        // The layout only arrives with each step, and is the same throughout a
++        // run; keep the last one so the picture does not blank on the final
++        // message, which carries an empty layout when a run is abandoned.
++        const QJsonObject layout = message[QStringLiteral("layout")].toObject();
++        if (!layout.isEmpty())
++            m_mapping_layout = layout.toVariantMap();
++
++        m_mapping_active = !done;
++        emit mappingChanged();
++        if (done)
++            emit mappingFinished(message[QStringLiteral("stored")].toBool());
++        return;
++    }
++
++    if (event == QLatin1String("layout_choice")) {
++        m_layout_choice_active = message[QStringLiteral("active")].toBool();
++        m_layout_choice_index = message[QStringLiteral("index")].toInt();
++        m_layout_choice_player = message[QStringLiteral("player")].toInt();
++
++        // Kept from the last message that carried any, like the mapping
++        // layout above: the closing message has an empty list, and clearing
++        // on it would blank the picture during the fade out.
++        const QJsonArray choices = message[QStringLiteral("choices")].toArray();
++        if (!choices.isEmpty())
++            m_layout_choices = choices.toVariantList();
++
++        emit layoutChoiceChanged();
++        return;
++    }
++
++    if (event == QLatin1String("error")) {
++        const QString text = message[QStringLiteral("message")].toString();
++        Log::warning(LOG_TAG, text);
++        emit errorReported(text);
++        return;
++    }
++}
++
++void Padmap::send(const QString& command, const QVariantMap& extra)
++{
++    if (m_socket.state() != QLocalSocket::ConnectedState) {
++        Log::warning(LOG_TAG, QStringLiteral("not connected, dropping '%1'").arg(command));
++        return;
++    }
++
++    QVariantMap payload = extra;
++    payload[QStringLiteral("cmd")] = command;
++
++    const QJsonDocument doc = QJsonDocument::fromVariant(payload);
++    m_socket.write(doc.toJson(QJsonDocument::Compact));
++    m_socket.write("\n");
++}
++
++void Padmap::begin(int players)
++{
++    send(QStringLiteral("begin"), {{QStringLiteral("players"), players}});
++}
++
++void Padmap::reset()
++{
++    send(QStringLiteral("reset"));
++}
++
++void Padmap::accept()
++{
++    send(QStringLiteral("accept"));
++}
++
++void Padmap::cancel()
++{
++    send(QStringLiteral("cancel"));
++}
++
++void Padmap::calibrate(int player)
++{
++    send(QStringLiteral("calibrate"), {{QStringLiteral("player"), player}});
++}
++
++void Padmap::chooseLayout(int player)
++{
++    send(QStringLiteral("choose_layout"), {{QStringLiteral("player"), player}});
++}
++
++void Padmap::startMapping(int player, const QString& layout)
++{
++    QVariantMap args {{ QStringLiteral("player"), player }};
++    if (!layout.isEmpty())
++        args[QStringLiteral("layout")] = layout;
++    send(QStringLiteral("map"), args);
++}
++
++void Padmap::skipControl()
++{
++    send(QStringLiteral("skip_control"));
++}
++
++void Padmap::configureEnd()
++{
++    send(QStringLiteral("configure_end"));
++}
++
++void Padmap::openGamepadEditor()
++{
++    // Release the pads before handing over. The editor records through SDL,
++    // and an EVIOCGRAB held by the daemon would let it enumerate the
++    // controller while no events ever arrive -- it would look broken.
++    //
++    // Only while assigning: in the ready state the physical pads are already
++    // republished as virtual ones, which are ungrabbed *and* calibrated. That
++    // is the better thing to map, so leave it running.
++    if (m_state == QLatin1String("assigning"))
++        send(QStringLiteral("cancel"));
++
++    emit gamepadEditorRequested();
++}
++
++void Padmap::setIcon(int player, const QString& icon)
++{
++    send(QStringLiteral("set_icon"), {
++        {QStringLiteral("player"), player},
++        {QStringLiteral("icon"), icon},
++    });
++}
++
++} // namespace model
+diff -ruN orig/src/backend/model/padmap/Padmap.h edited/src/backend/model/padmap/Padmap.h
+--- orig/src/backend/model/padmap/Padmap.h	1969-12-31 19:00:00.000000000 -0500
++++ edited/src/backend/model/padmap/Padmap.h	2026-09-05 21:02:16.772800790 -0400
+@@ -0,0 +1,197 @@
++// Pegasus Frontend -- padmap integration
++//
++// Exposes the padmap controller-assignment daemon to QML as `Api.padmap`.
++//
++// This deliberately holds no device logic. padmap owns the evdev handling,
++// hold detection and uinput republishing; this class is a client for its
++// newline-delimited JSON socket, so a theme can render an assignment screen
++// without Pegasus needing any input privileges of its own.
++//
++// This program is free software: you can redistribute it and/or modify
++// it under the terms of the GNU General Public License as published by
++// the Free Software Foundation, either version 3 of the License, or
++// (at your option) any later version.
++
++
++#pragma once
++
++#include <QLocalSocket>
++#include <QObject>
++#include <QTimer>
++#include <QVariantList>
++
++
++namespace model {
++
++class Padmap : public QObject {
++    Q_OBJECT
++
++    Q_PROPERTY(bool connected READ connected NOTIFY connectedChanged)
++    Q_PROPERTY(QString state READ state NOTIFY stateChanged)
++    // Not `slots`: that is a Qt keyword and cannot name a property.
++    Q_PROPERTY(int slotCount READ slotCount NOTIFY stateChanged)
++    Q_PROPERTY(QVariantList players READ players NOTIFY stateChanged)
++    Q_PROPERTY(qreal hold READ hold NOTIFY holdChanged)
++    Q_PROPERTY(qreal confirmHold READ confirmHold NOTIFY confirmHoldChanged)
++    Q_PROPERTY(QString launchConfig READ launchConfig NOTIFY launchConfigChanged)
++
++    // Calibration in flight. `calibrationPhase` is "" when idle, otherwise
++    // "rest" (hold still) or "reach" (move the stick around).
++    Q_PROPERTY(QString calibrationPhase READ calibrationPhase NOTIFY calibrationChanged)
++    Q_PROPERTY(qreal calibrationProgress READ calibrationProgress NOTIFY calibrationChanged)
++    Q_PROPERTY(int calibrationPlayer READ calibrationPlayer NOTIFY calibrationChanged)
++
++    // Button mapping. `mappingActive` is false when no wizard is running; the
++    // rest describe the step being asked for. `mappingLayout` is the layout
++    // the daemon chose, shapes and control positions included, so the theme
++    // draws the controller without knowing anything about which one it is.
++    Q_PROPERTY(bool mappingActive READ mappingActive NOTIFY mappingChanged)
++    Q_PROPERTY(QVariantMap mappingLayout READ mappingLayout NOTIFY mappingChanged)
++    Q_PROPERTY(int mappingIndex READ mappingIndex NOTIFY mappingChanged)
++    Q_PROPERTY(int mappingTotal READ mappingTotal NOTIFY mappingChanged)
++    Q_PROPERTY(int mappingPlayer READ mappingPlayer NOTIFY mappingChanged)
++    Q_PROPERTY(QString mappingLabel READ mappingLabel NOTIFY mappingChanged)
++    Q_PROPERTY(QVariantMap mappingCaptured READ mappingCaptured NOTIFY mappingChanged)
++
++    // Which console the pad is, asked before its buttons are mapped. The
++    // daemon drives the selection from the controller itself -- it holds
++    // EVIOCGRAB during a session, so no controller input reaches the
++    // front-end and a picker the theme navigated could only be worked from a
++    // keyboard. `layoutChoices` holds whole layouts, so a theme can draw the
++    // controller it is offering without knowing which consoles exist.
++    Q_PROPERTY(bool layoutChoiceActive READ layoutChoiceActive NOTIFY layoutChoiceChanged)
++    Q_PROPERTY(QVariantList layoutChoices READ layoutChoices NOTIFY layoutChoiceChanged)
++    Q_PROPERTY(int layoutChoiceIndex READ layoutChoiceIndex NOTIFY layoutChoiceChanged)
++    Q_PROPERTY(int layoutChoicePlayer READ layoutChoicePlayer NOTIFY layoutChoiceChanged)
++
++public:
++    explicit Padmap(QObject* parent = nullptr);
++
++    bool connected() const { return m_connected; }
++    const QString& state() const { return m_state; }
++    int slotCount() const { return m_slot_count; }
++    const QVariantList& players() const { return m_players; }
++    qreal hold() const { return m_hold; }
++    qreal confirmHold() const { return m_confirm_hold; }
++    const QString& launchConfig() const { return m_launch_config; }
++    const QString& calibrationPhase() const { return m_calibration_phase; }
++    qreal calibrationProgress() const { return m_calibration_progress; }
++    int calibrationPlayer() const { return m_calibration_player; }
++    bool mappingActive() const { return m_mapping_active; }
++    const QVariantMap& mappingLayout() const { return m_mapping_layout; }
++    int mappingIndex() const { return m_mapping_index; }
++    int mappingTotal() const { return m_mapping_total; }
++    int mappingPlayer() const { return m_mapping_player; }
++    const QString& mappingLabel() const { return m_mapping_label; }
++    const QVariantMap& mappingCaptured() const { return m_mapping_captured; }
++    bool layoutChoiceActive() const { return m_layout_choice_active; }
++    const QVariantList& layoutChoices() const { return m_layout_choices; }
++    int layoutChoiceIndex() const { return m_layout_choice_index; }
++    int layoutChoicePlayer() const { return m_layout_choice_player; }
++
++    /// Start an assignment session. Grabs the pads until accepted or cancelled.
++    Q_INVOKABLE void begin(int players = 4);
++    /// Drop all claims, keeping the session open.
++    Q_INVOKABLE void reset();
++    /// Finalise: save, republish, and write the launch config.
++    Q_INVOKABLE void accept();
++    /// Abandon the session and release the pads.
++    Q_INVOKABLE void cancel();
++    /// Measure a controller: where it rests, then how far it travels.
++    Q_INVOKABLE void calibrate(int player);
++    /// Ask which console this controller is, then map its buttons under the
++    /// layout chosen. The daemon reads the pad directly for both, so this
++    /// works while the pads are grabbed.
++    Q_INVOKABLE void chooseLayout(int player);
++    /// Walk a controller's buttons, one prompt at a time. An empty layout
++    /// lets the daemon pick from what it already knows about the pad.
++    Q_INVOKABLE void startMapping(int player, const QString& layout = QString());
++    /// Move past a control this controller does not have.
++    Q_INVOKABLE void skipControl();
++    /// Remember which icon represents this controller.
++    Q_INVOKABLE void setIcon(int player, const QString& icon);
++    /// Leave the modal configuration flow without finishing it. Necessary
++    /// because the daemon suspends claim detection for the duration -- an
++    /// abandoned overlay would otherwise leave setup permanently deaf.
++    Q_INVOKABLE void configureEnd();
++
++    /// Ask the frontend to open its built-in gamepad layout editor.
++    ///
++    /// A theme cannot reach the menu layer itself -- it is a sibling Loader
++    /// in the frontend's scope, and themes only see `api`. This relays the
++    /// request so a theme can offer button mapping without reimplementing an
++    /// editor that already exists.
++    ///
++    /// Cancels any assignment session first: the daemon holds EVIOCGRAB on
++    /// every pad during one, and the editor reads through SDL, so it would
++    /// list the controller and never see a press.
++    Q_INVOKABLE void openGamepadEditor();
++
++signals:
++    void connectedChanged();
++    void stateChanged();
++    void holdChanged();
++    void confirmHoldChanged();
++    void launchConfigChanged();
++    void calibrationChanged();
++    /// Relayed to the frontend, which opens the gamepad layout editor.
++    void gamepadEditorRequested();
++    /// Calibration finished and the profile has been written.
++    void calibrationFinished(int player);
++    /// The mapping step changed, or one started or ended.
++    void mappingChanged();
++    /// The layout picker opened, moved, or closed.
++    void layoutChoiceChanged();
++    /// Mapping ended. `stored` is false when it was abandoned partway, in
++    /// which case nothing was kept.
++    void mappingFinished(bool stored);
++
++    /// A pad claimed a slot. Themes use this for sound or animation; the
++    /// authoritative list is always the `players` property.
++    void claimed(int player, QString name, QString node);
++    /// The session finished and the virtual pads are live.
++    void accepted();
++    void errorReported(QString message);
++
++private slots:
++    void onConnected();
++    void onDisconnected();
++    void onReadyRead();
++    void tryConnect();
++
++private:
++    void send(const QString& command, const QVariantMap& extra = {});
++    void handleMessage(const QJsonObject& message);
++    void setConnected(bool);
++
++    QLocalSocket m_socket;
++    QTimer m_reconnect_timer;
++    QByteArray m_buffer;
++
++    bool m_connected = false;
++    QString m_state = QStringLiteral("idle");
++    int m_slot_count = 4;
++    QVariantList m_players;
++    qreal m_hold = 0.0;
++    qreal m_confirm_hold = 0.0;
++    QString m_launch_config;
++
++    QString m_calibration_phase;
++    qreal m_calibration_progress = 0.0;
++    int m_calibration_player = 0;
++
++    bool m_mapping_active = false;
++    QVariantMap m_mapping_layout;
++    QVariantMap m_mapping_captured;
++    int m_mapping_index = 0;
++    int m_mapping_total = 0;
++    int m_mapping_player = 0;
++    QString m_mapping_label;
++
++    bool m_layout_choice_active = false;
++    QVariantList m_layout_choices;
++    int m_layout_choice_index = 0;
++    int m_layout_choice_player = 0;
++};
++
++} // namespace model
+diff -ruN orig/src/backend/model/padmap/padmap.pri edited/src/backend/model/padmap/padmap.pri
+--- orig/src/backend/model/padmap/padmap.pri	1969-12-31 19:00:00.000000000 -0500
++++ edited/src/backend/model/padmap/padmap.pri	2026-09-05 21:02:00.242573307 -0400
+@@ -0,0 +1,2 @@
++SOURCES += $$PWD/Padmap.cpp
++HEADERS += $$PWD/Padmap.h
+diff -ruN orig/src/frontend/main.qml edited/src/frontend/main.qml
+--- orig/src/frontend/main.qml	2026-09-05 21:02:00.198159583 -0400
++++ edited/src/frontend/main.qml	2026-09-05 21:02:00.242729026 -0400
+@@ -127,10 +127,37 @@
+             source: "MenuLayer.qml"
+             asynchronous: true
+ 
+-            onLoaded: item.focus = focus
++            // Set when a screen was requested before this Loader finished.
++            property bool pendingGamepadEditor: false
++
++            onLoaded: {
++                item.focus = focus;
++                if (pendingGamepadEditor) {
++                    pendingGamepadEditor = false;
++                    item.openScreen("menu/settings/GamepadEditor.qml");
++                }
++            }
+             onFocusChanged: if (item) item.focus = focus
+             enabled: focus
+         }
++        // A theme cannot reach the menu layer directly, so padmap relays the
++        // request through the api object. Lets a theme offer button mapping
++        // by opening the editor the frontend already ships, instead of
++        // reimplementing one.
++        Connections {
++            target: api.padmap
++
++            function onGamepadEditorRequested() {
++                mainMenu.focus = true;
++                // The menu Loader is asynchronous, so item can still be null
++                // here. Remember the request and let onLoaded run it.
++                if (mainMenu.item)
++                    mainMenu.item.openScreen("menu/settings/GamepadEditor.qml");
++                else
++                    mainMenu.pendingGamepadEditor = true;
++            }
++        }
++
+         Connections {
+             target: mainMenu.item
+ 

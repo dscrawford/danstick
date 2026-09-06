@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none"
+     stroke="#00b8c4" stroke-width="2.5" stroke-linecap="round"
+     stroke-linejoin="round">
+  <!-- ball-top stick over a button cluster: the most recognisable
+       fightstick cue at small sizes -->
+  <rect x="4" y="30" width="56" height="26" rx="5"/>
+  <line x1="18" y1="30" x2="18" y2="16"/>
+  <circle cx="18" cy="11" r="6" fill="#00b8c4" stroke="none"/>
+  <circle cx="38" cy="38" r="3.2"/>
+  <circle cx="48" cy="36" r="3.2"/>
+  <circle cx="38" cy="48" r="3.2"/>
+  <circle cx="48" cy="46" r="3.2"/>
+</svg>

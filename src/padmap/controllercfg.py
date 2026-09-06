@@ -1,0 +1,500 @@
+"""Turn a captured mapping into the files RetroArch and Pegasus actually read.
+
+Two consumers, two formats, one capture. Written together and regenerated on
+every accept, which is what makes a mapping follow the controller rather than
+the player slot: SDL's database is keyed on the device name, and padmap's
+virtual pads are named after the slot, so a stored line goes stale the moment
+a controller is assigned somewhere else. Re-emitting for the current slot side-
+steps that entirely -- nothing has to be migrated, because nothing is expected
+to survive.
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any
+
+from . import devices, layouts, mapping, profiles, virtual
+from .devices import Pad
+from .mapping import Binding
+from .virtual import (PADMAP_PID, PADMAP_VERSION, PADMAP_VID, VIRTUAL_PREFIX,
+                      identity_for, virtual_name)
+
+log = logging.getLogger("padmap.controllercfg")
+
+# uinput devices report this bus unless told otherwise, and SDL folds it into
+# the GUID. Only right for a pad advertising padmap's own identity: in mirror
+# mode the virtual pad carries the source's bus, which is what lets SDL's
+# database match it at all.
+BUS_VIRTUAL = 0x06
+
+# The version uinput gives a device unless told otherwise. Part of the GUID,
+# so it has to match what SDL will see rather than what seems reasonable.
+VIRTUAL_VERSION = PADMAP_VERSION
+
+MARKER = "# padmap"
+
+
+def sdl_config_path() -> Path:
+    return Path(
+        os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")
+    ) / "pegasus-frontend" / "sdl_controllers.txt"
+
+
+def virtual_guid(player: int, pad: Pad | None = None) -> str:
+    """The GUID SDL will compute for a player's virtual pad.
+
+    Every input is known in advance -- padmap creates the device -- so a
+    mapping can be written before SDL has ever seen it. Confirmed against the
+    live pad: with padmap's own identity SDL reports
+    0600c9a7091200000100000001000000 for "padmap Player 1".
+
+    `pad` is the physical controller behind the slot, and is required for a
+    correct answer: by default the virtual pad *mirrors* it (see
+    virtual.identity_for), so the GUID depends on the hardware. Without one
+    this falls back to padmap's own identity, which is right only in that
+    mode -- callers that have a pad must pass it.
+    """
+    identity = (
+        identity_for(pad) if pad is not None
+        else virtual.Identity(PADMAP_VID, PADMAP_PID, BUS_VIRTUAL,
+                              VIRTUAL_VERSION)
+    )
+    return mapping.sdl_guid(
+        bus=identity.bustype, vendor=identity.vendor,
+        product=identity.product, version=identity.version,
+        name=virtual_name(player),
+    )
+
+
+def sdl_line_for(
+    player: int, bindings: dict[str, Binding],
+    axis_codes: list[int] | None = None, pad: Pad | None = None,
+) -> str:
+    """The SDL database line for a player's virtual pad.
+
+    `axis_codes` are the pad's ABS codes, used to declare its sticks. They are
+    not part of the capture -- see mapping.stick_fields -- but a line without
+    them leaves SDL believing the pad has no sticks, and a front-end with no
+    way to navigate but the d-pad.
+    """
+    name = virtual_name(player)
+    return mapping.sdl_mapping(
+        virtual_guid(player, pad), name, bindings,
+        sticks=mapping.stick_fields(axis_codes or []),
+    )
+
+
+def write_sdl_mappings(
+    lines: dict[int, str], path: Path | None = None,
+    notes: dict[int, str] | None = None,
+) -> Path:
+    """Replace padmap's lines in Pegasus's controller database, keeping others.
+
+    Rewritten rather than appended: appending a second line for the same GUID
+    leaves SDL to pick one, and which one is not something to rely on. Lines
+    for devices padmap does not manage are left exactly as they are -- users
+    map their own controllers in there too.
+    """
+    target = path or sdl_config_path()
+    target.parent.mkdir(parents=True, exist_ok=True)
+
+    # Every slot padmap could ever name, not just the ones being written: a
+    # controller that moved slots leaves a line behind under the old name,
+    # and SDL would go on matching it.
+    ours = {virtual_guid(player) for player in range(1, 17)}
+    kept: list[str] = []
+    try:
+        for line in target.read_text(errors="replace").splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith(MARKER):
+                continue
+            fields = stripped.split(",")
+            # A line whose GUID is one of ours is a previous generation.
+            if fields[0] in ours:
+                continue
+            # ...and so is one bearing our *name* under a GUID we cannot
+            # recompute. Mirrored identities hash to a GUID that depends on
+            # which controller was plugged in at the time, so a line for a pad
+            # that has since been unplugged is not findable by GUID at all --
+            # and it would still match if that controller came back. The name
+            # is ours by construction, which makes it the reliable half of
+            # this test rather than the fallback it began as.
+            if len(fields) > 1 and fields[1].startswith(VIRTUAL_PREFIX):
+                continue
+            kept.append(line)
+    except OSError:
+        pass
+
+    body = kept + [MARKER + " -- regenerated on every controller assignment"]
+    for player in sorted(lines):
+        note = (notes or {}).get(player)
+        if note:
+            # Every comment padmap writes starts with MARKER, because the read
+            # above keeps any line it does not recognise -- a comment spelled
+            # differently would survive every rewrite and accumulate.
+            body.append(f"{MARKER}: player {player} -- {note}")
+        body.append(lines[player])
+    target.write_text("\n".join(body) + "\n")
+    return target
+
+
+# -- a controller that has never been through the wizard ---------------------
+#
+# The mapping wizard lives inside the front-end, so a front-end that cannot be
+# navigated is a wizard that cannot be reached. Mirroring the source pad's
+# identity (virtual.identity_for, the default) is most of the answer: SDL's own
+# database then matches the virtual pad exactly as it would the real
+# controller. It is not all of it.
+#
+# A pad SDL has never heard of -- the N64 adapter measured here is one -- gets
+# a blind default instead: face buttons on b0-b3 and, fatally, the d-pad on
+# b12-b15. A pad whose d-pad is a hat, which is most of them, then has no
+# d-pad at all, leaving only the analogue stick, which on an uncalibrated
+# controller can rest far enough over to scroll the menus by itself.
+#
+# So padmap writes a line for every republished pad, captured or not. Under
+# padmap's own identity that line is the *only* thing between the user and a
+# controller with no buttons, since SDL knows nothing about 1209:0001. Two
+# sources, in order of how much they are worth trusting.
+
+# SDL button number -> field, for a pad we know nothing about. Deliberately
+# the order SDL's own default assumes, so a guess is never worse than the one
+# the front-end would have made unaided.
+GUESS_BUTTON_ORDER = (
+    "a", "b", "x", "y",
+    "leftshoulder", "rightshoulder", "lefttrigger", "righttrigger",
+    "back", "start", "leftstick", "rightstick",
+)
+
+# BTN_DPAD_UP..BTN_DPAD_RIGHT, for pads that report directions as keys.
+DPAD_KEYS = {0x220: "dpup", 0x221: "dpdown", 0x222: "dpleft", 0x223: "dpright"}
+
+# Spelled out rather than imported from evdev, matching capture.py.
+EV_KEY = 0x01
+EV_ABS = 0x03
+ABS_HAT0X = 0x10
+ABS_HAT0Y = 0x11
+
+# Fields that describe the *identity* of a line rather than a binding, and so
+# must not be carried from one device to another.
+_IDENTITY_FIELDS = frozenset({"platform", "crc", "hint", "sdk", "type"})
+
+
+def _stick_and_dpad_fields(axis_codes: list[int], keys: list[int]) -> dict[str, str]:
+    """Directions, from what the pad actually reports rather than a guess.
+
+    These are the ones that decide whether a front-end can be navigated at
+    all, and they are also the ones that need no guessing: a hat is a hat and
+    ABS_X is the left stick's X on every pad ever made.
+    """
+    fields: dict[str, str] = {}
+    if ABS_HAT0X in axis_codes and ABS_HAT0Y in axis_codes:
+        # Hats are numbered separately from axes; hat 0 is the only one any
+        # measured pad has.
+        fields.update(dpup="h0.1", dpright="h0.2", dpdown="h0.4", dpleft="h0.8")
+    else:
+        # No hat: some pads report the d-pad as four ordinary keys instead.
+        for code, field in DPAD_KEYS.items():
+            index = mapping.sdl_button_index(keys, code)
+            if index is not None:
+                fields[field] = f"b{index}"
+    fields.update(mapping.stick_fields(axis_codes))
+    return fields
+
+
+def guessed_fields(keys: list[int], axis_codes: list[int]) -> dict[str, str]:
+    """A mapping for a pad nothing knows anything about.
+
+    The face buttons really are a guess -- which physical button is A is
+    exactly what the wizard exists to find out, and pads disagree (SDL's own
+    database has the measured Fightstick as `a:b1,x:b0`). The order used here
+    is the one SDL and Pegasus both assume when they have nothing better, so
+    this can only be as wrong as what happens today, and no more.
+
+    Everything below the face buttons is not a guess, and is where the value
+    is: the d-pad and sticks come from the pad's own capabilities.
+    """
+    fields: dict[str, str] = {}
+    ordered = ([code for code in sorted(keys) if code >= mapping.BTN_JOYSTICK]
+               + [code for code in sorted(keys) if code < mapping.BTN_JOYSTICK])
+    for index, field in enumerate(GUESS_BUTTON_ORDER):
+        if index < len(ordered):
+            fields[field] = f"b{index}"
+    fields.update(_stick_and_dpad_fields(axis_codes, keys))
+    return fields
+
+
+def physical_guid(pad: Pad) -> str:
+    """The GUID SDL computes for the physical controller behind a virtual pad.
+
+    Deliberately the device's *raw* name, not the cleaned one: SDL checksums
+    what the kernel reports, and the N64 adapter measured here prefixes its
+    name with a 0x18 byte. Stripping it changes the checksum and the lookup
+    silently matches nothing.
+    """
+    try:
+        device = devices.open_device(pad)
+    except OSError:
+        return ""
+    try:
+        info = device.info
+        return mapping.sdl_guid(
+            bus=info.bustype, vendor=info.vendor, product=info.product,
+            version=info.version, name=device.name,
+        )
+    except OSError:
+        return ""
+    finally:
+        device.close()
+
+
+def _database_paths() -> list[Path]:
+    """Files SDL itself would read a mapping out of.
+
+    The user's own file first: a line in there was either written by Pegasus's
+    Gamepad Editor or typed by hand, and either way it is a statement about
+    this machine rather than a database's guess about a product line.
+    """
+    paths = [sdl_config_path()]
+    from_env = os.environ.get("SDL_GAMECONTROLLERCONFIG_FILE")
+    if from_env:
+        paths += [Path(part) for part in from_env.split(os.pathsep) if part]
+    return paths
+
+
+def carried_fields(guid: str) -> tuple[dict[str, str], str] | None:
+    """An existing mapping for this GUID, from wherever one can be found.
+
+    Returns the fields and where they came from, or None. The fields transfer
+    to the virtual pad *verbatim*: virtual.create clones the source's EV_KEY
+    and EV_ABS sets exactly, so SDL numbers the virtual pad's buttons, axes and
+    hats identically to the physical one. Only the GUID and the name differ,
+    and those are replaced.
+    """
+    if not guid:
+        return None
+
+    for path in _database_paths():
+        try:
+            text = path.read_text(errors="replace")
+        except OSError:
+            continue
+        for line in text.splitlines():
+            parsed = mapping.parse_sdl_line(line)
+            if parsed is None or parsed[0] != guid:
+                continue
+            # Skip padmap's own output: a line we wrote for a virtual pad
+            # cannot also be the physical pad's, and matching one would let a
+            # stale generation feed itself back in.
+            if parsed[1].startswith(VIRTUAL_PREFIX):
+                continue
+            return _binding_fields(parsed[2]), str(path)
+
+    builtin = sdl_builtin_fields(guid)
+    if builtin:
+        return builtin, "SDL's built-in database"
+    return None
+
+
+def _binding_fields(fields: dict[str, str]) -> dict[str, str]:
+    return {
+        field: target for field, target in fields.items()
+        if field not in _IDENTITY_FIELDS
+    }
+
+
+# Asks SDL for a mapping instead of hunting for a copy of its database.
+#
+# SDL's built-in database is compiled into the library as a C array, so there
+# is no file to read; the library itself is the only place it exists. The
+# lookup runs in a subprocess so the daemon never loads SDL, never holds its
+# threads, and cannot be taken down by it -- and with every device ignored, so
+# the probe opens no controllers at all. Verified: `joysticks 0`, and the
+# Fightstick's mapping still returned, in 0.4s.
+_SDL_PROBE = """
+import ctypes, sys
+import sdl2
+sdl2.SDL_Init(sdl2.SDL_INIT_GAMECONTROLLER)
+guid = sdl2.SDL_JoystickGetGUIDFromString(sys.argv[1].encode())
+found = sdl2.SDL_GameControllerMappingForGUID(guid)
+if found:
+    sys.stdout.write(ctypes.cast(found, ctypes.c_char_p).value.decode())
+sdl2.SDL_Quit()
+"""
+
+_builtin_cache: dict[str, dict[str, str]] = {}
+
+
+def sdl_builtin_fields(guid: str) -> dict[str, str]:
+    """What SDL's own database says about a GUID, or {}.
+
+    Never raises: SDL may be absent, and a controller with no entry is the
+    ordinary case rather than a failure.
+    """
+    if guid in _builtin_cache:
+        return _builtin_cache[guid]
+
+    environment = dict(os.environ)
+    # Enumerating devices is not wanted and is not free -- and doing it while
+    # the daemon holds EVIOCGRAB on those same pads is worth avoiding on
+    # principle. A vid/pid no device has leaves SDL with the database loaded
+    # and nothing open.
+    environment["SDL_GAMECONTROLLER_IGNORE_DEVICES_EXCEPT"] = "0xffff/0xffff"
+    environment["SDL_VIDEODRIVER"] = "dummy"
+    # SDL reads these two itself, and the file scan above has already covered
+    # them -- with the check that skips padmap's own lines, which SDL has no
+    # way to make. Leaving them set fed a line padmap wrote straight back to
+    # it as though the controller had come with it.
+    environment.pop("SDL_GAMECONTROLLERCONFIG", None)
+    environment.pop("SDL_GAMECONTROLLERCONFIG_FILE", None)
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", _SDL_PROBE, guid],
+            capture_output=True, text=True, timeout=15, env=environment,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        log.debug("SDL mapping probe failed: %s", error)
+        _builtin_cache[guid] = {}
+        return {}
+
+    parsed = mapping.parse_sdl_line(result.stdout.strip())
+    if parsed is not None and parsed[1].startswith(VIRTUAL_PREFIX):
+        # Belt and braces: whatever the source, a line naming one of our own
+        # pads describes a previous generation rather than a controller.
+        parsed = None
+    fields = _binding_fields(parsed[2]) if parsed else {}
+    _builtin_cache[guid] = fields
+    return fields
+
+
+def fallback_line_for(
+    player: int, pad: Pad, keys: list[int], axis_codes: list[int]
+) -> tuple[str, str] | None:
+    """A usable SDL line for a pad that has never been mapped, plus its source.
+
+    None when the pad reports no buttons at all, which is not a controller
+    anything could navigate with.
+    """
+    if not keys:
+        return None
+
+    carried = carried_fields(physical_guid(pad))
+    if carried is not None:
+        fields, source = carried
+        source = f"carried over from {source}"
+    else:
+        fields = guessed_fields(keys, axis_codes)
+        source = "guessed from the controller's own capabilities"
+    return (
+        mapping.sdl_line(virtual_guid(player, pad), virtual_name(player),
+                         fields),
+        source + "; run the mapping wizard to replace it",
+    )
+
+
+def pad_capabilities(pad: Pad) -> tuple[list[int], list[int]]:
+    """(key codes, ABS codes) for a pad, as SDL and RetroArch will see them.
+
+    The virtual pad is a clone, so these describe both.
+    """
+    try:
+        device = devices.open_device(pad)
+    except OSError:
+        return [], []
+    try:
+        caps: dict[int, Any] = device.capabilities()
+        keys = sorted(int(code) for code in (caps.get(EV_KEY) or []))
+        # evdev reports EV_ABS as (code, AbsInfo) pairs and EV_KEY as bare
+        # codes. Guard rather than trust: a stub device can report either.
+        axes = sorted(
+            int(entry[0])
+            for entry in (caps.get(EV_ABS) or [])
+            if isinstance(entry, tuple) and len(entry) == 2
+        )
+        return keys, axes
+    except OSError:
+        return [], []
+    finally:
+        device.close()
+
+
+def retroarch_profile(
+    player: int, pad: Pad, bindings: dict[str, Binding], source: str = "",
+    layout: str = "",
+) -> str:
+    """An autoconfig profile built from what the user pressed.
+
+    Deliberately *not* a copy of the physical pad's upstream libretro profile.
+    That copy is right whenever the pad is in libretro's database and silently
+    empty when it is not, and it can disagree with what the user mapped in the
+    front-end -- two sets of bindings for one controller, differing in ways
+    nobody is told about. A capture the user performed wins over a database
+    entry they never saw.
+
+    `layout` is the layout *id* the capture was taken under, resolved here
+    rather than baked into the stored bindings, so that a later correction to
+    a console's key table reaches profiles captured before it.
+    """
+    resolved = layouts.get(layout)
+    identity = identity_for(pad)
+    header = [
+        f"# Generated by padmap for {virtual_name(player)}.",
+        "# Bindings captured from the controller itself"
+        + (f", replacing {source}." if source else "."),
+        # Named in the file because a console-specific key is invisible once
+        # emitted -- input_y_btn on an N64 pad looks like a mistake until you
+        # know which layout asked for it.
+        f"# Layout: {resolved.label} ({resolved.id}).",
+    ]
+    lines = [
+        'input_driver = "udev"',
+        f'input_device = "{virtual_name(player)}"',
+        f'input_device_display_name = "{virtual_name(player)}"',
+        # The ids the virtual pad actually advertises, not padmap's own:
+        # by default it mirrors the source controller, and a profile claiming
+        # different ids scores against itself in RetroArch's autoconfig match.
+        f'input_vendor_id = "{identity.vendor}"',
+        f'input_product_id = "{identity.product}"',
+    ]
+    lines += mapping.retroarch_lines(bindings, resolved.retroarch_keys())
+
+    # Sticks come from calibration, not from the button capture, and are the
+    # same on every pad padmap republishes.
+    lines += [
+        'input_l_x_plus_axis = "+0"',
+        'input_l_x_minus_axis = "-0"',
+        'input_l_y_plus_axis = "+1"',
+        'input_l_y_minus_axis = "-1"',
+    ]
+    return "\n".join(header + lines) + "\n"
+
+
+def stored_bindings(pad: Pad) -> dict[str, Binding]:
+    """What was captured for this controller, if anything."""
+    profile = profiles.load(pad)
+    return dict(profile.buttons) if profile else {}
+
+
+def stored_layout(pad: Pad) -> str:
+    """Which layout those bindings were captured under, as an id.
+
+    Empty for a pad that has never been mapped, and for profiles written
+    before layouts were recorded -- both of which resolve to the generic
+    layout and so emit the canonical keys, exactly as they used to.
+    """
+    profile = profiles.load(pad)
+    return profile.layout if profile else ""
+
+
+def has_mapping(pad: Pad) -> bool:
+    """Whether this controller has been through the mapping wizard.
+
+    A profile can exist with no buttons -- calibration writes one, and so does
+    finishing a session -- so the presence of a profile is not the question.
+    """
+    return bool(stored_bindings(pad))
