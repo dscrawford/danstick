@@ -212,7 +212,7 @@ class StubPadmap(QObject):
         self._choice_title = "What is this mapping for?"
         self._options = capture.scope_options(
             scopes=set(), default_layout="n64",
-            last_game=("n64", "n64/super-mario-64", "Super Mario 64"))
+            recent=[("n64", "n64/super-mario-64", "Super Mario 64")])
         self.layoutChoiceChanged.emit()
 
     # Two decorators, because QML calls this with one argument and the real

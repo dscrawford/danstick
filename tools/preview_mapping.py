@@ -103,7 +103,7 @@ def main() -> int:
             option.to_json()
             for option in capture.scope_options(
                 scopes={"console:n64"}, default_layout="gamecube",
-                last_game=("n64", "n64/super-mario-64", "Super Mario 64"))
+                recent=[("n64", "n64/super-mario-64", "Super Mario 64")])
         ]
         title = "What is this mapping for?"
     else:

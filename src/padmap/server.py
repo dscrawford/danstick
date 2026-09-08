@@ -835,14 +835,13 @@ class Server:
         profile = profiles.load(pad)
         guess = (controllercfg.stored_layout(pad)
                  or icons.for_pad(pad, self._icon_overrides))
-        last = protocol.read_last_game()
         options = capture.scope_options(
             scopes=set(profile.mappings) if profile else set(),
             default_layout=guess,
-            last_game=(
-                (last["console"], last["key"], last["title"])
-                if last.get("key") else None
-            ),
+            recent=[
+                (game["console"], game["key"], game["title"])
+                for game in protocol.read_recent_games()
+            ],
         )
         # Asking the question again abandons whatever the last answer was.
         # Otherwise a scope chosen for a run that never reached the wizard --

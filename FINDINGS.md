@@ -2070,3 +2070,41 @@ still derived its pad list from the assignment, `sudo padmap hide` would have
 generated rules covering *nothing* -- the previous bug's worst case, reached
 by the very command meant to cure it. Reading the pads from /sys makes the
 privileged and unprivileged runs agree.
+
+## Per-game scope was limited to the one game just launched
+
+Asked for: "single-game or single-console mappings for a controller... should
+be possible to override per-game and per-console".
+
+Most of this already existed and works. `check_scopes.py` proves the whole
+resolution end to end, for the exact case driving it -- one GameCube pad with
+a default capture and an N64 one:
+
+    no context      -> gamecube default (input_a_btn, input_x_btn)
+    n64, other game -> n64 mapping (input_y_btn, no input_a_btn)
+    n64, Mario 64   -> the per-game mapping
+    snes            -> back to the default
+
+The route is Prev-page on the controller setup screen, which opens the scope
+picker before the button wizard.
+
+The gap was in what the picker could *offer*. A per-game scope can only be
+offered for a game the daemon has seen launched -- the setup screen is reached
+from the front-end, never from inside a game, so nothing else there knows
+which game is meant. But `read_last_game` returned exactly one, so someone who
+had since started something else could no longer reach the game they wanted to
+fix, with no route back to it but to launch it again.
+
+`lastgame.json` now holds a short list, newest first, deduplicated by key so a
+replay moves a game up rather than filling the list with copies. Capped at
+`protocol.RECENT_GAMES` (5): the strip is worked from the pad one step at a
+time and sits after the console entries, so a long tail of games turns "map
+this for N64" into a scrolling exercise.
+
+The pre-list format is still read. Someone upgrading mid-session would
+otherwise lose the per-game scope for the game they are playing right now,
+which is precisely when they are most likely to want it.
+
+Still missing, and worth doing: there is no way to *delete* a scoped mapping.
+Re-mapping replaces one, but a scope created by mistake can only be
+overwritten, never removed.

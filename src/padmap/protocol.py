@@ -248,18 +248,18 @@ def last_game_path() -> Path:
     return runtime_dir() / "lastgame.json"
 
 
-def read_last_game() -> dict[str, str]:
-    """{"console", "key", "title"} for the last launch, or {}.
+# How many recently played games the scope picker may offer.
+#
+# Small on purpose. The strip is worked from the pad, one step at a time, and
+# every entry here sits after the console entries -- a long tail of games
+# turns "map this for N64" into a scrolling exercise. Five covers an evening's
+# play, which is the span in which someone notices a control was wrong.
+RECENT_GAMES = 5
 
-    Never raises: this decorates a picker, and a missing or malformed file
-    means one fewer option rather than a failure.
-    """
-    try:
-        raw = json.loads(last_game_path().read_text())
-    except (OSError, ValueError):
-        return {}
-    if not isinstance(raw, dict):
-        return {}
+
+def _game_entry(raw: object) -> dict[str, str] | None:
+    if not isinstance(raw, dict) or not raw.get("key"):
+        return None
     return {
         "console": str(raw.get("console", "")),
         "key": str(raw.get("key", "")),
@@ -267,11 +267,47 @@ def read_last_game() -> dict[str, str]:
     }
 
 
+def read_recent_games() -> list[dict[str, str]]:
+    """Recently launched games, newest first.
+
+    Never raises: this decorates a picker, and a missing or malformed file
+    means fewer options rather than a failure.
+
+    Reads the pre-list format too -- a bare {"console","key","title"} object,
+    which is what earlier versions wrote. A user upgrading mid-session would
+    otherwise silently lose the per-game scope for the game they are playing
+    right now, which is the exact moment they are most likely to want it.
+    """
+    try:
+        raw = json.loads(last_game_path().read_text())
+    except (OSError, ValueError):
+        return []
+    if isinstance(raw, dict) and isinstance(raw.get("games"), list):
+        entries = [_game_entry(item) for item in raw["games"]]
+        return [entry for entry in entries if entry][:RECENT_GAMES]
+    single = _game_entry(raw)
+    return [single] if single else []
+
+
+def read_last_game() -> dict[str, str]:
+    """{"console", "key", "title"} for the most recent launch, or {}."""
+    recent = read_recent_games()
+    return recent[0] if recent else {}
+
+
 def write_last_game(console: str, key: str, title: str) -> Path:
+    """Record a launch, keeping the previous few.
+
+    Most recent first, deduplicated by key: replaying a game should move it to
+    the front, not fill the list with copies of itself and push out everything
+    else someone might want to correct.
+    """
+    entry = {"console": console, "key": key, "title": title}
+    kept = [game for game in read_recent_games() if game["key"] != key]
     path = last_game_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(
-        {"console": console, "key": key, "title": title}, indent=2))
+        {"games": [entry, *kept][:RECENT_GAMES]}, indent=2))
     return path
 
 

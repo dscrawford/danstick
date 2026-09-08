@@ -373,6 +373,56 @@ def main() -> int:
     check_launch_argv()
     check_emitted_profiles()
     check_only_console_mapped()
+    print("\nwhich games a per-game mapping may be made for:")
+    # A per-game scope can only be offered for a game the daemon has seen
+    # launched -- the setup screen is reached from the frontend, never from
+    # inside a game. Offering only the *newest* meant someone who had since
+    # started something else could no longer reach the game they wanted to
+    # fix, with no route to it but to launch it again.
+    from padmap import protocol
+
+    with tempfile.TemporaryDirectory() as tmp:
+        original = protocol.last_game_path
+        store = Path(tmp) / "lastgame.json"
+        protocol.last_game_path = lambda: store   # type: ignore[assignment]
+        try:
+            protocol.write_last_game("n64", "n64/goldeneye", "GoldenEye")
+            protocol.write_last_game("n64", "n64/smash", "Smash")
+            keys = [g["key"] for g in protocol.read_recent_games()]
+            if keys != ["n64/smash", "n64/goldeneye"]:
+                raise SystemExit(f"FAIL: newest-first order lost ({keys})")
+            if protocol.read_last_game()["key"] != "n64/smash":
+                raise SystemExit("FAIL: read_last_game is no longer the newest")
+
+            # Replaying moves a game to the front rather than duplicating it.
+            protocol.write_last_game("n64", "n64/goldeneye", "GoldenEye")
+            keys = [g["key"] for g in protocol.read_recent_games()]
+            if keys != ["n64/goldeneye", "n64/smash"]:
+                raise SystemExit(f"FAIL: replay did not move to front ({keys})")
+
+            # And the list stays short, or the picker becomes a scroll.
+            for n in range(protocol.RECENT_GAMES + 3):
+                protocol.write_last_game("n64", f"n64/game{n}", f"Game {n}")
+            if len(protocol.read_recent_games()) != protocol.RECENT_GAMES:
+                raise SystemExit(
+                    f"FAIL: {len(protocol.read_recent_games())} kept, cap is "
+                    f"{protocol.RECENT_GAMES}")
+
+            # The pre-list format still reads, or upgrading mid-session drops
+            # the scope for the game being played right now.
+            store.write_text(json.dumps(
+                {"console": "n64", "key": "n64/old", "title": "Old Format"}))
+            if [g["key"] for g in protocol.read_recent_games()] != ["n64/old"]:
+                raise SystemExit("FAIL: the old lastgame.json format was lost")
+
+            store.write_text("{ not json")
+            if protocol.read_recent_games() != []:
+                raise SystemExit("FAIL: a corrupt file should mean no options")
+        finally:
+            protocol.last_game_path = original   # type: ignore[assignment]
+    print(f"  ok  newest first, replays move up, capped at "
+          f"{protocol.RECENT_GAMES}, old format still read")
+
     print("\nall checks passed")
     return 0
 

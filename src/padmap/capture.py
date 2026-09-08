@@ -314,7 +314,7 @@ def layout_options(mapped_layouts: set[str] | None = None) -> list[Option]:
 
 def scope_options(
     scopes: set[str], default_layout: str = "",
-    last_game: tuple[str, str, str] | None = None,
+    recent: list[tuple[str, str, str]] | None = None,
 ) -> list[Option]:
     """"What is this mapping for?", as a strip of scopes.
 
@@ -327,13 +327,17 @@ def scope_options(
     which layout the wizard will walk, because that entry leads to the layout
     picker.
 
-    `last_game` is (console layout id, game key, title) for the game most
-    recently launched through padmap-play, or None. That is the only way a
-    per-game scope can be offered at all: the setup screen is reached from
-    the front-end, never from inside a game, so nothing else on this screen
-    knows which game the user means. "The controls were wrong in the game I
-    just played, let me fix them for that game" is also exactly the moment
-    someone wants one.
+    `recent` is [(console layout id, game key, title), ...] for games launched
+    through padmap-play, newest first. That is the only way a per-game scope
+    can be offered at all: the setup screen is reached from the front-end,
+    never from inside a game, so nothing else on this screen knows which game
+    the user means.
+
+    Several rather than only the newest. "The controls were wrong in the game
+    I just played" is the obvious case, but it is not the only one -- someone
+    who has since started something else would otherwise find the game they
+    actually wanted to fix no longer on offer, with no way to reach it but to
+    launch it again. Kept short deliberately; see protocol.RECENT_GAMES.
     """
     options = [
         Option(id=profiles.SCOPE_UNIVERSAL, label="Any game",
@@ -348,14 +352,16 @@ def scope_options(
             label=f"{console.console_label or console.label} games",
             layout=layout_id, mapped=scope in scopes,
         ))
-    if last_game is not None:
-        game_console, key, title = last_game
-        if key:
-            scope = profiles.game_scope(key)
-            options.append(Option(
-                id=scope, label=title or key, layout=game_console,
-                mapped=scope in scopes,
-            ))
+    seen: set[str] = set()
+    for game_console, key, title in (recent or []):
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        scope = profiles.game_scope(key)
+        options.append(Option(
+            id=scope, label=title or key, layout=game_console,
+            mapped=scope in scopes,
+        ))
     return options
 
 

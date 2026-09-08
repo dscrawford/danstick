@@ -196,7 +196,7 @@ def check_scope_choice() -> None:
     print("\nchoosing what a mapping is for:")
     options = scope_options(
         scopes={"console:n64"}, default_layout="gamecube",
-        last_game=("n64", "n64/super-mario-64", "Super Mario 64"))
+        recent=[("n64", "n64/super-mario-64", "Super Mario 64")])
     c = choice(options=options)
     if c.chosen != "":
         raise SystemExit(
@@ -232,6 +232,23 @@ def check_scope_choice() -> None:
         raise SystemExit(
             "FAIL: the per-game scope is not drawn as its console's pad")
     print(f"  ok  {game['label']!r} -> {game['id']!r}")
+
+    print("\nseveral recent games are all offered, each once:")
+    options = scope_options(
+        scopes={"game:n64/smash"}, default_layout="gamecube",
+        recent=[("n64", "n64/goldeneye", "GoldenEye"),
+                ("n64", "n64/smash", "Smash"),
+                ("n64", "n64/goldeneye", "GoldenEye")])
+    games = [o for o in options if o.id.startswith("game:")]
+    if [o.id for o in games] != ["game:n64/goldeneye", "game:n64/smash"]:
+        raise SystemExit(
+            f"FAIL: offered {[o.id for o in games]} -- a game replayed twice "
+            f"must not take two slots on a strip worked from the pad")
+    if not next(o for o in games if o.id == "game:n64/smash").mapped:
+        raise SystemExit(
+            "FAIL: an existing per-game mapping is unmarked, so re-mapping "
+            "would destroy it with no warning")
+    print(f"  ok  {[o.label for o in games]}, Smash marked as already mapped")
 
     print("\nno recent game, no per-game scope:")
     plain = scope_options(scopes=set(), default_layout="")
