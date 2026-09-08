@@ -42,12 +42,12 @@ FocusScope {
         // Opened from a game rather than from the menu: the setup screen runs
         // exactly as it always does, and the first pad to claim a slot gets
         // asked whether the mapping is for this console or this game.
-        onOpenMappingFor: function (console, key, title) {
+        onOpenMappingFor: function (consoleId, key, title) {
             if (!api.padmap.connected) {
                 toast.show("padmap daemon is not running — start it with `padmap serve`");
                 return;
             }
-            root.pendingGame = { "console": console, "key": key, "title": title };
+            root.pendingGame = { "console": consoleId, "key": key, "title": title };
             setupLoader.active = true;
         }
     }

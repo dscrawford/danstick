@@ -250,6 +250,23 @@ def main() -> int:
         if "Theme set to `padmap`" not in pegasus_log:
             failures.append("Pegasus did not load the padmap theme")
 
+        # Any QML complaint about the theme is a failure, not a note.
+        #
+        # Worth having, but do not mistake it for coverage of the "hides
+        # global variable" class: this was measured, with a deliberately
+        # broken theme built into the store and run here, and Pegasus emitted
+        # nothing. Whatever surfaces that diagnostic on a real desktop session
+        # does not surface it in this harness. check_theme_loads.py lints for
+        # that case directly, because nothing that runs an engine catches it.
+        complaints = [
+            line for line in pegasus_log.splitlines()
+            if ("[w]" in line or "[e]" in line) and "themes/padmap/" in line
+        ]
+        if complaints:
+            failures.append(
+                "the theme produced QML diagnostics, which means Pegasus "
+                "declined part of it:\n    " + "\n    ".join(complaints[:5]))
+
         # The theme opens the controller screen on the Details key. There is
         # no way to inject a keypress into an offscreen window, so drive the
         # daemon side directly -- what matters is what the theme does *after*

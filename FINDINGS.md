@@ -2164,3 +2164,45 @@ Deriving either in the theme, or again in the daemon, would be a second
 definition of which scope a game belongs to. The failure would be silent in
 the worst way: a mapping filed under a scope the launcher never looks up,
 which presents as a wizard that completes successfully and changes nothing.
+
+### `console` is a QML global, and the theme would not load
+
+Reported: "theme loading failed :(". Pegasus's own log said exactly why:
+
+    theme.qml:45:9: Signal parameter "console" hides global variable.
+
+The signal added for library-driven mapping named its first parameter
+`console`, and so did the handler and a local in `Library.qml`. `console` is a
+QML global (console.log); shadowing one is refused, and the refusal costs the
+whole *file*, not the handler. Renamed to `consoleId` throughout.
+
+The interesting part is not the mistake, it is that nothing caught it.
+`theme.qml` was loaded by no harness at all -- the theme's checks each load one
+component (Library.qml, ControllerSetup.qml) against a stub `api`, and the one
+file that wires those together had no coverage. Every check passed, mypy
+passed, Pegasus built, and the theme did not load.
+
+Two attempts at a guard failed, and both are worth recording because the
+obvious ones do not work:
+
+* **Compiling every file through PySide6.** Passes on the broken source.
+  PySide6 is Qt 6, Pegasus is Qt 5, and this diagnostic is Qt 5's.
+* **Asserting on real Pegasus's log in `e2e_pegasus.py`.** Also passes on the
+  broken source -- measured, not assumed: the broken theme was built into the
+  store, confirmed present in the store path Pegasus loaded, and the run
+  produced no such warning. Whatever surfaces it in a desktop session does not
+  surface it there.
+
+So nothing that *runs* the theme catches this. `check_theme_loads.py` lints for
+it by reading the text instead: signal parameters, handler parameters,
+function parameters and locals are checked against the names QML puts in
+scope. Unclever, and it fails on the exact source that broke the theme, which
+is the only property that matters.
+
+The compile pass is kept anyway -- it covers syntax errors across all eight
+files for almost nothing -- but it is documented as not covering this.
+
+`e2e_pegasus.py` has a separate, pre-existing failure ("theme did not start
+calibration for an unconfigured pad"). Confirmed pre-existing by running it
+against the theme as of 1089285, which fails identically. It is not in the
+`check_*` suite, so it has been failing unnoticed.

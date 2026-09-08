@@ -27,7 +27,7 @@ FocusScope {
     // Map the focused game's console -- or just that game -- for a pad. The
     // library is the one screen that already knows both, which is what makes
     // the question two entries wide instead of a list of every console.
-    signal openMappingFor(string console, string key, string title)
+    signal openMappingFor(string consoleId, string key, string title)
 
     property string query: ""
     property var filtered: []
@@ -251,12 +251,17 @@ FocusScope {
         var game = view.currentItem ? view.currentItem.game : null;
         if (!game)
             return;
-        var console = (game.extra && game.extra["console"]) || "";
-        if (!console) {
+        // Not named `console`: that is a QML global (console.log), and both
+        // a signal parameter and a local shadowing it are refused by the QML
+        // engine -- which failed the whole theme to load, not just this
+        // function.
+        var consoleId = (game.extra && game.extra["console"]) || "";
+        if (!consoleId) {
             root.say("No console known for this game");
             return;
         }
-        root.openMappingFor(console, (game.extra && game.extra["gamekey"]) || "",
+        root.openMappingFor(consoleId,
+                            (game.extra && game.extra["gamekey"]) || "",
                             game.title);
     }
 
