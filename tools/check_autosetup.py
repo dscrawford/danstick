@@ -329,6 +329,35 @@ def main() -> int:
             hide.RUNTIME_RULES_PATH = original
     print("  ok  the pad added later is flagged; the covered one is not")
 
+    print("\nwhich pads the udev rules must cover:")
+    # Reported: a Fightstick configured as player 1, but "the gc autoconfigured
+    # joysticks took up the first four slots". RetroArch's own log showed the
+    # adapter's four ports taking player slots 2-5, because the installed
+    # rules covered only the pads that had been *assigned* when they were
+    # generated. Assignment changes every session; the hardware does not.
+    stick = pad("Fightstick", vid=0x0079, pid=0x1830)
+    usb = pad("USB GamePad", vid=0x0079, pid=0x1879, node="event91")
+    cube = pad("GameCube Adapter", vid=0x0079, pid=0x1843, node="event92")
+
+    covered = [(p.vid, p.pid) for p in hide.targets([stick, usb, cube], [stick])]
+    if covered != [(0x0079, 0x1830), (0x0079, 0x1879), (0x0079, 0x1843)]:
+        raise SystemExit(
+            f"FAIL: rules would cover {[(hex(v), hex(d)) for v, d in covered]} "
+            f"-- an unassigned adapter left visible is four extra pads taking "
+            f"player slots")
+
+    # And the destructive direction: regenerating while one pad is assigned
+    # must not drop the others.
+    if len(hide.targets([stick, usb, cube], [])) != 3:
+        raise SystemExit("FAIL: pads went missing with nothing assigned")
+
+    # Four ports of one adapter are one rule.
+    ports = [pad("GameCube Adapter", vid=0x0079, pid=0x1843, node=f"event9{n}")
+             for n in range(4)]
+    if len(hide.targets(ports, [])) != 1:
+        raise SystemExit("FAIL: one adapter produced more than one rule")
+    print("  ok  all three adapters covered, assigned or not; ports deduped")
+
     print("\nall checks passed")
     return 0
 

@@ -863,8 +863,11 @@ def cmd_fetch_art(args: argparse.Namespace) -> int:
 
 
 def cmd_hide(_args: argparse.Namespace) -> int:
+    # Every physical pad, not merely the assigned ones -- see hide.targets.
+    # Building the rules from the assignment is what left the GameCube
+    # adapter visible, and regenerating that way would un-hide the others.
     assignments = _load_assignments()
-    pads = [a.pad for a in assignments] or devices.discover()
+    pads = hide.targets(devices.discover(), [a.pad for a in assignments])
     print(hide.install_hint(hide.generate_rules(pads), pads))
     return 0
 

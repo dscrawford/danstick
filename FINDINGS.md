@@ -1992,3 +1992,53 @@ guard, which fails the new check.
 The general form is worth stating, since this file has several instances of
 it: validate everything before performing the destructive half. A partial
 failure that leaves nothing behind is worse than doing nothing at all.
+
+## The udev rules were generated from the assignment, not the hardware
+
+Reported: "got the arcade fightstick connected and configured as player 1 but
+I think the gc autoconfigured joysticks took up the first four slots".
+
+Confirmed by running `tools/e2e_ports.py --live --installed`, which drives the
+real chain on a virtual display, and reading RetroArch's own autoconfig log:
+
+    [Autoconf] First unconfigured / unreserved player is 2.
+    [Autoconf] Device "mayflash ... GameCube Controller Adapter" (79:1843)
+               is not reserved for any player slot.
+    [Autoconf] Earlier free player slot found, reassigning to player 2.
+    ... and again for players 3, 4 and 5
+    [Autoconf] Config files scanned: pad name padmap Player 1 (0079/1830),
+               affinity 50
+    [Autoconf] padmap Player 1 configured in port 5.
+    [Autoconf] Reserved device matched.
+    [Autoconf] Device "padmap Player 1" is reserved for player 1, updating.
+    [Autoconf] Preferred slot was taken earlier by "(null)", reassigning to 1.
+
+So the adapter's four ports really do take player slots 2-5, and the
+Fightstick is first configured into slot 5 before the reservation drags it
+back to 1. The reservation mechanism works; it just cannot stop devices from
+occupying every other slot.
+
+Core ports were unaffected -- the probe reported `ports0-3=1,0,0,0`, one
+JOYPAD and three RETRO_DEVICE_NONE -- because `--nodevice` empties them
+regardless of which player slot a pad landed in. That is why this presents as
+clutter and confusion rather than a broken game, and why it survived so long.
+
+The cause is one line in `cmd_hide`:
+
+    pads = [a.pad for a in assignments] or devices.discover()
+
+Rules were generated from whatever held a player slot at that moment. The
+GameCube adapter was not assigned when the file was written, so it never got
+a rule. Worse, regenerating with a single controller assigned would have
+*dropped* the rules covering the others -- turning a stale file into a
+actively wrong one, and un-hiding pads that were correctly hidden.
+
+`hide.targets` now returns every physical pad on the machine, unioned with
+anything assigned. Which controller holds a slot changes every session; which
+adapters exist is a property of the hardware, and that is what a udev rule
+describes.
+
+The `unhidden` warning added earlier had been reading `devices.discover()` all
+along, which is why it correctly flagged 0079:1843 while the generator that
+was supposed to fix it would not have emitted a rule for it. The check and the
+thing it checks now agree.

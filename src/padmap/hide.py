@@ -76,6 +76,35 @@ def generate_rules(pads: list[Pad]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def targets(discovered: list[Pad], assigned: list[Pad] | None = None) -> list[Pad]:
+    """Every physical pad that must be hidden from RetroArch.
+
+    All of them, not just the ones holding a player slot right now. Which
+    controller is assigned changes every session; which adapters exist is a
+    property of the machine. Generating rules from the assignment is how the
+    installed file came to cover a Fightstick and a USB pad but not the
+    GameCube adapter plugged in later -- RetroArch then enumerated that
+    adapter's four ports and they took player slots 2 through 5, which is
+    exactly what was reported.
+
+    It is also actively destructive to regenerate from the assignment: with
+    only one controller assigned the result would *drop* the rules covering
+    every other adapter, un-hiding pads that were correctly hidden before.
+
+    Union rather than `discovered` alone, so a pad that is assigned but for
+    some reason missing from the scan still gets a rule.
+    """
+    result: list[Pad] = []
+    seen: set[tuple[int, int]] = set()
+    for pad in list(discovered) + list(assigned or []):
+        key = (pad.vid, pad.pid)
+        if not pad.vid or not pad.pid or key in seen:
+            continue
+        seen.add(key)
+        result.append(pad)
+    return result
+
+
 def unhidden(pads: list[Pad]) -> list[Pad]:
     """Pads padmap republishes that the installed rules do not cover.
 
