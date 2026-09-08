@@ -24,6 +24,10 @@ FocusScope {
     id: root
 
     signal openControllerSetup()
+    // Map the focused game's console -- or just that game -- for a pad. The
+    // library is the one screen that already knows both, which is what makes
+    // the question two entries wide instead of a list of every console.
+    signal openMappingFor(string console, string key, string title)
 
     property string query: ""
     property var filtered: []
@@ -227,6 +231,33 @@ FocusScope {
         if (api.keys.isPageDown)
             return api.keys.isPageDown(event);
         return event.key === Qt.Key_PageDown;
+    }
+
+    // A raw key, deliberately not one of Pegasus's named actions. Every one
+    // of those is already bound to something here, and the gamepad half of
+    // their bindings cannot reach this anyway: the daemon grabs every pad the
+    // moment the setup session opens, so this is a keyboard gesture or
+    // nothing.
+    function isMapKey(event) {
+        return event.key === Qt.Key_M && event.modifiers === Qt.NoModifier;
+    }
+
+    // Console and key come from the collection file, which padmap's exporter
+    // wrote using the same functions the launcher uses to resolve a scope.
+    // Deriving either here would be a second definition of which scope a game
+    // belongs to, and the symptom of drift would be a mapping that silently
+    // never applies.
+    function mapCurrent() {
+        var game = view.currentItem ? view.currentItem.game : null;
+        if (!game)
+            return;
+        var console = (game.extra && game.extra["console"]) || "";
+        if (!console) {
+            root.say("No console known for this game");
+            return;
+        }
+        root.openMappingFor(console, (game.extra && game.extra["gamekey"]) || "",
+                            game.title);
     }
 
     function say(text) {
@@ -798,9 +829,15 @@ FocusScope {
                 return root.note;
             if (root.searching)
                 return "type to filter     ·     Enter to keep it     ·     Esc to clear";
+            // "M map controller" names the key, not the action. Every other
+            // entry here names a Pegasus action because those are rebindable
+            // and the gamepad half of the binding works; this one is a raw
+            // key by necessity, and a hint reading "Prev-page" taught us what
+            // an unnameable action costs -- it has to be asked about.
             return "Accept launch     ·     L1/R1 switch console"
                  + "     ·     Filters search     ·     R2 favourite"
-                 + "     ·     Details controller order";
+                 + "     ·     Details controller order"
+                 + "     ·     M map controller for this game";
         }
         color: root.note !== "" ? colors.accent : colors.textFaint
         font.pixelSize: 13
@@ -857,6 +894,11 @@ FocusScope {
         if (root.isFavoriteKey(event)) {
             event.accepted = true;
             root.toggleFavorite();
+            return;
+        }
+        if (root.isMapKey(event)) {
+            event.accepted = true;
+            root.mapCurrent();
             return;
         }
         if (api.keys.isAccept(event)) {

@@ -70,6 +70,7 @@ class StubPadmap(QObject):
         self.choose_calls = []
         self.scope_calls = []
         self.forget_calls = []
+        self.map_for_game_calls = []
         self.skip_calls = 0
         self._mapping_active = False
         self._choice_active = False
@@ -244,6 +245,10 @@ class StubPadmap(QObject):
     @Slot(int)
     def forgetPad(self, player):
         self.forget_calls.append(player)
+
+    @Slot(int, str, str, str)
+    def mapForGame(self, player, console, key, title):
+        self.map_for_game_calls.append((player, console, key, title))
 
     # -- driving the stub from Python -------------------------------------
     def set_state(self, state, players=None):
@@ -591,6 +596,72 @@ def main() -> int:
         raise SystemExit(
             f"FAIL: Ctrl+1 was treated as a reset ({pad.forget_calls})")
     print("  ok  Ctrl+1 ignored")
+
+    print("\nmapping a pad for the game the library was sitting on:")
+    # The flow asked for: a key on a focused game, then a controller select,
+    # then "console or this game?" -- with both already known because the
+    # library knew them. The claim *is* the controller select: whichever pad
+    # presses a button is the one configured, which needs nothing mapped and
+    # works on a pad padmap has never seen.
+    pad.map_for_game_calls.clear()
+    setup = load(engine, api)
+    setup.setProperty("pendingGame", {
+        "console": "n64", "key": "n64/goldeneye-007-usa",
+        "title": "GoldenEye 007 (USA)"})
+    setup.setProperty("focus", True)
+    pad.set_state("assigning", [])
+    app.processEvents()
+
+    if pad.map_for_game_calls:
+        raise SystemExit(
+            f"FAIL: mapping started before any pad claimed a slot "
+            f"({pad.map_for_game_calls}) -- there is no controller select then")
+
+    # The case the claim gate actually exists for: the daemon opens this
+    # screen by itself, from a state that already lists players belonging to
+    # a session that is over. Configuring one of those means configuring
+    # whichever pad happened to be player 1 last time, not the pad the user
+    # is holding -- and nobody pressed anything to say so.
+    pad.set_state("assigning", [player(1, "Pad From Last Session", True)])
+    app.processEvents()
+    if pad.map_for_game_calls:
+        raise SystemExit(
+            f"FAIL: mapped a player left over from an earlier session "
+            f"({pad.map_for_game_calls}) -- the claim is the controller "
+            f"select, so it has to follow a press")
+
+    pad.set_state("assigning", [player(2, "GameCube Pad", True)])
+    pad.claimed.emit(2, "GameCube Pad", "event27")
+    app.processEvents()
+
+    if pad.map_for_game_calls != [
+            (2, "n64", "n64/goldeneye-007-usa", "GoldenEye 007 (USA)")]:
+        raise SystemExit(
+            f"FAIL: {pad.map_for_game_calls}, wanted one call for player 2 "
+            f"carrying the console and key the exporter computed")
+    print(f"  ok  mapForGame{pad.map_for_game_calls[0]}")
+
+    print("\n...once, though the claim and the state event both fire:")
+    pad.claimed.emit(2, "GameCube Pad", "event27")
+    pad.set_state("assigning", [player(2, "GameCube Pad", True)])
+    app.processEvents()
+    if len(pad.map_for_game_calls) != 1:
+        raise SystemExit(
+            f"FAIL: {len(pad.map_for_game_calls)} wizards started for one "
+            f"press ({pad.map_for_game_calls})")
+    print("  ok  one press, one wizard")
+
+    print("\nand with no game pending it behaves as it always did:")
+    pad.map_for_game_calls.clear()
+    plain = load(engine, api)
+    plain.setProperty("focus", True)
+    pad.set_state("assigning", [player(1, "Some Pad", True)])
+    pad.claimed.emit(1, "Some Pad", "event24")
+    app.processEvents()
+    if pad.map_for_game_calls:
+        raise SystemExit(
+            f"FAIL: a plain setup opened a game mapping ({pad.map_for_game_calls})")
+    print("  ok  no mapping started")
 
     print("\nall checks passed")
     return 0

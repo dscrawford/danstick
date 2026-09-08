@@ -11,6 +11,12 @@ FocusScope {
 
     focus: true
 
+    // {console, key, title} while the setup screen is being opened to map a
+    // pad for a particular game, otherwise null. Lives here because the
+    // Loader below builds the screen lazily -- there is no instance to set a
+    // property on at the moment the key is pressed.
+    property var pendingGame: null
+
     Colors { id: colors }
 
     Rectangle {
@@ -29,6 +35,19 @@ FocusScope {
                 toast.show("padmap daemon is not running — start it with `padmap serve`");
                 return;
             }
+            root.pendingGame = null;
+            setupLoader.active = true;
+        }
+
+        // Opened from a game rather than from the menu: the setup screen runs
+        // exactly as it always does, and the first pad to claim a slot gets
+        // asked whether the mapping is for this console or this game.
+        onOpenMappingFor: function (console, key, title) {
+            if (!api.padmap.connected) {
+                toast.show("padmap daemon is not running — start it with `padmap serve`");
+                return;
+            }
+            root.pendingGame = { "console": console, "key": key, "title": title };
             setupLoader.active = true;
         }
     }
@@ -54,9 +73,14 @@ FocusScope {
 
         sourceComponent: ControllerSetup {
             focus: true
+            // Held on the theme root rather than passed in: the Loader builds
+            // this lazily, so there is no instance to set a property on at
+            // the moment the key is pressed.
+            pendingGame: root.pendingGame
             Component.onCompleted: open()
             onClosed: {
                 setupLoader.active = false;
+                root.pendingGame = null;
                 library.focus = true;
             }
         }

@@ -233,6 +233,26 @@ def check_scope_choice() -> None:
             "FAIL: the per-game scope is not drawn as its console's pad")
     print(f"  ok  {game['label']!r} -> {game['id']!r}")
 
+    print("\nasked from a game, the question is two entries wide:")
+    # Reached from the library, both facts are already known -- this is an N64
+    # game and it is GoldenEye -- so there is nothing to scroll past.
+    from padmap.capture import game_scope_options
+    pair = game_scope_options("n64", "n64/goldeneye-007-usa",
+                              "GoldenEye 007 (USA)", {"console:n64"})
+    if [o.id for o in pair] != ["console:n64", "game:n64/goldeneye-007-usa"]:
+        raise SystemExit(f"FAIL: offered {[o.id for o in pair]}")
+    if not all(o.layout == "n64" for o in pair):
+        raise SystemExit(
+            f"FAIL: {[(o.id, o.layout) for o in pair]} -- a mapping for one "
+            f"N64 game is still a capture of the N64 control set")
+    if not pair[0].mapped or pair[1].mapped:
+        raise SystemExit("FAIL: the existing console mapping is unmarked")
+
+    # No console means no scope the launcher would ever look up.
+    if game_scope_options("", "", "Mystery", set()):
+        raise SystemExit("FAIL: offered a scope for a game with no console")
+    print(f"  ok  {[o.label for o in pair]}, both drawn as n64")
+
     print("\nseveral recent games are all offered, each once:")
     options = scope_options(
         scopes={"game:n64/smash"}, default_layout="gamecube",

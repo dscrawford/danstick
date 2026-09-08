@@ -312,6 +312,43 @@ def layout_options(mapped_layouts: set[str] | None = None) -> list[Option]:
     ]
 
 
+def game_scope_options(
+    console: str, key: str, title: str, scopes: set[str],
+) -> list[Option]:
+    """"Console or just this game?", asked with both answers already known.
+
+    The strip `scope_options` builds has to offer every console and a handful
+    of recently played games, because it is reached from the controller setup
+    screen, which knows nothing about what the user wants to play. Reached
+    from a game in the library instead, both facts are already in hand -- this
+    *is* an N64 game and it *is* GoldenEye -- so the question collapses to two
+    entries and there is nothing to scroll past and nothing to get wrong.
+
+    Both draw the console's pad, because both are captured against it: a
+    mapping for one N64 game is still a mapping of the N64 control set.
+
+    Console first. It is the answer that is right more often -- a pad that
+    needs remapping for one N64 game usually needs it for all of them -- and
+    the first entry is the one a hurried user confirms.
+    """
+    options: list[Option] = []
+    if console:
+        scope = profiles.console_scope(console)
+        label = layouts.get(console)
+        options.append(Option(
+            id=scope,
+            label=f"{label.console_label or label.label} games",
+            layout=console, mapped=scope in scopes,
+        ))
+    if key:
+        scope = profiles.game_scope(key)
+        options.append(Option(
+            id=scope, label=title or key, layout=console,
+            mapped=scope in scopes,
+        ))
+    return options
+
+
 def scope_options(
     scopes: set[str], default_layout: str = "",
     recent: list[tuple[str, str, str]] | None = None,

@@ -20,6 +20,15 @@ Commands (client -> daemon)
 {"cmd": "set_icon", "player": 1, "icon": "n64"}   remember the chosen icon
 {"cmd": "choose_layout", "player": 1}   pick a console, then map its buttons
 {"cmd": "choose_scope", "player": 1}    pick what a mapping is *for*, then map
+{"cmd": "map_for_game", "player": 1, "console": "n64",
+ "key": "n64/goldeneye-007-usa", "title": "GoldenEye 007 (USA)"}
+                                  map this player's pad for that console or
+                                  that one game -- asked from the library,
+                                  where both are already known, so the scope
+                                  question is two entries wide. console/key
+                                  come from the exporter's x-console and
+                                  x-gamekey, computed with the same functions
+                                  the launcher uses to resolve a scope
 {"cmd": "forget_pad", "player": 1}     throw away everything stored for that
                                   player's controller and open the wizard
                                   again; keyboard-driven, because the daemon

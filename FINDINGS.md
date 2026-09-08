@@ -2108,3 +2108,59 @@ which is precisely when they are most likely to want it.
 Still missing, and worth doing: there is no way to *delete* a scoped mapping.
 Re-mapping replaces one, but a scope created by mistake can only be
 overwritten, never removed.
+
+## Mapping a pad from the game, where the answers are already known
+
+Proposed: "a keyboard action and then a controller select beforehand. This
+shouldn't happen in the controller select screen but on the game view screen.
+So press a key on the keyboard while focused over a game, then we get the 'Is
+this mapping for console or game?', and we already know both because we're on
+the game select screen."
+
+That is a better shape than what existed, and the reason is worth stating.
+The scope picker reached from the controller setup screen has to offer every
+console and a handful of recently launched games, because that screen knows
+nothing about what anyone wants to play. It is a list built out of ignorance.
+Reached from a game in the library, both facts are in hand, so the question
+collapses to two entries -- "Nintendo 64 games" or "GoldenEye 007 (USA)" --
+with nothing to scroll past and nothing to get wrong. It also makes the
+recently-played list irrelevant for this route: any game in the library can be
+mapped for, not just one played this session.
+
+Press **M** on a focused game. A raw key, deliberately not one of Pegasus's
+named actions: every one of those is already bound here, and the gamepad half
+of their bindings could not reach this anyway, because the daemon grabs every
+pad the moment the session opens.
+
+**The claim is the controller select.** Rather than presenting a list of
+assigned pads, the setup screen opens as it always does and configures
+whichever pad presses a button. That gesture needs nothing mapped, works on a
+pad padmap has never seen, and is the same one that claims a slot -- so it is
+one idiom, not two.
+
+Two things had to be gated, both mutation-tested:
+
+* One press must start one wizard. The claim signal and the state event both
+  fire for a single press, in no guaranteed order.
+* It must follow a *press*. The daemon opens this screen by itself from a
+  state that already lists players belonging to a finished session, and
+  mapping one of those would configure whichever pad was player 1 last time
+  while the user held a different one. This is the same `claimedHere` trap
+  that once left the calibration overlay stuck on "Starting...".
+
+The first version of that second check was worthless and the mutation testing
+said so: it asserted nothing happened with an *empty* player list, where the
+loop never runs and the guard is never reached. It only became a real check
+once it listed a player who had not claimed on this screen.
+
+### The console and the key are computed once, by the exporter
+
+`x-console` and `x-gamekey` are written into the collection file by
+`pegasus.render`, using `layouts.for_core` and `profiles.game_key` -- the same
+two functions `padmap.launch` uses to resolve a scope when a game starts. The
+theme passes them through untouched and the daemon uses them as given.
+
+Deriving either in the theme, or again in the daemon, would be a second
+definition of which scope a game belongs to. The failure would be silent in
+the worst way: a mapping filed under a scope the launcher never looks up,
+which presents as a wizard that completes successfully and changes nothing.

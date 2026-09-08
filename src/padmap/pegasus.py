@@ -28,6 +28,7 @@ import shlex
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import layouts, profiles
 from .titles import Title, find_titles, resolve
 
 DETECT = "DETECT"
@@ -67,6 +68,11 @@ class Entry:
     # theme rather than acted on here: whether a preliminary driver is worth
     # hiding, dimming or just labelling is a presentation decision.
     status: str = ""
+    # profiles.game_key for this game, or "". Computed here rather than in
+    # the theme so it comes from the same function padmap.launch uses when the
+    # game starts -- a per-game mapping filed under a key the launcher does
+    # not compute is one nothing ever reads, and nothing would report it.
+    key: str = ""
     # Pegasus asset key -> absolute image path, for whatever art was found.
     assets: dict[str, str] = field(default_factory=dict)
 
@@ -77,6 +83,12 @@ class Collection:
     core_path: str
     entries: list[Entry]
     extensions: str = ""
+    # Layout id for the console this collection plays, or "" if the core is
+    # not one padmap knows. Derived with layouts.for_core -- the *same*
+    # function padmap.launch uses to pick a scope when a game starts, so a
+    # mapping made from the library is filed under the scope the launcher
+    # will later look for. Two derivations here would drift silently.
+    console: str = ""
 
 
 def _display_name(playlist: Path, data: dict) -> str:
@@ -179,6 +191,7 @@ def read_playlist(
 
     titles = titles if titles is not None else {}
     default_core = data.get("default_core_path", "")
+    console = layouts.for_core(default_core)
     # RetroArch files thumbnails under the playlist name, so the tree is
     # keyed by the same stem regardless of what the collection ends up
     # called for display.
@@ -197,6 +210,7 @@ def read_playlist(
             year=info.year,
             manufacturer=info.manufacturer,
             status=info.status,
+            key=profiles.game_key(console, rom) if console else "",
             assets=entry_assets(label, rom, art),
         ))
 
@@ -205,6 +219,7 @@ def read_playlist(
         core_path=default_core,
         entries=entries,
         extensions=data.get("scan_file_exts", ""),
+        console=console,
     )
 
 
@@ -349,6 +364,14 @@ def render(collection: Collection) -> str:
         # outside arcade has a grade at all.
         if entry.status:
             lines.append(f"x-mame-status: {entry.status}")
+        # Per game rather than once per collection: Pegasus exposes `x-` keys
+        # under `game.extra`, and the theme reads it from the game it is
+        # sitting on. It is what lets "map this pad for this game" ask a
+        # two-entry question instead of offering every console there is.
+        if collection.console:
+            lines.append(f"x-console: {collection.console}")
+        if entry.key:
+            lines.append(f"x-gamekey: {entry.key}")
         # Emitted only when the file exists, so the theme can treat "has a
         # boxFront" as "has art to show" and pick its layout from that.
         for _, asset in ART_KINDS:

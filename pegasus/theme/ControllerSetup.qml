@@ -20,6 +20,7 @@ FocusScope {
         // case would restart the session and discard existing claims.
         root.offered = ({});
         root.claimedHere = ({});
+        root.gameMappingStarted = false;
         if (api.padmap.state !== "assigning")
             api.padmap.begin(4);
 
@@ -52,6 +53,19 @@ FocusScope {
     // controller assigned to player N" and an overlay with nothing to show.
     property var claimedHere: ({})
 
+    // {console, key, title} when this screen was opened from a game in the
+    // library to map a pad for it, otherwise null.
+    //
+    // The claim is the controller select. Rather than asking which of the
+    // assigned pads to configure -- a list nobody wants to read -- the screen
+    // waits for someone to press a button, and configures whatever pressed
+    // it. That is the same gesture that claims a slot, so it needs nothing
+    // mapped and works on a pad padmap has never seen.
+    property var pendingGame: null
+    // So one claim starts one wizard. Both the claim signal and the state
+    // event fire for a single press, in no guaranteed order.
+    property bool gameMappingStarted: false
+
 
 
     // Set once a controller has been configured for the first time, to hint
@@ -75,6 +89,7 @@ FocusScope {
 
         function onClaimed(player, name, node) {
             root.claimedHere[player] = true;
+            root.maybeStartGameMapping();
             // Try straight away, and again from the state event: the claim
             // signal and the state event carrying the new player arrive
             // separately and in no guaranteed order, so whichever lands
@@ -83,7 +98,34 @@ FocusScope {
         }
 
         function onStateChanged() {
+            root.maybeStartGameMapping();
             root.maybeOfferSetup();
+        }
+    }
+
+    // Map for the game this screen was opened from, as soon as a pad claims.
+    //
+    // Checked before maybeOfferSetup, so a controller padmap has never seen
+    // gets the mapping that was actually asked for rather than the first-run
+    // calibration prompt. Someone who pressed a key on GoldenEye wants to map
+    // for GoldenEye; being asked to hold the stick in circles instead is a
+    // non-sequitur.
+    function maybeStartGameMapping() {
+        if (!root.pendingGame || root.gameMappingStarted)
+            return;
+        if (api.padmap.state !== "assigning")
+            return;
+
+        var players = api.padmap.players;
+        for (var i = 0; i < players.length; i++) {
+            var entry = players[i];
+            if (!root.claimedHere[entry.player])
+                continue;
+            root.gameMappingStarted = true;
+            api.padmap.mapForGame(entry.player, root.pendingGame.console,
+                                  root.pendingGame.key,
+                                  root.pendingGame.title);
+            return;
         }
     }
 

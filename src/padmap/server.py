@@ -368,6 +368,10 @@ class Server:
             self._begin_layout_choice(int(message.get("player", 0)))
         elif command == "choose_scope":
             self._begin_scope_choice(int(message.get("player", 0)))
+        elif command == "map_for_game":
+            self._begin_game_scope_choice(
+                int(message.get("player", 0)), str(message.get("console", "")),
+                str(message.get("key", "")), str(message.get("title", "")))
         elif command == "forget_pad":
             self._forget_pad(int(message.get("player", 0)))
         elif command == "skip_control":
@@ -800,6 +804,66 @@ class Server:
         # request is "this is wrong, fix it", and an extra step between the
         # key and the first prompt is one the user has to discover.
         self._begin_layout_choice(player)
+
+    def _begin_game_scope_choice(
+        self, player: int, console: str, key: str, title: str,
+    ) -> None:
+        """Ask console-or-this-game, for a game the front-end is sitting on.
+
+        The same question `_begin_scope_choice` asks, minus the guessing. That
+        one is reached from the controller setup screen, which knows nothing
+        about what anyone wants to play, so it has to offer every console and
+        a few recently launched games and hope the right one is among them.
+        Reached from a game in the library, both facts are already known, and
+        the question is genuinely two entries wide.
+
+        The console id and the game key both come from the front-end, which
+        got them from the exporter, which computed them with `layouts.for_core`
+        and `profiles.game_key` -- the same two functions `padmap.launch` uses
+        to decide which scope to look up when the game actually starts. Deriving
+        them here instead would be a second implementation with nothing to
+        notice when it drifted, and the symptom would be a mapping filed under
+        a scope nothing ever reads.
+        """
+        if self._assigner is None:
+            self._broadcast({"event": "error",
+                             "message": "mapping needs an open session"})
+            return
+        pad = self._pad_for_player(player)
+        if pad is None:
+            self._broadcast({"event": "error",
+                             "message": f"no controller assigned to player {player}"})
+            return
+        device = self._assigner.device_for(pad)
+        if device is None:
+            self._broadcast({"event": "error",
+                             "message": "controller is no longer open"})
+            return
+
+        profile = profiles.load(pad)
+        options = capture.game_scope_options(
+            console=console, key=key, title=title,
+            scopes=set(profile.mappings) if profile else set(),
+        )
+        if not options:
+            # No console means no scope worth offering: a mapping filed under
+            # a console padmap cannot name is one the launcher will never look
+            # for. Better to say so than to record something inert.
+            self._broadcast({
+                "event": "error",
+                "message": "no console known for this game"})
+            return
+
+        self._pending_scope = ""
+        self._choice = capture.Chooser(
+            pad=pad, player=player, options=options,
+            kind=capture.KIND_SCOPE,
+            title=f"Map for {title}?" if title else "What is this mapping for?",
+            axes=self._absolute_ranges(device),
+            held=self._active_keys(device),
+        )
+        self._confirm_started.clear()
+        self._broadcast(self._choice.to_event())
 
     def _begin_scope_choice(self, player: int) -> None:
         """Ask what a mapping is *for* before asking where the buttons are.
