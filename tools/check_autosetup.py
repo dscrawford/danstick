@@ -358,6 +358,47 @@ def main() -> int:
         raise SystemExit("FAIL: one adapter produced more than one rule")
     print("  ok  all three adapters covered, assigned or not; ports deduped")
 
+    print("\ninstalling the rules, rather than printing a script to paste:")
+    with tempfile.TemporaryDirectory() as tmp:
+        rules_file = Path(tmp) / "99-padmap.rules"
+        original_path, original_udevadm = hide.RUNTIME_RULES_PATH, hide._udevadm
+        hide.RUNTIME_RULES_PATH = rules_file
+        hide._udevadm = lambda *a: ""      # root-only; not what is under test
+        try:
+            pads = hide.targets([stick, usb, cube], [])
+            rules = hide.generate_rules(pads)
+
+            changed, messages = hide.install(rules)
+            if not changed or not rules_file.exists():
+                raise SystemExit(f"FAIL: nothing installed ({messages})")
+            if rules_file.read_text() != rules:
+                raise SystemExit("FAIL: the file does not hold the rules")
+
+            # udev keeps rules in memory: a write without a reload changes
+            # nothing until reboot, and a controller still visible after
+            # padmap said it hid it is the exact silent gap to avoid.
+            calls = []
+            hide._udevadm = lambda *a: calls.append(a) or ""
+            rules_file.write_text("stale")
+            hide.install(rules)
+            if ("control", "--reload-rules") not in calls:
+                raise SystemExit(f"FAIL: rules written without a reload ({calls})")
+
+            # Running twice must be honest about having done nothing.
+            again, messages = hide.install(rules)
+            if again:
+                raise SystemExit(f"FAIL: reinstalled unchanged rules ({messages})")
+
+            # The point of all of it: after installing, nothing is left over.
+            if hide.unhidden([stick, usb, cube]):
+                raise SystemExit(
+                    "FAIL: a pad is still unhidden after installing the rules "
+                    "-- the generator and the checker disagree")
+        finally:
+            hide.RUNTIME_RULES_PATH = original_path
+            hide._udevadm = original_udevadm
+    print("  ok  written, reloaded, idempotent, and nothing left unhidden")
+
     print("\nall checks passed")
     return 0
 

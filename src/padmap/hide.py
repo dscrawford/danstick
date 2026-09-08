@@ -25,9 +25,11 @@ produced five configured ports.
 
 from __future__ import annotations
 
-from pathlib import Path
-
+import os
 import re
+import shutil
+import subprocess
+from pathlib import Path
 
 from .devices import Pad
 
@@ -162,6 +164,65 @@ def nix_module_snippet(pads: list[Pad]) -> str:
         "    ];\n"
         "  };"
     )
+
+
+def have_root() -> bool:
+    return os.geteuid() == 0
+
+
+def _udevadm(*args: str) -> str:
+    """Run udevadm, returning "" on success or a message describing failure.
+
+    Located rather than assumed: on NixOS it lives under
+    /run/current-system/sw/bin, which is not always on a root shell's PATH.
+    """
+    binary = shutil.which("udevadm") or "/run/current-system/sw/bin/udevadm"
+    if not Path(binary).exists():
+        return "udevadm not found; reload the rules yourself"
+    try:
+        done = subprocess.run([binary, *args], capture_output=True, text=True)
+    except OSError as error:
+        return f"could not run udevadm: {error}"
+    if done.returncode != 0:
+        return f"udevadm {' '.join(args)} failed: {done.stderr.strip()}"
+    return ""
+
+
+def install(rules: str) -> tuple[bool, list[str]]:
+    """Write the rules and make udev apply them. (changed, messages).
+
+    Into /run/udev/rules.d: it is tmpfs, so a reboot undoes it, and on NixOS
+    /etc/udev/rules.d is a store symlink that cannot be written at all.
+
+    Reloading is not optional. udev keeps its rules in memory, so a file
+    written without the reload changes nothing until the next boot -- and a
+    controller that is still visible after padmap said it had hidden it is
+    precisely the kind of silent gap this project keeps tripping over.
+
+    `changed` is False when the file already said exactly this, so running it
+    twice is honest about having done nothing.
+    """
+    messages: list[str] = []
+    target = RUNTIME_RULES_PATH
+    try:
+        existing = target.read_text()
+    except OSError:
+        existing = ""
+    if existing == rules:
+        return False, [f"{target} already up to date"]
+
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(rules)
+    except OSError as error:
+        return False, [f"could not write {target}: {error}"]
+    messages.append(f"wrote {target}")
+
+    for args in (("control", "--reload-rules"),
+                 ("trigger", "--subsystem-match=input")):
+        problem = _udevadm(*args)
+        messages.append(problem or f"udevadm {args[0]} ok")
+    return True, messages
 
 
 def install_hint(rules: str, pads: list[Pad] | None = None) -> str:

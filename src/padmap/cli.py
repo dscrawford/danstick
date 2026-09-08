@@ -862,14 +862,48 @@ def cmd_fetch_art(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_hide(_args: argparse.Namespace) -> int:
-    # Every physical pad, not merely the assigned ones -- see hide.targets.
-    # Building the rules from the assignment is what left the GameCube
-    # adapter visible, and regenerating that way would un-hide the others.
-    assignments = _load_assignments()
-    pads = hide.targets(devices.discover(), [a.pad for a in assignments])
-    print(hide.install_hint(hide.generate_rules(pads), pads))
-    return 0
+def cmd_hide(args: argparse.Namespace) -> int:
+    """Show the udev rules, or install them outright when run as root.
+
+    Running as root is taken as the instruction to install: there is no other
+    reason to run this with privileges, and printing a script for someone who
+    already typed `sudo` to copy back into the same shell is a step that
+    exists only to be got wrong.
+
+    Note the pads are read from /sys, not from the assignment. That matters
+    precisely here: under sudo, XDG_RUNTIME_DIR points at root's, so the
+    assignment file is usually not even readable -- and rules derived from it
+    would then cover nothing at all. See hide.targets.
+    """
+    try:
+        assigned = [a.pad for a in _load_assignments()]
+    except Exception:
+        # Unreadable under sudo, which is normal and not worth failing over.
+        assigned = []
+    pads = hide.targets(devices.discover(), assigned)
+    rules = hide.generate_rules(pads)
+
+    if args.print_only or not hide.have_root():
+        if args.install and not hide.have_root():
+            print("Installing needs root. Re-run:  sudo padmap hide\n")
+        print(hide.install_hint(rules, pads))
+        return 0
+
+    print(f"Hiding {len(pads)} adapter(s) from RetroArch:")
+    for target in pads:
+        print(f"  {target.vid:04x}:{target.pid:04x}  {target.name}")
+    print()
+    changed, messages = hide.install(rules)
+    for message in messages:
+        print(f"  {message}")
+    if not changed and not any("could not" in m for m in messages):
+        return 0
+    print(f"\nCaution: while these rules are active and padmap is not "
+          f"running,\nthese controllers are invisible to RetroArch entirely."
+          f"\nUndo with:  sudo rm {hide.RUNTIME_RULES_PATH} && "
+          f"sudo udevadm control --reload-rules")
+    return 0 if not any("could not" in m or "failed" in m
+                        for m in messages) else 1
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -970,8 +1004,15 @@ def main(argv: list[str] | None = None) -> int:
     # see the note there on why argparse.REMAINDER cannot do this job.
     launch.set_defaults(func=cmd_launch, rest=[])
 
-    sub.add_parser("hide", help="print udev rules hiding physical pads"
-                   ).set_defaults(func=cmd_hide)
+    hide_cmd = sub.add_parser(
+        "hide", help="hide physical pads from RetroArch (installs as root)")
+    hide_cmd.add_argument(
+        "--install", action="store_true",
+        help="install the rules; needs root, so use `sudo padmap hide`")
+    hide_cmd.add_argument(
+        "--print", dest="print_only", action="store_true",
+        help="only print the rules, even when running as root")
+    hide_cmd.set_defaults(func=cmd_hide)
 
     ensure = sub.add_parser(
         "ensure-daemon",

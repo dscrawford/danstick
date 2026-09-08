@@ -2042,3 +2042,31 @@ The `unhidden` warning added earlier had been reading `devices.discover()` all
 along, which is why it correctly flagged 0079:1843 while the generator that
 was supposed to fix it would not have emitted a rule for it. The check and the
 thing it checks now agree.
+
+### `padmap hide` installs rather than dictates
+
+Asked for: "can I just have it run for me rather than echoing the bash
+script?" -- fair, since the script it printed was to be pasted back into the
+same root shell the user had already opened.
+
+Running as root is now taken as the instruction to install. There is no other
+reason to run this command with privileges, and a copy-paste step that exists
+only to be got wrong is not a safety feature. `--print` keeps the old output
+for someone who wants to read the rules first; `--install` without root says
+so and gives the one command that works.
+
+Two things the installer must not skip, both mutation-tested:
+
+* **The reload.** udev holds its rules in memory, so a file written without
+  `udevadm control --reload-rules` changes nothing until the next boot. A
+  controller still visible after padmap has said it hid it is precisely the
+  silent gap this project keeps finding.
+* **Honesty about doing nothing.** Installing identical rules reports "already
+  up to date" rather than claiming a change.
+
+One subtlety worth recording. Under `sudo`, `XDG_RUNTIME_DIR` points at
+root's, so the assignment file usually cannot be read at all. Had `cmd_hide`
+still derived its pad list from the assignment, `sudo padmap hide` would have
+generated rules covering *nothing* -- the previous bug's worst case, reached
+by the very command meant to cure it. Reading the pads from /sys makes the
+privileged and unprivileged runs agree.
