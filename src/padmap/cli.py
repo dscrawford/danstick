@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import argparse
+import errno
 import json
 import logging
 import os
@@ -444,8 +445,57 @@ def _load_assignments() -> list[Assignment]:
     return out
 
 
+class PadsHeld(Exception):
+    """Something else already owns the controllers."""
+
+
 def _start(assignments: list[Assignment]) -> tuple[virtual.Republisher, dict[int, str]]:
-    vpads = [virtual.create(a.pad, a.player) for a in assignments]
+    """Grab the physical pads and republish them, or explain who has them.
+
+    `run` and `launch` are the standalone paths: they build their own virtual
+    pads, which means taking EVIOCGRAB on the physical ones. A running daemon
+    is already doing exactly that, so these two cannot coexist with it -- and
+    what came out was a traceback ending in
+
+        OSError: [Errno 16] Device or resource busy
+
+    from inside evdev, which says nothing about the daemon, nothing about
+    which command to use instead, and looks like a bug in padmap rather than
+    two of its own commands wanting the same hardware.
+
+    Checked before opening anything, so the message does not depend on which
+    pad happened to fail first, and caught as well, because a daemon is not
+    the only thing that can hold a controller.
+    """
+    from . import pegasus, protocol
+
+    running = protocol.daemon_pids()
+    if running:
+        raise PadsHeld(
+            f"the padmap daemon (pid {running[0]}) already holds the "
+            f"controllers.\n"
+            f"This command republishes them itself, so the two cannot run at "
+            f"once.\n\n"
+            f"To launch a game while the daemon runs, use the launcher it "
+            f"maintains:\n"
+            f"  {pegasus.player_link()} -L <core.so> <rom>\n\n"
+            f"To use this command instead, stop the daemon first:\n"
+            f"  kill {running[0]}")
+
+    vpads: list[virtual.VirtualPad] = []
+    try:
+        for assignment in assignments:
+            vpads.append(virtual.create(assignment.pad, assignment.player))
+    except OSError as error:
+        for made in vpads:
+            made.close()
+        if error.errno == errno.EBUSY:
+            raise PadsHeld(
+                f"{error.strerror or error}: another program is holding a "
+                f"controller exclusively.\n"
+                f"Nothing else may grab a pad padmap is republishing.") from error
+        raise PadsHeld(f"could not open a controller: {error}") from error
+
     paths = {vp.player: vp.ui.device.path for vp in vpads}
     return virtual.Republisher(vpads), paths
 
@@ -456,7 +506,11 @@ def cmd_run(_args: argparse.Namespace) -> int:
         print("No assignments. Run `padmap setup` first.")
         return 1
 
-    republisher, paths = _start(assignments)
+    try:
+        republisher, paths = _start(assignments)
+    except PadsHeld as error:
+        print(error)
+        return 1
     retroarch.install_profiles(assignments)
     retroarch.write_launch_config(assignments, paths, LAUNCH_CONFIG_PATH)
     retroarch.write_launch_args(assignments, paths, LAUNCH_ARGS_PATH)
@@ -480,7 +534,11 @@ def cmd_launch(args: argparse.Namespace) -> int:
         print("No assignments. Run `padmap setup` first.")
         return 1
 
-    republisher, paths = _start(assignments)
+    try:
+        republisher, paths = _start(assignments)
+    except PadsHeld as error:
+        print(error)
+        return 1
     retroarch.install_profiles(assignments)
     retroarch.write_launch_config(
         assignments, paths, LAUNCH_CONFIG_PATH, verbose=bool(args.log)

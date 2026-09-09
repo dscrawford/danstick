@@ -2831,3 +2831,39 @@ Not reproduced first-hand: this needs a real game exit on the real machine, and
 the fix addresses the mechanism that was verified rather than a failure that
 was observed. Worth saying plainly, because everything else in this log was
 measured before it was changed.
+
+## Two padmap commands wanting the same controllers
+
+Reported as a traceback from `padmap launch --log`, ending in
+
+    OSError: [Errno 16] Device or resource busy
+
+out of `evdev.device.grab`. Not a bug in evdev and not a broken pad: `run` and
+`launch` are the standalone paths, so they build their own virtual pads, which
+means taking EVIOCGRAB on the physical ones -- and a running daemon is already
+doing exactly that. Two of padmap's own commands wanting the same hardware.
+
+What made it worth fixing is not the failure, it is what the failure said.
+Nothing in that traceback mentions the daemon, names the command to use
+instead, or suggests this is anything other than padmap being broken. The user
+ran it because I suggested it, and the suggestion was wrong.
+
+`_start` now asks whether a daemon holds the pads before opening anything --
+so the message does not depend on which pad happened to fail first -- and
+still catches EBUSY, because a daemon is not the only thing that can hold a
+controller. Both callers print it and exit 1.
+
+Three mistakes of my own while writing this, each caught by running the thing
+rather than reading it:
+
+* `protocol` was not imported. cli.py imports it lazily inside the functions
+  that need it, and I wrote module-level style into a function that had none.
+* Only one of the two call sites got the handler. My pattern used a four-space
+  indent, which is a *substring* of the eight-space call already inside the
+  other function's try block, so the count looked right and the replacement
+  landed in the wrong place. Anchoring on the following line fixed it.
+* The message told the user to run `padmap stop-daemon`, which does not exist.
+  An error that names a command you do not have is worse than one that names
+  none, and this file has spent a long session arguing that a guard has to say
+  what the user should do. It now prints `kill <pid>` with the pid it already
+  looked up.
