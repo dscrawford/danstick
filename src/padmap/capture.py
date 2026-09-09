@@ -402,6 +402,18 @@ def scope_options(
     for game_console, key, title in (recent or []):
         if not key or key in seen:
             continue
+        if not game_console:
+            # Same rule as game_scope_options. padmap.launch records EVERY
+            # launch, including one whose core layouts.for_core cannot name --
+            # deliberately, since a launch with an unknown core is exactly the
+            # one whose controls are most likely to have felt wrong. So an
+            # empty console really does reach here.
+            #
+            # Offering it draws the generic pad beside the entry and then walks
+            # whatever the pad's icon guesses, so the strip promises one
+            # controller and the wizard asks about another. That is precisely
+            # how a mapping ended up with cancel bound to an axis.
+            continue
         seen.add(key)
         scope = profiles.game_scope(key)
         options.append(Option(

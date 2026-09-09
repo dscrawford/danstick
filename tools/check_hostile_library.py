@@ -403,12 +403,16 @@ def check_newline_injection(work: Path) -> None:
     same("the real launch line is still emitted",
          any(PLAY in line or str(pegasus.player_link()) in line
              for line in header["launch"]), True)
-    if len(header["launch"]) == 1:
+    # Promoted from a gap once pegasus.one_line landed. A newline in any
+    # emitted value used to prepend a second launch line, and Pegasus keeps
+    # the FIRST launch command it sees -- so an injected one won for the whole
+    # collection. Every value is now confined to its own line.
+    if len(header["launch"]) != 1:
         raise SystemExit(
-            "FAIL: scan_file_exts no longer injects -- assert it instead")
-    gap("scan_file_exts is copied verbatim, so a newline in it prepends a "
-        f"second launch line ({header['launch'][0]!r}); Pegasus keeps the "
-        "first launch command it sees, so that one wins for the whole set")
+            f"FAIL: {len(header['launch'])} launch lines "
+            f"({header['launch']!r}). A newline in scan_file_exts injected "
+            f"one ahead of the real launcher, and Pegasus honours the first "
+            f"it sees -- every game in the collection would run it")
 
 
 def check_duplicates(work: Path) -> None:
@@ -678,15 +682,19 @@ def check_stale_collections(work: Path) -> None:
 
     dirs_file.write_text(f"{games}\n")
     metadata.write_text('collection: X\nlaunch: "/nix/store/unbalanced -L x\n')
+    # Promoted from a gap once stale_collections guarded shlex.split. An
+    # unbalanced quote raised ValueError, and ensure-daemon calls this
+    # unconditionally on every start -- so a hand-edited metadata.pegasus.txt
+    # tracebacked the whole start path. Same shape as the hide.unhidden UTF-8
+    # bug, and the third time this project has shipped it.
     result = stale()
-    if not isinstance(result, Exception):
+    if isinstance(result, Exception):
         raise SystemExit(
-            "FAIL: an unlexable launch line is handled -- assert it instead")
-    gap(f"a launch line with an unbalanced quote raises "
-        f"{type(result).__name__} out of stale_collections, and cli's "
-        "ensure-daemon calls it unconditionally, so a hand-edited "
-        "metadata.pegasus.txt tracebacks the whole start path -- the same "
-        "shape as the hide.unhidden UTF-8 bug")
+            f"FAIL: a launch line with an unbalanced quote raised "
+            f"{type(result).__name__} out of stale_collections. "
+            f"ensure-daemon calls it on every start, so padmap would not "
+            f"start at all over a cosmetic defect in a file it only reads")
+    same("an unlexable launch line is skipped, not fatal", result, [])
 
     metadata.write_text("collection: X\nlaunch:\n\ngame: A\n")
     same("a launch line with no command is not called stale", stale(), [])

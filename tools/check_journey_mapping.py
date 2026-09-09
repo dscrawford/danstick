@@ -821,45 +821,39 @@ def check_scope_picker_unknown_console() -> None:
     # Reachable: `padmap.launch` records every launch, deliberately including
     # one whose core it does not recognise -- "a launch with an unknown core
     # is exactly the one whose controls are most likely to have felt wrong".
-    # `layouts.for_core` returns "" for such a core, and that "" travels into
-    # the strip as the layout to draw.
+    # `layouts.for_core` returns "" for such a core, and that "" travelled
+    # into the strip as the layout to draw.
+    #
+    # It used to be offered. The entry was drawn as the generic pad, because
+    # Option.to_json falls back to it for an empty layout, and confirming it
+    # handed _begin_mapping an empty layout id -- which falls back to the
+    # pad's own guess. So the strip promised one controller and the wizard
+    # asked about another, which is exactly how a mapping once ended up with
+    # cancel bound to an axis. game_scope_options already refused the same
+    # thing; scope_options now does too.
     options = capture.scope_options(
         scopes=set(), default_layout="gamecube",
         recent=[("", "unknown/mystery-blob", "Mystery Blob")])
     games = [o for o in options if profiles.scope_game(o.id)]
-    if len(games) != 1:
-        fail(f"expected the game to be offered once, got "
-             f"{[o.id for o in games]}")
-    entry = games[0]
-    # Unambiguously right: the scope string is the one padmap.launch will look
-    # up for that ROM, so a capture filed here is not inert.
-    if entry.id != profiles.game_scope("unknown/mystery-blob"):
-        fail(f"the offered scope is {entry.id!r}, which is not the key "
-             f"profiles.game_key writes for a ROM with no console")
-    if profiles.scope_order("", "unknown/mystery-blob")[0] != entry.id:
-        fail("the offered scope is not the first one a launch of that game "
-             "would look for, so a capture filed here would never apply")
-    print(f"  ok  {entry.id!r} is the scope a launch of that game resolves")
+    if games:
+        fail(f"a game with no console is still offered ({[o.id for o in games]}). "
+             f"The strip draws the generic pad for it and the wizard then walks "
+             f"whatever the controller is guessed to be, so the picture promises "
+             f"one pad and the prompts ask about another")
+    print("  ok  not offered at all")
 
-    drawn = controls_of(entry)
-    # `Chooser.chosen_layout` is what the daemon hands `_begin_mapping`, and
-    # for this entry it is empty -- so the wizard walks whatever the pad is
-    # guessed to be, while the strip drew the generic gamepad `layouts.get("")`
-    # falls back to.
-    walked = wizard_asks(entry.layout, guess=PAD_GUESS)
-    if drawn != walked:
-        print(f"  gap: the entry is drawn as "
-              f"{entry.to_json()['layout']['id']!r}, because its console is "
-              f"empty and Option.to_json falls back to the generic pad. "
-              f"Confirming it hands _begin_mapping an empty layout id, which "
-              f"falls back to the pad's own guess -- here {PAD_GUESS!r}, so "
-              f"the wizard would ask for {walked[:3]}... while the picture "
-              f"promised {drawn[:3]}... Same class as the console-less game "
-              f"scope already refused by game_scope_options.")
-    else:
-        fail("the unknown-console entry now agrees with the wizard; turn the "
-             "gap above into an assertion")
-
+    print("\n...while a recent game whose console IS known is still offered:")
+    options = capture.scope_options(
+        scopes=set(), default_layout="gamecube",
+        recent=[("", "unknown/blob", "Blob"), ("n64", "n64/mario", "Mario")])
+    games = [o for o in options if profiles.scope_game(o.id)]
+    if [o.id for o in games] != [profiles.game_scope("n64/mario")]:
+        fail(f"expected only the N64 game, got {[o.id for o in games]} -- "
+             f"refusing the unknown one must not cost the known ones")
+    if games[0].layout != "n64":
+        fail(f"the offered entry draws {games[0].layout!r}, not the console "
+             f"whose control set the capture is made against")
+    print(f"  ok  {games[0].id!r} offered, drawn as {games[0].layout!r}")
 
 def check_game_scope_picker_is_two_entries() -> None:
     print("\nS10: asked from a game, the question is two entries wide:")

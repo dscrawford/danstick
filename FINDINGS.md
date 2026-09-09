@@ -2630,3 +2630,59 @@ raises on a damaged table and silently loads a string as a one-character title;
 `padmap forget` crashes on the same non-object JSON the discovery path was
 already fixed for; and `scope_options` still offers a recent game whose console
 is unknown, drawing one pad and walking another.
+
+## Clearing the backlog: six defects the sweeps had found but nobody had fixed
+
+**A newline in a game's title injected a metadata key.** metadata.pegasus.txt
+is line oriented, and every field value was interpolated raw. A title holding
+"Evil\nlaunch: /bin/sh" emitted a launch line of its own, *ahead* of the
+collection's real one -- and Pegasus keeps the first launch command it sees, so
+that game would have run it. Reachable with nobody hand-editing anything:
+titles.parse_mame_xml reads <description> with re.S, so a MAME description
+wrapped across two lines is enough.
+
+`pegasus.one_line` now confines every emitted value. The first version
+collapsed all runs of whitespace, which fixed the injection and quietly
+rewrote every title containing a tab or a double space -- "Double  Dragon"
+became "Double Dragon". A test caught it. The format cares about line breaks
+and nothing else, so now neither does the guard.
+
+**One damaged playlist emptied the whole library.** read_playlist validated the
+top-level shape and then trusted everything below it, so `{"items": [1,2,3]}`
+raised out of a loop that walks every .lpl in turn. The user's entire library
+disappeared from Pegasus because one file was bad. Entries are now skipped
+individually, a file with no usable entries at all returns None rather than an
+empty collection, and export survives a playlist it cannot read.
+
+**stale_collections could stop padmap starting**, twice over: shlex.split on a
+launch line with an unbalanced quote, and read_text on a file that exists but
+is unreadable. ensure-daemon calls it unconditionally on every start.
+
+**`padmap forget` was defeated by the thing it exists to fix.** It read each
+profile inside `except (OSError, ValueError)` and then called .get() on the
+result, so a file holding `null` or `42` raised AttributeError -- the same
+non-object JSON bug already fixed in discovery. And --all unlinked everything
+it globbed, so a directory named *.json killed the one command meant to clear
+up a mess. It also reported the number of files it *attempted*, which meant
+telling someone five profiles were forgotten while one was still on disk.
+
+**The scope picker offered a game whose console padmap cannot name.**
+game_scope_options already refused this; scope_options never got the same
+guard, and padmap.launch deliberately records every launch including one with
+an unrecognised core. The entry drew the generic pad and then walked whatever
+the controller was guessed to be -- the strip promising one pad and the wizard
+asking about another, which is precisely how a mapping once ended up with
+cancel bound to an axis.
+
+### Two gaps that promoted themselves
+
+The sweep agents were told to keep their files green and print a "gap:" line
+where the behaviour was wrong. Two of them went further and wrote the gap so
+that *fixing* the bug fails the test:
+
+    if len(header["launch"]) == 1:
+        raise SystemExit("FAIL: scan_file_exts no longer injects -- assert it instead")
+
+That is a better construction than either a plain gap or a red test. It stays
+green while the bug exists, it cannot be forgotten, and the moment someone
+fixes the source it demands to be turned into a real assertion. Both have been.

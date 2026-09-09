@@ -23,12 +23,15 @@ rather than downloaded again; see `art_index`.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shlex
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import layouts, profiles
+
+log = logging.getLogger("padmap.pegasus")
 from .titles import Title, find_titles, resolve
 
 DETECT = "DETECT"
@@ -198,8 +201,24 @@ def read_playlist(
     art = art_index(path.stem)
 
     entries: list[Entry] = []
-    for item in data["items"]:
+    items = data.get("items")
+    if not isinstance(items, list):
+        # "items" present but not a list. The top-level shape was checked and
+        # this was not, so a playlist holding {"items": null} raised straight
+        # out of read_playlist -- and export walks every .lpl in one loop, so
+        # ONE damaged file meant no collections at all and the whole library
+        # vanished from Pegasus.
+        return None
+    skipped = 0
+    for item in items:
+        if not isinstance(item, dict):
+            # An entry that is not an object costs that entry, not the file.
+            skipped += 1
+            continue
         rom = item.get("path", "")
+        if not isinstance(rom, str):
+            skipped += 1
+            continue
         if not rom:
             continue
         label = item.get("label", "")
@@ -213,6 +232,13 @@ def read_playlist(
             key=profiles.game_key(console, rom) if console else "",
             assets=entry_assets(label, rom, art),
         ))
+
+    if skipped and not entries:
+        # Every entry was unusable. Reporting that as an empty collection
+        # presents damaged data as valid, and nothing downstream would say so;
+        # None is what this function already returns for a file it cannot make
+        # sense of. A file with SOME good entries keeps them.
+        return None
 
     return Collection(
         name=_display_name(path, data),
@@ -320,39 +346,81 @@ def stale_collections() -> list[Path]:
 
     wanted = str(player_link())
     stale: list[Path] = []
-    for line in config.read_text(errors="replace").splitlines():
+    try:
+        config_text = config.read_text(errors="replace")
+    except OSError:
+        # is_file() then read is a race, and the file can simply be
+        # unreadable -- left root-owned by a `sudo padmap export-pegasus`,
+        # say. Either way this must not end `ensure-daemon`.
+        return []
+    for line in config_text.splitlines():
         directory = line.strip()
         if not directory:
             continue
         metadata = Path(directory) / "metadata.pegasus.txt"
         if not metadata.is_file():
             continue
-        for entry in metadata.read_text(errors="replace").splitlines():
+        try:
+            metadata_text = metadata.read_text(errors="replace")
+        except OSError:
+            continue
+        for entry in metadata_text.splitlines():
             if not entry.startswith("launch:"):
                 continue
-            parts = shlex.split(entry[len("launch:"):].strip())
+            try:
+                parts = shlex.split(entry[len("launch:"):].strip())
+            except ValueError:
+                # An unbalanced quote. This runs from `ensure-daemon`, so
+                # raising here means padmap will not start at all -- over a
+                # cosmetic defect in a file it only wants to look at.
+                continue
             if parts and parts[0] != wanted:
                 stale.append(metadata)
             break
     return stale
 
 
+def one_line(value: str) -> str:
+    """A field value that cannot break out of its line.
+
+    metadata.pegasus.txt is line oriented: a key, a colon, a value, one per
+    line. A value containing a newline therefore does not merely look wrong,
+    it *injects a key*. A game whose title held "Evil\\nlaunch: /bin/sh"
+    emitted a launch line of its own, ahead of the collection's real one --
+    and Pegasus keeps the first launch command it sees, so that game would run
+    it.
+
+    Reachable without anyone hand-editing a file: titles.parse_mame_xml reads
+    <description> with re.S, so a MAME description wrapped across two lines
+    yields a title containing a newline.
+
+    Line breaks only. An earlier version collapsed all runs of whitespace,
+    which fixed the injection and quietly rewrote every title that contained
+    a tab or a double space -- "Double  Dragon" became "Double Dragon". The
+    format cares about newlines and nothing else, so neither should this.
+    """
+    text = str(value)
+    for break_char in ("\r\n", "\r", "\n", "\u2028", "\u2029"):
+        text = text.replace(break_char, " ")
+    return text
+
+
 def render(collection: Collection) -> str:
     lines = [
-        f"collection: {collection.name}",
+        f"collection: {one_line(collection.name)}",
     ]
     if collection.extensions:
-        lines.append(f"extensions: {collection.extensions}")
+        lines.append(f"extensions: {one_line(collection.extensions)}")
     lines.append(f"launch: {launch_line(collection.core_path)}")
     lines.append("")
 
     for entry in collection.entries:
-        lines.append(f"game: {entry.title}")
-        lines.append(f"file: {entry.path}")
+        lines.append(f"game: {one_line(entry.title)}")
+        lines.append(f"file: {one_line(entry.path)}")
         if entry.year:
-            lines.append(f"release: {entry.year}")
+            lines.append(f"release: {one_line(entry.year)}")
         if entry.manufacturer:
-            lines.append(f"developer: {entry.manufacturer}")
+            lines.append(f"developer: {one_line(entry.manufacturer)}")
         # `x-` is Pegasus's own extension escape hatch: PegasusMetadata.cpp
         # keeps any key starting with it and exposes the rest of the name
         # under `game.extra`. Nothing built in carries "this driver does not
@@ -363,21 +431,21 @@ def render(collection: Collection) -> str:
         # unknown, which the theme must not read as broken -- almost nothing
         # outside arcade has a grade at all.
         if entry.status:
-            lines.append(f"x-mame-status: {entry.status}")
+            lines.append(f"x-mame-status: {one_line(entry.status)}")
         # Per game rather than once per collection: Pegasus exposes `x-` keys
         # under `game.extra`, and the theme reads it from the game it is
         # sitting on. It is what lets "map this pad for this game" ask a
         # two-entry question instead of offering every console there is.
         if collection.console:
-            lines.append(f"x-console: {collection.console}")
+            lines.append(f"x-console: {one_line(collection.console)}")
         if entry.key:
-            lines.append(f"x-gamekey: {entry.key}")
+            lines.append(f"x-gamekey: {one_line(entry.key)}")
         # Emitted only when the file exists, so the theme can treat "has a
         # boxFront" as "has art to show" and pick its layout from that.
         for _, asset in ART_KINDS:
             image = entry.assets.get(asset)
             if image:
-                lines.append(f"assets.{asset}: {image}")
+                lines.append(f"assets.{asset}: {one_line(image)}")
         lines.append("")
 
     return "\n".join(lines)
@@ -409,13 +477,25 @@ def export(
     written: list[Path] = []
 
     for playlist in sorted(playlist_dir.glob("*.lpl")):
-        collection = read_playlist(playlist, titles)
+        # Per playlist, because the alternative is all or nothing. Every
+        # collection is independent, and a library that loses its arcade tab
+        # to one damaged file is far better than one that loses every tab.
+        try:
+            collection = read_playlist(playlist, titles)
+        except Exception as error:                      # noqa: BLE001
+            log.warning("skipping %s: %s: %s",
+                        playlist.name, type(error).__name__, error)
+            continue
         if collection is None or not collection.entries:
             continue
 
         target = out_dir / playlist.stem
-        target.mkdir(parents=True, exist_ok=True)
-        (target / "metadata.pegasus.txt").write_text(render(collection))
+        try:
+            target.mkdir(parents=True, exist_ok=True)
+            (target / "metadata.pegasus.txt").write_text(render(collection))
+        except OSError as error:
+            log.warning("could not write %s: %s", target, error)
+            continue
         written.append(target)
 
         resolved = sum(

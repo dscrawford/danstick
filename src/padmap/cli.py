@@ -335,11 +335,26 @@ def cmd_forget(args: argparse.Namespace) -> int:
                 raw = json.loads(path.read_text())
             except (OSError, ValueError):
                 continue
-            if raw.get("signature") in connected:
+            if isinstance(raw, dict) and raw.get("signature") in connected:
+                # isinstance, because json.loads happily returns None, a list
+                # or a number for "null", "[1,2]" or "42" without raising, and
+                # .get() on those is an AttributeError that this except clause
+                # does not catch. `padmap forget` is the recovery command for a
+                # broken profile store; it must not be stopped by one.
                 targets.append(path)
 
+    removed = 0
     for path in targets:
-        path.unlink()
+        try:
+            path.unlink()
+        except OSError as error:
+            # A directory named *.json, or one that is not ours to remove.
+            # --all unlinks everything it globbed, so without this the
+            # "remove everything and start again" command is the only one
+            # that dies on the mess it is meant to clear up.
+            print(f"  could not remove {path.name}: {error}")
+            continue
+        removed += 1
         print(f"  removed {path.name}")
 
     # Clear the 'already asked' record for every controller in scope, not
@@ -362,7 +377,10 @@ def cmd_forget(args: argparse.Namespace) -> int:
         return 0
 
     if targets:
-        print(f"\nForgot {len(targets)} profile(s). They will be set up again")
+        # What was actually removed, not what was attempted. Reporting five
+        # when one of them is still on disk sends someone away believing a
+        # controller was reset when it will come back configured.
+        print(f"\nForgot {removed} profile(s). They will be set up again")
         print("on the next controller assignment.")
     if cleared:
         print(f"Cleared {cleared} 'already asked' record(s), so setup is")
