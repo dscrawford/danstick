@@ -2427,3 +2427,34 @@ indistinguishable from input mapped wrongly when you are holding the pad.
 
 Worth recording because the instinct was to go looking for a persistence bug,
 and there wasn't one.
+
+### The daemon and the launcher wrote different profiles to the same file
+
+Reported: the game-specific mapping "didn't seem to apply on the second go".
+
+Not a persistence bug -- the mapping is stored, and `padmap.launch` resolves it
+correctly and idempotently. Run twice with the same core and ROM it produced
+the same game-scoped profile both times, so the launcher never drops it.
+
+The conflict is that two different things write that file with different
+answers. `padmap.launch` writes a profile resolved from the core and ROM of the
+launch in progress. `Server._start_republisher` wrote one with no context at
+all, which resolves to the controller's default mapping. Same path, same
+filename, and whichever ran last wins.
+
+Republishing restarts for reasons that have nothing to do with the game: a
+setup session being accepted, a controller reconnecting, the daemon being
+restarted to pick up new code. Any of those after a launch replaces the
+game-specific profile with the default one -- and a mapping that is live one
+launch and gone the next, with nothing in between that the user did, is
+exactly the report.
+
+`_start_republisher` now passes the last launched game as context, so it
+regenerates the profile the launcher would rather than contradicting it. Where
+nothing has been launched the context is empty and this is the same write it
+always was.
+
+Not confirmed as the cause -- it could not be reproduced on demand, because
+reproducing it needs a republish to land between a launch and RetroArch reading
+the file. It is a real disagreement between two writers of one file, which is a
+thing worth removing whether or not it is this report.

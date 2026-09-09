@@ -1503,7 +1503,25 @@ class Server:
             self._selector.register(fd, selectors.EVENT_READ, self._on_pad_read)
 
         paths = {vp.player: vp.ui.device.path for vp in vpads}
-        retroarch.install_profiles(self._assignments)
+        # Regenerate the profiles the *launcher* would, not context-free ones.
+        #
+        # padmap.launch resolves a scope from the core and ROM at launch and
+        # writes it into this same directory. Writing a context-free profile
+        # here overwrites that with the default mapping, and republishing
+        # restarts for reasons that have nothing to do with the game -- a
+        # session being accepted, a controller reconnecting, the daemon being
+        # upgraded. Whichever wrote last wins, so a game-specific mapping
+        # could be live one launch and silently gone the next.
+        #
+        # The last game is the right context because it is the only one this
+        # side knows, and it is what the next launch will resolve again anyway
+        # if it is still the game being played. If nothing has been launched,
+        # this is exactly the context-free write it always was.
+        last = protocol.read_last_game()
+        retroarch.install_profiles(
+            self._assignments,
+            console=last.get("console", ""), game=last.get("key", ""),
+            context=last.get("title", ""))
         retroarch.write_launch_config(
             self._assignments, paths, self.launch_config_path
         )
