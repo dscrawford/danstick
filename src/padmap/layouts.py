@@ -371,9 +371,53 @@ PS2 = Layout(
     ),
 )
 
+# The Switch Pro pad. Nintendo puts its face buttons where nobody else does:
+# A is the *right* button and B the *bottom* one, X the top and Y the left --
+# the mirror image of an Xbox pad, which is why a Switch controller feels like
+# it has A and B swapped everywhere else.
+#
+# So the labels and the canonical names deliberately disagree, and that is the
+# entire reason this layout exists rather than reusing GENERIC. `canonical` is
+# a *position* -- SDL's `a` is the bottom face button whatever is printed on
+# it -- while `label` is the letter under the user's thumb. Getting this
+# backwards is not cosmetic: the wizard would say "press A", the user presses
+# the button marked A, and the binding lands on the bottom button, so confirm
+# and cancel come out swapped in every game.
+#
+# No RetroArch overrides, and for the same reason as SNES: the abstract
+# RetroPad already uses Nintendo positions, so the global table maps these
+# straight through. The work here is telling the user which button to press,
+# not rewiring where it goes.
+#
+# Home and Capture are left out -- they have no canonical name, and Home is
+# claimed by the front-end anyway. The stick clicks are out for the reason
+# given on PS2: padmap has no canonical name for one yet.
+SWITCH = Layout(
+    id="switch",
+    label="Switch Pro",
+    console_label="Switch",
+    shapes=_PAD_BODY,
+    controls=(
+        Control("a", "B (bottom)", 0.72, 0.52),
+        Control("b", "A (right)", 0.78, 0.42),
+        Control("x", "Y (left)", 0.66, 0.42),
+        Control("y", "X (top)", 0.72, 0.32),
+        Control("dpup", "D-pad up", 0.28, 0.36, kind="dpad", radius=0.045),
+        Control("dpdown", "D-pad down", 0.28, 0.52, kind="dpad", radius=0.045),
+        Control("dpleft", "D-pad left", 0.23, 0.44, kind="dpad", radius=0.045),
+        Control("dpright", "D-pad right", 0.33, 0.44, kind="dpad", radius=0.045),
+        Control("back", "Minus", 0.45, 0.44, radius=0.035),
+        Control("start", "Plus", 0.55, 0.44, radius=0.035),
+        Control("leftshoulder", "L", 0.26, 0.20, kind="shoulder"),
+        Control("rightshoulder", "R", 0.74, 0.20, kind="shoulder"),
+        Control("lefttrigger", "ZL", 0.34, 0.12, kind="shoulder"),
+        Control("righttrigger", "ZR", 0.66, 0.12, kind="shoulder"),
+    ),
+)
+
 ALL: dict[str, Layout] = {
     layout.id: layout
-    for layout in (GENERIC, SNES, N64, ARCADE, GAMECUBE, PS2)
+    for layout in (GENERIC, SNES, N64, ARCADE, GAMECUBE, PS2, SWITCH)
 }
 
 DEFAULT = GENERIC.id

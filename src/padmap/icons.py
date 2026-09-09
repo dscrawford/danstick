@@ -31,13 +31,14 @@ ARCADE = "arcade"
 N64 = "n64"
 GAMECUBE = "gamecube"
 SNES = "snes"
+SWITCH = "switch"
 PLAYSTATION = "playstation"
 XBOX = "xbox"
 WHEEL = "wheel"
 GAMEPAD = "gamepad"  # the fallback
 
 ICON_NAMES = (
-    ARCADE, N64, GAMECUBE, SNES, PLAYSTATION, XBOX, WHEEL, GAMEPAD,
+    ARCADE, N64, GAMECUBE, SNES, SWITCH, PLAYSTATION, XBOX, WHEEL, GAMEPAD,
 )
 
 # Fallback only, for a pad that has not been configured yet -- a learned
@@ -54,7 +55,13 @@ _BY_ID: dict[tuple[int, int], str] = {
     (0x054C, 0x0CE6): PLAYSTATION,  # DualSense
     (0x045E, 0x028E): XBOX,       # Xbox 360 pad
     (0x045E, 0x02FD): XBOX,       # Xbox One S pad
-    (0x057E, 0x2009): SNES,       # Switch Pro (closest silhouette we ship)
+    (0x057E, 0x2009): SWITCH,     # Switch Pro
+    # Nintendo's reissued pads for Switch Online really are those controllers,
+    # button for button, so they get the layout of the console they came from
+    # rather than the Switch one. A user handed the Switch wizard for an N64
+    # pad would be asked to press an X and a Y it does not have.
+    (0x057E, 0x2017): SNES,       # SNES pad for Switch Online
+    (0x057E, 0x2019): N64,        # N64 pad for Switch Online
 }
 
 # Ordered: first match wins. Case-insensitive.
@@ -63,6 +70,11 @@ _BY_NAME: tuple[tuple[str, str], ...] = (
     (r"\bn64\b|nintendo 64|retrolink.*64", N64),
     (r"gamecube|\bgc\b|wii ?u? ?gc", GAMECUBE),
     (r"\bsnes\b|super nintendo|\bsfc\b", SNES),
+    # After the SNES and N64 entries above on purpose: Nintendo's Switch Online
+    # reissues carry both words ("Nintendo Co., Ltd. N64 Controller"), and the
+    # console they copy is the more useful answer than the console they plug
+    # into. Only pads that are *only* Switch pads should land here.
+    (r"pro controller|switch pro|joy-?con|\bnso\b", SWITCH),
     (r"dualshock|dualsense|playstation|\bps[3-5]\b", PLAYSTATION),
     (r"xbox|xinput", XBOX),
     (r"wheel|racing|g29|g27|driving", WHEEL),
