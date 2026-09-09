@@ -19,6 +19,7 @@ import evdev
 from evdev import ecodes
 
 from .devices import Pad, open_device
+from .mapping import rests_centred
 from .profiles import AxisCalibration, Profile, signature
 
 # (fraction 0..1) -> None, so a UI can draw a progress bar.
@@ -39,6 +40,10 @@ _SKIP_AXES = frozenset({
 })
 
 # Triggers rest at one end of travel, so their resting value is not a centre.
+#
+# A shortcut, not the rule -- see calibratable_axes. The codes a trigger is
+# conventionally reported on, which is not the same as the codes this
+# machine's triggers are actually on.
 _TRIGGER_AXES = frozenset({
     ecodes.ABS_Z, ecodes.ABS_RZ, ecodes.ABS_GAS, ecodes.ABS_BRAKE,
 })
@@ -55,12 +60,33 @@ def abs_entries(device: evdev.InputDevice) -> list[tuple[int, evdev.AbsInfo]]:
 
 
 def calibratable_axes(device: evdev.InputDevice) -> dict[int, evdev.AbsInfo]:
-    """Axes worth centring, with their current absinfo."""
+    """Axes worth centring, with their current absinfo.
+
+    A trigger must not be here. Calibration takes the resting value as the
+    centre and maps it to the middle of the declared range, so centring a
+    trigger makes it read half pressed while untouched and costs it half its
+    travel. The code list above catches the conventional cases; it does not
+    catch this machine's GameCube adapter, whose analogue triggers are on
+    ABS_RX and ABS_RY -- stick codes -- resting at 24 of 0-255.
+
+    So the resting value decides, and the code list is only a shortcut. A
+    stick centres and a trigger does not, which is the difference the code
+    number cannot carry. Same test, and the same reasoning, as the one that
+    stopped those two axes being published as a right stick.
+
+    An axis being *held* over as this runs would be read as a trigger and
+    skipped. That needs more than half deflection at the moment the wizard
+    reaches this point, having just asked the user to leave the pad alone --
+    and skipping one stick is recoverable, where silently ruining a trigger
+    is what this is here to prevent.
+    """
     out: dict[int, evdev.AbsInfo] = {}
     for code, info in abs_entries(device):
         if code in _SKIP_AXES or code in _TRIGGER_AXES:
             continue
         if info.max <= info.min:
+            continue
+        if not rests_centred((info.min, info.max, info.value)):
             continue
         out[code] = info
     return out

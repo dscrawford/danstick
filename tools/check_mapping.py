@@ -280,6 +280,7 @@ def main() -> int:
     check_identity_modes()
     check_unmapped_fallback()
     check_triggers_are_not_sticks()
+    check_triggers_are_not_calibrated()
 
     print("\nall checks passed")
     return 0
@@ -564,6 +565,65 @@ FIGHTSTICK_LINE = (
     "guide:b12,leftshoulder:b4,lefttrigger:b6,leftx:a0,lefty:a1,"
     "rightshoulder:b5,righttrigger:b7,start:b9,x:b0,y:b3,platform:Linux,"
 )
+
+
+def check_triggers_are_not_calibrated() -> None:
+    """Centring a trigger ruins it, so calibration must not pick one up.
+
+    Calibration takes an axis's resting value as its centre and maps that to
+    the middle of the declared range. Do that to a trigger, which rests at one
+    end, and it reads half pressed while untouched and loses half its travel.
+
+    The exclusion used to be a list of codes triggers are conventionally
+    reported on. This machine's GameCube adapter puts its analogue triggers on
+    ABS_RX and ABS_RY -- stick codes -- so they went straight through it. That
+    became urgent when the wizard started calibrating automatically: every
+    mapping would have quietly wrecked the triggers it had just captured.
+    """
+    import evdev
+
+    from padmap import calibrate
+
+    class Stub:
+        def __init__(self, entries):
+            self._entries = entries
+
+        def capabilities(self, absinfo=True):
+            return {evdev.ecodes.EV_ABS: self._entries}
+
+    def absinfo(value):
+        # AbsInfo(value, min, max, fuzz, flat, resolution)
+        return evdev.AbsInfo(value, 0, 255, 0, 15, 0)
+
+    print("\nan axis resting at an end is never calibrated:")
+    # The adapter's real numbers: sticks centred, triggers down at 24/25.
+    device = Stub([
+        (evdev.ecodes.ABS_X, absinfo(127)),
+        (evdev.ecodes.ABS_Y, absinfo(130)),
+        (evdev.ecodes.ABS_RX, absinfo(24)),
+        (evdev.ecodes.ABS_RY, absinfo(25)),
+        (evdev.ecodes.ABS_HAT0X, evdev.AbsInfo(0, -1, 1, 0, 0, 0)),
+    ])
+    got = sorted(calibrate.calibratable_axes(device))
+    want = sorted([evdev.ecodes.ABS_X, evdev.ecodes.ABS_Y])
+    if got != want:
+        names = [evdev.ecodes.ABS.get(c, c) for c in got]
+        raise SystemExit(
+            f"FAIL: would calibrate {names} -- centring a trigger makes it "
+            f"read half pressed at rest and halves its travel")
+    print("  ok  the two sticks, and neither trigger")
+
+    print("\n...and a pad whose triggers really are on Z/RZ still works:")
+    conventional = Stub([
+        (evdev.ecodes.ABS_X, absinfo(128)),
+        (evdev.ecodes.ABS_Y, absinfo(128)),
+        (evdev.ecodes.ABS_Z, absinfo(0)),
+        (evdev.ecodes.ABS_RZ, absinfo(0)),
+    ])
+    got = sorted(calibrate.calibratable_axes(conventional))
+    if got != want:
+        raise SystemExit(f"FAIL: {[evdev.ecodes.ABS.get(c, c) for c in got]}")
+    print("  ok  unchanged for the conventional layout")
 
 
 def check_triggers_are_not_sticks() -> None:

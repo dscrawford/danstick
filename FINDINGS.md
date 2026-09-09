@@ -2311,3 +2311,32 @@ object in for the assigner, and the cancel line asked it for `.assignments`.
 Fixed with getattr -- a log line in a teardown path is never worth raising
 from -- but worth recording that the check caught an unsafe assumption in
 instrumentation within a minute of it being written.
+
+### Calibration would have wrecked the triggers it had just captured
+
+Found while chasing "the analog stick didn't work", and it is a fault the
+previous change created rather than one it exposed.
+
+`calibrate.calibratable_axes` excluded triggers by listing the codes they are
+conventionally reported on -- ABS_Z, ABS_RZ, ABS_GAS, ABS_BRAKE. The comment
+above that list states the real rule correctly: "Triggers rest at one end of
+travel, so their resting value is not a centre." The list is not that rule,
+and this machine's GameCube adapter puts its analogue triggers on ABS_RX and
+ABS_RY -- stick codes -- so they went straight through. Measured on the live
+adapter, it offered four axes to calibrate: the two sticks and both triggers.
+
+Centring a trigger is not a small error. Calibration takes the resting value
+as the centre and maps it to the middle of the declared range, so a trigger
+resting at 24 of 0-255 would read half pressed while untouched and keep half
+its travel. Harmless while nothing called it -- and every profile here had
+`axes: {}`, so nothing ever had. Wiring calibration into the end of the
+mapping wizard changed that: every mapping would have quietly ruined the
+triggers it had just finished capturing.
+
+The resting value now decides, with the code list kept only as a shortcut.
+That is the same test, and the same reasoning, that stopped those two axes
+being published as a right stick -- an axis code does not say what the control
+is, and this adapter has now proved it twice on the same two codes.
+
+Measured after the change: the adapter offers ABS_X and ABS_Y, and nothing
+else.
