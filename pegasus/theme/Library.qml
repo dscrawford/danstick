@@ -122,8 +122,31 @@ FocusScope {
     // the collection file into `game.extra`; anything without a grade -- which
     // is nearly everything outside arcade -- must read as fine rather than as
     // broken.
+    //
+    // The grade arrives as a *list*, not a string. PegasusMetadata.cpp builds
+    // a QStringList for every `x-` field and Game.h exposes that map as
+    // `extra`, so the real front-end hands this `["preliminary"]` and
+    // `["preliminary"] === "preliminary"` is false. Every preliminary arcade
+    // set therefore rendered as a working game -- no pill, no dimmed title,
+    // no dimmed cover -- for as long as the marking has existed. It was never
+    // seen because tools/preview_library.py stubbed a bare string, so every
+    // screenshot showed the pill working. Both shapes are read here: the list
+    // is what Pegasus sends today, the string is what any stub or a future
+    // front-end may send, and neither is safe to assume.
     function driverStatus(game) {
-        return (game && game.extra && game.extra["mame-status"]) || "";
+        var grade = game && game.extra ? game.extra["mame-status"] : undefined;
+        if (grade === undefined || grade === null)
+            return "";
+        if (typeof grade === "string")
+            return grade;
+        // Array-like rather than `Array.isArray`: what crosses from C++ is a
+        // converted QStringList, and how faithfully a given engine build
+        // converts it is not something a theme should bet the marking on.
+        // Only the first entry carries the grade -- the exporter writes one
+        // `x-mame-status` line per game.
+        if (typeof grade.length === "number")
+            return grade.length > 0 && grade[0] ? String(grade[0]) : "";
+        return "";
     }
 
     function isBroken(game) {

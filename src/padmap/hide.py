@@ -31,6 +31,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from . import safeio
 from .devices import Pad
 
 RULES_PATH = Path("/etc/udev/rules.d/99-padmap.rules")
@@ -122,16 +123,17 @@ def unhidden(pads: list[Pad]) -> list[Pad]:
     reboot or an edit can all put those two out of step.
     """
     for path in (RUNTIME_RULES_PATH, RULES_PATH):
-        try:
-            # errors="replace" rather than a bare read_text: a rules file that
-            # is not valid UTF-8 raises UnicodeDecodeError, which is not an
-            # OSError, and `ensure-daemon` calls this unconditionally on every
-            # start. A corrupt file in /run would have taken down the whole
-            # startup path instead of being reported as covering nothing.
-            text = path.read_bytes().decode("utf-8", "replace")
+        # safeio rather than a bare read_text: a rules file that is not valid
+        # UTF-8 raises UnicodeDecodeError, which is not an OSError, and
+        # `ensure-daemon` calls this unconditionally on every start. A corrupt
+        # file in /run would have taken down the whole startup path instead of
+        # being reported as covering nothing. default=None because "no file
+        # here, try the next path" and "a file covering nothing" are different
+        # answers -- an installed but empty file must not fall through to a
+        # stale /etc copy.
+        text = safeio.read_text(path, default=None)
+        if text is not None:
             break
-        except OSError:
-            continue
     else:
         # No rules installed at all. Not this function's business to complain
         # -- that is a setup step the user may simply not have taken.
@@ -209,10 +211,12 @@ def install(rules: str) -> tuple[bool, list[str]]:
     """
     messages: list[str] = []
     target = RUNTIME_RULES_PATH
-    try:
-        existing = target.read_text()
-    except OSError:
-        existing = ""
+    # safeio, not read_text: this is a file in /run that padmap did not
+    # necessarily write, and read_text on bytes that are not UTF-8 raises
+    # UnicodeDecodeError -- not an OSError, so the guard here used to miss it
+    # and `sudo padmap hide` tracebacked on a corrupt 99-padmap.rules instead
+    # of overwriting it, which is the one thing that would have fixed it.
+    existing = safeio.read_text(target)
     if existing == rules:
         return False, [f"{target} already up to date"]
 

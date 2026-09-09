@@ -180,6 +180,10 @@ class VirtualPad:
     # here rather than in a front-end means every consumer benefits, and a
     # worn stick stops reading as permanently deflected everywhere at once.
     axes: dict[int, AxisCalibration] = field(default_factory=dict)
+    # Events the clone refused. Counted rather than logged one for one: this
+    # is the hot path, a pad emits at about 8ms, and a fault that repeats
+    # would otherwise write a log line per event for as long as the game runs.
+    dropped: int = 0
 
     @property
     def name(self) -> str:
@@ -241,7 +245,26 @@ def create(pad: Pad, player: int, grab: bool = True) -> VirtualPad:
     # Without one the pad is forwarded verbatim, which is correct for a
     # controller that actually centres itself.
     profile = load_profile(pad)
-    axes = profile.axes if profile is not None else {}
+    axes: dict[int, AxisCalibration] = {}
+    for code, cal in (profile.axes if profile is not None else {}).items():
+        # profiles rejects an unwritable calibration when it reads the file,
+        # so this repeats a check that has usually already run. It is here
+        # anyway because the store is not the only source: `calibrate` builds
+        # calibrations from a live measurement and hands them over without a
+        # round trip through JSON, and an absinfo read off a lying adapter is
+        # exactly the sort of thing that produces one. Getting it wrong does
+        # not cost a bad axis, it costs the process -- the seed write below
+        # raises OverflowError, which is not an OSError, so it escapes
+        # create() past every caller's guard and the daemon exits with the
+        # assignments already written and the setup screen still waiting.
+        if cal.fits_evdev():
+            axes[code] = cal
+        else:
+            log.warning(
+                "player %d: axis %d's calibration cannot be written to an "
+                "evdev value (centre %d, range %d..%d); forwarding that axis "
+                "uncorrected instead", player, code, cal.center,
+                cal.minimum, cal.maximum)
     if axes:
         log.info("player %d: applying calibration for %d axis/axes",
                  player, len(axes))
@@ -330,7 +353,31 @@ class Republisher:
                 calibration = vpad.axes.get(event.code)
                 if calibration is not None:
                     event.value = calibration.apply(event.value)
-            vpad.ui.write_event(event)
+            try:
+                vpad.ui.write_event(event)
+            except (OSError, OverflowError) as exc:
+                # Nothing about one event is worth the daemon. A dropped event
+                # costs a press, or one frame of stick movement; an exception
+                # leaving here costs every player's controller at once, because
+                # this call is three frames below the daemon's selector
+                # callback with no guard in between.
+                #
+                # Reproduced with a hand-edited profile whose declared range
+                # was wider than 32 bits: apply() scaled a raw 150 into 2**40,
+                # write_event raised OverflowError -- not an OSError, so the
+                # `except (BlockingIOError, OSError)` around the read above
+                # would not have caught it either -- and the process ended
+                # mid-game. The bound in profiles is what stops that value
+                # being stored; this is what stops any *other* refused write
+                # ending the same way, since the failure mode is the part that
+                # is unacceptable, not the one value that caused it.
+                vpad.dropped += 1
+                if vpad.dropped == 1:
+                    log.warning(
+                        "player %d: the clone refused an event (%s: %s); "
+                        "dropping it and continuing -- a controller missing "
+                        "an input recovers, a daemon exiting does not",
+                        vpad.player, type(exc).__name__, exc)
 
     def _handle_feedback(self, vpad: VirtualPad) -> None:
         """Proxy rumble from the virtual device back to the physical one."""

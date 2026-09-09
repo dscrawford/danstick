@@ -1246,85 +1246,233 @@ def check_burst_latency_and_loss() -> None:
 
 
 def check_hostile_calibration() -> None:
-    """A stored profile is user data, and it is read straight into the pump."""
+    """A stored profile is user data, and it is read straight into the pump.
+
+    Was a printed gap until the bound went in. The failure it describes was
+    measured, not imagined: a profile declaring a range of +-2**40 made
+    `apply(150)` return 1099511627776, `write_event` raise OverflowError --
+    which is not an OSError, so nothing between here and the daemon's selector
+    callback caught it -- and the process ended mid-game with every player's
+    controller going dead at once. "The controllers just died."
+    """
     heading("S12 — a hand-edited calibration is read straight onto the hot path")
     bench = Bench()
     try:
         # Valid JSON, a real object, every field the right type -- and the
-        # declared range is wider than an evdev value can be. profiles has no
-        # bound on what it will accept here.
+        # declared range is wider than an evdev value can be.
         huge = {"center": 128, "min": -(2 ** 40), "max": 2 ** 40,
                 "flat": 0, "reach_min": 100, "reach_max": 150}
+        sane = {"center": 128, "min": 0, "max": 255, "flat": 4,
+                "reach_min": 20, "reach_max": 240}
 
         forward = bench.source("hostilefwd")
         forward.store_profile({}, raw={
             "signature": profiles.signature(forward.pad),
-            "axes": {str(ecodes.ABS_X): huge},
+            "name": "hand edited",
+            "axes": {str(ecodes.ABS_X): huge, str(ecodes.ABS_Y): sane},
         })
         loaded = profiles.load(forward.pad)
-        if loaded is None or ecodes.ABS_X not in loaded.axes:
-            fail("profiles.load rejected the file, so nothing below can be "
-                 "reached and this scenario is stale")
-        ok("profiles.load accepts the file: valid JSON, an object, right types")
+        if loaded is None:
+            fail("profiles.load threw the whole profile away over one bad "
+                 "axis; the controller's name, icon and every mapping went "
+                 "with it, so the pad reads as one nobody has ever set up")
+        if ecodes.ABS_X in loaded.axes:
+            fail(f"profiles.load kept a calibration declaring a range of "
+                 f"{huge['min']}..{huge['max']}; no evdev value can carry "
+                 f"that, so it is carried to the hot path where writing it "
+                 f"raises OverflowError and the daemon exits mid-game -- "
+                 f"every controller dead at once")
+        ok("an axis whose declared range cannot fit an evdev value is "
+           "rejected when the profile is read")
+        if ecodes.ABS_Y not in loaded.axes:
+            fail("the sane axis beside it was dropped too; one bad number "
+                 "must cost one axis, not every calibrated stick on the pad")
+        ok("the sane axis in the same file survives, and so does the profile")
+        if loaded.name != "hand edited":
+            fail("the rest of the profile did not survive the rejected axis")
+        ok("name, icon and mappings are untouched by the rejection")
 
-        cal = loaded.axes[ecodes.ABS_X]
-        corrected = cal.apply(150)
-        if -(2 ** 31) <= corrected < 2 ** 31:
-            fail(f"apply(150) returned {corrected}, which fits in the signed "
-                 f"32-bit field an evdev value travels in; this scenario is "
-                 f"stale")
-        ok(f"AxisCalibration.apply turns a raw 150 into {corrected}, far "
-           f"outside the 32 bits an evdev value has")
-
+        # The rejection has to reach `virtual`, not just `profiles`: what the
+        # user gets is an *uncorrected* axis, which is exactly what an
+        # uncalibrated pad already does and is the one behaviour here known to
+        # work.
         vpad = bench.publish(forward)
+        if ecodes.ABS_X in vpad.axes:
+            fail("the republisher is applying the rejected calibration anyway")
         reader = bench.reader(vpad)
         rep = bench.republisher(vpad)
-        forward.frame((ecodes.EV_ABS, ecodes.ABS_X, 150))
-        crash = None
+        forward.frame((ecodes.EV_ABS, ecodes.ABS_X, 150),
+                      (ecodes.EV_KEY, BTN_A, 1))
         try:
-            one_clone(rep, reader, seconds=0.2)
-        except Exception as error:  # noqa: BLE001
-            crash = error
-        if crash is None:
-            ok("the republisher survived forwarding it")
-        else:
-            gap(f"Republisher.pump died forwarding it: "
-                f"{type(crash).__name__}: {crash}")
-            gap("    _forward guards vpad.source.read() but not "
-                "vpad.ui.write_event(event), and this is not an OSError, so "
-                "it escapes pump(), escapes run(), and ends the daemon "
-                "mid-game -- every controller gone at once")
+            got = triples(one_clone(rep, reader, seconds=0.2))
+        except Exception as error:  # noqa: BLE001 - the bug itself
+            fail(f"Republisher.pump died forwarding one axis event "
+                 f"({type(error).__name__}: {error}); this call is three "
+                 f"frames below the daemon's selector callback with no guard "
+                 f"in between, so the daemon exits and takes every player's "
+                 f"controller with it")
+        if (ecodes.EV_ABS, ecodes.ABS_X, 150) not in got:
+            fail(f"the uncalibrated axis did not arrive verbatim: {got}; a "
+                 f"rejected calibration must leave the stick working, not "
+                 f"silence it")
+        ok("the axis is forwarded uncorrected, and the raw 150 arrives as 150")
+        if (ecodes.EV_KEY, BTN_A, 1) not in got:
+            fail("the button pressed in the same frame never arrived, so the "
+                 "pad went quiet even though the daemon survived")
+        ok("the rest of the frame still arrives -- the pad keeps working")
 
         # The same value reached through create()'s centre seed, which runs
-        # before the loop ever starts.
+        # before the loop ever starts. Its failure is worse than the hot
+        # path's: server catches OSError only, so it escapes after the
+        # assignments are written and the setup screen waits forever.
         seeding = bench.source("hostileseed")
         seeding.store_profile({}, raw={
             "signature": profiles.signature(seeding.pad),
             "axes": {str(ecodes.ABS_X): {"center": 0, "min": 2 ** 40,
                                          "max": 2 ** 40 + 2, "flat": 0}},
         })
-        seed_crash = None
         try:
-            bench.publish(seeding, allow_failure=True)
-        except Exception as error:  # noqa: BLE001
-            seed_crash = error
-        if seed_crash is None:
-            ok("virtual.create survived seeding a calibrated axis from it")
-        else:
-            gap(f"virtual.create died on the centre seed: "
-                f"{type(seed_crash).__name__}: {seed_crash}")
-            gap("    Server._accept and the resume path both catch OSError "
-                "only, so this escapes and the daemon exits after the "
-                "assignments have already been written -- the setup screen "
-                "waits forever, which is a scar server.py already carries a "
-                "comment about")
-
-        if crash is not None or seed_crash is not None:
-            gap("    reachable from any profile file a user or a half-written "
-                "save leaves behind; profiles.Profile.from_json bounds "
-                "neither min/max nor reach_min/reach_max")
+            seeded = bench.publish(seeding, allow_failure=True)
+        except Exception as error:  # noqa: BLE001 - the bug itself
+            raise SystemExit(
+                f"FAIL: virtual.create died seeding an axis at the midpoint of "
+                f"a stored range ({type(error).__name__}: {error}); the daemon "
+                f"catches OSError only, so this ends it after the assignments "
+                f"have been written and the setup screen waits forever") \
+                from None
+        if seeded.axes:
+            fail("create() published with an unwritable calibration attached")
+        ok("virtual.create publishes the pad instead of dying on the centre "
+           "seed")
     finally:
         bench.close()
+
+
+def check_live_calibration_cannot_kill_create() -> None:
+    """S12 — the store is not the only source of a calibration.
+
+    `calibrate` builds one from a live measurement and hands it to `create`
+    without a round trip through JSON, so the bound `profiles.from_json`
+    enforces on read is not reached at all on that path. An absinfo read off a
+    lying adapter is exactly the sort of thing that produces one, and the cost
+    is not a bad axis -- the centre seed raises OverflowError, which is not an
+    OSError, so it escapes `create` past every caller's guard.
+    """
+    heading("S12 — a calibration that never came from a file cannot kill create")
+    bench = Bench()
+    try:
+        src = bench.source("liveinsane")
+        insane = profiles.AxisCalibration(
+            center=0, minimum=2 ** 40, maximum=2 ** 40 + 2, flat=0)
+        if insane.fits_evdev():
+            fail("AxisCalibration.fits_evdev() calls a range of 2**40 "
+                 "writable; the bound is not being enforced at all")
+        ok("fits_evdev() rejects a range no evdev value can carry")
+
+        real_load = virtual.load_profile
+
+        def measured(pad, directory=None):
+            return profiles.Profile(signature=profiles.signature(pad),
+                                    axes={ecodes.ABS_X: insane})
+
+        virtual.load_profile = measured
+        try:
+            vpad = bench.publish(src, allow_failure=True)
+        except Exception as error:  # noqa: BLE001 - the bug itself
+            raise SystemExit(
+                f"FAIL: virtual.create died on a calibration handed to it "
+                f"directly ({type(error).__name__}: {error}); a measurement "
+                f"that never touched the profile store still ends the daemon "
+                f"with the setup screen waiting") from None
+        finally:
+            virtual.load_profile = real_load
+
+        if ecodes.ABS_X in vpad.axes:
+            fail("create() kept the unwritable calibration, so the first "
+                 "stick movement takes the daemon down instead")
+        ok("create() drops it and publishes the pad uncorrected")
+    finally:
+        bench.close()
+
+
+def check_one_refused_event_is_not_the_daemon() -> None:
+    """S1 — whatever the cause, one bad write must not end the process.
+
+    The bound in `profiles` stops the value that was actually reported ever
+    being stored. This is the other half: `_forward` sits three frames below
+    the daemon's selector callback, and *any* exception from the clone write
+    -- not just the one overflow already seen -- reaches it. A controller
+    missing an input recovers; a daemon exiting does not.
+    """
+    heading("S1 — one event the clone refuses does not take the daemon down")
+    bench = Bench()
+    try:
+        src = bench.source("refused")
+        vpad = bench.publish(src)
+        reader = bench.reader(vpad)
+        rep = bench.republisher(vpad)
+
+        # Injected past create()'s filter deliberately: the point is that the
+        # write is guarded regardless of how a bad value got here.
+        vpad.axes[ecodes.ABS_X] = profiles.AxisCalibration(
+            center=128, minimum=-(2 ** 40), maximum=2 ** 40, flat=0,
+            reach_min=100, reach_max=150)
+
+        src.frame((ecodes.EV_ABS, ecodes.ABS_X, 150))
+        src.frame((ecodes.EV_KEY, BTN_A, 1))
+        try:
+            got = triples(one_clone(rep, reader, seconds=0.2))
+        except Exception as error:  # noqa: BLE001 - the bug itself
+            fail(f"the write escaped _forward as {type(error).__name__}: "
+                 f"{error} -- it escapes pump(), escapes run(), and ends the "
+                 f"daemon mid-game, which the user reports as 'the "
+                 f"controllers just died'")
+        ok("the republisher survived an event the clone would not take")
+        if vpad.dropped != 1:
+            fail(f"the refused event was counted {vpad.dropped} times, not "
+                 f"once; the count is what keeps the log from writing a line "
+                 f"per event for as long as the game runs")
+        ok("the refused event is counted once, not logged per event")
+        if (ecodes.EV_KEY, BTN_A, 1) not in got:
+            fail("the next press never arrived, so the pad went quiet -- "
+                 "dropping one event must not stop the ones after it")
+        ok("the very next press still crosses, so the pad keeps playing")
+        if rep._stop:
+            fail("the republisher stopped itself over one refused event")
+        ok("the republisher is still running")
+    finally:
+        bench.close()
+
+
+def check_profile_numbers_that_are_not_numbers() -> None:
+    """S12 — JSON can hold a number Python cannot make an int of.
+
+    `1e400` parses to `inf`, and `int(inf)` raises OverflowError. That escaped
+    `Profile.from_json` entirely -- `load`'s except wraps only the read and
+    the parse -- and since `is_known` is `load() is not None` and discovery
+    calls it for every pad, one damaged file stopped the whole controller
+    list rather than costing one axis.
+    """
+    heading("S12 — an axis value JSON can hold but int() cannot take")
+    for label, value in (("1e400 (inf)", 1e400), ("-1e400 (-inf)", -1e400)):
+        raw = {"signature": "sig", "name": "kept",
+               "axes": {"0": {"center": 0, "min": 0, "max": value, "flat": 0},
+                        "1": {"center": 128, "min": 0, "max": 255,
+                              "flat": 0}}}
+        try:
+            profile = profiles.Profile.from_json(json.loads(json.dumps(raw)))
+        except Exception as error:  # noqa: BLE001 - the bug itself
+            fail(f"a profile holding {label} raised {type(error).__name__} "
+                 f"out of from_json; is_known() calls load() for every pad "
+                 f"during discovery, so one such file leaves the user with "
+                 f"an empty controller list")
+        if 0 in profile.axes:
+            fail(f"the axis declaring {label} was kept")
+        if 1 not in profile.axes:
+            fail(f"the sane axis beside {label} was dropped with it")
+        if profile.name != "kept":
+            fail(f"{label} cost the whole profile, not one axis")
+        ok(f"an axis declaring {label} costs that axis and nothing else")
 
 
 def check_failed_publish_does_not_keep_the_pad() -> None:
@@ -1396,6 +1544,9 @@ SCENARIOS = [
     check_descriptors_cover_both_directions,
     check_burst_latency_and_loss,
     check_hostile_calibration,
+    check_live_calibration_cannot_kill_create,
+    check_one_refused_event_is_not_the_daemon,
+    check_profile_numbers_that_are_not_numbers,
     check_failed_publish_does_not_keep_the_pad,
 ]
 

@@ -98,13 +98,42 @@ class Binding:
     # RetroArch numbers buttons from a lower base than SDL, so the same
     # physical button can be b2 to one and 0 to the other. Carrying both is
     # the only way a stored binding stays right for both consumers; None
-    # means they agree, which is the case on most pads.
+    # means they agree, which is the case on most pads, and RA_INVISIBLE
+    # means RetroArch has no number for this button at all.
     ra_index: int | None = None
+
+    def sdl_visible(self) -> bool:
+        """Whether SDL can be told about this binding at all."""
+        if self.kind == "hat":
+            return self.value in HAT_DIRECTIONS
+        return self.kind in ("button", "axis")
+
+    def retroarch_visible(self) -> bool:
+        """Whether RetroArch can be told about this binding at all.
+
+        False for a button whose evdev code sits below BTN_MISC: RetroArch's
+        udev driver never enumerates those, so there is no number that names
+        it. See RA_INVISIBLE for what happens when one is invented anyway.
+        """
+        if not self.sdl_visible():
+            return False
+        if self.kind == "button" and self.ra_index is not None:
+            # Any negative index, not just RA_INVISIBLE itself: a profile off
+            # disk can hold whatever it likes, and no real button is negative.
+            return self.ra_index >= 0
+        return True
 
     def sdl(self) -> str:
         if self.kind == "button":
             return f"b{self.index}"
         if self.kind == "hat":
+            if self.value not in HAT_DIRECTIONS:
+                # A hat mask naming two directions or none is not a control
+                # anyone can press. See retroarch() below: refusing it here
+                # too is what stops the two consumers disagreeing about
+                # whether the d-pad direction exists.
+                raise ValueError(
+                    f"hat value {self.value} is not one direction bit")
             return f"h{self.index}.{self.value}"
         if self.kind == "axis":
             sign = "+" if self.value >= 0 else "-"
@@ -116,11 +145,26 @@ class Binding:
 
         Hats are `hN<direction>`, e.g. `h0up`; axes carry a sign; buttons are
         a bare number.
+
+        Raises ValueError for a binding RetroArch cannot be told about --
+        `retroarch_visible` is the question to ask first. Both the shapes that
+        raise came out of real files: a hat value that is not a single
+        direction (a hand-edited or half-written profile) used to raise
+        KeyError from the middle of writing the launch profiles, and a button
+        below BTN_MISC used to come out as a plausible-looking number that
+        named a different button, or none.
         """
         index = self.index if self.ra_index is None else self.ra_index
         if self.kind == "button":
+            if index < 0:
+                raise ValueError(
+                    "RetroArch's udev driver has no number for this button "
+                    "(its evdev code is below BTN_MISC)")
             return str(index)
         if self.kind == "hat":
+            if self.value not in HAT_DIRECTIONS:
+                raise ValueError(
+                    f"hat value {self.value} is not one direction bit")
             return f"h{index}{HAT_DIRECTIONS[self.value]}"
         if self.kind == "axis":
             sign = "+" if self.value >= 0 else "-"
@@ -145,12 +189,33 @@ class Binding:
 
 
 # SDL hat bit -> RetroArch's direction word.
+#
+# Only the four single bits. A hat reads 3 ("up and right") on a diagonal and
+# 0 at rest, and neither is a control: RetroArch's config has one direction
+# word per key, and an SDL mask of two bits only matches while both are held.
+# Binding refuses both rather than letting one consumer render what the other
+# cannot -- see Binding.sdl.
 HAT_DIRECTIONS = {1: "up", 2: "right", 4: "down", 8: "left"}
 
 # Where each consumer starts counting buttons. They are not the same, and the
 # difference is invisible on most pads.
 BTN_MISC = 0x100
 BTN_JOYSTICK = 0x120
+
+# ra_index for a button RetroArch cannot see at all.
+#
+# retroarch_button_index used to answer None for two different reasons -- the
+# two consumers agree (the usual case), or the code is below BTN_MISC and
+# RetroArch's udev driver never enumerates it -- and Binding read that None as
+# "they agree". A combo adapter reporting KEY_A/KEY_B alongside its twelve
+# buttons therefore stored Binding(kind="button", index=13, ra_index=None),
+# whose .retroarch() was "13" on a pad RetroArch numbers 0..11. RetroArch
+# binds a button that does not exist -- or, if the pad has enough BTN_MISC
+# codes, a real but entirely different one -- without complaining, and still
+# reports the pad as configured: the control works in Pegasus and is dead in
+# every game. A negative index keeps the two answers apart; no real button
+# index is negative.
+RA_INVISIBLE = -1
 
 
 def sdl_button_index(keys: list[int], code: int) -> int | None:
@@ -175,9 +240,25 @@ def retroarch_button_index(keys: list[int], code: int) -> int | None:
     SDL's. On a pad whose buttons all sit at 0x120 or above -- most of them --
     the two agree exactly, which is why this difference can go unnoticed until
     it silently shifts every binding on the one pad that does not.
+
+    Three answers, not two, because a caller storing this in a Binding has to
+    be able to tell them apart:
+
+    * an index, when RetroArch numbers the code;
+    * RA_INVISIBLE, when the pad reports the code but RetroArch's driver
+      cannot see it -- anything below BTN_MISC, which is every KEY_* code a
+      combo adapter or an arcade encoder throws in alongside its buttons;
+    * None, when the code is not one of this pad's at all.
+
+    Answering None for the middle case is what let a keyboard key be written
+    into an autoconfig as a button number: see RA_INVISIBLE.
     """
+    if code not in keys:
+        return None
+    if code < BTN_MISC:
+        return RA_INVISIBLE
     ordered = [c for c in sorted(keys) if c >= BTN_MISC]
-    return ordered.index(code) if code in ordered else None
+    return ordered.index(code)
 
 
 # Hats are absolute axes too, but neither consumer counts them as axes.
@@ -313,6 +394,21 @@ def stick_fields(
     return fields
 
 
+# Characters a device name may not carry into a database line.
+#
+# The comma is the field separator. The rest all end a line for one reader or
+# the other: SDL splits the file on newline, and padmap's own rewriter --
+# controllercfg.write_sdl_mappings, which must preserve the lines it does not
+# own -- uses str.splitlines(), which additionally breaks on \v, \f, \x1c-\x1e,
+# NEL and the Unicode line/paragraph separators. A name is a USB string
+# descriptor written by somebody else (this machine reports one
+# beginning 0x18), so none of these is hypothetical.
+_NAME_FORBIDDEN = {
+    ord(char): None
+    for char in ",\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029"
+}
+
+
 def sdl_line(guid: str, name: str, fields: dict[str, str],
              platform: str = "Linux") -> str:
     """One line for SDL's controller database, from plain field:target pairs.
@@ -323,9 +419,15 @@ def sdl_line(guid: str, name: str, fields: dict[str, str],
     would quietly cost the user bindings they already had.
 
     Commas separate the fields and the name sits in one of them, so a name
-    containing a comma would silently corrupt every field after it.
+    containing a comma would silently corrupt every field after it. A newline
+    is worse and was not guarded: the database is read a line at a time, so a
+    name carrying one writes *two* physical lines -- SDL reads the first as a
+    device with no bindings and drops the second as junk, and the pad ends up
+    with no mapping at all rather than a damaged one. Carriage return goes the
+    same way, since SDL trims CR when it splits lines and a stray one would
+    otherwise ride along inside the name it matches on.
     """
-    parts = [guid, name.replace(",", "")]
+    parts = [guid, name.translate(_NAME_FORBIDDEN)]
     parts += [f"{field}:{target}" for field, target in fields.items()]
     parts.append(f"platform:{platform}")
     return ",".join(parts) + ","
@@ -354,12 +456,20 @@ def parse_sdl_line(line: str) -> tuple[str, str, dict[str, str]] | None:
 def sdl_mapping(guid: str, name: str, bindings: dict[str, Binding],
                 platform: str = "Linux",
                 sticks: dict[str, str] | None = None) -> str:
-    """One line for SDL's controller database, from a capture."""
+    """One line for SDL's controller database, from a capture.
+
+    A binding SDL cannot express is left out rather than raising: the shape
+    that arrives here is a hat value that is not a single direction, off a
+    profile somebody edited or a write that was cut short, and dying halfway
+    through means the pad gets no line at all -- every control lost to save
+    one. Left out, the direction reads as unmapped and the wizard can be run
+    again.
+    """
     fields = {}
     for control in CANONICAL_ORDER:
         binding = bindings.get(control)
         field = SDL_FIELDS.get(control)
-        if binding is not None and field is not None:
+        if binding is not None and field is not None and binding.sdl_visible():
             fields[field] = binding.sdl()
     fields.update(sticks or {})
     return sdl_line(guid, name, fields, platform)
@@ -373,6 +483,17 @@ def retroarch_lines(
     Only what the user actually pressed: a key bound to nothing is worse than
     an absent one, because RetroArch will happily bind a button that does not
     exist and report the pad as configured.
+
+    Which is also why a binding RetroArch cannot name is dropped here instead
+    of guessed at. Two shapes reach this:
+
+    * a button whose evdev code is below BTN_MISC -- a combo adapter's KEY_A,
+      an arcade encoder's keyboard codes. RetroArch's udev driver never
+      enumerates them, so writing SDL's number for one names a button that
+      does not exist, or a real but different one. See RA_INVISIBLE.
+    * a hat value that is not one direction bit, which used to raise KeyError
+      out of the middle of writing a launch profile, leaving the game to start
+      with no controller config at all.
     """
     overrides = overrides or {}
     lines = []
@@ -383,6 +504,8 @@ def retroarch_lines(
         # control sits on the pad.
         key = overrides.get(control) or RETROARCH_KEYS.get(control)
         if binding is None or key is None:
+            continue
+        if not binding.retroarch_visible():
             continue
         if binding.kind == "axis":
             # An axis has to go under the _axis key, not _btn.

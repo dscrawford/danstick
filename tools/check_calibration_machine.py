@@ -667,7 +667,20 @@ def check_reach_ends_on_a_press_after_the_minimum():
 
     h = Harness()
     run = h.run_for(PAD, 1, dict(STICK))
-    run.begin_phase(PHASE_REACH)
+    # The rest phase runs first, as it does for a real user. It is what gives
+    # the axis a credible dead band; skipping it lands on the no-rest fallback,
+    # which derives a "rest" from the sweep itself and so calls half the sweep
+    # a dead band. That path has its own check
+    # (check_reach_without_a_rest_measurement_survives) and is not what this
+    # one is about.
+    run.begin_phase(PHASE_REST)
+    rewind(run, REST_SECONDS * 1.1)
+    h.tick()
+    run.feed(press())
+    h.tick()
+    if run.phase != PHASE_REACH:
+        fail(f"the rest phase did not lead into reach on a press (in "
+             f"{run.phase})")
     for code in (ecodes.ABS_X, ecodes.ABS_Y):
         run.feed(axis(code, 20))
         run.feed(axis(code, 235))
@@ -1154,19 +1167,46 @@ def check_merge_of_a_reach_inside_the_dead_band():
 
     nudged = calibrate.merge_reach(rest_cal(center=128, flat=10),
                                    {ecodes.ABS_X: (120, 240)})[ecodes.ABS_X]
+    if nudged.reach_min is not None:
+        fail(f"a direction that moved 8 units -- less than the "
+             f"{nudged.flat}-unit dead band, so indistinguishable from not "
+             f"moving at all -- was recorded as a measured reach "
+             f"(reach_min={nudged.reach_min})")
     if nudged.apply(0) == nudged.apply(128):
-        print(f"  gap: a direction that moved 8 units -- less than the "
-              f"{nudged.flat}-unit dead band, so indistinguishable from not "
-              f"moving -- records reach_min={nudged.reach_min}, and the span "
-              f"from the edge of the band to there is negative, so the whole "
-              f"of that direction reads dead centre: apply(0) is "
-              f"{nudged.apply(0)}, the same as apply(128). Moving a stick a "
-              f"hair during the sweep is worse than not moving it at all. "
-              f"merge_reach's test is `low < cal.center`, one dead band short "
-              f"of its own stated intent; `low < cal.center - cal.flat` would "
-              f"ignore it as it means to.")
-    else:
-        print("  ok  a nudge inside the dead band does not kill the direction")
+        fail(f"a stick nudged 8 units inside its {nudged.flat}-unit dead band "
+             f"during the sweep reads {nudged.apply(0)} at full left, the "
+             f"same as at rest -- the whole of that direction is dead, so "
+             f"twitching the stick a hair is worse than never moving it")
+    if nudged.apply(0) != nudged.minimum:
+        fail(f"full left reads {nudged.apply(0)} rather than "
+             f"{nudged.minimum} on a direction whose only movement was inside "
+             f"the dead band -- unmeasured must fall back to the declared "
+             f"range")
+    print("  ok  a nudge inside the dead band does not kill the direction")
+
+    # The other edge of the same guard: a sweep that clears the band is a real
+    # measurement and must survive, or ignoring dithers would cost every
+    # short-throw adapter its calibration.
+    real = calibrate.merge_reach(rest_cal(center=128, flat=10),
+                                 {ecodes.ABS_X: (117, 240)})[ecodes.ABS_X]
+    if real.reach_min != 117:
+        fail(f"a direction swept one unit past the {real.flat}-unit dead band "
+             f"recorded reach_min={real.reach_min} rather than 117 -- a "
+             f"measurement that cleared the band is real travel and dropping "
+             f"it scales the stick against a range its hardware never reaches")
+    print("  ok  a sweep that clears the band is still recorded")
+
+    other = calibrate.merge_reach(rest_cal(center=128, flat=10),
+                                  {ecodes.ABS_X: (30, 135)})[ecodes.ABS_X]
+    if other.reach_max is not None:
+        fail(f"the same on the other side: a 7-unit twitch inside the "
+             f"{other.flat}-unit dead band was recorded as reach_max="
+             f"{other.reach_max}")
+    if other.apply(255) != other.maximum:
+        fail(f"full right reads {other.apply(255)} rather than "
+             f"{other.maximum} on a direction that only ever twitched inside "
+             f"the dead band")
+    print("  ok  the same holds for the other direction")
 
 
 def check_a_jittery_axis_that_never_moves_during_the_sweep():
@@ -1188,19 +1228,21 @@ def check_a_jittery_axis_that_never_moves_during_the_sweep():
     merged = calibrate.merge_reach(rest, {ecodes.ABS_X: (128, 128),
                                           ecodes.ABS_Y: (20, 235)})
     cal = merged[ecodes.ABS_X]
+    if cal.reach_min is not None:
+        fail(f"the reach window is seeded from absinfo (128) while the centre "
+             f"is measured ({cal.center}), so an untouched axis ends the "
+             f"sweep below its own centre and got recorded as having reached "
+             f"{cal.reach_min} -- a reach nobody performed")
     if cal.apply(cal.minimum) == cal.apply(cal.center):
-        print(f"  gap: reach and centre come from different windows -- the "
-              f"reach window is seeded from absinfo ({128}) while the centre "
-              f"is measured ({cal.center}) -- so an axis that never moved "
-              f"during the sweep still lands one unit below its own centre, "
-              f"records reach_min={cal.reach_min}, and dies: full left reads "
-              f"{cal.apply(0)}, identical to centre. This is the whole 'the "
-              f"stick cannot go left at all' failure, reached without anyone "
-              f"doing anything wrong. Seeding the reach window from the "
-              f"measured centre, or ignoring a reach inside the dead band, "
-              f"would fix it.")
-    else:
-        print("  ok  it keeps its declared travel")
+        fail(f"an axis that dithered at rest and was never touched during the "
+             f"sweep reads {cal.apply(cal.minimum)} at full left, identical "
+             f"to its resting reading -- the stick cannot go left at all, "
+             f"reached with the user doing nothing wrong")
+    if cal.apply(cal.minimum) != cal.minimum:
+        fail(f"full left reads {cal.apply(cal.minimum)} rather than "
+             f"{cal.minimum} on an untouched axis, which must fall back to "
+             f"its declared range")
+    print("  ok  it keeps its declared travel")
 
     good = merged[ecodes.ABS_Y]
     if good.apply(0) != 0 or good.apply(255) != 255:

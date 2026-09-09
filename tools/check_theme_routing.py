@@ -20,6 +20,9 @@ MAME's own grade behind its red "THIS GAME DOES NOT WORK" screen -- dims the
 title and adds a "not working" pill. Everything else, including no grade at
 all, has to read as fine: almost nothing outside arcade carries a grade, and
 marking a whole console library as broken would be worse than saying nothing.
+Checked in both shapes, because Pegasus stores every `x-` field as a
+QStringList and hands the theme `["preliminary"]`, not `"preliminary"` -- the
+difference that kept the marking from ever appearing on the real box.
 
 Loaded the way the front-end loads it: the real Library.qml against a stub
 `api`. No daemon, no Pegasus, and no controller touched.
@@ -29,11 +32,21 @@ Loaded the way the front-end loads it: the real Library.qml against a stub
 
 import os
 import sys
+import tempfile
 
 # Before PySide6 is imported, and not left to the caller: Qt otherwise binds
 # to whatever display happens to be around, and the same check then passes or
 # fails depending on where it was run from.
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+# Nothing in this file wants the real box's state, but the last section
+# imports tools/preview_library.py to check that the preview stubs the shape
+# production sends, and that pulls in padmap, which resolves its config and
+# thumbnail paths off exactly these. Pointed at a scratch directory first, so
+# a check can never read or write the live machine's configuration.
+_SANDBOX = tempfile.mkdtemp(prefix="padmap-theme-routing-")
+for _var in ("HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_RUNTIME_DIR"):
+    os.environ[_var] = _SANDBOX
 
 from pathlib import Path  # noqa: E402
 
@@ -483,6 +496,18 @@ def build_api():
             StubGame("Wave Race 64",
                      pegasus_extra(console="n64", gamekey="n64/wave-race-64")),
             StubGame("Cheeky Mouse II", pegasus_extra(mame_status="preliminary")),
+            # The other grades in the same shape, so a fix for the list cannot
+            # be a fix that marks everything: the whole arcade tab dimmed and
+            # pilled would be worse than the bug it replaced.
+            StubGame("Pac-Man II", pegasus_extra(mame_status="good",
+                                                 console="arcade")),
+            StubGame("Rally X II", pegasus_extra(mame_status="imperfect")),
+            # A key that is present but carries nothing. `x-mame-status:` with
+            # a blank value is one hand-edit away, and QStringList makes it an
+            # empty list or a list holding an empty string rather than the
+            # absent key the guard above was written for.
+            StubGame("Blank Grade", {"mame-status": []}),
+            StubGame("Empty Grade", {"mame-status": [""]}),
         ]),
     ]
     api = StubApi(collections)
@@ -854,26 +879,79 @@ def main() -> int:
          "openMappingFor declares both as `string`, so a one-entry list is "
          "flattened on the way out -- which is why S10 works at all")
 
-    listed = shelf[REAL].entries[1]
-    marked = call(root, "isBroken", listed)
-    pill = label(row_for(root, "Cheeky Mouse II"), "not working")
-    shown = pill is not None and pill.property("visible")
-    if marked and shown:
-        same("a preliminary grade delivered as a list is marked too",
-             (marked, shown), (True, True))
-    else:
-        print("  gap:  a preliminary driver, delivered the way Pegasus "
-              "delivers it, is NOT marked")
-        print(f"        driverStatus says "
-              f"{call(root, 'driverStatus', listed)!r}, isBroken says "
-              f"{marked!r}, and the pill is not shown")
-        print("        Library.qml:126 compares game.extra['mame-status'] "
-              "against a string, but PegasusMetadata.cpp:444 stores every x- "
-              "field as a QStringList. The comparison is never true in the "
-              "real front-end, so no arcade set is ever marked as not "
-              "working -- everything above passes because the stub carries "
-              "the grade as a bare string, exactly as preview_library.py "
-              "does.")
+    # The bug this half of the file was written to catch. Every assertion
+    # above passes with `x-mame-status` carried as a bare string, which is
+    # what preview_library.py used to build and what no front-end has ever
+    # sent: PegasusMetadata.cpp stores each `x-` field as a QStringList, so
+    # the theme is handed ["preliminary"] and `=== "preliminary"` is false.
+    # For as long as that stood, no arcade set was marked in production while
+    # every screenshot showed the pill.
+    listed, good_l, imperfect_l, blank_l, empty_l = shelf[REAL].entries[1:]
+    same("a preliminary grade delivered as a list still reads as the grade",
+         call(root, "driverStatus", listed), "preliminary",
+         "a list is what the front-end sends; a theme that only reads "
+         "strings reads nothing")
+    truth("and the set is marked broken",
+          call(root, "isBroken", listed),
+          "this is the production shape -- MAME's own 'THIS GAME DOES NOT "
+          "WORK' set renders as a working game")
+    same("a good grade delivered as a list reads as good",
+         call(root, "driverStatus", good_l), "good")
+    same("and is not marked", call(root, "isBroken", good_l), False,
+         "reading the list wrongly the other way marks the whole arcade tab")
+    same("an imperfect grade delivered as a list reads as imperfect",
+         call(root, "driverStatus", imperfect_l), "imperfect")
+    same("and is deliberately not marked",
+         call(root, "isBroken", imperfect_l), False)
+    same("an empty list reports nothing",
+         call(root, "driverStatus", blank_l), "",
+         "a blank x-mame-status line must read as ungraded, not as a crash")
+    same("and is not marked", call(root, "isBroken", blank_l), False)
+    same("a list holding an empty string reports nothing",
+         call(root, "driverStatus", empty_l), "")
+    same("and is not marked", call(root, "isBroken", empty_l), False)
+
+    print("\nS23: and the row under the real shape is drawn as marked")
+    same("this collection is drawn as a list", root.property("artMode"), False)
+    row = row_for(root, "Cheeky Mouse II")
+    truth("the pill is on screen",
+          label(row, "not working").property("visible"),
+          "the marking exists only if the user can see it")
+    same("the title is dimmed",
+         title_label(row, "Cheeky Mouse II").property("color"), faint)
+    for title in ("Wave Race 64", "Pac-Man II", "Rally X II", "Blank Grade",
+                  "Empty Grade"):
+        row = row_for(root, title)
+        same(f"{title}: no pill",
+             label(row, "not working").property("visible"), False,
+             "a playable game marked as not working is the same lie in "
+             "reverse")
+        same(f"{title}: at full strength",
+             title_label(row, title).property("color"), plain)
+
+    # ------------------------------------- the harness that hid it for years --
+    print("\nS23: the preview stubs the shape the front-end really sends")
+    # This is the reason the marking could be broken in production while every
+    # screenshot showed it working: tools/preview_library.py handed the theme
+    # a bare string. Pinned here rather than left to whoever next opens the
+    # preview, because a harness that is more convenient than production is
+    # a harness that lies, and nobody goes looking for that.
+    sys.path.insert(0, str(REPO / "tools"))
+    import preview_library  # noqa: E402
+
+    from padmap.pegasus import Entry  # noqa: E402  (preview_library adds src/)
+
+    previewed = preview_library.StubGame(
+        Entry(title="Cheeky Mouse", path="/roms/cheekyms.zip",
+              status="preliminary"))
+    truth("the preview carries the grade as a list",
+          isinstance(previewed.extra.get("mame-status"), list),
+          "a preview that stubs a bare string shows a pill the real "
+          "front-end never draws")
+    truth("and the real theme marks the preview's own game",
+          call(root, "isBroken", previewed),
+          "what the preview shows and what Pegasus shows have to be the "
+          "same screen")
 
     print("\nall checks passed")
     return 0

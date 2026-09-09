@@ -814,20 +814,27 @@ def scenario_unbounded_buffer() -> None:
     print(f"  ok  {sent // (1024 * 1024)} MiB with no newline yields no "
           f"messages at all")
 
-    if held >= sent:
-        gap(f"LineReader has no size limit: after {sent // (1024 * 1024)} "
-            f"MiB with no newline it is still holding all "
-            f"{held // (1024 * 1024)} MiB. The socket lives in "
-            f"XDG_RUNTIME_DIR and any process running as this user may "
-            f"connect, so `yes | nc -U .../padmap.sock` grows the daemon "
-            f"until the OOM killer takes it -- and with it every virtual "
-            f"pad on the machine, mid-game. Stopped at "
-            f"{sent // (1024 * 1024)} MiB rather than the gigabyte in the "
-            f"brief so as not to OOM the machine running this check; "
-            f"nothing in feed() bounds it, so a gigabyte is held too. A cap "
-            f"on len(self._buffer) that drops the client is the usual fix.")
-    else:
-        print(f"  ok  the buffer is capped at {held} bytes")
+    check(held < sent,
+          f"LineReader has no size limit: after {sent // (1024 * 1024)} MiB "
+          f"with no newline it is still holding all {held // (1024 * 1024)} "
+          f"MiB. The socket lives in XDG_RUNTIME_DIR and any process running "
+          f"as this user may connect, so `yes | nc -U .../padmap.sock` grows "
+          f"the daemon until the OOM killer takes it -- and with it every "
+          f"virtual pad on the machine, mid-game. Stopped at "
+          f"{sent // (1024 * 1024)} MiB rather than the gigabyte in the brief "
+          f"so as not to OOM the machine running this check; unbounded here "
+          f"means a gigabyte is held too")
+    print(f"  ok  the buffer is capped at {held} bytes")
+
+    # Bounded is only half of it: the connection has to make sense again
+    # afterwards, or the front-end stays connected while nothing it sends is
+    # ever acted on.
+    check(reader.feed(b"the tail of the over-long line\n") == [],
+          "the tail of a dropped over-long line was parsed as a message")
+    check(reader.feed(protocol.encode(CLAIM)) == [CLAIM],
+          "after dropping an over-long line the reader never resynchronised; "
+          "every later event on that connection is lost")
+    print("  ok  framing resynchronises on the next newline after the drop")
 
     # Whatever it does with the size, it must not corrupt the message.
     reader = protocol.LineReader()
@@ -840,51 +847,56 @@ def scenario_unbounded_buffer() -> None:
     print("  ok  a legitimate 2 MiB message still arrives whole and exact")
 
 
+def _feed_or_die(reader: protocol.LineReader, chunk: bytes,
+                 depth: int) -> list[dict]:
+    """feed(), turning anything it raises into a failure of this file.
+
+    json.loads recurses once per level of nesting, so past about 52,000
+    brackets it raises RecursionError -- which is a RuntimeError, not a
+    ValueError, so the `except ValueError` inside feed() used to miss it.
+    feed() is called from Server._on_client_read, inside the selector loop,
+    inside serve(), with no try anywhere in between: whatever comes out of
+    here ends the daemon and takes every virtual pad on the machine with it,
+    mid-game, at the request of anything that can open the socket.
+    """
+    try:
+        return reader.feed(chunk)
+    except BaseException as error:                       # noqa: BLE001
+        raise SystemExit(
+            f"FAIL: feed() raised {type(error).__name__} on a {depth}-deep "
+            f"line. Any local process can write that to the socket in "
+            f"XDG_RUNTIME_DIR, and the daemon exits -- every controller on "
+            f"the machine stops working, mid-game, with nothing on screen to "
+            f"say why") from error
+
+
 def scenario_pathological_nesting() -> None:
     print("\na peer that sends deeply nested JSON:")
-    for depth in (1000, 10000):
+    for depth in (1000, 10000, 200000):
         wire = (b"[" * depth) + (b"]" * depth) + b"\n"
-        try:
-            check(feed_all(wire) == [],
-                  f"a {depth}-deep array was delivered as a message; it is "
-                  f"not an object")
-        except RecursionError:
-            gap(f"feed() raised RecursionError on a {depth}-deep array")
-            return
-    print("  ok  10000-deep nesting is skipped like any other non-object")
+        check(_feed_or_die(protocol.LineReader(), wire, depth) == [],
+              f"a {depth}-deep array was delivered as a message; it is "
+              f"not an object")
+    print("  ok  nesting 1000, 10000 and 200000 deep is skipped like any "
+          "other non-object")
 
+    # And in the shape it arrives in: a real event ahead of the poison in the
+    # same read. That event is the one telling the setup screen who just
+    # claimed a slot, and it was being lost along with the daemon.
     depth = 200000
     wire = protocol.encode(CLAIM) + (b"[" * depth) + (b"]" * depth) + b"\n"
     reader = protocol.LineReader()
-    raised = None
-    got = []
-    try:
-        got = reader.feed(wire)
-    except RecursionError as error:
-        raised = error
-    if raised is None:
-        check(got == [CLAIM],
-              f"a {depth}-deep array was delivered as a message")
-        print(f"  ok  {depth}-deep nesting is skipped, the claim before it "
-              f"survives")
-        return
-
-    gap(f"LineReader.feed raises RecursionError -- not ValueError -- on a "
-        f"deeply nested line (about 52000 brackets on this build), and it "
-        f"only catches ValueError. Server._on_client_read calls feed() "
-        f"outside any try, so it goes through the selector loop and out of "
-        f"serve(): the daemon exits and every virtual pad on the machine "
-        f"disappears mid-game. Repro: connect to the socket in "
-        f"XDG_RUNTIME_DIR and write b'['*200000 + b']'*200000 + b'\\n'. "
-        f"Reachable in 64 KiB recv chunks because feed() accumulates across "
-        f"reads before parsing. The {CLAIM['event']!r} event ahead of it in "
-        f"the same read is lost too.")
-    # The half that IS unambiguously right: the poisoned line is consumed,
-    # so a reader that survives the raise resynchronises on the next one.
+    check(_feed_or_die(reader, wire, depth) == [CLAIM],
+          f"the {CLAIM['event']!r} event ahead of a {depth}-deep line in the "
+          f"same read did not survive it; the player who just pressed a "
+          f"button never appears on the setup screen")
+    print(f"  ok  {depth}-deep nesting is skipped, the claim before it "
+          f"survives")
+    # The poisoned line is consumed, so framing resynchronises on the next.
     check(reader.feed(protocol.encode(STATE)) == [STATE],
-          "after the raise the reader was left holding the poisoned line; "
-          "even a caller that caught the error could never resynchronise")
-    print("  ok  the poisoned line is consumed, so a surviving caller resyncs")
+          "the reader was left holding the poisoned line; framing never "
+          "resynchronises and the setup screen stops updating for good")
+    print("  ok  the poisoned line is consumed, so the next one is read")
 
 
 def scenario_daemon_read_shape() -> None:
@@ -932,16 +944,16 @@ def scenario_daemon_read_shape() -> None:
 
     seen, error = run((b"[" * 200000) + (b"]" * 200000) + b"\n"
                       + protocol.encode(STATE))
-    if error is None:
-        check(seen == [STATE],
-              "a deeply nested line over a real socket cost us the message "
-              "after it")
-        print("  ok  a deeply nested line is skipped over a real socket too")
-    else:
-        gap(f"over a real socket, in the daemon's exact recv(65536)/feed "
-            f"shape, a deeply nested line ends the read loop with "
-            f"{type(error).__name__} and the message after it is never "
-            f"seen. This is the daemon exiting.")
+    check(error is None,
+          f"over a real socket, in the daemon's exact recv(65536)/feed shape, "
+          f"a deeply nested line ends the read loop with "
+          f"{type(error).__name__}. This is the daemon exiting, at the "
+          f"request of any process that can open the socket: every virtual "
+          f"pad on the machine disappears mid-game")
+    check(seen == [STATE],
+          "a deeply nested line over a real socket cost us the message "
+          "after it")
+    print("  ok  a deeply nested line is skipped over a real socket too")
 
 
 def main() -> int:

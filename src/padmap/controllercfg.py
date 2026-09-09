@@ -105,6 +105,14 @@ def write_sdl_mappings(
     leaves SDL to pick one, and which one is not something to rely on. Lines
     for devices padmap does not manage are left exactly as they are -- users
     map their own controllers in there too.
+
+    Raises OSError if the existing database cannot be read. Preserving those
+    foreign lines is the entire reason this rewrites instead of appending, and
+    a read that failed cannot tell "the file is empty" from "the file is there
+    and I could not see it" -- so the rewrite is abandoned rather than allowed
+    to publish the difference. Callers already treat a write failure as an
+    OSError (the daemon's command guard among them), so a refusal is reported
+    the same way a full disk would be.
     """
     target = path or sdl_config_path()
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -115,26 +123,41 @@ def write_sdl_mappings(
     ours = {virtual_guid(player) for player in range(1, 17)}
     kept: list[str] = []
     try:
-        for line in target.read_text(errors="replace").splitlines():
-            stripped = line.strip()
-            if not stripped or stripped.startswith(MARKER):
-                continue
-            fields = stripped.split(",")
-            # A line whose GUID is one of ours is a previous generation.
-            if fields[0] in ours:
-                continue
-            # ...and so is one bearing our *name* under a GUID we cannot
-            # recompute. Mirrored identities hash to a GUID that depends on
-            # which controller was plugged in at the time, so a line for a pad
-            # that has since been unplugged is not findable by GUID at all --
-            # and it would still match if that controller came back. The name
-            # is ours by construction, which makes it the reliable half of
-            # this test rather than the fallback it began as.
-            if len(fields) > 1 and fields[1].startswith(VIRTUAL_PREFIX):
-                continue
-            kept.append(line)
+        existing = target.read_text(errors="replace")
+    except FileNotFoundError:
+        # No database yet -- a first run, or a symlink whose target has still
+        # to be created. There is nothing to preserve, so there is nothing to
+        # lose: write ours and be done.
+        existing = ""
     except OSError:
-        pass
+        # Anything else means the file is there and we could not read it:
+        # mode 0222 after a hand-edit, an unreadable mount, an I/O error.
+        # This used to be swallowed, and "could not read" became "was empty" --
+        # so a user with a hand-written mapping in sdl_controllers.txt lost it
+        # on the next wizard run, silently. Refuse instead: their lines are
+        # what this whole read-and-rewrite exists to keep.
+        log.warning("cannot read %s -- refusing to rewrite it, because the "
+                    "mappings already in it would be lost", target)
+        raise
+
+    for line in existing.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith(MARKER):
+            continue
+        fields = stripped.split(",")
+        # A line whose GUID is one of ours is a previous generation.
+        if fields[0] in ours:
+            continue
+        # ...and so is one bearing our *name* under a GUID we cannot
+        # recompute. Mirrored identities hash to a GUID that depends on
+        # which controller was plugged in at the time, so a line for a pad
+        # that has since been unplugged is not findable by GUID at all --
+        # and it would still match if that controller came back. The name
+        # is ours by construction, which makes it the reliable half of
+        # this test rather than the fallback it began as.
+        if len(fields) > 1 and fields[1].startswith(VIRTUAL_PREFIX):
+            continue
+        kept.append(line)
 
     body = kept + [MARKER + " -- regenerated on every controller assignment"]
     for player in sorted(lines):
@@ -294,7 +317,19 @@ def carried_fields(guid: str) -> tuple[dict[str, str], str] | None:
     for path in _database_paths():
         try:
             text = path.read_text(errors="replace")
-        except OSError:
+        except FileNotFoundError:
+            # The ordinary case: SDL_GAMECONTROLLERCONFIG_FILE may name files
+            # that do not exist, and a machine that has never run the wizard
+            # has no sdl_controllers.txt.
+            continue
+        except OSError as error:
+            # A database that is there and unreadable is not the same thing,
+            # and skipping it quietly means a user's own mapping is passed
+            # over in favour of a guess with nothing said. Nothing is
+            # rewritten here, so this degrades rather than destroys -- but it
+            # is worth a line in the log to explain the guess.
+            log.warning("cannot read %s, so a mapping in it will not be "
+                        "carried over: %s", path, error)
             continue
         for line in text.splitlines():
             parsed = mapping.parse_sdl_line(line)

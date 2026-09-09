@@ -2746,3 +2746,46 @@ had wrapped the collection *write* in the same guard as the playlist *read*, so
 an unusable output directory skipped silently and reported success. A damaged
 input costs one collection; a destination that cannot be written costs
 everything, and reporting success then is a lie rather than resilience.
+
+## Fixing nineteen bugs in parallel, by owning files rather than bugs
+
+Nine agents, one disjoint set of source files each, 49 verified mutations. The
+partition held exactly: every source change landed inside its owner's files and
+nothing else. The only collision was in tools/, where two agents extended the
+same check, and a three-way merge against the base resolved it without
+conflict.
+
+That is the lesson worth keeping from the exercise. Parallel *testing* needs
+only isolation; parallel *fixing* needs an ownership rule, because two agents
+editing one file cannot both be right and neither knows the other exists.
+Assigning by file rather than by bug also forced the bugs into sensible groups:
+the five that live in the daemon's own state machine went to one agent who
+could see how they interact, rather than to five agents each holding a corner.
+
+Two limits were reported honestly rather than worked around. The mapping agent
+could not fix the server half of the sub-BTN_MISC binding, because
+`_begin_mapping` passes the pad's key list unfiltered and it does not own
+server.py; it made mapping.py able to *express* "RetroArch cannot see this"
+and said what remains. The calibration agent could not change the reach seeding
+in `CalibrationRun` for the same reason, and fixed the half that lives in
+merge_reach. Both are better outcomes than an agent reaching into a file
+another was editing.
+
+### The recurring hole finally got a helper
+
+`safeio.read_text` now exists, and hide.py and cli.py use it. The UTF-8 decode
+bug had shipped five times in five places -- `hide.unhidden`, the profile
+store, `Server._load_prompted`, `hide.install`, `cli._forget_prompted` -- each
+found separately, each fixed separately. Five instances of one mistake is not
+five bugs; it is a missing abstraction, and counting them was what made that
+obvious.
+
+### One integration trap worth recording
+
+The combined tree passed all 42 checks and failed mypy with "Module padmap has
+no attribute safeio". The file was there. The flake was not: a Nix git tree
+copies only *tracked* files, so a new module that has never been `git add`ed is
+invisible to every derivation while being perfectly visible to the tests run
+from the working directory. Staging it fixed it. This is the same family as
+every other stale-artefact failure in this log -- the thing being built was not
+the thing on disk -- and it will happen again to anyone adding a module here.

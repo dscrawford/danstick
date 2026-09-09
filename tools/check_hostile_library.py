@@ -384,10 +384,16 @@ def check_newline_injection(work: Path) -> None:
         '<mame><game name="evil"><description>Wrapped\nOver Two Lines'
         "</description></game></mame>", encoding="utf-8")
     table = titles.parse_mame_xml(xml)
-    same("a description wrapped over two lines keeps both",
-         table["evil"].title, "Wrapped\nOver Two Lines")
-    gap("so the newline above needs no hand-edited playlist: any MAME XML "
-        "with a wrapped <description> feeds one straight into render()")
+    # Was a gap: <description> is read with re.S, so a wrapped one used to
+    # reach the table as "Wrapped\nOver Two Lines" and fed a key injection
+    # into render() with nobody hand-editing anything. Normalised at the
+    # source now, so the table itself never holds a title no human typed.
+    same("a description wrapped over two lines arrives as one line",
+         table["evil"].title, "Wrapped Over Two Lines")
+    need("\n" not in table["evil"].title,
+         "a MAME XML with a wrapped <description> still puts a newline in a "
+         "game title, which the metadata file reads as the start of a new key")
+    ok("no MAME XML can feed a newline into render() through the table")
 
     print("\nS22: a collection-level field containing a newline")
     source = playlist(work / "ext.lpl", ARCADE_CORE,
@@ -843,6 +849,13 @@ def check_titles_table(work: Path) -> None:
              Title("Pac-Man", "1980", "Namco", "banana")),
         "an empty table":
             ("{}", None),
+        # Short rows and bare-string rows are the shapes a hand-written table
+        # comes in, and both used to be read a character at a time or not at
+        # all. A name with no year is still the name the player reads.
+        "a row that is only a title":
+            ('{"pacman": ["Pac-Man"]}', Title("Pac-Man")),
+        "a row that is a bare string":
+            ('{"pacman": "Pac-Man"}', Title("Pac-Man")),
     }
     for label, (text, wanted) in supported.items():
         table_path.write_text(text)
@@ -856,42 +869,41 @@ def check_titles_table(work: Path) -> None:
           ("good", "imperfect", "preliminary", "")],
          [True, True, False, True])
 
+    # Was a gap: each of these raised straight out of find_titles, and
+    # pegasus.export calls it on its first line -- so a table caught
+    # half-written ended the whole export and the user lost every collection,
+    # not just the arcade tab's real names.
     damaged = {
         "truncated mid-write": '{"pacman": ["Pac',
         "a top-level list": "[1, 2, 3]",
         "an empty file": "",
-        "a row with one column": '{"pacman": ["Pac-Man"]}',
         "a row with no columns": '{"pacman": []}',
         "a null row": '{"pacman": null}',
         "a row that is an object": '{"pacman": {"title": "Pac-Man"}}',
+        "a row that is a number": '{"pacman": 1980}',
+        "a row whose title is empty": '{"pacman": ["", "1980", "Namco"]}',
+        "a row whose title is not a string": '{"pacman": [["Pac-Man"]]}',
     }
-    raised = []
     for label, text in damaged.items():
         table_path.write_text(text)
         try:
             got = titles.find_titles()
         except Exception as error:  # noqa: BLE001
-            raised.append(f"{label} -> {type(error).__name__}")
-            continue
-        need(got.get("pacman") is None or got["pacman"].title == "Pac-Man",
+            raise SystemExit(
+                f"FAIL: {label} raises {type(error).__name__} out of "
+                "find_titles; pegasus.export calls it first, so this damaged "
+                "table costs the user every collection instead of the arcade "
+                "tab's real names") from error
+        same(f"{label} means no titles, not a crash", got, {})
+        need(got.get("pacman") is None,
              f"{label} was loaded as a title table, with a made-up title")
     ok(f"none of {len(damaged)} damaged tables invents a title")
-    if not raised:
-        raise SystemExit(
-            "FAIL: damaged title tables are handled -- assert {} instead")
-    gap(f"{len(raised)} damaged title tables raise out of find_titles, e.g. "
-        f"{raised[0]}; the docstring promises \"the best available title "
-        "table, or an empty dict\", and pegasus.export calls it first, so a "
-        "half-written PADMAP_MAME_TITLES stops every collection being "
-        "regenerated rather than costing the arcade tab its real names")
 
-    table_path.write_text('{"pacman": "Pac-Man"}')
-    got = titles.find_titles()["pacman"]
-    if got.title == "Pac-Man":
-        raise SystemExit("FAIL: string rows load properly now -- assert it")
-    gap(f"a table whose rows are plain strings loads silently as "
-        f"{got!r}: every arcade game gets a one-character name, and nothing "
-        "in the export report says the table was the wrong shape")
+    table_path.write_text(
+        '{"pacman": ["Pac-Man", "1980", "Namco", "good"], "broken": null}')
+    got = titles.find_titles()
+    same("one unreadable row costs that set only, not the whole table",
+         got, {"pacman": Title("Pac-Man", "1980", "Namco", "good")})
 
     os.environ[titles.ENV_TITLES] = str(work / "never-built.json")
     same("a table that was never built means no titles, not a crash",

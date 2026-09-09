@@ -84,8 +84,15 @@ class StubGame(QObject):
         A map even when empty, matching `Game::extraMap` -- the theme reads
         `extra["mame-status"]` and an absent map would exercise only the
         guard, never the marker.
+
+        The grade is a one-entry *list*, because that is what the front-end
+        sends: PegasusMetadata.cpp builds a QStringList per `x-` field. This
+        stub used to hand over a bare string, which is why every preview and
+        every screenshot showed the "not working" pill while no real arcade
+        set was ever marked. A harness more convenient than production is a
+        harness that lies -- the picture was of something else.
         """
-        return {"mame-status": self._entry.status} if self._entry.status else {}
+        return {"mame-status": [self._entry.status]} if self._entry.status else {}
 
     @Slot()
     def launch(self):

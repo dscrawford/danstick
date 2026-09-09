@@ -535,26 +535,23 @@ def check_sdl_database_keeps_foreign_lines() -> None:
             f"sdl_controllers.txt and finish the wizard")
 
     if not skip_as_root("a write-only SDL database"):
+        # A database that can be written but not read is the one destination
+        # where succeeding is worse than failing. This file is rewritten
+        # rather than appended to precisely so the user's own lines survive,
+        # and a read that failed cannot tell "the file was empty" from "the
+        # file is there and I could not see it". It used to write anyway, and
+        # the hand-written mappings went with it -- reproduce by chmod 0222 on
+        # ~/.config/pegasus-frontend/sdl_controllers.txt, then finish the
+        # wizard.
         base = fresh("sdl-write-only")
         target = base / "sdl_controllers.txt"
         target.write_text(mine)
         target.chmod(0o222)
-        survives("rewriting a database that cannot be read but can be written",
-                 lambda: controllercfg.write_sdl_mappings(SDL_LINE, target))
+        refuses("rewriting a database that can be written but not read",
+                lambda: controllercfg.write_sdl_mappings(SDL_LINE, target))
         target.chmod(0o644)
-        after = target.read_text()
-        if "padmap Player 1" not in after:
-            fail("padmap's own mapping was not written at all")
-        ok("padmap's own mapping is written")
-        if "Xbox 360" not in after:
-            gap("write_sdl_mappings silently discarded every line it could "
-                "not read back. Reproduce: chmod 0222 "
-                "~/.config/pegasus-frontend/sdl_controllers.txt with a hand-"
-                "written mapping in it and finish the wizard -- `except "
-                "OSError: pass` around the read (controllercfg.py) treats "
-                "'could not read the file' as 'the file was empty', so the "
-                "user's own controller mappings are dropped and nothing says "
-                "so. A read that fails must abort the rewrite, not empty it")
+        unchanged("the user's own mappings survive a database that could not "
+                  "be read", target, mine)
 
 
 # -- S14: what a launch writes ----------------------------------------------

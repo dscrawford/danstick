@@ -139,6 +139,26 @@ def _proc_field(pid: int, name: str) -> list[str]:
     ]
 
 
+def _same_runtime(one: str, other: str) -> bool:
+    """Do two XDG_RUNTIME_DIR values name the same directory?
+
+    Compared as raw strings, `/run/user/1000` and `/run/user/1000/` are two
+    different daemons -- and they are not, they bind the same socket, because
+    everything here builds the path with `Path(...) / "padmap"` and a trailing
+    separator disappears the moment it does. A daemon started from a shell
+    where the variable happened to carry a slash was therefore invisible to
+    every caller: `ensure-daemon` saw no daemon and started a second one on the
+    socket the first was already listening on, and `restart-daemon` left the
+    stale one running -- which is the exact failure the build-id machinery
+    above exists to prevent.
+
+    normpath rather than realpath: this compares a value read out of another
+    process's environ, and resolving it would touch the filesystem (and hang on
+    one that is not answering) for a string comparison.
+    """
+    return os.path.normpath(one) == os.path.normpath(other)
+
+
 def daemon_pids(runtime: str | None = None) -> list[int]:
     """Pids of `padmap serve` processes on a given XDG_RUNTIME_DIR.
 
@@ -179,7 +199,7 @@ def daemon_pids(runtime: str | None = None) -> list[int]:
             key, sep, value = item.partition("=")
             if sep:
                 env[key] = value
-        if env.get("XDG_RUNTIME_DIR", "/tmp") == wanted:
+        if _same_runtime(env.get("XDG_RUNTIME_DIR", "/tmp"), wanted):
             pids.append(pid)
     return pids
 
@@ -338,30 +358,97 @@ def encode(message: dict[str, Any]) -> bytes:
     return (json.dumps(message, separators=(",", ":")) + "\n").encode("utf-8")
 
 
+# Most one unterminated line may accumulate before it is thrown away.
+#
+# The socket lives in XDG_RUNTIME_DIR and any process running as this user may
+# connect to it, so without a bound `yes | nc -U .../padmap.sock` grows the
+# daemon until the OOM killer takes it -- and every virtual pad on the machine
+# goes with the daemon, mid-game. That is the same denial of service as the
+# nesting one below, reached by another route.
+#
+# Generous rather than tight, because the cost of guessing low is a front-end
+# whose console picker silently never opens. The largest thing padmap puts on
+# this socket is a layout_choice carrying whole layouts (~8 KiB for five
+# consoles) or an sdl_mapping; anything within an order of magnitude of this
+# limit is not padmap traffic.
+MAX_LINE_BYTES = 8 * 1024 * 1024
+
+
 class LineReader:
     """Accumulates socket reads and yields whole JSON messages.
 
     A stream socket splits messages anywhere, so a client that assumes one
     recv() is one message works until it doesn't. This buffers instead.
+
+    `feed` does not raise. Everything it is handed came off a socket any local
+    process may connect to, and its caller in the daemon is the selector loop
+    itself -- `Server._on_client_read` sits inside `serve()`, so an exception
+    from here ends the process rather than the connection.
     """
 
     def __init__(self) -> None:
-        self._buffer = b""
+        # A bytearray with two offsets into it rather than a bytes that is
+        # re-sliced: `buffer = buffer.split(b"\n", 1)[1]` copies everything
+        # still pending on every read and `b"\n" in buffer` rescans it, which
+        # makes reassembling one message quadratic in its length. Measured at
+        # 27s for a 1 MiB message arriving a byte at a time -- 27s during
+        # which the daemon's single thread forwards no pad events at all.
+        self._buffer = bytearray()
+        self._start = 0     # first byte of the line being accumulated
+        self._scanned = 0   # how far we have already looked for its newline
+        # True while discarding the tail of a line that blew MAX_LINE_BYTES.
+        self._dropping = False
 
     def feed(self, data: bytes) -> list[dict[str, Any]]:
         self._buffer += data
         messages: list[dict[str, Any]] = []
-        while b"\n" in self._buffer:
-            line, self._buffer = self._buffer.split(b"\n", 1)
-            line = line.strip()
+
+        while True:
+            end = self._buffer.find(b"\n", self._scanned)
+            if end < 0:
+                self._scanned = len(self._buffer)
+                break
+            line = bytes(self._buffer[self._start:end]).strip()
+            # Consume the line *before* parsing it. Whatever happens next, the
+            # framing has already resynchronised on this newline.
+            self._start = self._scanned = end + 1
+            if self._dropping:
+                # The tail of an over-long line, and the newline that finally
+                # ended it. Nothing to parse; normal framing resumes here.
+                self._dropping = False
+                continue
             if not line:
                 continue
             try:
                 decoded = json.loads(line)
-            except ValueError:
+            except (ValueError, RecursionError):
                 # A malformed line is worth skipping rather than killing the
                 # connection: the framing is still intact after the newline.
+                #
+                # RecursionError sits beside ValueError because it is not one
+                # -- it is a RuntimeError. json.loads recurses once per level
+                # of nesting, so a line of b"[" * 52096 (measured threshold on
+                # this build) raised straight out of feed(), out of
+                # _on_client_read, through the selector loop and out of
+                # serve(). Any process that could open the socket could end
+                # the daemon, and every virtual pad went with it mid-game.
+                # A good message earlier in the same read was lost too.
                 continue
             if isinstance(decoded, dict):
                 messages.append(decoded)
+
+        if self._start:
+            del self._buffer[:self._start]
+            self._scanned -= self._start
+            self._start = 0
+
+        if len(self._buffer) > MAX_LINE_BYTES:
+            # A peer that sends and sends without ever sending a newline. Drop
+            # what it has sent and keep dropping until one arrives: refusing to
+            # grow is the whole point, and the next newline is the only place
+            # this connection can be trusted to make sense again.
+            self._buffer.clear()
+            self._scanned = 0
+            self._dropping = True
+
         return messages

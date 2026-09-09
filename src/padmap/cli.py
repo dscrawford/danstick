@@ -25,7 +25,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import devices, hide, retroarch, virtual
+from . import devices, hide, retroarch, safeio, virtual
 from .assign import HOLD_SECONDS, Assigner, Assignment
 
 STATE_DIR = Path(
@@ -174,12 +174,16 @@ def cmd_export_pegasus(args: argparse.Namespace) -> int:
             print(f"  {line}")
         return 0
 
-    existing = []
-    if config.is_file():
-        existing = [
-            line.strip() for line in config.read_text().splitlines()
-            if line.strip()
-        ]
+    # safeio: game_dirs.txt is Pegasus' file, not padmap's, and read_text on
+    # bytes that are not UTF-8 raises UnicodeDecodeError -- the same hole as
+    # `hide` and `forget` had, in the one command that has already written
+    # every collection by the time it gets here. A traceback now leaves the
+    # games exported and Pegasus never told where they are, which looks from
+    # the front-end like the export did nothing at all.
+    existing = [
+        line.strip() for line in (safeio.read_text(config) or "").splitlines()
+        if line.strip()
+    ]
     # Drop our own previous entries (including the old merged directory) but
     # keep anything the user added by hand.
     keep = [
@@ -294,13 +298,15 @@ def _forget_prompted(signatures: set[str] | None) -> int:
     from . import protocol
 
     path = protocol.prompted_path()
-    try:
-        remembered = [
-            line.strip() for line in path.read_text().splitlines()
-            if line.strip()
-        ]
-    except OSError:
+    # safeio, not read_text: the file lives in XDG_RUNTIME_DIR where anything
+    # may have written it, and bytes that are not UTF-8 raise
+    # UnicodeDecodeError -- a ValueError, so the `except OSError` here missed
+    # it and `padmap forget` tracebacked. That is the command someone runs to
+    # recover from a broken controller record; it has to survive a broken one.
+    raw = safeio.read_text(path, default=None)
+    if raw is None:
         return 0
+    remembered = [line.strip() for line in raw.splitlines() if line.strip()]
 
     keep = [] if signatures is None else [
         line for line in remembered if line not in signatures
@@ -618,10 +624,31 @@ def cmd_ensure_daemon(args: argparse.Namespace) -> int:
     # what stops a rebuild leaving them on a padmap-play from before whatever
     # was just fixed -- the failure that kept four controllers appearing in
     # N64 games long after the cause was fixed everywhere else.
-    link = pegasus.install_player_link()
+    #
+    # Guarded, and reported rather than raised: this was the first statement
+    # in the function and nothing caught it, so a `bin` directory that had
+    # become a plain file (FileExistsError), or a `padmap-play` that was a
+    # directory (IsADirectoryError), or a root-owned one (PermissionError),
+    # ended ensure-daemon before it had even looked for a daemon. Both the
+    # Pegasus and padmap-start wrappers run this as
+    #   padmap ensure-daemon || echo continuing without a current daemon
+    # so the front-end then came up with no daemon, no virtual pads and no
+    # controllers at all -- over a symlink that only decides which launcher
+    # *exported collections* invoke. Getting the daemon up is the job; the
+    # link is a convenience, and a broken one has to be stepped over.
+    link = None
+    try:
+        link = pegasus.install_player_link()
+        if link is not None:
+            print(f"launcher: {link} -> {os.readlink(link)}")
+    except OSError as error:
+        link = None
+        print(f"warning: could not update the launcher link: {error}")
+        print("  exported collections keep invoking the launcher they were "
+              "exported with;")
+        print("  clear that path and re-run, or re-export with:  "
+              "padmap export-pegasus")
     if link is not None:
-        print(f"launcher: {link} -> {os.readlink(link)}")
-
         # Collections exported before the link existed name a store path
         # directly and will keep invoking it whatever the link says.
         stale = pegasus.stale_collections()

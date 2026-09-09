@@ -218,23 +218,30 @@ def check_newline_name() -> None:
     if "," in line.split(",")[1]:
         raise SystemExit("FAIL: the name field is not comma-free")
     print("  ok  the comma guard still applies to a multi-line name")
-    if "\n" in line:
-        first = mapping.parse_sdl_line(line.splitlines()[0])
-        lost = first is not None and not [
-            f for f in first[2] if f != "platform"
-        ]
-        gap("mapping.sdl_line strips commas from the name but not newlines, "
-            "so a pad whose name contains one writes two physical lines into "
-            "sdl_controllers.txt. Repro: "
-            "mapping.sdl_line('0'*32, 'Line\\nBreak Pad', {'a': 'b0'}) -- "
-            "SDL reads line one as a device with "
-            f"{'no bindings at all' if lost else 'the wrong bindings'} and "
-            "line two as junk. Not reachable from a physical pad today "
-            "(every caller passes virtual_name), but the comma guard beside "
-            "it is one-sided.")
-    else:
-        raise SystemExit(
-            "FAIL: this is now guarded -- turn the gap into an assertion")
+    # The comma guard used to be one-sided: a newline in the name wrote two
+    # physical lines into sdl_controllers.txt, SDL read the first as a device
+    # with no bindings at all and dropped the second as junk, and the pad had
+    # no mapping rather than a damaged one.
+    read_back(line, "LineBreak Pad", {"a": "b0"}, "a newline in the name")
+    print("  ok  the newline is removed too, so the entry is one line")
+    breakers = (("a carriage return", "Car\rriage Pad", "Carriage Pad"),
+                ("CRLF", "Crlf\r\nPad", "CrlfPad"),
+                ("a vertical tab", "Vert\x0bical Pad", "Vertical Pad"),
+                ("a form feed", "Form\x0cFeed Pad", "FormFeed Pad"),
+                ("a Unicode line separator", "Uni\u2028code Pad",
+                 "Unicode Pad"))
+    for label, hostile, expected in breakers:
+        # str.splitlines() -- which controllercfg uses to keep other people's
+        # lines when it rewrites the database -- breaks on all of these, so any
+        # one of them costs padmap the line it just wrote.
+        written = mapping.sdl_line(GUID, hostile, {"a": "b0"})
+        if len(written.splitlines()) != 1:
+            raise SystemExit(
+                f"FAIL: {label} in a device name still splits the SDL entry "
+                "into two lines -- the pad ends up with no mapping at all and "
+                "SDL says nothing about it")
+        read_back(written, expected, {"a": "b0"}, label)
+    print("  ok  carriage return, CRLF, VT, FF and U+2028 are all one line")
 
 
 def check_guid_hostile_identity() -> None:
@@ -808,10 +815,18 @@ def check_keyboard_range_code() -> None:
         raise SystemExit("FAIL: KEY_B is not below the assigner's cutoff")
     print(f"  ok  S3: assign ignores everything below {assign.BTN_FIRST:#x}, "
           "so a stuck keyboard key cannot claim a player slot")
-    if mapping.retroarch_button_index(keys, 48) is not None:
+    # Three answers, not two: an index, RA_INVISIBLE, or None for a code this
+    # pad does not report at all. Answering None for the middle case is what
+    # let a keyboard key be written into an autoconfig as a button number.
+    if mapping.retroarch_button_index(keys, 48) != mapping.RA_INVISIBLE:
         raise SystemExit(
             "FAIL: RetroArch's numbering now includes a sub-BTN_MISC code")
-    print("  ok  RetroArch's udev driver cannot see KEY_B at all (index None)")
+    if mapping.retroarch_button_index(keys, 0x200) is not None:
+        raise SystemExit(
+            "FAIL: a code the pad does not report is no longer distinguishable "
+            "from one RetroArch cannot see")
+    print("  ok  RetroArch's udev driver cannot see KEY_B at all "
+          "(RA_INVISIBLE), and that is not the same answer as 'unknown code'")
     visible = len([code for code in keys if code >= mapping.BTN_MISC])
     if mapping.sdl_button_index(keys, 48) != 13:
         raise SystemExit("FAIL: SDL's numbering for KEY_B moved")
@@ -822,25 +837,38 @@ def check_keyboard_range_code() -> None:
     if not tap(run, 48):
         raise SystemExit(
             "FAIL: the wizard refused the key outright -- if that is the new "
-            "behaviour, turn the gap below into an assertion")
+            "behaviour, this check needs rewriting around it")
     binding = run.bindings["a"]
     if binding.sdl() != "b13":
         raise SystemExit(f"FAIL: SDL binding is {binding.sdl()}, not b13")
-    if binding.ra_index is None and int(binding.retroarch()) >= visible:
-        gap("capture.MappingRun records a button whose evdev code is below "
-            "BTN_MISC, and mapping.Binding treats ra_index=None as 'both "
-            "consumers agree' -- but retroarch_button_index returned None "
-            "because RetroArch cannot see that code at all. Repro: "
-            "keys=[30, 48]+list(range(0x120,0x12c)); tap KEY_B (48) in a "
-            "MappingRun -> Binding(kind='button', index=13, ra_index=None), "
-            f"whose .retroarch() is '13' on a pad where RetroArch counts only "
-            f"{visible} buttons (0..{visible - 1}). The autoconfig line binds "
-            "a button that does not exist and RetroArch still reports the pad "
-            "as configured. assign.BTN_FIRST already refuses this range for "
-            "slot claims; the wizard does not.")
+    # The wound: b13 is right for SDL, but RetroArch counts only the twelve
+    # real buttons. Emitting "13" bound a button that does not exist while
+    # RetroArch still reported the pad as configured -- the control worked in
+    # Pegasus and was dead in every game, with nothing said.
+    if binding.retroarch_visible():
+        raise SystemExit(
+            "FAIL: the wizard recorded KEY_B as a button RetroArch can be "
+            f"told about ({binding!r}). RetroArch's udev driver numbers only "
+            f"the {visible} codes at or above BTN_MISC, so any number written "
+            "for this press names a button that does not exist -- and "
+            "RetroArch still reports the pad as configured, so the control "
+            "works in Pegasus and is dead in every game.")
+    if mapping.retroarch_lines(run.bindings):
+        raise SystemExit(
+            "FAIL: the autoconfig carries a line for a button RetroArch "
+            f"cannot see: {mapping.retroarch_lines(run.bindings)}")
+    print("  ok  the press is stored as RA_INVISIBLE and written to no "
+          "autoconfig line, rather than as button 13 of 12")
+    try:
+        binding.retroarch()
+    except ValueError:
+        pass
     else:
         raise SystemExit(
-            "FAIL: this is now handled -- turn the gap into an assertion")
+            "FAIL: .retroarch() invented a number for a button RetroArch "
+            "cannot see instead of refusing -- any caller that does not ask "
+            "retroarch_visible() first is back to writing a dead binding")
+    print("  ok  .retroarch() refuses it loudly, so no caller can guess")
 
 
 def check_chooser_hostile() -> None:
@@ -958,24 +986,36 @@ def check_vendor_zero() -> None:
     print("  ok  a captured profile writes vendor 0, matching what the pad "
           "advertises")
 
+    # The unmapped path has to answer the same. It used to write
+    # `vid or PADMAP_VID`, so a pad reporting vendor 0 -- or any pad whose
+    # /sys id files are unreadable, since devices._read_hex returns 0 --
+    # claimed padmap's own ids in a profile for a mirror-mode virtual pad
+    # that advertises 0:0, and the same controller got a different answer
+    # before and after going through the wizard.
     derived = retroarch.derive_profile(None, 1, vid=0, pid=0)
-    if f'input_vendor_id = "{virtual.PADMAP_VID}"' in derived:
-        gap("retroarch.derive_profile writes `vid or PADMAP_VID`, so a pad "
-            "whose descriptor reports vendor 0 (or product 0) gets padmap's "
-            f"own {virtual.PADMAP_VID}:{virtual.PADMAP_PID} in its autoconfig "
-            "profile while the virtual pad advertises 0:0 -- exactly the "
-            "disagreement the docstring says scores against the profile. "
-            "Repro: retroarch.derive_profile(None, 1, vid=0, pid=0) -> "
-            f'input_vendor_id = "{virtual.PADMAP_VID}". Reached from '
-            "install_profiles for any unmapped pad in mirror mode whose "
-            "vendor is 0, including one whose /sys id/vendor is unreadable "
-            "(devices._read_hex returns 0). controllercfg.retroarch_profile, "
-            "the captured-bindings path just above, writes 0 correctly -- so "
-            "the same controller gets two different answers depending on "
-            "whether it has been through the wizard.")
-    else:
+    for line in ('input_vendor_id = "0"', 'input_product_id = "0"'):
+        if line not in derived.splitlines():
+            raise SystemExit(
+                f"FAIL: derive_profile does not write {line!r} for a pad that "
+                "reports 0; it claims ids the virtual pad does not advertise, "
+                "which scores the profile down in RetroArch's autoconfig "
+                "match, and disagrees with the profile the same pad gets once "
+                "it has been through the wizard. Got: "
+                f"{[l for l in derived.splitlines() if '_id = ' in l]}")
+    print("  ok  an unmapped pad reporting 0:0 derives a profile claiming "
+          "0:0, matching the captured path")
+
+    # "Unknown" is still distinct from "zero": a caller that has no ids to
+    # give omits them and gets padmap's own, which is what the padmap-identity
+    # virtual pad really advertises.
+    unknown = retroarch.derive_profile(None, 1)
+    if f'input_vendor_id = "{virtual.PADMAP_VID}"' not in unknown.splitlines():
         raise SystemExit(
-            "FAIL: this is now handled -- turn the gap into an assertion")
+            "FAIL: derive_profile with no ids given no longer falls back to "
+            f"padmap's own {virtual.PADMAP_VID}:{virtual.PADMAP_PID}, so a "
+            "profile for a padmap-identity pad names ids nothing advertises")
+    print("  ok  a caller that gives no ids still gets padmap's own, so "
+          "'unknown' and 'zero' stay distinguishable")
 
 
 def check_diagonal_hat_binding() -> None:
@@ -987,22 +1027,66 @@ def check_diagonal_hat_binding() -> None:
                 f"FAIL: hat bit {value} is not {spelling}; a wrong direction "
                 "word is a d-pad that silently does nothing")
     print("  ok  the four single-bit directions spell out correctly")
-    if Binding("hat", 0, 3).sdl() != "h0.3":
+    if Binding("hat", 0, 1).sdl() != "h0.1":
         raise SystemExit("FAIL: SDL's hat spelling changed")
-    try:
-        mapping.retroarch_lines({"dpup": Binding("hat", 0, 3)})
-    except KeyError:
-        gap("mapping.Binding.retroarch() raises KeyError on a hat value that "
-            "is not a single direction bit, while .sdl() accepts it (h0.3 is "
-            "a legal diagonal). Binding.from_json takes any int, so a "
-            "hand-edited or partially written profile carrying "
-            '{\"kind\": \"hat\", \"value\": 3} crashes retroarch_lines while '
-            "the launch profiles are being written -- the game then starts "
-            "with no controller config at all. Repro: "
-            "mapping.retroarch_lines({'dpup': mapping.Binding('hat', 0, 3)}).")
-    else:
+
+    # Binding.from_json takes any int, so a hand-edited or half-written
+    # profile can hold a diagonal (3) or a centred hat (0). retroarch() used
+    # to raise KeyError on one from the middle of writing the launch profiles
+    # -- the game then started with no controller config at all -- while
+    # sdl() rendered it happily, so the two consumers did not even agree that
+    # the binding existed.
+    for value, label in ((3, "a diagonal"), (0, "a centred hat"), (99, "junk")):
+        stray = Binding("hat", 0, value)
+        if stray.sdl_visible() or stray.retroarch_visible():
+            raise SystemExit(
+                f"FAIL: {label} hat value {value} is offered to a consumer. "
+                "It names two directions or none, so neither SDL nor "
+                "RetroArch can press it -- accepting it in one and not the "
+                "other is a d-pad that works in Pegasus and not in game.")
+        for render, who in ((stray.sdl, "SDL"), (stray.retroarch, "RetroArch")):
+            try:
+                render()
+            except ValueError:
+                continue
+            except Exception as error:                    # noqa: BLE001
+                raise SystemExit(
+                    f"FAIL: the {who} spelling of {label} raised "
+                    f"{type(error).__name__}, not ValueError -- a corrupt "
+                    "profile crashes the writer instead of being refused")
+            raise SystemExit(
+                f"FAIL: the {who} spelling of {label} came out as "
+                f"{render()!r}; a hat value that is not one direction bit "
+                "cannot be spelled for anyone")
+        try:
+            line_up = mapping.retroarch_lines({"dpup": stray})
+            sdl_line = mapping.sdl_mapping(GUID, "Stray Hat Pad",
+                                           {"dpup": stray})
+        except Exception as error:                        # noqa: BLE001
+            raise SystemExit(
+                f"FAIL: writing out a profile holding {label} raised "
+                f"{type(error).__name__} -- the writers run while a game is "
+                "launching, so the player gets no controller config at all "
+                "over one field nobody can press")
+        if line_up:
+            raise SystemExit(
+                f"FAIL: {label} reached the autoconfig as {line_up}")
+        if "dpup" in sdl_line:
+            raise SystemExit(
+                f"FAIL: {label} reached the SDL line as {sdl_line!r}")
+    print("  ok  a diagonal, a centred and a junk hat value are refused by "
+          "both consumers, and neither writer dies on one")
+
+    # The control: an intact capture beside it still renders for both.
+    sound = {"dpup": Binding("hat", 0, 1)}
+    if mapping.retroarch_lines(sound) != ['input_up_btn = "h0up"']:
         raise SystemExit(
-            "FAIL: this is now handled -- turn the gap into an assertion")
+            "FAIL: a real hat direction stopped reaching the autoconfig")
+    if "dpup:h0.1" not in mapping.sdl_mapping(GUID, "Sound Pad", sound):
+        raise SystemExit(
+            "FAIL: a real hat direction stopped reaching the SDL line")
+    print("  ok  a single-bit hat still reaches both, so this refuses only "
+          "the shapes nobody can press")
 
 
 def main() -> int:

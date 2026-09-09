@@ -996,25 +996,37 @@ def main() -> int:
         d.up(code=BTN_START)         # let go of that one; BTN_A never released
         clock.advance(server.CONFIRM_HOLD_SECONDS)
         d.ticks(3)
-        if d.accepted() == 1:
-            ok("releasing a second button does not cancel a confirm still "
-               "held on the first")
-        else:
-            gap("releasing a *second* button cancels a confirm hold that is "
-                "still down on the first. Server._on_claimed_event keys "
-                "_confirm_started on pad.path alone and pops it on any "
-                "value == 0, unlike Assigner._consume which checks "
-                "held[0] == event.code for exactly this reason. Because a "
-                "held button emits no further events, the confirm can then "
-                "never complete until the user lets go and presses again -- "
-                "the reported symptom being 'I have to hold it several "
-                "times'. Repro: _on_claimed_event(pad, BTN_SOUTH, 1); "
-                "_on_claimed_event(pad, BTN_START, 1); "
-                "_on_claimed_event(pad, BTN_START, 0); wait past "
-                "CONFIRM_HOLD_SECONDS; _tick() never accepts.")
-            if d.srv._confirm_started:
-                fail("the confirm tracker is neither cleared nor honoured")
-            ok("the confirm is cancelled rather than left half-tracked")
+        if d.accepted() != 1:
+            fail("releasing a *second* button cancels a confirm hold that is "
+                 "still down on the first. Server._on_claimed_event keyed "
+                 "_confirm_started on pad.path alone and popped it on any "
+                 "value == 0, unlike Assigner._consume which checks "
+                 "held[0] == event.code for exactly this reason. Because a "
+                 "held button emits no further events, the confirm can then "
+                 "never complete until the user lets go and presses again -- "
+                 "which is the report 'I have to reassign controllers twice "
+                 "before they actually get assigned'. A thumb resting on B "
+                 "is enough")
+        ok("releasing a second button does not cancel a confirm still "
+           "held on the first")
+        d.close()
+
+    print("\nS4: releasing the button that started the confirm cancels it")
+    with frozen(server) as clock:
+        d = Daemon(claims=1)
+        d.down(code=BTN_A)
+        clock.advance(0.3)
+        d.up(code=BTN_A)             # the hold really is over
+        clock.advance(server.CONFIRM_HOLD_SECONDS)
+        d.ticks(3)
+        if d.accepted():
+            fail("a tap on a claimed pad accepted the session anyway -- setup "
+                 "ends before the user has checked the player order, and the "
+                 "pads are released out from under them")
+        if d.srv._confirm_started:
+            fail("the confirm tracker still holds a hold nobody is holding; "
+                 "the next tick would accept a session nobody confirmed")
+        ok("the release that matches the press does cancel the hold")
         d.close()
 
     if _GAPS:

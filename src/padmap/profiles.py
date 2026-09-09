@@ -24,6 +24,7 @@ anything positional like the event node or phys, which change between plugs.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 from dataclasses import dataclass, field
@@ -31,6 +32,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from . import mapping
+
+log = logging.getLogger("padmap.profiles")
 
 if TYPE_CHECKING:  # pragma: no cover
     # Only for annotations. Importing it for real would pull evdev in, and
@@ -171,6 +174,18 @@ def _filename(sig: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "_", sig)[:120] + ".json"
 
 
+# The width of the field an axis value travels in. `input_event.value` is an
+# `__s32`, and python-evdev packs it with `struct`, so a number outside this
+# range does not become a wrong reading -- it raises OverflowError. That is
+# neither an OSError nor a ValueError, so every guard between the profile
+# store and the uinput write misses it, and the process ends. Measured: a
+# stored profile declaring min/max of -+2**40 made `apply(150)` return
+# 1099511627776, `write_event` raise, and the whole daemon exit mid-game with
+# every player's controller going dead at once.
+EVDEV_VALUE_MIN = -(2 ** 31)
+EVDEV_VALUE_MAX = 2 ** 31 - 1
+
+
 @dataclass
 class AxisCalibration:
     """Where an axis rests, how far it actually travels, and its dead band.
@@ -204,6 +219,23 @@ class AxisCalibration:
     def high(self) -> int:
         value = self.reach_max if self.reach_max is not None else self.maximum
         return max(value, self.center)
+
+    def fits_evdev(self) -> bool:
+        """Whether everything this calibration can emit is writable at all.
+
+        Checked on the stored numbers rather than on each result, because the
+        stored numbers bound every result: `apply` clamps into
+        `minimum`..`maximum`, and the only other value that leaves here is the
+        centre seed `virtual.create` writes, which is their midpoint. So one
+        check when a profile is read stands in for a check on every event, and
+        the hot path stays arithmetic.
+        """
+        bounds = [self.center, self.minimum, self.maximum, self.flat]
+        if self.reach_min is not None:
+            bounds.append(self.reach_min)
+        if self.reach_max is not None:
+            bounds.append(self.reach_max)
+        return all(EVDEV_VALUE_MIN <= n <= EVDEV_VALUE_MAX for n in bounds)
 
     def apply(self, value: int) -> int:
         """Rescale a raw reading so `center` maps to the declared midpoint.
@@ -424,7 +456,8 @@ class Profile:
             try:
                 reach_min = values.get("reach_min")
                 reach_max = values.get("reach_max")
-                axes[int(code)] = AxisCalibration(
+                number = int(code)
+                cal = AxisCalibration(
                     center=int(values["center"]),
                     minimum=int(values["min"]),
                     maximum=int(values["max"]),
@@ -432,8 +465,40 @@ class Profile:
                     reach_min=None if reach_min is None else int(reach_min),
                     reach_max=None if reach_max is None else int(reach_max),
                 )
-            except (KeyError, TypeError, ValueError):
+            except (KeyError, TypeError, ValueError, OverflowError):
+                # OverflowError belongs beside the rest: JSON's `1e400` parses
+                # to `inf`, and `int(inf)` raises it. Without it here, a single
+                # such number escaped from_json entirely -- past `load`, whose
+                # except only wraps the read and the parse -- and since
+                # `is_known` is `load() is not None` and discovery calls it for
+                # every pad, one damaged file stopped the whole controller list
+                # rather than costing one axis.
                 continue
+            if not cal.fits_evdev():
+                # Rejected, not clamped, and the choice is deliberate.
+                #
+                # A range wider than an evdev value can hold is not a
+                # measurement that overshot: no stick reports 2**40. It is a
+                # hand-edit, or a save interrupted halfway, and the numbers
+                # beside it are worth nothing either. Clamping them to +-2**31
+                # keeps the daemon alive but keeps scaling every reading
+                # against nonsense, so the user trades a dead daemon for a
+                # stick that reads permanently slammed into a corner -- a
+                # frontend acts on that immediately, which is the runaway menu
+                # navigation `virtual.create`'s centre seed exists to avoid.
+                # Dropping the axis falls back to forwarding it verbatim,
+                # which is exactly what an uncalibrated pad already does and
+                # is the one behaviour here known to work. One axis loses its
+                # correction, the controller and the game survive, and the log
+                # says which axis and why so it can be re-calibrated.
+                log.warning(
+                    "axis %s of %s has a calibration no evdev value can carry "
+                    "(centre %d, range %d..%d); ignoring it, so the axis is "
+                    "forwarded uncorrected -- re-run calibration to restore it",
+                    code, raw.get("signature", "this profile"),
+                    cal.center, cal.minimum, cal.maximum)
+                continue
+            axes[number] = cal
 
         mappings: dict[str, Mapping] = {}
         stored_mappings = raw.get("mappings")

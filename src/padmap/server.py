@@ -206,6 +206,10 @@ class Server:
         self._assignments: list[Assignment] = []
         self._republisher: virtual.Republisher | None = None
         self._confirm_started: dict[str, float] = {}
+        # Which button started the hold on each pad. Kept beside
+        # _confirm_started rather than in it because a release only ends a
+        # confirm if it is a release of *that* button; see _on_claimed_event.
+        self._confirm_button: dict[str, int] = {}
         self._last_progress = 0.0
         self._last_confirm = 0.0
         self._slots = 4
@@ -252,7 +256,20 @@ class Server:
     # -- lifecycle --------------------------------------------------------
 
     def start(self) -> None:
-        self.socket_path.parent.mkdir(parents=True, exist_ok=True)
+        # Both of the failures below are reported the way the live-daemon case
+        # a few lines down is: a RuntimeError naming the socket. serve() calls
+        # start() outside its try/finally, so whatever comes out of here is
+        # what the operator sees when the daemon will not come up -- and a
+        # bare `IsADirectoryError: [Errno 21]` with no path in it says nothing
+        # about padmap, the socket, or what to delete. Both are real: the
+        # runtime dir is world-writable-by-this-user scratch space, and an
+        # `mkdir /run/user/1000/padmap/padmap.sock` typo is enough.
+        try:
+            self.socket_path.parent.mkdir(parents=True, exist_ok=True)
+        except OSError as error:
+            raise RuntimeError(
+                f"cannot create the directory for {self.socket_path}: {error}"
+            ) from error
         # A socket left by a crashed daemon would make bind() fail with
         # EADDRINUSE even though nothing is listening. Probe before removing,
         # so we refuse to steal the socket from a daemon that *is* alive.
@@ -262,7 +279,13 @@ class Server:
                     f"another padmap daemon is already listening on "
                     f"{self.socket_path}"
                 )
-            self.socket_path.unlink()
+            try:
+                self.socket_path.unlink()
+            except OSError as error:
+                raise RuntimeError(
+                    f"{self.socket_path} is in the way and is not a socket "
+                    f"padmap can remove: {error}"
+                ) from error
 
         self._listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self._listener.bind(str(self.socket_path))
@@ -335,7 +358,23 @@ class Server:
         if not data:
             self._drop_client(sock)
             return
-        for message in client.reader.feed(data):
+        # Guarded for the same reason _handle_command is, one layer further
+        # out. `feed` is reached before any other guard on this path, and it
+        # is reached with bytes any local process may have written to the
+        # socket: a line of 52,096 open brackets made json.loads raise
+        # RecursionError -- a RuntimeError, so the except beside it missed --
+        # and it left feed(), left here, went through the selector loop and
+        # out of serve(). The daemon exited and took every virtual pad on the
+        # machine with it, mid-game. feed() no longer raises that; this is
+        # here so that nothing it might raise in future can end the daemon
+        # either.
+        try:
+            messages = client.reader.feed(data)
+        except Exception as error:                      # noqa: BLE001
+            log.warning("unreadable data from a client (%s: %s); dropping it",
+                        type(error).__name__, error)
+            return
+        for message in messages:
             self._handle_command(client, message)
 
     def _drop_client(self, sock: Any) -> None:
@@ -464,8 +503,16 @@ class Server:
         # rather than requiring the daemon to be restarted.
         self._icon_overrides = icons.load_overrides()
 
-        self._assigner = Assigner(pads, grab=True)
-        self._assigner.__enter__()
+        assigner = self._open_pads(pads)
+        if assigner is None:
+            # Nothing to run a session on. Put back whatever was on the air
+            # before, exactly as _cancel does: opening a session stops
+            # republishing, and failing here must not be a more expensive way
+            # to lose your controllers than never having asked.
+            self._resume_republishing()
+            self._broadcast(self._state_event())
+            return
+        self._assigner = assigner
         self._assigner.on_claimed_event = self._on_claimed_event
         # Calibration needs the EV_ABS stream, which claim detection ignores.
         self._assigner.on_raw_event = self._on_raw_event
@@ -483,7 +530,7 @@ class Server:
         self._slots = max(1, players)
         for fd in self._assigner.fds:
             self._selector.register(fd, selectors.EVENT_READ, self._on_pad_read)
-        self._confirm_started.clear()
+        self._clear_confirm()
         self._last_progress = 0.0
         self._last_confirm = 0.0
         self._state = STATE_ASSIGNING
@@ -494,21 +541,91 @@ class Server:
         # Without these lines the answer to all three is unobtainable after
         # the fact.
         log.info("session open: %d pad(s), %d slot(s), %d already assigned",
-                 len(pads), self._slots, len(self._assignments))
+                 len(self._assigner.pads), self._slots, len(self._assignments))
         if self._assigner.grab_failures:
             log.warning(
                 "session: %d pad(s) not grabbed exclusively (%s) -- presses "
                 "also reach the front-end",
                 len(self._assigner.grab_failures),
                 ", ".join(p.event for p in self._assigner.grab_failures))
-        self._broadcast({"event": "pads", "count": len(pads)})
+        self._broadcast({"event": "pads", "count": len(self._assigner.pads)})
         self._broadcast(self._state_event())
+
+    def _open_pads(self, pads: list[Pad]) -> Assigner | None:
+        """Open and grab a set of pads, skipping any that have gone away.
+
+        devices.discover() lists what /sys said a moment ago; open_device()
+        opens what /dev has now. A controller unplugged in between makes
+        evdev raise FileNotFoundError out of Assigner.__enter__, and nothing
+        guarded it: not _begin, not _handle_command, not run(). Since
+        _poll_new_controllers calls _begin itself once a second, a pad
+        unplugged just after being plugged in ended the daemon -- and every
+        virtual pad on the machine with it -- at the moment padmap was trying
+        to be helpful about the pad that had just arrived.
+
+        Retries without the pad that failed rather than abandoning the
+        session, because unplugging one controller is no reason the other
+        three cannot be assigned. Terminates: every pass drops one pad, and a
+        pass that cannot name the pad it failed on gives up.
+
+        Returns None if no session could be opened at all; the caller is then
+        responsible for putting republishing back.
+        """
+        remaining = list(pads)
+        last: OSError | None = None
+        while remaining:
+            assigner = Assigner(remaining, grab=True)
+            try:
+                assigner.__enter__()
+                return assigner
+            except OSError as error:
+                # Whatever it had already opened is open and grabbed. Nobody
+                # else will release those, and every one of them is a
+                # controller that has stopped working until the daemon dies.
+                assigner.close()
+                last = error
+                gone = getattr(error, "filename", None)
+                if not any(p.path == gone for p in remaining):
+                    # Not a pad we can name, so there is nothing to drop and
+                    # retrying would loop on the same failure.
+                    log.warning("could not open the pads for a session: %s",
+                                error)
+                    break
+                log.warning("%s went away between discovery and opening it; "
+                            "carrying on with %d other pad(s)",
+                            gone, len(remaining) - 1)
+                remaining = [p for p in remaining if p.path != gone]
+
+        self._broadcast({
+            "event": "error",
+            "message": f"the controllers went away before setup could open "
+                       f"them: {last}"})
+        return None
+
+    def _resume_republishing(self) -> None:
+        """Put the stored assignments back on the air, and settle the state.
+
+        Opening a session stops republishing, so without this, leaving one --
+        by cancelling, or by failing to open it at all -- left the machine
+        with no virtual pads and nothing but a daemon restart to bring them
+        back. Cheap when setup was always something the user asked for; now
+        that the daemon opens it on its own, an unwanted screen would cost
+        someone their controllers for declining it.
+        """
+        if self._republisher is None and self._assignments:
+            try:
+                self._start_republisher()
+            except OSError as error:
+                # A pad that went away while the session was open. Idle is
+                # the honest state then, rather than pretending.
+                log.warning("could not resume republishing: %s", error)
+        self._state = STATE_READY if self._republisher else STATE_IDLE
 
     def _reset(self) -> None:
         if self._assigner is None:
             return
         self._assigner.reset()
-        self._confirm_started.clear()
+        self._clear_confirm()
         self._broadcast(self._state_event())
 
     def _cancel(self) -> None:
@@ -537,20 +654,7 @@ class Server:
         self._end_session(release=True)
         self._calibration = None
         if had_session:
-            # Put the previous assignments back on the air. Opening a session
-            # stops republishing, so without this, backing out of setup left
-            # the machine with no virtual pads at all and nothing but a
-            # daemon restart to bring them back. Cheap before the daemon
-            # opened setup on its own; now that it does, an unwanted screen
-            # would cost the user their controllers for declining it.
-            if self._republisher is None and self._assignments:
-                try:
-                    self._start_republisher()
-                except OSError as error:
-                    # A pad that went away while the session was open. Idle is
-                    # the honest state then, rather than pretending.
-                    log.warning("could not resume republishing: %s", error)
-            self._state = STATE_READY if self._republisher else STATE_IDLE
+            self._resume_republishing()
         self._broadcast(self._state_event())
 
     def _accept(self) -> None:
@@ -644,7 +748,7 @@ class Server:
             self._store_profile(pad, {})
             self._calibration = CalibrationRun(pad, player, {})
             self._calibration.begin_phase(PHASE_ICON)
-            self._confirm_started.clear()
+            self._clear_confirm()
             self._broadcast({
                 "event": "calibration", "phase": PHASE_ICON, "frac": 1.0,
                 "player": player, "axes": 0, "name": _clean(pad.name),
@@ -654,7 +758,7 @@ class Server:
         self._calibration = CalibrationRun(pad, player, axes)
         # Drop any in-flight confirm hold: the button that opened this is
         # very likely still down, and it must not resume a confirm later.
-        self._confirm_started.clear()
+        self._clear_confirm()
         self._emit_calibration(self._calibration)
 
     def _on_raw_event(self, pad: Pad, event: Any) -> None:
@@ -741,7 +845,7 @@ class Server:
         self._calibration = None
         # A button held while choosing an icon would otherwise be sitting in
         # the confirm tracker and fire the moment normal handling resumes.
-        self._confirm_started.clear()
+        self._clear_confirm()
         self._last_confirm = 0.0
         self._broadcast({
             "event": "calibration", "phase": "done", "frac": 1.0,
@@ -856,7 +960,7 @@ class Server:
         )
         # The button that opened this is very likely still down; it must not
         # resume a confirm hold when the modal flow ends.
-        self._confirm_started.clear()
+        self._clear_confirm()
         self._broadcast(self._choice.to_event())
 
     def _forget_pad(self, player: int) -> None:
@@ -966,7 +1070,7 @@ class Server:
             axes=self._absolute_ranges(device),
             held=self._active_keys(device),
         )
-        self._confirm_started.clear()
+        self._clear_confirm()
         self._broadcast(self._choice.to_event())
 
     def _begin_scope_choice(self, player: int) -> None:
@@ -1023,7 +1127,7 @@ class Server:
             axes=self._absolute_ranges(device),
             held=self._active_keys(device),
         )
-        self._confirm_started.clear()
+        self._clear_confirm()
         self._broadcast(self._choice.to_event())
 
     def _mapped_layouts(self, pad: Pad) -> set[str]:
@@ -1075,7 +1179,7 @@ class Server:
         """Leave the picker without starting a wizard."""
         run = self._choice
         self._choice = None
-        self._confirm_started.clear()
+        self._clear_confirm()
         self._last_confirm = 0.0
         self._broadcast({
             "event": "layout_choice", "active": False,
@@ -1189,7 +1293,7 @@ class Server:
         # set would file the *next* wizard -- possibly for a different
         # controller -- under a scope nobody chose for it.
         self._pending_scope = ""
-        self._confirm_started.clear()
+        self._clear_confirm()
         log.info("mapping %s as %s for scope %r",
                  _clean(pad.name), layout.id, scope)
         self._emit_mapping()
@@ -1217,7 +1321,7 @@ class Server:
         """
         run = self._mapping
         self._mapping = None
-        self._confirm_started.clear()
+        self._clear_confirm()
         self._last_confirm = 0.0
         self._pending_scope = ""
 
@@ -1338,11 +1442,38 @@ class Server:
         elif self._republisher is not None:
             self._republisher.handle_readable(int(fd))
 
-    def _on_claimed_event(self, pad: Pad, _code: int, value: int) -> None:
+    def _clear_confirm(self) -> None:
+        """Forget any confirm hold in flight, on every pad.
+
+        Both halves together. Leaving _confirm_button behind would be harmless
+        today -- a fresh hold overwrites it -- but "the hold is cancelled" is
+        one fact, and splitting it across two dicts that can be cleared
+        separately is how it stops being one.
+        """
+        self._confirm_started.clear()
+        self._confirm_button.clear()
+
+    def _on_claimed_event(self, pad: Pad, code: int, value: int) -> None:
+        """Track the confirm hold on an already-claimed pad.
+
+        The release has to match the button that started the hold, exactly as
+        Assigner._consume checks `held[0] == event.code` on the claim side.
+        Keying on the pad alone and popping on *any* release meant a second
+        button going up cancelled a hold still down on the first -- and since
+        a held button emits no further events, nothing would ever restart it:
+        the bar sat wherever it had got to until the user let go and began
+        again. A thumb resting on B while holding A is enough, which is why
+        this was reported as "I have to reassign controllers twice before they
+        actually get assigned".
+        """
         if value == 1:
-            self._confirm_started.setdefault(pad.path, time.monotonic())
+            if pad.path not in self._confirm_started:
+                self._confirm_started[pad.path] = time.monotonic()
+                self._confirm_button[pad.path] = code
         elif value == 0:
-            self._confirm_started.pop(pad.path, None)
+            if self._confirm_button.get(pad.path) == code:
+                self._confirm_started.pop(pad.path, None)
+                self._confirm_button.pop(pad.path, None)
 
     def _read_prompted_stamp(self) -> int:
         try:
@@ -1584,7 +1715,7 @@ class Server:
         if release:
             self._assigner.close()
         self._assigner = None
-        self._confirm_started.clear()
+        self._clear_confirm()
 
     # -- republishing -----------------------------------------------------
 

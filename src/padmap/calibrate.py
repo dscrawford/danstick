@@ -215,7 +215,25 @@ def sample_reach(
 def merge_reach(
     axes: dict[int, AxisCalibration], reach: dict[int, tuple[int, int]]
 ) -> dict[int, AxisCalibration]:
-    """Fold measured extremes into an existing centre calibration."""
+    """Fold measured extremes into an existing centre calibration.
+
+    A direction has to clear the dead band before it counts as measured. The
+    old test was `low < cal.center`, one dead band short of its own intent: a
+    reading inside the band is by definition indistinguishable from the stick
+    sitting still, and recording it as a reach makes `apply` compute a span
+    from the edge of the band that is zero or negative, so the whole of that
+    direction reads dead centre.
+
+    That is not a corner case. The reach sample window opens at the axis's
+    absinfo value while the centre comes from the *measured* rest samples, so
+    the two disagree by however far the stick dithered while the user was
+    letting go. An axis that jitters up a couple of units at rest and is then
+    never touched during the sweep -- the user circling the other stick --
+    ends the sweep one unit below its own centre, which the old test recorded
+    as a reach_min. Result: full left reads dead centre. The exact "the stick
+    cannot go left at all" failure that measuring reach exists to prevent,
+    with the user doing nothing wrong.
+    """
     out: dict[int, AxisCalibration] = {}
     for code, cal in axes.items():
         low, high = reach.get(code, (cal.center, cal.center))
@@ -224,10 +242,11 @@ def merge_reach(
             minimum=cal.minimum,
             maximum=cal.maximum,
             flat=cal.flat,
-            # Ignore a direction that never moved: leaving it None falls back
-            # to the declared range rather than pinning travel to zero.
-            reach_min=low if low < cal.center else None,
-            reach_max=high if high > cal.center else None,
+            # Ignore a direction that never left the dead band: leaving it
+            # None falls back to the declared range rather than pinning travel
+            # to zero.
+            reach_min=low if low < cal.center - cal.flat else None,
+            reach_max=high if high > cal.center + cal.flat else None,
         )
     return out
 

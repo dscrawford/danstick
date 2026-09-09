@@ -1219,18 +1219,23 @@ def check_button_numbering_is_kept_for_both() -> None:
     if binding.sdl() != "b2":
         fail(f"SDL was told {binding.sdl()!r}; SDL numbers a sub-BTN_JOYSTICK "
              f"code after the joystick ones, so 0xAC is b2 here")
-    if mapping.retroarch_button_index(home, 0xAC) is not None:
-        fail("RetroArch now numbers a code below BTN_MISC; turn the gap "
-             "below into an assertion")
-    if binding.ra_index is None and binding.retroarch() == "2":
-        print("  gap: a button below BTN_MISC is stored with ra_index=None, "
-              "which means 'both consumers agree', and is emitted to "
-              "RetroArch as button 2 -- an index its udev driver never "
-              "reports for this pad. The control works in Pegasus and is "
-              "dead in every game, with nothing said.")
-    else:
-        fail(f"the sub-BTN_MISC binding is now {binding!r}; turn the gap into "
-             f"an assertion")
+    if mapping.retroarch_button_index(home, 0xAC) != mapping.RA_INVISIBLE:
+        fail("RetroArch now numbers a code below BTN_MISC, or no longer says "
+             "so distinctly -- ra_index=None means 'the two agree'")
+    # It used to be stored with ra_index=None, which means "both consumers
+    # agree", and was emitted to RetroArch as button 2 -- the number its udev
+    # driver gives 0x121, a different button entirely. The Home key pressed
+    # the wrong control in every game while Pegasus behaved, with nothing said.
+    if binding.retroarch_visible():
+        fail(f"the wizard stored {binding!r} for KEY_HOMEPAGE as though "
+             f"RetroArch could name it; its udev driver cannot see any code "
+             f"below BTN_MISC, so the number written would press whichever "
+             f"real button happens to hold that index")
+    if mapping.retroarch_lines(r.bindings, r.layout.retroarch_keys()):
+        fail("an autoconfig line was written for a button RetroArch cannot "
+             "see; the pad reads as configured and the control is dead")
+    print("  ok  a code below BTN_MISC is marked as one RetroArch cannot see, "
+          "and no autoconfig line is invented for it")
 
 
 def main() -> int:

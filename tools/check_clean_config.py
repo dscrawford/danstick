@@ -25,9 +25,11 @@ file padmap admits is not its own, and the backup is the only undo.
 
 Scenarios cover the exact key families it rewrites and the near-miss keys it
 must not, idempotency, the backup (including when one already exists),
---dry-run, and the shapes a real config comes in: CRLF, no trailing newline,
-duplicate keys, odd spacing around `=`, comments, values containing `=` or a
-quote, plus a file that is empty, not valid UTF-8, read-only, or a directory.
+--dry-run, and the shapes a real config comes in: CRLF, mixed endings, no
+trailing newline, duplicate keys, odd spacing around `=`, comments, unquoted
+values and values with a comment after the closing quote (both of which
+RetroArch's own parser honours), values containing `=` or a quote, plus a file
+that is empty, not valid UTF-8, read-only, or a directory.
 
 Nothing here touches real user state or hardware: XDG_RUNTIME_DIR,
 XDG_CONFIG_HOME, XDG_DATA_HOME and PADMAP_PROFILE_DIR are redirected into a
@@ -583,31 +585,62 @@ def check_crlf() -> None:
     ok("the leaked key really is reset to N-1 on disk")
 
     expected = text.replace('_index = "0"', '_index = "2"').encode()
-    if after == expected:
-        ok("every CRLF ending survives, on the changed line and the others")
-    else:
-        gap("clean_user_config reads with read_text() and writes with "
-            "write_text(), both in universal-newlines mode, so every CRLF in "
-            "the file becomes a bare LF on the way out. A config with Windows "
-            "line endings -- one shared from a dual-boot install, or "
-            "hand-edited on Windows -- is rewritten end to end by a command "
-            "that reported changing one line, and the backup is written from "
-            "the same translated text so it cannot put the endings back. "
-            "Repro: write a retroarch.cfg with \\r\\n endings and one "
-            "input_player3_joypad_index line, run `padmap clean-config`; the "
-            "file and retroarch.cfg.padmap-backup both come back pure LF. "
-            "newline='' on the read and the write, or reading and writing "
-            "bytes, would keep them.")
+    if after != expected:
+        fail(f"clean-config rewrote the line endings of a CRLF config: "
+             f"{after!r} != {expected!r}. A config with Windows endings -- one "
+             f"off a dual-boot install, or hand-edited there -- must not be "
+             f"rewritten end to end by a command that reported changing one "
+             f"line; every line it has no rule for, and did not report, has to "
+             f"come back byte for byte")
+    ok("every CRLF ending survives, on the changed line and the others")
 
-    if backup_of(path).read_bytes() == text.encode():
-        ok("the backup of a CRLF config is the original bytes")
-    else:
-        note("the backup shares the translation above, so it cannot undo it")
+    if backup_of(path).read_bytes() != text.encode():
+        fail(f"the backup of a CRLF config is not the original bytes: "
+             f"{backup_of(path).read_bytes()!r}. The backup is the only undo "
+             f"for this rewrite, and one written from padmap's own reading of "
+             f"the file cannot put back what the reading changed")
+    ok("the backup of a CRLF config is the original bytes")
 
     # Whatever it does to the endings, it must not lose or duplicate a line.
     if after.replace(b"\r\n", b"\n").count(b"\n") != 3:
         fail(f"clean-config changed how many lines the config has: {after!r}")
     ok("no line is lost, duplicated or split by the rewrite")
+
+
+def check_mixed_line_endings() -> None:
+    heading("S21: a config mixing CRLF and LF, with no trailing newline")
+
+    # Half CRLF, half LF, unterminated last line: the shape a config that has
+    # been edited on both a Windows box and this one really has. Every ending
+    # is its own; the cleaner may not normalise any of them.
+    path = fresh()
+    text = ('video_driver = "gl"\r\n'
+            'input_player1_reserved_device = "padmap Player 1"\n'
+            'audio_driver = "alsa"\r\n'
+            'input_player3_joypad_index = "0"')
+    path.write_bytes(text.encode())
+    changes, backup = retroarch.clean_user_config(path)
+    after = path.read_bytes()
+
+    expected = (text.replace('"padmap Player 1"', '""')
+                    .replace('_index = "0"', '_index = "2"')).encode()
+    if after != expected:
+        fail(f"clean-config did not preserve mixed line endings: {after!r} != "
+             f"{expected!r}. Rewriting a \\r\\n as \\n (or adding a newline to "
+             f"an unterminated last line) changes lines the user was told "
+             f"nothing about")
+    ok("each line keeps the ending it had, and no newline is appended to the "
+       "last one")
+
+    if len(changes) != 2:
+        fail(f"clean-config reported {changes!r} for two leaked lines split "
+             f"across two kinds of line ending")
+    ok("leaked keys are found on both CRLF and LF lines")
+
+    if backup is None or backup.read_bytes() != text.encode():
+        fail("the backup of a mixed-ending config is not the original bytes, "
+             "so the rewrite cannot be undone")
+    ok("the backup is the original bytes")
 
 
 def check_no_trailing_newline() -> None:
@@ -735,44 +768,104 @@ def check_awkward_values() -> None:
     ok("only the one leaked line is reported")
 
 
-def check_parser_is_stricter_than_retroarch() -> None:
-    heading("S21: leaked values RetroArch honours but clean-config does not "
-            "match")
+def check_every_form_retroarch_honours() -> None:
+    heading("S21: leaked values written in the other forms RetroArch honours")
 
-    # config_file.c reads an unquoted value up to whitespace, and stops a
-    # quoted one at its closing quote, ignoring the rest of the line. padmap's
-    # _SETTING regex requires quotes and nothing but whitespace after them.
+    # config_file.c's extract_value() reads an unquoted value up to the first
+    # whitespace, and stops a quoted one at its closing quote while ignoring
+    # the rest of the line. Both forms are honoured by RetroArch, so a cleaner
+    # that only matches `key = "value"` with nothing after it reports "has no
+    # padmap leftovers" and exits 0 over a config where the stale index of S21
+    # is still in force -- an all-clear that is worse than a missed line.
     path = fresh()
     text = ('input_player3_joypad_index = 0\n'
             'input_player4_joypad_index = "0" # left over from padmap\n')
     path.write_text(text)
     changes, backup = retroarch.clean_user_config(path)
+    after = path.read_text()
 
-    if path.read_text() != text:
-        fail(f"clean-config half-rewrote a line it does not fully match, "
-             f"which is worse than skipping it: {path.read_text()!r}")
-    ok("a line clean-config does not match is left exactly as it was")
+    if changes != ['input_player3_joypad_index: "0" -> "2"',
+                   'input_player4_joypad_index: "0" -> "3"']:
+        fail(f"clean-config reported {changes!r} for two stale joypad indices "
+             f"RetroArch honours -- an unquoted one and one with a trailing "
+             f"comment. Missing them means `padmap clean-config` prints \"has "
+             f"no padmap leftovers\" and exits 0 while one controller still "
+             f"drives two ports")
+    ok("an unquoted value and a comment-trailed one are both recognised")
 
-    if changes:
-        gap("clean-config now rewrites unquoted or comment-trailed values; "
-            "turn the assertion below into the real one")
-    else:
-        gap("clean_user_config's _SETTING regex is stricter than RetroArch's "
-            "own config parser: it requires a double-quoted value with "
-            "nothing but whitespace after the closing quote. RetroArch's "
-            "config_file.c accepts an unquoted value (read up to whitespace) "
-            "and ignores anything after a quoted value's closing quote. So "
-            "`input_player3_joypad_index = 0` and "
-            "`input_player4_joypad_index = \"0\" # note` are both honoured by "
-            "RetroArch and both invisible to clean-config -- and the command "
-            "then prints \"has no padmap leftovers\", which reads as "
-            "all-clear while the exact stale index of S21 is still in force. "
-            "Repro: put `input_player3_joypad_index = 0` in a retroarch.cfg "
-            "and run `padmap clean-config`; it exits 0 reporting nothing.")
+    if after != ('input_player3_joypad_index = 2\n'
+                 'input_player4_joypad_index = "3" # left over from padmap\n'):
+        fail(f"clean-config did not rewrite the newly recognised forms "
+             f"faithfully: {after!r}. The value is the only thing that may "
+             f"change: quoting a line the user wrote unquoted, or eating the "
+             f"comment after a quoted value, edits the file beyond what was "
+             f"reported")
+    ok("each is rewritten in place, keeping its own quoting and its trailing "
+       "comment")
 
-    if backup is not None:
-        fail("clean-config took a backup for a file it reported no changes to")
-    ok("no backup is taken when nothing is reported")
+    if backup is None or backup.read_text() != text:
+        fail("clean-config rewrote the config without a backup holding the "
+             "original")
+    ok("the rewrite is backed up")
+
+    # RetroArch stops an unquoted value at the first whitespace, so what it
+    # reads from the reservation below is "padmap", not a virtual pad name.
+    # Matching its parser means matching it here too: this is not padmap's
+    # leftover and must not be touched.
+    path = fresh()
+    text = ('input_player3_reserved_device = padmap Player 3\n'
+            'video_driver = gl\n'
+            'input_player5_joypad_index = 4\n'
+            'input_player1_b_btn = nul\n')
+    path.write_text(text)
+    changes, backup = retroarch.clean_user_config(path)
+
+    if changes or backup is not None or path.read_text() != text:
+        fail(f"clean-config touched unquoted lines it has no rule for: "
+             f"{changes!r}, {path.read_text()!r}. An unquoted value stops at "
+             f"the first space for RetroArch, so `= padmap Player 3` reserves "
+             f"a device called \"padmap\" -- not one of padmap's own names -- "
+             f"and a joypad_index already at N-1 or a bind already `nul` is "
+             f"nothing to rewrite")
+    ok("unquoted values that are already correct, or that RetroArch reads as "
+       "something padmap never wrote, are left alone")
+
+    # The one value that cannot go back unquoted: extract_value() finds no
+    # token at all in an empty one, so the setting would disappear from the
+    # config instead of being cleared.
+    path = fresh()
+    path.write_text('input_player1_a_btn = 1\n')
+    retroarch.clean_user_config(path)
+    if path.read_text() != 'input_player1_a_btn = nul\n':
+        fail(f"an unquoted leaked bind was not reset in place: "
+             f"{path.read_text()!r}")
+    ok("an unquoted bind is reset to nul, still unquoted")
+
+    # Only "\n" ends a line for RetroArch's fgets. Python's splitlines() also
+    # breaks on \v, \f, \x1c and U+2028, and now that an unquoted value is
+    # recognised, the tail of such a "line" reads as a setting RetroArch never
+    # sees -- so a ROM directory holding one of those bytes could be rewritten
+    # under a report naming a joypad_index that is not in the file at all.
+    path = fresh()
+    text = ('system_directory = "/roms/a\x0binput_player3_joypad_index = 0"\n'
+            'input_player3_joypad_index = "0"\n')
+    path.write_text(text)
+    changes, _ = retroarch.clean_user_config(path)
+
+    if changes != ['input_player3_joypad_index: "0" -> "2"']:
+        fail(f"clean-config reported {changes!r}: it found a setting inside "
+             f"the user's own value, which RetroArch reads as one line")
+    if path.read_text() != text.replace('_index = "0"', '_index = "2"'):
+        fail(f"clean-config rewrote the inside of a value containing a "
+             f"vertical tab: {path.read_text()!r}. That is the user's ROM "
+             f"path, and RetroArch would not find the directory afterwards")
+    ok("a value holding a vertical tab stays one line, as it is to RetroArch")
+
+    if retroarch._render_value("", quoted=False) != '""':
+        fail("an emptied value is written back without quotes, which is not "
+             "an empty value to RetroArch's parser but no value at all -- the "
+             "setting would vanish from the config rather than be cleared")
+    ok("an emptied value is quoted so the setting survives as empty")
 
 
 # -- S21: files that are not a readable config -------------------------------
@@ -997,11 +1090,12 @@ def main() -> int:
     check_backup_already_exists()
     check_dry_run()
     check_crlf()
+    check_mixed_line_endings()
     check_no_trailing_newline()
     check_duplicate_keys()
     check_spacing_and_comments()
     check_awkward_values()
-    check_parser_is_stricter_than_retroarch()
+    check_every_form_retroarch_honours()
     check_empty_file()
     check_not_utf8()
     check_read_only_file()
