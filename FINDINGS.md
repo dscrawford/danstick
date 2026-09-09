@@ -2925,13 +2925,25 @@ deliberate instruction, so it wins; both halves then resolve to `AXIS_NONE`,
 other direction, and that part is not padmap's to fix -- RetroArch has no way
 to say "this button, and also that axis" on one analog axis.
 
-Calibrating the pad gets the other direction back, and only because of the
-floor division: `apply()` maps the measured rest to `(min + max) // 2` = 127,
-which normalises to **-128**, and the positive half clamps a negative reading
-to 0. So `input_r_y_plus_axis` would read exactly zero at rest and the button
-would still be consulted. Note the asymmetry -- this rescues a button on the
-*minus* half only. A button on the plus half with an axis on the minus half
-reads -128, never zero, and cannot be rescued on a 0..255 range at all.
+The drop is unconditional today, so C-stick down is gone from that one game
+mapping. It did not work before this change either -- nothing on that axis did,
+because `res` was 900 and the whole bind was inert -- so nothing regressed, but
+it is a real limit and worth stating plainly rather than implying the mapping
+is now complete.
+
+There is a way to keep it, not taken here. Calibrating the pad would be enough,
+and only because of the floor division: `apply()` maps the measured rest to
+`(min + max) // 2` = 127, which normalises to **-128**, and the positive half
+clamps a negative reading to 0. `input_r_y_plus_axis` would then read exactly
+zero at rest and the button would still be consulted. Making the drop
+conditional on a calibrated axis would recover C-down, at the cost of a rule
+whose correctness depends on a stored calibration being present and honest --
+so it is written down rather than built, until someone wants that direction
+back badly enough to pay for it.
+
+Note the asymmetry if anyone does: this rescues a button on the *minus* half
+only. A button on the plus half with an axis on the minus half reads -128,
+never zero, and cannot be rescued on a 0..255 range at all.
 
 Two things worth remembering beyond this bug:
 
