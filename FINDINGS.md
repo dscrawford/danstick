@@ -2249,3 +2249,33 @@ test believes it destroyed. `drop_setups` now flushes them with
 Worth remembering as a class: a test-only bug that makes a *correct*
 implementation look broken costs as much as one that hides a real fault, and it
 is harder to recognise because the instinct is to doubt the code under test.
+
+### Analog gain is a workaround, so padmap only removes it once it can
+
+`input_analog_sensitivity` was 1.6 in retroarch.cfg. That is not arbitrary: a
+GameCube stick does not reach the extremes its adapter declares, RetroArch
+scales the partial travel against the full declared range, and the stick feels
+weak. Winding the gain up compensates. libretro's own profile for a GameCube
+adapter ships the same idea, commented out:
+
+    # input_analog_sensitivity = "1.400000"
+
+It works, and it costs the top of the range. At 1.6 the stick is saturated at
+about 62% deflection, and everything past that is the same reading -- which is
+what "only 0% or 100%" felt like from the sofa.
+
+Calibration addresses the cause instead: `AxisCalibration.apply` rescales the
+measured reach onto the declared range, so a calibrated pad delivers the full
+sweep and a gain on top of it double-compensates.
+
+So padmap writes `input_analog_sensitivity = "1.000000"` into the launch
+override **only when every managed pad is calibrated**, and otherwise says
+nothing. The asymmetry is deliberate. Sensitivity is global, not per player, so
+one uncalibrated pad in a two-player session means the boost is still doing
+useful work for it; taking that away silently would make a stick worse while
+claiming to fix it. The setting reverts to the user's own value the moment a
+pad without calibration joins.
+
+This is the same reasoning as the rest of launch.cfg: retroarch.cfg drifts,
+padmap owns the launch. The difference is that this key is only overridden
+when padmap has earned the right to -- when it is the thing setting the range.

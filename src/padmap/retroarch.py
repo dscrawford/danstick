@@ -32,7 +32,7 @@ import os
 import re
 from pathlib import Path
 
-from . import protocol, virtual
+from . import profiles, protocol, virtual
 from .assign import Assignment
 from .virtual import PADMAP_PID, PADMAP_VID, VIRTUAL_PREFIX, virtual_name
 
@@ -497,6 +497,33 @@ def launch_config(
         for bind in PLAYER_BINDS:
             lines.append(f'input_player{player}_{bind}_btn = "nul"')
             lines.append(f'input_player{player}_{bind}_axis = "nul"')
+
+    # Analog gain, and only once padmap is the one deciding the range.
+    #
+    # A GameCube stick does not reach the extremes its adapter declares, so
+    # RetroArch scales a partial travel against a full range and the stick
+    # feels weak. The usual answer is to wind input_analog_sensitivity up --
+    # libretro's own profile for a GameCube adapter carries a commented-out
+    # `input_analog_sensitivity = "1.400000"` for exactly this. It works, and
+    # it costs the top of the range: at 1.6 the stick is already saturated at
+    # about 62% deflection, which is what "only 0% or 100%" felt like.
+    #
+    # Calibration fixes the cause instead: AxisCalibration.apply rescales the
+    # measured reach onto the declared range, so a calibrated pad delivers the
+    # full sweep and any gain on top double-compensates.
+    #
+    # So this is written only when every managed pad is calibrated. Otherwise
+    # the boost is still doing useful work and removing it would make the
+    # stick worse, which is not padmap's call to make silently.
+    if managed and all(
+        (profile := profiles.load(a.pad)) is not None and profile.axes
+        for a in assignments if a.player in managed
+    ):
+        lines.append("")
+        lines.append("# Every managed pad is calibrated, so padmap is already")
+        lines.append("# delivering the stick's full range. Gain on top of that")
+        lines.append("# only saturates it early.")
+        lines.append('input_analog_sensitivity = "1.000000"')
 
     lines.append("")
     lines.append("# Autoconfig comes from padmap's own directory, not")

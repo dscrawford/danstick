@@ -113,4 +113,58 @@ assert retroarch.launch_args(
 )[:2] == ["--nodevice", "1"]
 print("  ok  assignment with no enumerated pad -> slot emptied, not skipped")
 
+# Analog gain, written only when padmap is the one setting the range.
+#
+# A GameCube stick under-reaches the range its adapter declares, and the usual
+# workaround is to wind input_analog_sensitivity up -- libretro's own profile
+# for a GameCube adapter carries a commented-out 1.4 for exactly that. It costs
+# the top of the travel: at 1.6 the stick saturates around 62% deflection.
+# Calibration fixes the cause, so a calibrated pad needs no gain and a gain on
+# top of one only saturates it early. An uncalibrated pad still wants the
+# boost, so padmap must not quietly take it away.
+class _Profile:
+    def __init__(self, axes):
+        self.axes = axes
+
+
+def with_profiles(loader, assignments, paths):
+    original = retroarch.profiles.load
+    retroarch.profiles.load = loader
+    try:
+        return parse(retroarch.launch_config(assignments, paths))
+    finally:
+        retroarch.profiles.load = original
+
+
+print("\nanalog gain follows whether the pad is calibrated:")
+two = [Assignment(player=p, pad=pad(f"/dev/input/event{100 + p}"), button=0)
+       for p in (1, 2)]
+paths = {1: "/dev/input/event101", 2: "/dev/input/event102"}
+retroarch.visible_order = lambda: {0: "/dev/input/event101",
+                                   1: "/dev/input/event102"}
+
+cfg = with_profiles(lambda _pad: None, two, paths)
+assert "input_analog_sensitivity" not in cfg, (
+    "uncalibrated pads had their gain overridden -- the boost is compensating "
+    "for a stick that under-reaches, and removing it makes the stick weaker")
+print("  ok  nothing stored: gain left alone")
+
+cfg = with_profiles(lambda _pad: _Profile({}), two, paths)
+assert "input_analog_sensitivity" not in cfg, (
+    "a profile with no axes is not a calibration")
+print("  ok  profile but no axes: gain left alone")
+
+cfg = with_profiles(lambda _pad: _Profile({0: object()}), two, paths)
+assert cfg.get("input_analog_sensitivity") == "1.000000", (
+    f"calibrated pads still carry a gain ({cfg.get('input_analog_sensitivity')}) "
+    f"-- padmap already rescales to the full range, so this saturates early")
+print("  ok  both calibrated: gain reset to 1.0")
+
+calibrated_one = lambda p: _Profile({0: object()}) if p.path.endswith("101") else None
+cfg = with_profiles(calibrated_one, two, paths)
+assert "input_analog_sensitivity" not in cfg, (
+    "gain reset while a managed pad was still uncalibrated -- sensitivity is "
+    "global, so that pad loses the compensation it still needs")
+print("  ok  only one calibrated: gain left alone")
+
 print("all checks passed")
