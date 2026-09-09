@@ -474,6 +474,67 @@ def main() -> int:
         devices.discover = original_discover      # type: ignore[assignment]
         marker.unlink(missing_ok=True)
 
+    print("\nno full scan when nothing has been plugged or unplugged:")
+    # devices.discover spawns `udevadm info` per input device -- 32 on the
+    # machine this was measured on, 257-294ms -- and it ran once a second on
+    # the thread forwarding controller events. A capture of the virtual pad
+    # showed a 7.9ms median gap with stalls of 80-176ms about once a second.
+    calls = {"n": 0}
+    found = list(devices.discover())
+
+    def counting_discover(*_a, **_k):
+        calls["n"] += 1
+        return list(found)
+
+    original_discover = devices.discover
+    original_nodes = server._event_nodes
+    marker = protocol.playing_marker()
+    marker.unlink(missing_ok=True)
+    try:
+        devices.discover = counting_discover        # type: ignore[assignment]
+        h = Harness([pad("Known Pad")])
+        devices.discover = counting_discover        # type: ignore[assignment]
+        server._event_nodes = lambda: frozenset({"event0"})  # type: ignore[assignment]
+
+        h.srv._last_pad_scan = 0.0
+        h.srv._poll_new_controllers()
+        first = calls["n"]
+        if first != 1:
+            raise SystemExit(f"FAIL: {first} scan(s) on the first look")
+
+        h.srv._last_pad_scan = 0.0
+        h.srv._poll_new_controllers()
+        if calls["n"] != first:
+            raise SystemExit(
+                "FAIL: scanned again with nothing changed -- that is a "
+                "quarter-second stall per second on the input thread")
+        print("  ok  unchanged: no scan")
+
+        # A controller appearing adds an event node, which must be noticed.
+        server._event_nodes = lambda: frozenset({"event0", "event1"})  # type: ignore[assignment]
+        h.srv._last_pad_scan = 0.0
+        h.srv._poll_new_controllers()
+        if calls["n"] != first + 1:
+            raise SystemExit(
+                "FAIL: a new event node did not trigger a scan -- plugging a "
+                "controller in would never be noticed")
+        print("  ok  a new node: scans")
+
+        # `padmap forget` clears the prompted file to have a pad offered
+        # again, and changes nothing about what is plugged in.
+        h.srv.prompted_path.parent.mkdir(parents=True, exist_ok=True)
+        h.srv.prompted_path.write_text("changed\n")
+        h.srv._last_pad_scan = 0.0
+        h.srv._poll_new_controllers()
+        if calls["n"] != first + 2:
+            raise SystemExit(
+                "FAIL: forgetting a controller no longer re-offers it")
+        print("  ok  prompted file changed: scans")
+    finally:
+        devices.discover = original_discover        # type: ignore[assignment]
+        server._event_nodes = original_nodes        # type: ignore[assignment]
+        h.srv.prompted_path.unlink(missing_ok=True)
+
     print("\nall checks passed")
     return 0
 

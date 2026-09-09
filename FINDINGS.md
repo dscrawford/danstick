@@ -2458,3 +2458,46 @@ Not confirmed as the cause -- it could not be reproduced on demand, because
 reproducing it needs a republish to land between a launch and RetroArch reading
 the file. It is a real disagreement between two writers of one file, which is a
 thing worth removing whether or not it is this report.
+
+## The controller lag, measured: a quarter-second scan once a second
+
+Reported: "there's a lag on the controllers... doesn't seem to work great when
+entering two inputs... it feels more like it's just arriving at a very slow
+rate". Measured rather than reasoned about, by reading the virtual pad for ten
+seconds while the stick was moved:
+
+    1695 events over 10.0s -> 169/s
+    gap ms: median 7.94  mean 5.91  max 176.0
+      gaps > 50ms: 11
+      gaps >100ms: 5      (104, 128, 128, 160, 176)
+
+The steady cadence is healthy -- 7.94ms is the adapter's own ~125Hz. What is
+wrong is a stall of 80-176ms about once a second. Timing the suspect directly:
+
+    devices.discover()      : 257.3 ms   (7 pads)
+    signature + has_mapping :   1.0 ms
+    repeat: 276.6 / 274.0 / 293.9 ms
+
+`devices.discover` runs `udevadm info` **as a subprocess per input device** to
+read ID_INPUT_JOYSTICK, and this machine has 32 input devices. A quarter of a
+second, once a second, on the single thread that forwards controller events to
+the virtual pads. The profile parsing everyone would suspect first is 1ms of it.
+
+`_poll_new_controllers` now compares a cheap signal first -- the set of
+/dev/input/event* node names, plus the prompted file's mtime -- and only does
+the full scan when one of them has changed. Measured at 0.032ms against
+257-294ms, and a controller that appears always adds a node.
+
+Two ordering details, one of which the checks caught immediately:
+
+* The signature is recorded only when a scan actually runs, *after* the
+  blocked test. Recording it before meant a controller plugged in during a
+  game was never noticed once the game ended -- the next look saw nothing
+  changed and skipped for good.
+* Being blocked still returns without recording, so the offer survives until
+  the reason goes away.
+
+The deeper fix is not spawning 32 subprocesses at all -- udev's database can be
+read directly from /run/udev/data -- but that changes a filter deliberately
+matched to RetroArch's own (udev_joypad.c:1053), and the scan is no longer on
+the hot path, so it can wait for its own change.

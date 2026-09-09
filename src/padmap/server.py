@@ -165,6 +165,22 @@ class CalibrationRun:
         self._reset_samples()
 
 
+def _event_nodes() -> frozenset[str]:
+    """Names of the evdev nodes that exist right now.
+
+    A directory listing, deliberately: the question is only "has anything
+    appeared or gone away", and answering it must not cost what answering
+    "what exactly is out there" costs.
+    """
+    try:
+        return frozenset(
+            name for name in os.listdir("/dev/input")
+            if name.startswith("event")
+        )
+    except OSError:
+        return frozenset()
+
+
 class Server:
     def __init__(
         self,
@@ -227,6 +243,9 @@ class Server:
         # fresh boot offers again.
         self.prompted_path = self.launch_config_path.parent / "prompted"
         self._prompted: set[str] = self._load_prompted()
+        # (event nodes, prompted mtime) at the last full scan; see
+        # _poll_new_controllers. None until the first one has run.
+        self._last_scan_signature: tuple[frozenset[str], int] | None = None
         self._prompted_stamp = self._read_prompted_stamp()
         self._last_pad_scan = 0.0
 
@@ -1368,6 +1387,27 @@ class Server:
             return
         self._last_pad_scan = now
 
+        # Nothing plugged or unplugged since the last look? Then there is
+        # nothing a full scan could discover, and a full scan is expensive in
+        # a way that is easy to miss: devices.discover spawns `udevadm info`
+        # once per input device to read ID_INPUT_JOYSTICK, and this machine
+        # has 32 of them. Measured at 257-294ms, once a second, on the single
+        # thread that forwards controller events to the virtual pads.
+        #
+        # That is the controller lag. A capture of the virtual pad while the
+        # stick was moving showed a healthy 7.9ms median gap punctuated by
+        # stalls of 80-176ms, roughly one a second.
+        #
+        # Event nodes are the right signal: a controller that appears adds
+        # one, and listing a directory costs a fraction of a millisecond. The
+        # prompted stamp is checked too, because `padmap forget` clears that
+        # file to have a controller offered again, and it changes nothing
+        # about what is plugged in.
+        nodes = _event_nodes()
+        stamp = self._read_prompted_stamp()
+        if (nodes, stamp) == self._last_scan_signature:
+            return
+
         # Ask *first* whether setup could open at all, because everything
         # below is expensive and this is not.
         #
@@ -1385,7 +1425,13 @@ class Server:
         # which the next scan a second later proceeds normally.
         blocked = self._autosetup_blocked()
         if blocked is not None:
+            # Deliberately without recording the signature. Being blocked is
+            # temporary -- a game ends, a front-end connects -- and a
+            # controller plugged in meanwhile still has to be noticed once the
+            # reason goes away. Recording here means the next look sees
+            # nothing changed and skips it for good.
             return
+        self._last_scan_signature = (nodes, stamp)
 
         self._reload_prompted_if_changed()
 
