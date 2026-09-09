@@ -2279,3 +2279,35 @@ pad without calibration joins.
 This is the same reasoning as the rest of launch.cfg: retroarch.cfg drifts,
 padmap owns the launch. The difference is that this key is only overridden
 when padmap has earned the right to -- when it is the thing setting the range.
+
+## The session lifecycle was the one thing the log did not record
+
+Reported: "I have to reassign controllers twice with i before they actually
+get assigned. first run does nothing."
+
+The daemon is not at fault, and that was worth establishing before changing
+anything. Driving it directly through two `begin`/`cancel` cycles produced an
+identical session each time -- `pads=7`, `state=assigning`, no grab failures --
+so `begin` opens and grabs correctly on the first call as well as the second.
+
+Which narrows it to the front-end path, and there the log had nothing to say.
+It recorded republishing, mappings and SDL writes, but not whether a session
+opened, whether the pads were grabbed exclusively, or whether a hold was ever
+seen. Every one of those is what this report turns on, and none of them was
+recoverable after the fact.
+
+Now logged: session open (pads, slots, existing assignments), any pad that
+could not be grabbed exclusively, each claim as it happens, and cancellation
+with the number of claims it discarded.
+
+The interesting detail from the report is that the *second* press works, and
+the second press does not call `begin` at all -- `open()` skips it when the
+daemon already says `assigning`. So the session the second screen uses is the
+one the first press created. That points at the screen rather than the
+session, and the next reproduction will say which.
+
+Adding the lines broke `check_autosetup.py` immediately: it stands a bare
+object in for the assigner, and the cancel line asked it for `.assignments`.
+Fixed with getattr -- a log line in a teardown path is never worth raising
+from -- but worth recording that the check caught an unsafe assumption in
+instrumentation within a minute of it being written.

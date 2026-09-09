@@ -436,6 +436,20 @@ class Server:
         self._last_progress = 0.0
         self._last_confirm = 0.0
         self._state = STATE_ASSIGNING
+        # The session lifecycle was the one thing the log did not record, and
+        # it is exactly what a report like "I have to press it twice before
+        # anything is assigned" turns on: whether a session opened at all,
+        # whether the pads were grabbed, and whether a hold was ever seen.
+        # Without these lines the answer to all three is unobtainable after
+        # the fact.
+        log.info("session open: %d pad(s), %d slot(s), %d already assigned",
+                 len(pads), self._slots, len(self._assignments))
+        if self._assigner.grab_failures:
+            log.warning(
+                "session: %d pad(s) not grabbed exclusively (%s) -- presses "
+                "also reach the front-end",
+                len(self._assigner.grab_failures),
+                ", ".join(p.event for p in self._assigner.grab_failures))
         self._broadcast({"event": "pads", "count": len(pads)})
         self._broadcast(self._state_event())
 
@@ -455,6 +469,12 @@ class Server:
         controllers were in fact live.
         """
         had_session = self._assigner is not None
+        if had_session:
+            # getattr, because a session object is not always a real Assigner
+            # -- the checks stand a stub in its place -- and a log line is
+            # never worth raising from a teardown path.
+            claims = getattr(self._assigner, "assignments", ())
+            log.info("session cancelled after %d claim(s)", len(claims))
         # Close a modal flow properly rather than dropping it. Nothing will
         # read the pad after this, so an overlay left believing it is active
         # would sit waiting for events that cannot arrive -- and the front-end
@@ -1385,6 +1405,8 @@ class Server:
             progress = max(progress, min(fraction, 1.0))
 
         def on_claim(assignment: Assignment) -> None:
+            log.info("claim: player %d <- %s (%s)", assignment.player,
+                     _clean(assignment.pad.name), assignment.pad.event)
             # `configured` lets a front-end offer calibration the first time
             # it sees a controller, and stay quiet on every later run.
             known = profiles.is_known(assignment.pad)
