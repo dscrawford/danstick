@@ -953,6 +953,60 @@ def main() -> int:
           "what the preview shows and what Pegasus shows have to be the "
           "same screen")
 
+    print("\nS14: exiting a game must not immediately launch another")
+    # Reported: "when exiting a game, for some reason it immediately starts
+    # another game as if an A input is stuck". Nothing grabs the virtual pads
+    # exclusively, so while a game runs RetroArch and Pegasus read the SAME
+    # pad -- every button pressed in-game also reaches the library sitting
+    # behind it. Quitting with A still down handed the library an accept the
+    # instant it came back.
+    go_to_tab(app, view, root, N64)
+
+    # The application becoming active is what returning from a game looks like
+    # from in here -- the library never loses QML focus, because the game is a
+    # separate process. This harness activated the app when it started, so the
+    # guard is already disarmed, which is the wiring proving itself.
+    if root.property("acceptArmed"):
+        raise SystemExit(
+            "FAIL: accept is armed even though the application only just "
+            "became active. Coming back from a game would launch it again on "
+            "the accept that quit it")
+    print("  ok  activation disarmed accept without anything else being done")
+
+    root.setProperty("acceptArmed", True)
+    before = game.launched
+    press(app, view, Qt.Key.Key_Return)
+    same("a fresh press still launches", game.launched, before + 1,
+         "the guard must not cost the ordinary case -- this is how a game is "
+         "started at all")
+
+    before = game.launched
+    repeat = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Return,
+                       Qt.KeyboardModifier.NoModifier, "", True, 1)
+    QCoreApplication.sendEvent(view, repeat)
+    QCoreApplication.sendEvent(
+        view, QKeyEvent(QEvent.Type.KeyRelease, Qt.Key.Key_Return,
+                        Qt.KeyboardModifier.NoModifier, "", True, 1))
+    app.processEvents()
+    same("an auto-repeat does not launch", game.launched, before,
+         "a held button relaunches the game it just came back from")
+    if not repeat.isAccepted():
+        raise SystemExit(
+            "FAIL: the refused repeat was not accepted, so it falls through "
+            "to the grid underneath and moves the selection instead")
+
+    print("\n...and accept is disarmed while the screen settles:")
+    root.setProperty("acceptArmed", False)
+    before = game.launched
+    press(app, view, Qt.Key.Key_Return)
+    same("a press arriving while disarmed is refused", game.launched, before,
+         "the accept that quit the game launches it again the moment Pegasus "
+         "comes back")
+    root.setProperty("acceptArmed", True)
+    press(app, view, Qt.Key.Key_Return)
+    same("and the next press works once rearmed", game.launched, before + 1,
+         "the guard never rearms, so no game can be launched at all")
+
     print("\nall checks passed")
     return 0
 

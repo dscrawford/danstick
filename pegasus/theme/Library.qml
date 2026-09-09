@@ -288,6 +288,50 @@ FocusScope {
                             game.title);
     }
 
+    // Launching follows a *fresh* press, never a button that was already
+    // down. Every other screen here already works that way -- the setup screen
+    // ignores the press that opened it, the wizard ignores a button held from
+    // before, a tap does not confirm -- and the library was the one place that
+    // did not.
+    //
+    // It matters because nothing grabs the virtual pads exclusively: while a
+    // game runs, RetroArch and Pegasus read the SAME pad, so every button
+    // pressed in-game also reaches the library sitting behind it. Quitting a
+    // game with A still down therefore handed the library an accept the
+    // instant it came back, and it launched the highlighted game again --
+    // reported as "exiting a game immediately starts another, as if an A
+    // input is stuck".
+    property bool acceptArmed: true
+
+    Timer {
+        id: rearmAccept
+        interval: 600
+        onTriggered: root.acceptArmed = true
+    }
+
+    // The application losing and regaining activation is what a game starting
+    // and ending looks like from in here. Active focus is no use: the game is
+    // a separate process, so this item never loses QML focus at all.
+    Connections {
+        target: Qt.application
+        function onStateChanged() {
+            if (Qt.application.state === Qt.ApplicationActive) {
+                root.acceptArmed = false;
+                rearmAccept.restart();
+            }
+        }
+    }
+
+    /// Whether this key press may launch a game.
+    ///
+    /// Auto-repeat is refused outright: a held button must not relaunch, and a
+    /// repeat is by definition not a fresh press.
+    function acceptAllowed(event) {
+        if (event.isAutoRepeat)
+            return false;
+        return root.acceptArmed;
+    }
+
     function say(text) {
         note = text;
         noteTimer.restart();
@@ -930,8 +974,11 @@ FocusScope {
             return;
         }
         if (api.keys.isAccept(event)) {
+            // Accepted either way, so a swallowed press does not fall through
+            // to the grid underneath and move the selection instead.
             event.accepted = true;
-            root.launchCurrent();
+            if (root.acceptAllowed(event))
+                root.launchCurrent();
             return;
         }
         if (api.keys.isCancel(event) && root.query !== "") {

@@ -2789,3 +2789,45 @@ invisible to every derivation while being perfectly visible to the tests run
 from the working directory. Staging it fixed it. This is the same family as
 every other stale-artefact failure in this log -- the thing being built was not
 the thing on disk -- and it will happen again to anyone adding a module here.
+
+## Exiting a game launched another one
+
+Reported: "when exiting a game, for some reason it immediately starts another
+game as if an A input is stuck".
+
+Nothing grabs the virtual pads exclusively -- verified by grabbing and
+releasing each of them while no game was running. So while a game is playing,
+RetroArch and Pegasus read the *same* virtual pad: every button pressed in the
+game also reaches the library sitting behind it. The frontend is not
+insulated from the game by anything at all.
+
+Against that, the library launched on any accept whatsoever. So quitting a game
+with the accept button still down handed the library that press the instant it
+came back, and it launched the highlighted game again.
+
+The striking part is that this rule already exists everywhere else in the
+project, three times over: the setup screen ignores the press that opened it
+(`_drain`, `held`), the wizard ignores a button held from before (`settling`),
+and a tap does not confirm. The library was the one screen that acted on an
+input without asking whether it was a *fresh* one, and it is the screen where
+acting means starting a program.
+
+Two guards now, both mutation-tested. Auto-repeat can never launch: a held
+button is by definition not a fresh press. And accept is disarmed for 600ms
+whenever the application becomes active, because that -- not focus -- is what
+returning from a game looks like from inside the theme. The library never
+loses QML focus while a game runs; the game is a separate process, so
+`activeFocusChanged` never fires and `Qt.application.state` is the only signal
+that does.
+
+The check for this found its own wiring by accident: the first version asserted
+that a fresh press launches, and it failed, because the harness activating the
+application had already disarmed accept. That is the guard working, so the
+assertion became "activation disarmed accept without anything else being done"
+-- which is a better test than the one intended, and pins the part that is
+otherwise invisible.
+
+Not reproduced first-hand: this needs a real game exit on the real machine, and
+the fix addresses the mechanism that was verified rather than a failure that
+was observed. Worth saying plainly, because everything else in this log was
+measured before it was changed.
