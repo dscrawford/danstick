@@ -305,9 +305,68 @@ class Republisher:
         self._by_source_fd = {p.source.fd: p for p in pads}
         self._by_ui_fd = {p.ui.fd: p for p in pads}
         self._stop = False
+        self._paused = False
 
     def stop(self) -> None:
         self._stop = True
+
+    @property
+    def paused(self) -> bool:
+        return self._paused
+
+    def set_paused(self, paused: bool) -> None:
+        """Stop or resume forwarding presses to the virtual pads.
+
+        A mapping or calibration wizard reads the *physical* pad directly, and
+        the daemon holds EVIOCGRAB so the front-end cannot see it. That is only
+        half the story: the same pad is also being republished, and the clone is
+        exactly what the front-end *does* watch. So every press the wizard asked
+        for was also delivered to the UI, and a wizard that says "press B" had
+        its answer read by Pegasus as "go back" -- the step cancelled itself with
+        the button it requested. Reported on a Switch Pro, but nothing about it
+        is Switch-specific; it needed a pad whose B sits where the front-end's
+        cancel is.
+
+        Pausing rather than stopping the republisher, because stopping destroys
+        the uinput nodes: the front-end would see every controller disconnect
+        when the wizard opened and reappear when it closed, which reshuffles
+        SDL's joystick indices mid-configuration.
+
+        Sources are still drained while paused -- see `_forward`. An unread evdev
+        node does not go quiet, it fills, and the backlog would arrive in a burst
+        the moment the wizard closed.
+        """
+        if paused == self._paused:
+            return
+        self._paused = paused
+        if paused:
+            self._release_all()
+
+    def _release_all(self) -> None:
+        """Let go of anything held, on the clone, before we stop forwarding.
+
+        Otherwise a button held as the wizard opens stays held forever: the
+        press was forwarded, the release lands during the pause and is dropped,
+        and the virtual pad is left with a key that is down with nothing to lift
+        it. That is the shape of the stuck-input bug that made exiting a game
+        immediately launch another one, so it is worth the few writes.
+        """
+        for vpad in self.pads:
+            try:
+                held = list(vpad.source.active_keys())
+            except OSError:
+                continue
+            if not held:
+                continue
+            for code in held:
+                try:
+                    vpad.ui.write(ecodes.EV_KEY, code, 0)
+                except (OSError, OverflowError):       # noqa: PERF203
+                    pass
+            try:
+                vpad.ui.syn()
+            except OSError:
+                pass
 
     @property
     def fds(self) -> list[int]:
@@ -345,6 +404,12 @@ class Republisher:
             if isinstance(exc, OSError) and exc.errno == errno.ENODEV:
                 log.warning("player %d: source disappeared", vpad.player)
                 self._stop = True
+            return
+        # Drained above whether or not we are paused: an evdev node that is not
+        # read fills up, and the backlog would land on the front-end in one
+        # burst the moment the wizard closed. Dropping the events here is the
+        # whole point of the pause -- see set_paused.
+        if self._paused:
             return
         for event in events:
             if event.type not in FORWARD_TYPES:

@@ -424,6 +424,10 @@ class Server:
         """
         try:
             self._dispatch(client, message)
+            # A wizard opens on a command, and the press answering its first
+            # prompt can arrive before the next tick. Applying the pause here
+            # too means the prompt that opened the flow cannot leak.
+            self._sync_republish_pause()
         except Exception as error:                      # noqa: BLE001
             log.warning("command %r failed: %s: %s",
                         message.get("cmd"), type(error).__name__, error)
@@ -1637,6 +1641,10 @@ class Server:
 
     def _tick(self) -> None:
         self._poll_new_controllers()
+        # Before any early return: the modal flows below each end in one, and
+        # a pause that only got applied on the paths that fall through would
+        # be applied exactly never.
+        self._sync_republish_pause()
 
         if self._assigner is None:
             return
@@ -1760,6 +1768,28 @@ class Server:
         self._write_controller_configs()
         log.info("republishing %d pad(s); launch config at %s",
                  len(vpads), self.launch_config_path)
+
+    def _sync_republish_pause(self) -> None:
+        """Silence the clone while a wizard is reading the physical pad.
+
+        The daemon grabs the physical pad, so the front-end never sees it --
+        but it republishes that pad as `padmap Player N`, and the clone is what
+        the front-end actually watches. So every answer to a wizard prompt was
+        also delivered to the UI as ordinary controller input: "press B" was
+        read by Pegasus as "go back", and the step cancelled itself with the
+        button it had just asked for.
+
+        Driven from state rather than from the begin/finish methods, because
+        there are six of those and a modal flow can also end by the pad being
+        unplugged, the session being cancelled, or `configure_end` arriving --
+        paths that no amount of pairing begin with end would cover.
+        """
+        if self._republisher is None:
+            return
+        modal = (self._mapping is not None
+                 or self._calibration is not None
+                 or self._choice is not None)
+        self._republisher.set_paused(modal)
 
     def _stop_republisher(self) -> None:
         if self._republisher is None:

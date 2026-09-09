@@ -54,6 +54,22 @@ from padmap.assign import Assignment  # noqa: E402
 from padmap.devices import Pad  # noqa: E402
 from padmap.mapping import Binding  # noqa: E402
 
+
+class FakeRepublisher:
+    """Stands in for a live republisher, which these tests never really start.
+
+    Was a bare `object()`, enough when the daemon only asked whether anything
+    was republishing. It now also pauses the clone while a wizard is open, so
+    the stand-in has to answer set_paused or the checks fail on the double
+    rather than on the daemon.
+    """
+
+    def __init__(self) -> None:
+        self.paused = False
+
+    def set_paused(self, paused: bool) -> None:
+        self.paused = paused
+
 # The only pads anything in this file may see. Bound once, at import, so a
 # stray code path that reaches discovery cannot enumerate the real machine.
 _VISIBLE: list[Pad] = []
@@ -193,7 +209,7 @@ class Harness:
 
     def _republish(self) -> None:
         self.republished += 1
-        self.srv._republisher = object()   # type: ignore[assignment]
+        self.srv._republisher = FakeRepublisher()  # type: ignore[assignment]
 
     def add_client(self, age: float = 60.0) -> socket.socket:
         """A real connected client, registered exactly as _on_accept does."""

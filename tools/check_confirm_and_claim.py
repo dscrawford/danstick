@@ -56,6 +56,22 @@ from padmap.devices import Pad                           # noqa: E402
 # would land in the middle of the scenario headings.
 logging.getLogger("padmap").setLevel(logging.CRITICAL)
 
+
+class FakeRepublisher:
+    """Stands in for a live republisher, which these tests never really start.
+
+    Was a bare `object()`, which said the only thing the daemon asked at the
+    time: whether anything was republishing at all. It now also pauses the
+    clone while a wizard is open -- so a stand-in has to answer set_paused, or
+    the checks fail on the double rather than on the daemon.
+    """
+
+    def __init__(self) -> None:
+        self.paused = False
+
+    def set_paused(self, paused: bool) -> None:
+        self.paused = paused
+
 BTN_A = ecodes.BTN_SOUTH        # 0x130
 BTN_B = ecodes.BTN_EAST         # 0x131
 BTN_START = ecodes.BTN_START    # 0x13b
@@ -362,7 +378,7 @@ class Daemon:
 
     def _republish(self) -> None:
         self.republished += 1
-        self.srv._republisher = object()  # type: ignore[assignment]
+        self.srv._republisher = FakeRepublisher()  # type: ignore[assignment]
 
     # -- driving ---------------------------------------------------------
 
