@@ -525,11 +525,31 @@ class Server:
     # -- calibration ------------------------------------------------------
 
     def _pad_for_player(self, player: int) -> Pad | None:
-        source = (
-            self._assigner.assignments if self._assigner is not None
-            else self._assignments
-        )
-        for assignment in source:
+        """The pad behind a player number, claims first, then what is stored.
+
+        A session's claims win, because during one they are the live answer:
+        someone re-assigning slots means player 1 is whatever just pressed a
+        button, not whatever held the slot before.
+
+        But a session starts with no claims at all, and the stored assignment
+        is still true -- that pad is assigned, republishing, and the thing the
+        user means by "player 1". Consulting only the claims made every
+        per-player command fail for the first few seconds of a session with
+        "no controller assigned to player 1", about a controller that was
+        plainly assigned. That is how asking to calibrate came to require
+        holding a button first, with nothing saying so.
+
+        Note what this deliberately does *not* change: `_players_payload`
+        still reports claims alone, so the setup screen keeps drawing only
+        slots claimed in front of the user. Reporting stored assignments there
+        is a bug that has already been fixed once -- it offered to configure a
+        controller nobody had touched.
+        """
+        if self._assigner is not None:
+            for assignment in self._assigner.assignments:
+                if assignment.player == player:
+                    return assignment.pad
+        for assignment in self._assignments:
             if assignment.player == player:
                 return assignment.pad
         return None

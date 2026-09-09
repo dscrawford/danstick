@@ -2340,3 +2340,38 @@ is, and this adapter has now proved it twice on the same two codes.
 
 Measured after the change: the adapter offers ABS_X and ABS_Y, and nothing
 else.
+
+## "Calibration needs a button held first" was an accident, not a design
+
+Asked: "how do I trigger the calibration?" -- and the honest answer turned out
+to be "hold a button on the pad, *then* press Details", which nothing said and
+nobody had decided.
+
+Measured against the live daemon: opening a session and asking to calibrate
+player 1 returns
+
+    no controller assigned to player 1
+
+about a controller that is assigned, republishing, and visible in the state
+event a moment earlier. `_pad_for_player` consulted the session's claims and
+nothing else, and a session starts with none. So every per-player command --
+calibrate, map, forget -- failed for the opening seconds of a session, and the
+only way through was to claim a slot first.
+
+`_pad_for_player` now takes the claim when there is one and the stored
+assignment otherwise. The claim has to win: mid-session, player 1 is whatever
+just pressed a button, not whatever held the slot before, or re-assigning a
+slot would configure the pad it replaced.
+
+What this deliberately leaves alone is `_players_payload`, which still reports
+claims only. Making *that* fall back to stored assignments would undo a fix
+already recorded above: the setup screen would once again draw players from a
+finished session and offer to configure a controller nobody had touched.
+Resolution and display are different questions and only one of them wanted
+changing.
+
+The second half is that the key said nothing at all. `Details` with no claims
+ran a loop over an empty list and returned, which is indistinguishable from a
+broken key -- and this is a screen where the pads are grabbed, so there is no
+other feedback to fall back on. It now says which step is missing. A key that
+finds nothing to act on has to say so.

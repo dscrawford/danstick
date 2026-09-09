@@ -399,6 +399,33 @@ def main() -> int:
             hide._udevadm = original_udevadm
     print("  ok  written, reloaded, idempotent, and nothing left unhidden")
 
+    print("\na player number resolves to its pad before anything is claimed:")
+    # A session starts with no claims, so consulting only those made every
+    # per-player command fail for the first seconds of a session -- "no
+    # controller assigned to player 1", about a pad that was plainly
+    # assigned and republishing. That is what made calibration appear to
+    # need a button held first, with nothing saying so.
+    target = pad("Assigned Pad")
+    h = Harness([target])
+    h.srv._assignments = [Assignment(player=1, pad=target, button=0)]
+    h.srv._assigner = type("Stub", (), {"assignments": []})()
+    if h.srv._pad_for_player(1) is not target:
+        raise SystemExit(
+            "FAIL: a session with no claims hides an assigned controller")
+
+    # A claim still wins: mid-session, player 1 is whatever just pressed a
+    # button, not whatever held the slot before.
+    claimed = pad("Just Claimed", node="event95")
+    h.srv._assigner = type("Stub", (), {
+        "assignments": [Assignment(player=1, pad=claimed, button=0)]})()
+    if h.srv._pad_for_player(1) is not claimed:
+        raise SystemExit(
+            "FAIL: a stored assignment outranked a live claim -- re-assigning "
+            "a slot would configure the pad it replaced")
+    if h.srv._pad_for_player(4) is not None:
+        raise SystemExit("FAIL: an unassigned slot resolved to something")
+    print("  ok  claim wins, stored assignment answers when there is none")
+
     print("\nall checks passed")
     return 0
 

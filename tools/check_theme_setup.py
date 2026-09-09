@@ -292,7 +292,7 @@ class StubKeys(QObject):
 
     @Slot("QVariant", result=bool)
     def isDetails(self, event):
-        return False
+        return self.wanted == "details"
 
     @Slot("QVariant", result=bool)
     def isFilters(self, event):
@@ -747,6 +747,33 @@ def main() -> int:
     if pad.accept_calls != 1:
         raise SystemExit(f"FAIL: {pad.accept_calls} accepts, wanted 1")
     print("  ok  accepted, nothing measured")
+
+    print("\nasking to calibrate before anything claimed says what is missing:")
+    # The key did nothing at all until a controller had claimed a slot, which
+    # reads as a broken key rather than as a missing step.
+    drop_setups(app)
+    pad.calibrate_calls.clear()
+    setup = load(engine, api)
+    setup.setProperty("focus", True)
+    pad.set_state("assigning", [])
+    app.processEvents()
+
+    api._keys.wanted = "details"
+    QGuiApplication.sendEvent(
+        setup, QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_I,
+                         Qt.KeyboardModifier.NoModifier))
+    app.processEvents()
+    api._keys.wanted = ""
+
+    if pad.calibrate_calls:
+        raise SystemExit(
+            f"FAIL: asked the daemon to calibrate nothing ({pad.calibrate_calls})")
+    note = setup.property("note")
+    if not note or "Hold a button" not in note:
+        raise SystemExit(
+            f"FAIL: said nothing ({note!r}) -- a key that silently does "
+            f"nothing is indistinguishable from a broken one")
+    print(f"  ok  {note!r}")
 
     print("\nall checks passed")
     return 0

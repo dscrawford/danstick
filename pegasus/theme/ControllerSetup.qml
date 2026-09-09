@@ -22,6 +22,7 @@ FocusScope {
         root.claimedHere = ({});
         root.gameMappingStarted = false;
         root.acceptAfterCalibration = false;
+        root.note = "";
         if (api.padmap.state !== "assigning")
             api.padmap.begin(4);
 
@@ -70,6 +71,22 @@ FocusScope {
     // Set while a calibration was started by the wizard finishing, so its own
     // completion knows to accept the session afterwards.
     property bool acceptAfterCalibration: false
+
+    // Transient message shown in place of the status line. A key that finds
+    // nothing to act on has to say so: silence reads as a broken key, and
+    // this one genuinely did nothing until a controller had claimed a slot.
+    property string note: ""
+
+    function say(text) {
+        note = text;
+        noteTimer.restart();
+    }
+
+    Timer {
+        id: noteTimer
+        interval: 4000
+        onTriggered: root.note = ""
+    }
 
 
 
@@ -255,6 +272,8 @@ FocusScope {
                 anchors.horizontalCenter: parent.horizontalCenter
                 anchors.top: parent.top
                 text: {
+                    if (root.note !== "")
+                        return root.note;
                     if (!api.padmap.connected)
                         return "padmap daemon is not running — start it with `padmap serve`";
                     var n = api.padmap.players.length;
@@ -416,12 +435,19 @@ FocusScope {
             // wrong icon or a bad calibration is fixable without unplugging.
             event.accepted = true;
             var players = api.padmap.players;
-            if (players.length > 0) {
-                var last = players[players.length - 1];
-                // Re-running by hand: calibration only. Use Next-page to
-                // reach the button editor deliberately.
-                calibration.start(last.player, last.name, false);
+            if (players.length === 0) {
+                // Nothing has claimed a slot yet, so there is no controller
+                // to measure. The daemon would answer "no controller assigned
+                // to player 1" -- true, but it reads as a fault rather than
+                // as the missing step it is.
+                root.say("Hold a button on the controller first, "
+                         + "then press Details to calibrate it.");
+                return;
             }
+            var last = players[players.length - 1];
+            // Re-running by hand: calibration only. Use Next-page to
+            // reach the button editor deliberately.
+            calibration.start(last.player, last.name, false);
         } else {
             // Number keys throw that slot's controller away and start the
             // wizard over. By slot number rather than "the last one claimed",
