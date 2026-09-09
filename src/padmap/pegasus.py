@@ -370,10 +370,17 @@ def stale_collections() -> list[Path]:
             try:
                 parts = shlex.split(entry[len("launch:"):].strip())
             except ValueError:
-                # An unbalanced quote. This runs from `ensure-daemon`, so
-                # raising here means padmap will not start at all -- over a
-                # cosmetic defect in a file it only wants to look at.
-                continue
+                # An unbalanced quote. Two things must be true here. It must
+                # not raise: this runs from `ensure-daemon`, so raising means
+                # padmap does not start at all, over a defect in a file it
+                # only wants to read. And it must count as *stale* rather than
+                # be skipped -- a launch line nothing can parse is a launch
+                # line nothing can verify, and a collection whose launcher
+                # cannot be read is more likely to be broken than one whose
+                # can, not less. Skipping it would leave the collection most
+                # in need of re-exporting as the one never reported.
+                stale.append(metadata)
+                break
             if parts and parts[0] != wanted:
                 stale.append(metadata)
             break
@@ -489,13 +496,14 @@ def export(
         if collection is None or not collection.entries:
             continue
 
+        # Deliberately NOT guarded, unlike the read above. A damaged playlist
+        # costs one collection and the rest of the library survives; a
+        # destination that cannot be written costs *everything*, and reporting
+        # success then would leave padmap believing it had saved a library it
+        # had not. One is resilience, the other is a lie.
         target = out_dir / playlist.stem
-        try:
-            target.mkdir(parents=True, exist_ok=True)
-            (target / "metadata.pegasus.txt").write_text(render(collection))
-        except OSError as error:
-            log.warning("could not write %s: %s", target, error)
-            continue
+        target.mkdir(parents=True, exist_ok=True)
+        (target / "metadata.pegasus.txt").write_text(render(collection))
         written.append(target)
 
         resolved = sum(

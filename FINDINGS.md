@@ -2686,3 +2686,63 @@ that *fixing* the bug fails the test:
 That is a better construction than either a plain gap or a red test. It stays
 green while the bug exists, it cannot be forgotten, and the moment someone
 fixes the source it demands to be turned into a real assertion. Both have been.
+
+## The zero-coverage sweep: 246 scenarios, and the marking that never worked
+
+Nine agents took the areas docs/STORIES.md proved had no test at all. 246
+scenarios, 107 verified mutations, roughly twenty-nine defects. Three deserve
+naming.
+
+**The MAME "not working" marking has never worked in the real front-end.**
+Pegasus stores every `x-` field as a QStringList, not a string
+(PegasusMetadata.cpp builds `QStringList values` and Game.h exposes that map as
+`extra`). So the theme is handed `["preliminary"]`, and in QML
+`["preliminary"] === "preliminary"` is false. Every arcade set MAME grades as
+preliminary has been rendering as a working game: no pill, no dimmed title, no
+dimmed cover.
+
+It was never seen because `tools/preview_library.py` builds `extra` with a
+bare string. Every preview and every screenshot showed the marking working
+perfectly. A harness that is *more convenient* than production is a harness
+that lies, and this is the clearest instance of it in the project: the feature
+was verified by looking at a picture, and the picture was of something else.
+
+**Any local process can kill the daemon with one message.** `LineReader.feed`
+raises RecursionError on deeply nested JSON -- measured threshold on this build
+is 52,096 brackets -- and RecursionError is a RuntimeError, not a ValueError,
+so the `except ValueError` beside it misses. `server._on_client_read` has no
+try either, and the guard that does exist sits one layer further in. Anything
+that can open the socket can end the process and take every virtual pad with
+it, mid-game.
+
+**A hand-edited calibration can kill the republisher.** `Profile.from_json`
+puts no bound on an axis's stored min/max, `AxisCalibration.apply` scales into
+that range, and `virtual.py` writes the result into an evdev value -- a signed
+32-bit field. Out of range it raises OverflowError, which is not an OSError, so
+every guard on that path misses it. The daemon exits mid-game.
+
+And one that likely explains a report from earlier in this session. Releasing a
+*second* button cancels a confirm hold that is still down on the first, because
+`_confirm_started` is keyed on the pad alone and popped on any release, with no
+equivalent of the `held[0] == event.code` guard Assigner already has. A resting
+thumb is enough. The user's words were "I have to reassign controllers twice
+before they actually get assigned".
+
+The UTF-8-decode hole has now been found five times in five places:
+`hide.unhidden`, the profile store, `Server._load_prompted`, `hide.install` and
+`cli._forget_prompted`. That is no longer five bugs, it is one missing helper
+for reading a file padmap does not own.
+
+### Two contracts that disagreed, and one regression of mine
+
+Two agents specified `stale_collections` differently for a launch line that
+cannot be lexed: skip it, or report it. Reporting wins. A false positive costs
+a "re-export this" warning; a false negative silently misses the exact failure
+the function exists to catch, and the collection whose launcher cannot even be
+parsed is more likely to be broken than one whose can, not less.
+
+My own export-resilience fix was caught by a contract test in the same sweep. I
+had wrapped the collection *write* in the same guard as the playlist *read*, so
+an unusable output directory skipped silently and reported success. A damaged
+input costs one collection; a destination that cannot be written costs
+everything, and reporting success then is a lie rather than resilience.

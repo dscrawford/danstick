@@ -694,7 +694,11 @@ def check_stale_collections(work: Path) -> None:
             f"{type(result).__name__} out of stale_collections. "
             f"ensure-daemon calls it on every start, so padmap would not "
             f"start at all over a cosmetic defect in a file it only reads")
-    same("an unlexable launch line is skipped, not fatal", result, [])
+    # Reported, not skipped: a launch line nothing can parse is one nothing
+    # can verify, and this function exists to notice a collection still
+    # invoking a frozen store path.
+    same("an unlexable launch line is reported as stale, not fatal",
+         result, [metadata])
 
     metadata.write_text("collection: X\nlaunch:\n\ngame: A\n")
     same("a launch line with no command is not called stale", stale(), [])

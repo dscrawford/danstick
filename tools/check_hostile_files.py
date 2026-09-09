@@ -752,8 +752,29 @@ def check_damaged_installed_collections() -> None:
     # that says nothing about a launcher at all.
     cases = damaged(b"collection: Nintendo 6",
                     wrong_shape=b'{"collection": "N64"}')
-    cases["a launch line with an unbalanced quote"] = (
+    # Deliberately not in the loop above: this one's contract is the
+    # opposite. Every other damaged shape means "nothing to report"; a launch
+    # line nothing can parse is a launch line nothing can VERIFY, and the
+    # whole job of stale_collections is to notice a collection still invoking
+    # a frozen store path. Skipping it would leave the collection most in need
+    # of re-exporting as the one never reported. It must not raise either --
+    # ensure-daemon calls this on every start.
+    metadata.write_bytes(
         b'collection: N64\nlaunch: /nix/store/abc/bin/padmap-play "unclosed\n')
+    try:
+        reported = pegasus.stale_collections()
+    except Exception as error:                          # noqa: BLE001
+        raise SystemExit(
+            f"FAIL: an unbalanced quote raised {type(error).__name__} out of "
+            f"stale_collections; ensure-daemon calls it on every start, so "
+            f"padmap would not start at all")
+    if metadata not in reported:
+        raise SystemExit(
+            "FAIL: a launch line that cannot be parsed was treated as "
+            "current. Nothing can verify which launcher it names, so the "
+            "collection most likely to be broken is the one not reported")
+    print("  ok  an unparseable launch line is reported as stale, not skipped")
+
     for label, data in cases.items():
         metadata.write_bytes(data)
         degrades(
