@@ -475,6 +475,64 @@ def sdl_mapping(guid: str, name: str, bindings: dict[str, Binding],
     return sdl_line(guid, name, fields, platform)
 
 
+# The four analog stick half-axis pairs, by the stem of their RetroArch keys.
+# Each stem gets both a `_minus` and a `_plus` bind, and RetroArch reads the
+# two together -- see drop_shadowed_axis_halves.
+ANALOG_STEMS: tuple[str, ...] = (
+    "input_l_x", "input_l_y", "input_r_x", "input_r_y",
+)
+
+
+def drop_shadowed_axis_halves(lines: list[str]) -> list[str]:
+    """Remove an `_axis` bind that would stop the other half's `_btn` working.
+
+    RetroArch reads a stick axis in `input_joypad_analog_axis`, and it reads
+    both halves before it will look at a button:
+
+        res  = abs(input_joypad_axis(..., axis_plus,  ...));
+        res -= abs(input_joypad_axis(..., axis_minus, ...));
+
+        if (res == 0)
+        {
+            ... consult bind_minus->joykey / bind_plus->joykey ...
+        }
+
+    The button fallback is gated behind `res == 0`. So a mapping that puts a
+    button on one half of an axis and leaves an axis on the other half only
+    works while that axis reads *exactly* zero, and it never does:
+
+    * `udev_compute_axis` is `(value - min) * 0xffff / range - 0x7fff`. With
+      the 0..255 range these adapters report, the value that would normalise
+      to zero is 127.5 -- there isn't one. The nearest, 127, comes out at -128
+      and 128 at +129, so one half or the other is always slightly live.
+    * an uncalibrated stick is worse. This adapter's C-stick rests at 131,
+      which is +900. Under 3% of full scale, so it sits inside the core's own
+      deadzone and the stick looks perfectly normal -- while `res` is 900, the
+      fallback never runs, and the button bound to the other half is dead.
+
+    That was the reported bug: Y mapped to C-up did nothing in Smash Bros,
+    with no error anywhere and a C-stick that behaved.
+
+    The captured button is the deliberate instruction, so it wins. Dropping the
+    opposing axis makes both halves AXIS_NONE, `res` is then always 0, and the
+    button is read every time. It costs the stick's other direction, which is
+    the part of this that is not padmap's to fix: RetroArch has no way to
+    express "this button, and also that axis" on one analog axis.
+    """
+    keys = {line.split(" = ", 1)[0] for line in lines if " = " in line}
+    doomed = set()
+    for stem in ANALOG_STEMS:
+        for half, other in (("minus", "plus"), ("plus", "minus")):
+            if f"{stem}_{half}_btn" in keys and f"{stem}_{other}_axis" in keys:
+                doomed.add(f"{stem}_{other}_axis")
+    if not doomed:
+        return lines
+    return [
+        line for line in lines
+        if line.split(" = ", 1)[0] not in doomed
+    ]
+
+
 def retroarch_lines(
     bindings: dict[str, Binding], overrides: dict[str, str] | None = None
 ) -> list[str]:
@@ -517,4 +575,4 @@ def retroarch_lines(
             # configured. Only the _axis parser understands the sign.
             key = key.replace("_btn", "_axis")
         lines.append(f'{key} = "{binding.retroarch()}"')
-    return lines
+    return drop_shadowed_axis_halves(lines)

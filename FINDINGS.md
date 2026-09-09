@@ -2867,3 +2867,82 @@ rather than reading it:
   none, and this file has spent a long session arguing that a guard has to say
   what the user should do. It now prints `kill <pid>` with the pid it already
   looked up.
+
+## Y mapped to C-up did nothing, and the C-stick looked fine
+
+The mapping was right at every layer padmap owns. The capture was stored
+(`rightstick_up: {kind: button, index: 3}`), the autoconfig carried
+`input_r_y_minus_btn = "3"`, button 3 was the correct number for that pad --
+its codes run contiguously from `BTN_JOYSTICK`, so SDL and RetroArch agree --
+and RetroArch's own shipped database uses `_btn` on an analog half-axis in 40
+profiles. The verbose log confirmed the profile matched and was applied:
+
+    [Autoconf] ... pad name padmap Player 1 (0079/1843), phys padmap/p1, affinity 50
+    [INFO] [Autoconf] padmap Player 1 configured in port 1.
+
+The fault was one layer below, in `input_joypad_analog_axis`:
+
+    res  = abs(input_joypad_axis(..., axis_plus,  normal_mag));
+    res -= abs(input_joypad_axis(..., axis_minus, normal_mag));
+
+    if (res == 0)
+    {
+       ... consult bind_minus->joykey / bind_plus->joykey ...
+    }
+
+The button is only read when the axis reads **exactly** zero. padmap was
+emitting a button on one half of the axis and leaving an axis on the other:
+
+    input_r_y_minus_btn  = "3"     <- Y
+    input_r_y_plus_axis  = "+2"    <- C-stick down
+
+so the axis decided the answer and Y was never consulted.
+
+It never read zero. Two independent reasons, and both matter:
+
+* the pad does not centre. Measured on the live `padmap Player 1` node, axis 2
+  rests at **131** on a 0..255 axis. `udev_compute_axis` is
+  `(value - min) * 0xffff / range - 0x7fff`, so that is **+900**.
+* even a perfectly centred axis would not reach zero. That formula subtracts
+  `0x7fff`, not `0x8000`, so the value that normalises to zero on a 0..255
+  range is 127.5 -- there isn't one. 127 gives -128, 128 gives +129.
+
+900 is 2.7% of full scale. Below the core's own `mupen64plus-astick-deadzone`
+of 5, so the C-stick behaved perfectly while the button was dead. Nothing was
+logged, nothing was misconfigured, and the one visible symptom -- stick drift --
+was invisible by construction. That is why this survived several passes: every
+artefact padmap produced was correct, and the check that would have caught it
+had to model RetroArch's arithmetic rather than inspect padmap's output.
+
+`input_analog_deadzone = "0.000000"` in the user's retroarch.cfg (and 0.0f is
+RetroArch's compiled-in default) is what removed the last chance of rescue: the
+deadzone branch that would have zeroed 900 never runs.
+
+The fix, `drop_shadowed_axis_halves`, drops the opposing `_axis` bind whenever
+a button is bound to the other half of the same analog axis. The button is the
+deliberate instruction, so it wins; both halves then resolve to `AXIS_NONE`,
+`res` is always 0, and the fallback fires every time. It costs that stick's
+other direction, and that part is not padmap's to fix -- RetroArch has no way
+to say "this button, and also that axis" on one analog axis.
+
+Calibrating the pad gets the other direction back, and only because of the
+floor division: `apply()` maps the measured rest to `(min + max) // 2` = 127,
+which normalises to **-128**, and the positive half clamps a negative reading
+to 0. So `input_r_y_plus_axis` would read exactly zero at rest and the button
+would still be consulted. Note the asymmetry -- this rescues a button on the
+*minus* half only. A button on the plus half with an axis on the minus half
+reads -128, never zero, and cannot be rescued on a 0..255 range at all.
+
+Two things worth remembering beyond this bug:
+
+* **no padmap pad currently rests at true zero on any axis.** The 0..255 range
+  these adapters report has no such value. Publishing a wider, symmetric range
+  (`min=-32767, max=32767`, rest 0) would give exactly zero and make half-axis
+  button binds work in both directions.
+* **ABS_Z and ABS_RZ are special.** RetroArch treats them as analog triggers
+  and rescales them `(val + 0x7fff) / 2` when an axis's *initial* value
+  normalises below -1300 (~4%). padmap publishes the C-stick Y as ABS_Z, so any
+  future change to the published range must keep it from starting negative, or
+  a resting stick reads +16383 -- half deflection, permanently.
+
+Neither is a live bug today; both are traps for the next change here.

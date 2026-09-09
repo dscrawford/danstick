@@ -25,19 +25,32 @@ version does -- and the build installed here is the one that matters.
 Nothing here touches the live daemon or the real controllers: its pad is its
 own uinput node, and every XDG directory is redirected.
 
-INCOMPLETE. It does not yet get its pad bound: RetroArch logs
+ANSWERED, but not by this test -- see tools/check_half_axis_binds.py. RetroArch
+does convert such a button into full deflection, and the reported failure was
+narrower than "it doesn't work": in `input_joypad_analog_axis` the button is
+only consulted when the axis reads *exactly* zero,
+
+    if (res == 0) { ... consult bind_minus->joykey ... }
+
+and the pad's C-stick rests at 131 on a 0..255 axis, which normalises to 900.
+So `res` was never zero and the button was never read. That is now modelled
+directly from the RetroArch source, which is both cheaper and sharper than this
+harness: it names the rest value that breaks the bind, where a run here could
+only have said yes or no.
+
+STILL INCOMPLETE as a program. It does not get its pad bound -- RetroArch logs
 
     [Autoconf] padmap analog probe pad (4617/20816) not configured.
 
 so the profile is never matched and the control check correctly refuses to
-report a verdict rather than inventing one. The control check is the valuable
-part and it works -- it distinguishes "the analog path is empty" from "nothing
+report a verdict rather than inventing one. That control check is the part
+worth keeping: it distinguishes "the analog path is empty" from "nothing
 reached the core at all", which is exactly the mistake this test exists to
-avoid making. Finishing it means working out why the generated profile does not
-match; likely the filename or a field RetroArch scores on.
+avoid making.
 
-Kept because the question is still open and the scaffolding -- probe core,
-synthetic pad, injected hold, real RetroArch on Xvfb -- is most of the work.
+Kept for the scaffolding -- probe core, synthetic pad, injected hold, real
+RetroArch on Xvfb -- which is most of the work for the next question that only
+the running binary can answer.
 
     python3 tools/e2e_analog_bind.py [--keep]
 """
