@@ -331,15 +331,24 @@ def game_scope_options(
     needs remapping for one N64 game usually needs it for all of them -- and
     the first entry is the one a hurried user confirms.
     """
+    # Both entries are captured against the console's control set, so without
+    # a console there is nothing coherent to offer -- not even the game. The
+    # daemon relies on an empty list here to say "no console known for this
+    # game" rather than record a mapping under a scope it cannot draw. This is
+    # reachable: the exporter writes x-gamekey for every game but omits
+    # x-console when the collection's core is not one padmap recognises, so a
+    # front-end really can send a key with no console.
+    if not console:
+        return []
+
     options: list[Option] = []
-    if console:
-        scope = profiles.console_scope(console)
-        label = layouts.get(console)
-        options.append(Option(
-            id=scope,
-            label=f"{label.console_label or label.label} games",
-            layout=console, mapped=scope in scopes,
-        ))
+    scope = profiles.console_scope(console)
+    label = layouts.get(console)
+    options.append(Option(
+        id=scope,
+        label=f"{label.console_label or label.label} games",
+        layout=console, mapped=scope in scopes,
+    ))
     if key:
         scope = profiles.game_scope(key)
         options.append(Option(

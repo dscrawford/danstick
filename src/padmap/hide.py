@@ -123,7 +123,12 @@ def unhidden(pads: list[Pad]) -> list[Pad]:
     """
     for path in (RUNTIME_RULES_PATH, RULES_PATH):
         try:
-            text = path.read_text()
+            # errors="replace" rather than a bare read_text: a rules file that
+            # is not valid UTF-8 raises UnicodeDecodeError, which is not an
+            # OSError, and `ensure-daemon` calls this unconditionally on every
+            # start. A corrupt file in /run would have taken down the whole
+            # startup path instead of being reported as covering nothing.
+            text = path.read_bytes().decode("utf-8", "replace")
             break
         except OSError:
             continue

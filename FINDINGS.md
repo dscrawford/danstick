@@ -2501,3 +2501,64 @@ The deeper fix is not spawning 32 subprocesses at all -- udev's database can be
 read directly from /run/udev/data -- but that changes a filter deliberately
 matched to RetroArch's own (udev_joypad.c:1053), and the scan is no longer on
 the hot path, so it can wait for its own change.
+
+## What a test buildout actually found
+
+Nine agents wrote 5,777 lines of tests across the areas this session changed,
+each in its own checkout, each required to mutation-test its own file. They
+reported 333 scenarios and 87 verified mutations between them.
+
+Three real defects fell out. All three are the same shape: a guard written for
+one failure mode that does not cover a neighbouring one.
+
+**profiles.load raised instead of returning None.** `Profile.from_json` calls
+`raw.get(...)` on whatever `json.loads` returned, and `load` catches only
+`(OSError, ValueError)`. A file holding valid JSON that is not an object --
+`null`, a list, a bare string, a number -- came back as `AttributeError`.
+`is_known` calls `load` for every pad during discovery, so one corrupted file
+stopped that controller being handled at all, which is precisely the contract
+the existing catch exists to provide. Returning an empty `Profile` would not
+do either: `is_known` is `load() is not None`, so an empty one marks the pad as
+already set up and it is never offered the wizard. Damaged has to read the
+same as absent. The nested containers had the same gap -- `{"axes": "nope"}`,
+`{"mappings": {"": {"buttons": "x"}}}` -- where junk in one slot should cost
+that slot, not the profile.
+
+**hide.unhidden raised on a rules file that is not UTF-8.** It read with
+`Path.read_text()`, and `UnicodeDecodeError` is not an `OSError`. `cli.py`
+calls `unhidden(devices.discover())` unconditionally from `ensure-daemon`, so a
+corrupt or binary 99-padmap.rules would traceback the entire start path. The
+docstring already promised that a missing, unreadable or malformed file is
+safe; it was one exception class short of true.
+
+**game_scope_options offered a scope for a game with no console.** It tested
+`console` and `key` independently, so an empty console with a key returned one
+entry -- the game -- drawn with the generic layout. The daemon's own comment
+relies on an empty list to report "no console known for this game". It is
+reachable: `pegasus.render` writes `x-gamekey` for every entry but omits
+`x-console` when the collection's core is not one padmap recognises, so a
+front-end really can send that pair, and the user would capture a mapping under
+a scope nothing looks up.
+
+Two non-bugs worth recording, both from mutation testing rather than from a
+failing assertion:
+
+* `calibratable_axes` has a dead guard. `if info.max <= info.min: continue` is
+  unreachable as a distinct branch, because `rests_centred` already returns
+  False for any such span. Deleting it changes no behaviour on any input. Kept
+  as defence in depth, but nothing can fail if it goes.
+* `mapping.axis_index` filters hat codes when numbering, and no pad shape can
+  exercise it: hat codes (0x10+) sort above every analogue axis code, so their
+  presence cannot shift an index. The agent removed its claim rather than
+  assert something unreachable, which is the right call.
+
+And one flake, unrelated to any change here: `check_sdl_live.py` failed once in
+a back-to-back suite run and passed alone and on repeat. It creates real uinput
+devices, so it is timing-sensitive.
+
+The lesson worth keeping is about where the bugs were. Not one was in the
+behaviour the session had just changed -- all that held up. They were in the
+error paths *beside* it: what happens when a file is damaged, when a byte is
+not UTF-8, when a fact the code assumed is present is missing. Those are
+exactly the paths hand-testing never reaches, because producing them requires
+deliberately breaking something.

@@ -275,8 +275,11 @@ class Mapping:
 
     @classmethod
     def from_json(cls, raw: dict) -> "Mapping":
+        if not isinstance(raw, dict):
+            return cls()
         buttons: dict[str, mapping.Binding] = {}
-        for control, values in (raw.get("buttons") or {}).items():
+        stored = raw.get("buttons")
+        for control, values in (stored if isinstance(stored, dict) else {}).items():
             if not isinstance(values, dict):
                 continue
             try:
@@ -401,8 +404,23 @@ class Profile:
 
     @classmethod
     def from_json(cls, raw: dict) -> "Profile":
+        # A file can hold valid JSON that is not a profile at all -- `null`,
+        # a list, a bare string -- and every read below assumes an object.
+        # `load` catches OSError and ValueError to turn a damaged file into
+        # "no profile stored", but an AttributeError from .get() on a list
+        # went straight past it. is_known() calls load() for every pad during
+        # discovery, so one corrupted file stopped that controller being
+        # handled at all rather than presenting it as a pad nobody has set up.
+        if not isinstance(raw, dict):
+            raw = {}
+
         axes: dict[int, AxisCalibration] = {}
-        for code, values in (raw.get("axes") or {}).items():
+        stored_axes = raw.get("axes")
+        for code, values in (
+                stored_axes if isinstance(stored_axes, dict) else {}).items():
+            if not isinstance(values, dict):
+                # Junk in one axis slot costs that axis, not the profile.
+                continue
             try:
                 reach_min = values.get("reach_min")
                 reach_max = values.get("reach_max")
@@ -418,7 +436,10 @@ class Profile:
                 continue
 
         mappings: dict[str, Mapping] = {}
-        for scope, values in (raw.get("mappings") or {}).items():
+        stored_mappings = raw.get("mappings")
+        for scope, values in (
+                stored_mappings if isinstance(stored_mappings, dict) else {}
+        ).items():
             if isinstance(values, dict):
                 mappings[str(scope)] = Mapping.from_json(values)
 
@@ -453,9 +474,17 @@ class Profile:
 def load(pad: "Pad", directory: Path | None = None) -> Profile | None:
     target = (directory or profile_dir()) / _filename(signature(pad))
     try:
-        return Profile.from_json(json.loads(target.read_text()))
+        raw = json.loads(target.read_text())
     except (OSError, ValueError):
         return None
+    if not isinstance(raw, dict):
+        # Valid JSON, but not a profile: `null`, a list, a bare string. None
+        # rather than an empty Profile, because is_known() is `load() is not
+        # None` -- an empty one would mark the controller as already set up,
+        # so a corrupted file would stop it ever being offered the wizard.
+        # "Damaged" has to read the same as "nothing stored".
+        return None
+    return Profile.from_json(raw)
 
 
 def save(profile: Profile, directory: Path | None = None) -> Path:
