@@ -2562,3 +2562,71 @@ error paths *beside* it: what happens when a file is damaged, when a byte is
 not UTF-8, when a fact the code assumed is present is missing. Those are
 exactly the paths hand-testing never reaches, because producing them requires
 deliberately breaking something.
+
+## The story sweep: what breaks when the world is not well formed
+
+Nine agents wrote 10,178 lines against 23 user stories, half of them
+adversarial. They reported roughly thirty-four defects. Not one was in a happy
+path; every single one was an error path beside working code, which is now the
+third sweep running to say the same thing.
+
+Five were fatal to the daemon, and those share a shape worth naming. When
+padmap raises, it does not degrade -- the process ends, its uinput nodes go
+with it, and the machine has no controllers at all, mid-game, with nothing on
+screen to explain it. A daemon must not be killable by the thing it exists to
+serve.
+
+**A malformed command argument ended the process.** Several commands coerce
+with int(), and `{"cmd": "begin", "players": "lots"}` raised through
+`_on_client_read`, the selector dispatch and `serve()`. Any client could do it
+with one bad message. `_handle_command` now wraps the dispatch and answers with
+an error event. Deliberately broad: the point is not to enumerate how a message
+can be wrong, it is that no message may end the process.
+
+**A `prompted` file that was not UTF-8 stopped the daemon starting.** Read in
+`Server.__init__` with `read_text()`, and `UnicodeDecodeError` is not an
+`OSError`. The file lives in XDG_RUNTIME_DIR where anything may write it, so
+`padmap serve` simply could not start and `ensure-daemon` failed forever. This
+is the third instance of exactly this bug -- after `hide.unhidden` and the
+profile store -- which is a strong argument for a shared "read a text file we
+do not control" helper rather than a fourth fix.
+
+**A wizard outlived its session.** `_begin` cleared the picker and the
+calibration but not the mapping, and `_tick` returns early while a mapping is
+open. So for the whole of the *next* session no hold could claim a slot and the
+confirm gesture never fired: the setup screen sat there inert, with nothing
+logged and no error shown. That is worse than a crash, because there is nothing
+to report.
+
+**A controller unplugged mid-session ended the daemon.** `_cancel` guarded
+`_start_republisher` and `_accept` and `restore` did not. In `_accept` the
+exception escaped *after* `_save_assignments` had written the state file, so
+the front-end never heard "accepted" or "error" and the screen waited forever.
+In `restore` it is worse: `serve()` calls it outside its try/finally, so the
+daemon died during startup with the pads already discovered.
+
+**A player number outside 1..16 raised StopIteration.** `launch_config` hands
+out one spare index per unmanaged slot but counted an out-of-range player as
+managed without consuming one. A hand-edited or corrupted assignments.json
+reaches it, and `restore` calls it at startup.
+
+Two notes on doing this work rather than on its results. The fix for the
+out-of-range players called `log.warning` in a module with no logger, and the
+import test passed -- because the call sits inside a branch that only runs when
+the fault occurs. Exercising the actual path is what caught it. And the first
+draft of `check_daemon_survival.py` grabbed the live machine's controllers,
+because `{"players": 1.5}` is a *valid* command and began a real session; the
+Assigner is now replaced before any command is dispatched. A test that reaches
+the hardware it is meant to be isolated from is a bug in the test, and it was
+found the same way everything else here was -- by reading what actually
+happened rather than what was supposed to.
+
+The remaining defects are recorded in the sweep's own notes and are not fixed
+here: a newline in a MAME description injects metadata keys into a collection
+file (including a `launch:` line, which Pegasus honours); one malformed .lpl
+makes the whole export produce nothing; `stale_collections` raises out of
+`ensure-daemon` on an unbalanced quote or an unreadable file; `find_titles`
+raises on a damaged table and silently loads a string as a one-character title;
+`padmap forget` crashes on the same non-object JSON the discovery path was
+already fixed for; and `scope_options` still offers a recent game whose console
+is unknown, drawing one pad and walking another.

@@ -28,6 +28,7 @@ leaked.
 from __future__ import annotations
 
 import glob
+import logging
 import os
 import re
 from pathlib import Path
@@ -35,6 +36,8 @@ from pathlib import Path
 from . import profiles, protocol, virtual
 from .assign import Assignment
 from .virtual import PADMAP_PID, PADMAP_VID, VIRTUAL_PREFIX, virtual_name
+
+log = logging.getLogger("padmap.retroarch")
 
 CONFIG_DIR = Path(os.environ.get(
     "RETROARCH_CONFIG_DIR",
@@ -450,6 +453,18 @@ def launch_config(
     """
     order = visible_order()
     managed = managed_players(assignments, virtual_paths, order)
+    # Only slots this config actually writes. A player number outside
+    # 1..MAX_PLAYERS -- from a hand-edited or corrupted assignments.json, or
+    # simply from more pads than there are slots -- was counted as managed
+    # without ever consuming one of the spare indices the emitting loop hands
+    # out, so the iterator ran dry and launch_config raised StopIteration.
+    # Server.restore calls this during startup, after the pads are grabbed, so
+    # that ended the daemon and left the machine with no working controllers.
+    outside = [player for player in managed if not 1 <= player <= MAX_PLAYERS]
+    for player in outside:
+        log.warning("player %d is outside 1..%d; not binding it",
+                    player, MAX_PLAYERS)
+        del managed[player]
     dropped = [a.player for a in assignments if a.player not in managed]
 
     lines = [

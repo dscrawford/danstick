@@ -370,6 +370,32 @@ class Server:
     # -- commands ---------------------------------------------------------
 
     def _handle_command(self, client: Client, message: dict[str, Any]) -> None:
+        """Dispatch one command, surviving anything the client sends.
+
+        Every argument below arrives over a socket from a separate program,
+        and several are coerced with int(). A front-end sending
+        {"cmd": "begin", "players": "lots"} raised ValueError straight through
+        _on_client_read and the selector loop, out of serve(), and the daemon
+        *exited* -- taking every virtual pad with it, so the machine had no
+        controllers at all until something restarted it. A daemon must not be
+        killable by the thing it exists to serve.
+
+        Broad on purpose. The point is not to enumerate the ways a message can
+        be wrong, it is that no message may end the process.
+        """
+        try:
+            self._dispatch(client, message)
+        except Exception as error:                      # noqa: BLE001
+            log.warning("command %r failed: %s: %s",
+                        message.get("cmd"), type(error).__name__, error)
+            reply = {"event": "error",
+                     "message": f"{message.get('cmd')!r} failed: {error}"}
+            if client is not None:
+                self._send(client, reply)
+            else:
+                self._broadcast(reply)
+
+    def _dispatch(self, client: Client, message: dict[str, Any]) -> None:
         command = message.get("cmd")
         if command == "begin":
             self._begin(int(message.get("players", 4)))
@@ -445,6 +471,12 @@ class Server:
         self._assigner.on_raw_event = self._on_raw_event
         self._calibration = None
         self._choice = None
+        # And the wizard. Without this a capture in flight survived into the
+        # new session holding a pad from the closed one, and _tick returns
+        # early while a mapping is open -- so for the whole of the next
+        # session no hold could claim a slot and confirm never fired. The
+        # setup screen simply sat there, with nothing logged and no error.
+        self._mapping = None
         # `players` is advisory: the session ends on the confirm gesture, not
         # on a count, so a front-end showing 4 slots and a user assigning 2 is
         # a normal outcome rather than an unfinished one.
@@ -532,8 +564,21 @@ class Server:
         self._end_session(release=True)
         self._save_assignments()
         self._write_controller_configs()
-        self._start_republisher()
-        self._state = STATE_READY
+        # Guarded exactly as _cancel guards the same call. A controller
+        # unplugged between the last claim and the confirm hold makes
+        # virtual.create raise, and the exception escaped _accept *after*
+        # _save_assignments had written the state file -- so the front-end
+        # never got "accepted" or "error", the setup screen waited forever,
+        # and the daemon exited.
+        try:
+            self._start_republisher()
+        except OSError as error:
+            log.warning("could not start republishing: %s", error)
+            self._broadcast({
+                "event": "error",
+                "message": f"a controller went away before it could be "
+                           f"published: {error}"})
+        self._state = STATE_READY if self._republisher else STATE_IDLE
         self._broadcast({
             "event": "accepted",
             "players": self._players_payload(),
@@ -1322,13 +1367,15 @@ class Server:
 
     def _load_prompted(self) -> set[str]:
         try:
-            return {
-                line.strip()
-                for line in self.prompted_path.read_text().splitlines()
-                if line.strip()
-            }
+            # decode(errors="replace") rather than read_text(): a file that is
+            # not valid UTF-8 raises UnicodeDecodeError, which is not an
+            # OSError, and this runs from __init__ -- so `padmap serve` could
+            # not start at all, and ensure-daemon kept failing forever. The
+            # file lives in XDG_RUNTIME_DIR where anything may have written it.
+            raw = self.prompted_path.read_bytes().decode("utf-8", "replace")
         except OSError:
             return set()
+        return {line.strip() for line in raw.splitlines() if line.strip()}
 
     def _save_prompted(self) -> None:
         try:
@@ -1705,7 +1752,16 @@ class Server:
 
         self._assignments = restored
         self._slots = max(a.player for a in restored)
-        self._start_republisher()
+        # serve() calls restore() outside its try/finally, so an exception
+        # here ends the process during startup -- after the pads have been
+        # discovered, and with nothing republished. Coming up idle is a state
+        # the user can fix from the setup screen; not coming up is not.
+        try:
+            self._start_republisher()
+        except OSError as error:
+            log.warning("could not republish restored assignments: %s", error)
+            self._state = STATE_IDLE
+            return
         self._state = STATE_READY
         log.info("restored %d assignment(s) from %s",
                  len(restored), self.state_path)
