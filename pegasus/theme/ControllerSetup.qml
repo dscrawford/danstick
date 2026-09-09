@@ -21,6 +21,7 @@ FocusScope {
         root.offered = ({});
         root.claimedHere = ({});
         root.gameMappingStarted = false;
+        root.acceptAfterCalibration = false;
         if (api.padmap.state !== "assigning")
             api.padmap.begin(4);
 
@@ -66,6 +67,10 @@ FocusScope {
     // event fire for a single press, in no guaranteed order.
     property bool gameMappingStarted: false
 
+    // Set while a calibration was started by the wizard finishing, so its own
+    // completion knows to accept the session afterwards.
+    property bool acceptAfterCalibration: false
+
 
 
     // Set once a controller has been configured for the first time, to hint
@@ -80,6 +85,24 @@ FocusScope {
         }
 
         function onMappingFinished(stored) {
+            // Measuring the sticks is part of configuring a controller, so it
+            // follows the buttons rather than being a separate errand nobody
+            // knows to run. Without it the pad's axes are scaled against the
+            // range the adapter *declares* rather than the one the stick
+            // actually reaches, which is what made an analog stick read as
+            // little more than off or full.
+            //
+            // Before accepting, and that order is forced: accept ends the
+            // session and releases the pads, and calibration reads them.
+            // Calibrating afterwards would measure a controller nobody holds.
+            if (stored && calibration.player === 0
+                    && api.padmap.mappingPlayer > 0) {
+                root.acceptAfterCalibration = true;
+                calibration.start(api.padmap.mappingPlayer,
+                                  root.padNameFor(api.padmap.mappingPlayer),
+                                  false);
+                return;
+            }
             // Accepting is what writes the RetroArch profile and the SDL
             // mapping, so it has to follow the capture rather than precede
             // it. Abandoning the wizard keeps the assignment but writes no
@@ -343,6 +366,14 @@ FocusScope {
             if (firstTime)
                 root.mappingSuggested = true;
             player = 0;
+            if (root.acceptAfterCalibration) {
+                // This calibration was the tail of a mapping run, so finish
+                // what that started. Cleared first: an accept that fails must
+                // not leave the flag set to hijack the next calibration.
+                root.acceptAfterCalibration = false;
+                api.padmap.accept();
+                return;
+            }
             root.forceActiveFocus();
         }
     }

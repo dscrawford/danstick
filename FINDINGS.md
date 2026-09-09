@@ -2206,3 +2206,46 @@ files for almost nothing -- but it is documented as not covering this.
 calibration for an unconfigured pad"). Confirmed pre-existing by running it
 against the theme as of 1089285, which fails identically. It is not in the
 `check_*` suite, so it has been failing unnoticed.
+
+## Configuring a controller now measures its sticks
+
+Asked for, after an analog stick behaved as though it were only off or full:
+"can the controller configuration do the calibration?"
+
+It can, and it should have all along. Calibration was only ever offered for a
+pad padmap had never seen, so anyone reaching a controller through the mapping
+wizard was never prompted -- and every profile on this machine had `axes: {}`.
+Uncalibrated, an axis is scaled against the range the adapter *declares*
+rather than the one the stick actually reaches, which is exactly the shape of
+"0% or 100%".
+
+The wizard now runs calibration when it finishes, before accepting.
+
+**That order is forced, and it is the whole subtlety.** `accept` is what writes
+the RetroArch profile and the SDL mapping, and it also ends the session and
+releases the pads. Calibrating after it would be measuring a controller nobody
+is holding. So the chain is: capture buttons -> measure sticks -> accept.
+Abandoning the wizard still accepts and measures nothing, as before.
+
+A pad with no analog axes is not a special case here: the daemon already
+handles that, storing an empty calibration and going on to the icon step.
+
+### The harness was counting five screens as one
+
+The check for this failed while the behaviour was correct, which took longer to
+work out than the feature did. `check_theme_setup.py` builds a fresh
+ControllerSetup per scenario, and every one of them stays connected to the same
+stub `api`. A signal emitted for one check is delivered to all the screens left
+over from earlier ones, so anything counting calls -- `accept_calls`,
+`calibrate_calls` -- was measuring the whole pile.
+
+Deleting them was not enough either. `deleteLater()` schedules a deferred
+deletion, and `processEvents()` does not run those, so the screens stayed alive
+and connected while the code read as though they had gone. That is worse than
+not cleaning up at all, because the counts then quietly include objects the
+test believes it destroyed. `drop_setups` now flushes them with
+`sendPostedEvents(None, QEvent.Type.DeferredDelete)`.
+
+Worth remembering as a class: a test-only bug that makes a *correct*
+implementation look broken costs as much as one that hides a real fault, and it
+is harder to recognise because the instinct is to doubt the code under test.

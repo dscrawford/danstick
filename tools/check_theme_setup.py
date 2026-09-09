@@ -28,7 +28,7 @@ import sys
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from pathlib import Path
 
-from PySide6.QtCore import (Property, QEvent, QObject, Qt, QUrl, Signal,  # noqa: E402
+from PySide6.QtCore import (Property, QCoreApplication, QEvent, QObject, Qt, QUrl, Signal,  # noqa: E402
                             Slot)
 from PySide6.QtGui import QGuiApplication, QKeyEvent
 from PySide6.QtQml import QQmlComponent, QQmlEngine
@@ -73,6 +73,7 @@ class StubPadmap(QObject):
         self.map_for_game_calls = []
         self.skip_calls = 0
         self._mapping_active = False
+        self._mapping_player = 0
         self._choice_active = False
         self._choice_kind = ""
         self._choice_title = ""
@@ -137,7 +138,7 @@ class StubPadmap(QObject):
 
     @Property(int, notify=mappingChanged)
     def mappingPlayer(self):
-        return 0
+        return self._mapping_player
 
     @Property(str, notify=mappingChanged)
     def mappingLabel(self):
@@ -257,6 +258,13 @@ class StubPadmap(QObject):
             self._players = players
         self.stateChanged.emit()
 
+    def finish_mapping(self, player, stored=True):
+        """The daemon's final mapping event: player still set, done=True."""
+        self._mapping_player = player
+        self._mapping_active = False
+        self.mappingChanged.emit()
+        self.mappingFinished.emit(stored)
+
     def set_phase(self, phase):
         self._phase = phase
         self.calibrationChanged.emit()
@@ -349,6 +357,27 @@ def load(engine, api):
 
 # Kept out of scope of the garbage collector for the run's duration.
 _alive: list = []
+
+
+def drop_setups(app):
+    """Delete every screen built so far, so call counts mean one screen.
+
+    Each ControllerSetup stays connected to the same stub `api`, so a signal
+    emitted for one check reaches the screens left over from earlier ones too.
+    Property reads are unaffected -- those are per object -- but anything that
+    counts calls (accept, calibrate) otherwise measures the whole pile, and a
+    check that cannot tell one screen from five is not measuring what it says.
+    """
+    for obj in _alive:
+        if hasattr(obj, "deleteLater"):
+            obj.deleteLater()
+    _alive.clear()
+    # processEvents() alone does not run deferred deletions, so the screens
+    # would stay alive and connected while looking as though they had gone --
+    # which is worse than not trying, because the counts then quietly include
+    # them.
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    app.processEvents()
 
 
 def mapping_overlay_of(setup):
@@ -662,6 +691,62 @@ def main() -> int:
         raise SystemExit(
             f"FAIL: a plain setup opened a game mapping ({pad.map_for_game_calls})")
     print("  ok  no mapping started")
+
+    print("\nfinishing the wizard measures the sticks before accepting:")
+    # Reported: an analog stick behaving as though it were only off or full.
+    # Nothing had ever been calibrated, so axes were scaled against the range
+    # the adapter declares rather than the one the stick reaches. Measuring is
+    # part of configuring a controller, so the wizard does it rather than
+    # leaving it as an errand nobody knows to run.
+    drop_setups(app)
+    pad.calibrate_calls.clear()
+    pad.accept_calls = 0
+    setup = load(engine, api)
+    setup.setProperty("focus", True)
+    pad.set_state("assigning", [player(2, "GameCube Pad", True)])
+    app.processEvents()
+
+    pad.finish_mapping(2, stored=True)
+    app.processEvents()
+
+    if pad.accept_calls:
+        raise SystemExit(
+            "FAIL: accepted straight after the wizard. Accept ends the "
+            "session and releases the pads, so calibration would then be "
+            "measuring a controller nobody is holding")
+    if pad.calibrate_calls != [2]:
+        raise SystemExit(
+            f"FAIL: calibrate{pad.calibrate_calls}, wanted [2] -- the sticks "
+            f"are never measured and the analog range stays wrong")
+    print(f"  ok  calibrate({pad.calibrate_calls[0]}), and no accept yet")
+
+    print("\n...and accepting follows the calibration, not the wizard:")
+    overlay = overlay_of(setup)
+    overlay.setProperty("player", 2)
+    pad.calibrationFinished.emit(2)
+    app.processEvents()
+    if pad.accept_calls != 1:
+        raise SystemExit(
+            f"FAIL: {pad.accept_calls} accepts after calibration finished -- "
+            f"nothing writes the RetroArch profile or the SDL mapping")
+    print("  ok  accepted once, after the measurement")
+
+    print("\nan abandoned wizard still accepts, and measures nothing:")
+    drop_setups(app)
+    pad.calibrate_calls.clear()
+    pad.accept_calls = 0
+    plain = load(engine, api)
+    plain.setProperty("focus", True)
+    pad.set_state("assigning", [player(1, "Some Pad", True)])
+    pad.finish_mapping(1, stored=False)
+    app.processEvents()
+    if pad.calibrate_calls:
+        raise SystemExit(
+            f"FAIL: calibrated after a run that stored nothing "
+            f"({pad.calibrate_calls})")
+    if pad.accept_calls != 1:
+        raise SystemExit(f"FAIL: {pad.accept_calls} accepts, wanted 1")
+    print("  ok  accepted, nothing measured")
 
     print("\nall checks passed")
     return 0
