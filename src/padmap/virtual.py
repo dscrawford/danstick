@@ -339,6 +339,7 @@ class Republisher:
         if paused == self._paused:
             return
         self._paused = paused
+        log.info("republish %s", "PAUSED (wizard open)" if paused else "resumed")
         if paused:
             self._release_all()
 

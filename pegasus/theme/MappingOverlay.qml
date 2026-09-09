@@ -335,10 +335,27 @@ FocusScope {
         // user sees while the hold confirms the other. It costs nothing: this
         // is only ever reached by holding a button on the controller, so the
         // controller demonstrably works.
-        if (api.keys.isCancel(event))
+        // Logged because the comment above turned out to be wrong once
+        // already, and nothing in either log said so. `event.text` is the
+        // cheapest signal for where this came from: a keyboard press carries
+        // the character, a gamepad button translated by the front-end does
+        // not. If a cancel arrives here with empty text while a mapping is
+        // active, the pad is reaching the UI and the daemon's pause is not
+        // doing its job -- which is exactly the bug that kept being called
+        // fixed. Reads in Pegasus's own lastrun.log.
+        console.log("padmap-theme: MappingOverlay key=" + event.key
+                    + " text=" + JSON.stringify(event.text)
+                    + " repeat=" + event.isAutoRepeat
+                    + " isCancel=" + api.keys.isCancel(event)
+                    + " choosing=" + root.choosing
+                    + " mappingActive=" + api.padmap.mappingActive);
+        if (api.keys.isCancel(event)) {
+            console.log("padmap-theme: MappingOverlay -> cancelRequested "
+                        + "(configureEnd); THIS closes the wizard");
             root.cancelRequested();
-        else if (api.keys.isFilters(event) && !root.choosing)
+        } else if (api.keys.isFilters(event) && !root.choosing) {
             root.skipRequested();
+        }
         event.accepted = true;
     }
 }

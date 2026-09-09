@@ -212,9 +212,14 @@ class Journey:
                     path=f"/dev/input/event210{player}")))
 
         def republisher(vpads):
-            made = SimpleNamespace(vpads=list(vpads), fds=[], closed=0)
+            made = SimpleNamespace(vpads=list(vpads), fds=[], closed=0,
+                                   paused=False)
             made.close = lambda: setattr(made, "closed", made.closed + 1)
             made.handle_readable = lambda fd: None
+            # The daemon silences the clone while a wizard is open, and it
+            # re-applies that on every restart -- so a stand-in has to answer
+            # set_paused or the journey fails on the double, not the daemon.
+            made.set_paused = lambda paused: setattr(made, "paused", paused)
             self.republishers.append(made)
             return made
 

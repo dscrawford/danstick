@@ -398,7 +398,20 @@ FocusScope {
     }
 
     Keys.onPressed: function (event) {
+        // The overlay above takes focus while it is open, so a key reaching
+        // *here* during a mapping means focus is not where it should be --
+        // and this handler calls leave(), which tears down the whole setup
+        // screen rather than just the wizard. Worth being able to tell the
+        // two exits apart in the log instead of inferring which one ran.
+        console.log("padmap-theme: ControllerSetup key=" + event.key
+                    + " text=" + JSON.stringify(event.text)
+                    + " isCancel=" + api.keys.isCancel(event)
+                    + " mappingActive=" + api.padmap.mappingActive
+                    + " layoutChoiceActive=" + api.padmap.layoutChoiceActive
+                    + " calibrationPlayer=" + calibration.player);
         if (api.keys.isCancel(event)) {
+            console.log("padmap-theme: ControllerSetup -> leave(); "
+                        + "THIS closes the whole setup screen");
             event.accepted = true;
             root.leave();
         } else if (api.keys.isFilters(event)) {

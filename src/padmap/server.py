@@ -1733,6 +1733,13 @@ class Server:
         self._republisher = virtual.Republisher(vpads)
         for fd in self._republisher.fds:
             self._selector.register(fd, selectors.EVENT_READ, self._on_pad_read)
+        # A fresh Republisher starts forwarding, and this runs *during* a
+        # mapping: beginning one rewrites the SDL mappings and republishes, so
+        # the clone the wizard had just silenced is replaced by a live one
+        # mid-prompt. Carrying the pause across the restart is the difference
+        # between the pause holding for the whole wizard and holding until the
+        # first thing that republishes.
+        self._sync_republish_pause()
 
         paths = {vp.player: vp.ui.device.path for vp in vpads}
         # Regenerate the profiles the *launcher* would, not context-free ones.
