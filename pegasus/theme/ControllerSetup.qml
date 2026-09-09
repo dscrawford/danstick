@@ -409,6 +409,22 @@ FocusScope {
                     + " mappingActive=" + api.padmap.mappingActive
                     + " layoutChoiceActive=" + api.padmap.layoutChoiceActive
                     + " calibrationPlayer=" + calibration.player);
+        // While a wizard is open the pad belongs to the daemon, so a key the
+        // front-end synthesised from one must not reach this handler -- it
+        // calls leave(), which tears down the entire setup screen rather than
+        // just the step. Scoped to the modal flows on purpose: on the plain
+        // select screen, backing out with the controller is the behaviour
+        // people expect, and there is no wizard there to break.
+        //
+        // See MappingOverlay for why 0x100000 identifies a gamepad key.
+        var fromGamepad = event.key >= 0x100000 && event.key < 0x1000000;
+        var wizardOpen = api.padmap.mappingActive
+                      || api.padmap.layoutChoiceActive
+                      || calibration.player !== 0;
+        if (fromGamepad && wizardOpen) {
+            event.accepted = true;
+            return;
+        }
         if (api.keys.isCancel(event)) {
             console.log("padmap-theme: ControllerSetup -> leave(); "
                         + "THIS closes the whole setup screen");

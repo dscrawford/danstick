@@ -349,6 +349,31 @@ FocusScope {
                     + " isCancel=" + api.keys.isCancel(event)
                     + " choosing=" + root.choosing
                     + " mappingActive=" + api.padmap.mappingActive);
+        // Swallow anything the front-end synthesised from a gamepad.
+        //
+        // The comment above claims presses arriving here can only have come
+        // from a keyboard. That was never true, and it is the whole bug: the
+        // wizard asks the user to press B, Pegasus translates the pad's B into
+        // a key event, `isCancel` matches it, and the step cancels itself with
+        // the button it just requested. It cost several wrong fixes further
+        // down the stack -- grabs, udev rules, pausing the republished clone --
+        // none of which could work, because the front-end reads the pads
+        // whatever padmap does. SDL does not honour ID_INPUT_JOYSTICK, so the
+        // hide rules never applied to it at all.
+        //
+        // Telling the two apart is possible, and the log is what showed how:
+        // a keyboard Escape arrives as Qt.Key_Escape (0x01000000), while the
+        // front-end's gamepad buttons come through in its own 0x100000 block
+        // with an empty `text`. Everything in that block is the pad, and the
+        // pad's presses belong to the daemon while a wizard is open.
+        //
+        // Cancel from an actual keyboard still works, which is what keeps this
+        // from being a trap: there is always a way out of the wizard.
+        var fromGamepad = event.key >= 0x100000 && event.key < 0x1000000;
+        if (fromGamepad) {
+            event.accepted = true;
+            return;
+        }
         if (api.keys.isCancel(event)) {
             console.log("padmap-theme: MappingOverlay -> cancelRequested "
                         + "(configureEnd); THIS closes the wizard");
