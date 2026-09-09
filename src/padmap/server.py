@@ -1367,6 +1367,26 @@ class Server:
         if now - self._last_pad_scan < PAD_SCAN_SECONDS:
             return
         self._last_pad_scan = now
+
+        # Ask *first* whether setup could open at all, because everything
+        # below is expensive and this is not.
+        #
+        # discover() globs /sys/class/input and reads several files per pad,
+        # and has_mapping parses a profile off disk for each one -- seven pads
+        # here. That ran once a second on the same single thread that forwards
+        # controller events to the virtual pads, including all the way through
+        # a game, only to reach this test and give up. A periodic stall in the
+        # input path is exactly the shape of "there's a lag on the controllers"
+        # and it gets worse with every pad attached.
+        #
+        # Nothing is lost by checking early: the answer does not depend on
+        # what is plugged in, and the reasons it returns are all states the
+        # user leaves -- quitting the game, connecting a front-end -- after
+        # which the next scan a second later proceeds normally.
+        blocked = self._autosetup_blocked()
+        if blocked is not None:
+            return
+
         self._reload_prompted_if_changed()
 
         fresh = {}
@@ -1379,12 +1399,6 @@ class Server:
             return
 
         names = ", ".join(sorted(_clean(pad.name) for pad in fresh.values()))
-        blocked = self._autosetup_blocked()
-        if blocked is not None:
-            # Not marked as prompted: this should be offered once the reason
-            # goes away, not silently dropped.
-            log.debug("new controller (%s) but %s", names, blocked)
-            return
 
         # Mark before starting: if _begin fails, the user still gets to reach
         # setup by hand rather than being re-prompted every second.

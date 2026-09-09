@@ -426,6 +426,54 @@ def main() -> int:
         raise SystemExit("FAIL: an unassigned slot resolved to something")
     print("  ok  claim wins, stored assignment answers when there is none")
 
+    print("\nthe expensive scan is skipped when setup could not open anyway:")
+    # discover() globs /sys/class/input and has_mapping parses a profile off
+    # disk per pad. That ran once a second on the same thread that forwards
+    # controller events -- all the way through a game -- only to find setup
+    # was blocked and give up. A periodic stall in the input path is what
+    # "there's a lag on the controllers" feels like, and it costs more with
+    # every pad attached.
+    import os as _os
+
+    calls = {"n": 0}
+    counted = list(devices.discover())
+
+    def counting_discover(*_a, **_k):
+        calls["n"] += 1
+        return list(counted)
+
+    marker = protocol.playing_marker()
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    original_discover = devices.discover
+    try:
+        devices.discover = counting_discover      # type: ignore[assignment]
+        h = Harness([pad("Unknown Pad")])
+        devices.discover = counting_discover      # type: ignore[assignment]
+
+        marker.write_text(f"{_os.getpid()}\n")   # a game is running
+        calls["n"] = 0
+        h.srv._last_pad_scan = 0.0
+        h.srv._poll_new_controllers()
+        if calls["n"]:
+            raise SystemExit(
+                f"FAIL: scanned {calls['n']} time(s) mid-game -- that is a "
+                f"disk-reading stall on the thread forwarding controller "
+                f"events, once a second, for nothing")
+        print("  ok  game running: no scan at all")
+
+        marker.unlink(missing_ok=True)
+        calls["n"] = 0
+        h.srv._last_pad_scan = 0.0
+        h.srv._poll_new_controllers()
+        if calls["n"] != 1:
+            raise SystemExit(
+                f"FAIL: {calls['n']} scan(s) with nothing blocking -- a new "
+                f"controller would never be noticed")
+        print("  ok  nothing blocking: scans as before")
+    finally:
+        devices.discover = original_discover      # type: ignore[assignment]
+        marker.unlink(missing_ok=True)
+
     print("\nall checks passed")
     return 0
 

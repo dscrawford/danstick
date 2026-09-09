@@ -2375,3 +2375,55 @@ ran a loop over an empty list and returned, which is indistinguishable from a
 broken key -- and this is a screen where the pads are grabbed, so there is no
 other feedback to fall back on. It now says which step is missing. A key that
 finds nothing to act on has to say so.
+
+## A once-a-second disk scan on the thread that forwards controller events
+
+Reported: "there's a lag on the controllers... doesn't seem to work great when
+entering two inputs... it feels more like it's just arriving at a very slow
+rate".
+
+The daemon is single threaded. One selector loop forwards every physical event
+to its virtual pad and then calls `_tick`, and `_tick` opens with
+`_poll_new_controllers`. That is rate limited to once a second, which sounds
+harmless until you read what the once-a-second call does: `devices.discover()`
+globs /sys/class/input and reads several files per device, then `has_mapping`
+parses a profile off disk for each pad. Seven pads here.
+
+Then it asked whether setup could open at all -- and during a game the answer
+is always no. So every second, mid-game, padmap did a full device enumeration
+and seven JSON reads on the same thread as the input path, to conclude it must
+do nothing. The cost scales with the number of pads attached, which matches
+"worse with two inputs".
+
+The blocked test is now first. It is a handful of comparisons and one small
+file read, and its answer does not depend on what is plugged in, so nothing is
+lost by asking it before the expensive part.
+
+This is a periodic stall rather than constant latency, so it is unlikely to be
+the whole of the report. It is, however, a real one, in the one place that
+must never stall, and it was doing nothing useful at the time.
+
+## The game-specific mapping did save, and did apply
+
+Reported in the same message: "gamecube controller didn't seem to save
+game-specific input mapping between sessions". It saved. On disk:
+
+    scopes: ['', 'console:n64', 'game:n64/super-smash-bros-u']
+      ''                            layout=gamecube  buttons=12
+      'console:n64'                 layout=n64       buttons=14
+      'game:n64/super-smash-bros-u' layout=n64       buttons=14
+
+And it resolved: the key computed at launch from the core and the ROM path is
+`n64/super-smash-bros-u`, identical to the stored one, with `scope_order`
+placing it first. The autoconfig RetroArch actually read says so in its own
+header:
+
+    # Mapping scope: game:n64/super-smash-bros-u; resolved for Super Smash Bros. (U) [!].
+
+So storage, key derivation and resolution are all working end to end, and the
+thing to chase is why a correctly applied mapping felt wrong -- for which the
+lag above is the obvious suspect, since input arriving late and unevenly is
+indistinguishable from input mapped wrongly when you are holding the pad.
+
+Worth recording because the instinct was to go looking for a persistence bug,
+and there wasn't one.
