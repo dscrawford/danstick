@@ -327,9 +327,53 @@ GAMECUBE = Layout(
     ),
 )
 
+# The one console where "no overrides" needs no argument beyond the hardware
+# itself: the abstract RetroPad was modelled on a DualShock, so the PS2 pad is
+# the shape every other layout here is a deviation from.
+#
+# Verified against pcsx2/PAD/PAD.cpp, the table that maps each PS2 button to
+# the RetroPad id it is read from:
+#
+#   RETRO_DEVICE_ID_JOYPAD_X,   // PAD_TRIANGLE    ..._L,  // PAD_L1
+#   RETRO_DEVICE_ID_JOYPAD_A,   // PAD_CIRCLE      ..._R,  // PAD_R1
+#   RETRO_DEVICE_ID_JOYPAD_B,   // PAD_CROSS       ..._L2, // PAD_L2
+#   RETRO_DEVICE_ID_JOYPAD_Y,   // PAD_SQUARE      ..._R2, // PAD_R2
+#
+# Against the global table that is an exact match on all eight, because both
+# describe the same pad: SDL's `a` is the bottom face button and RetroPad's B
+# is the bottom face button, and the bottom face button is Cross.
+#
+# L3 and R3 are deliberately absent. The core reads them (PAD_L3/PAD_R3 above),
+# but padmap has no canonical name for a stick click -- SDL_FIELDS stops at the
+# triggers -- so there is nothing to bind them to yet. Adding two names to that
+# table would be the whole change, and it is worth doing when a pad that has
+# them is being mapped. Neither controller on this machine does: the GameCube
+# adapter has no stick clicks at all.
+PS2 = Layout(
+    id="ps2",
+    label="PlayStation 2",
+    shapes=_PAD_BODY,
+    controls=(
+        Control("a", "Cross (bottom)", 0.72, 0.52),
+        Control("b", "Circle (right)", 0.78, 0.42),
+        Control("x", "Square (left)", 0.66, 0.42),
+        Control("y", "Triangle (top)", 0.72, 0.32),
+        Control("dpup", "D-pad up", 0.28, 0.36, kind="dpad", radius=0.045),
+        Control("dpdown", "D-pad down", 0.28, 0.52, kind="dpad", radius=0.045),
+        Control("dpleft", "D-pad left", 0.23, 0.44, kind="dpad", radius=0.045),
+        Control("dpright", "D-pad right", 0.33, 0.44, kind="dpad", radius=0.045),
+        Control("back", "Select", 0.45, 0.44, radius=0.035),
+        Control("start", "Start", 0.55, 0.44, radius=0.035),
+        Control("leftshoulder", "L1", 0.26, 0.20, kind="shoulder"),
+        Control("rightshoulder", "R1", 0.74, 0.20, kind="shoulder"),
+        Control("lefttrigger", "L2", 0.34, 0.12, kind="shoulder"),
+        Control("righttrigger", "R2", 0.66, 0.12, kind="shoulder"),
+    ),
+)
+
 ALL: dict[str, Layout] = {
     layout.id: layout
-    for layout in (GENERIC, SNES, N64, ARCADE, GAMECUBE)
+    for layout in (GENERIC, SNES, N64, ARCADE, GAMECUBE, PS2)
 }
 
 DEFAULT = GENERIC.id
@@ -390,6 +434,13 @@ CORE_LAYOUTS: dict[str, str] = {
     # retro_set_controller_port_device_gc -- the reading that produced the
     # GameCube layout's identity face-button mapping.
     "dolphin": GAMECUBE.id,
+    # pcsx2/PAD/PAD.cpp, the PAD_* -> RETRO_DEVICE_ID_JOYPAD_* table -- the
+    # reading that established PS2 needs no overrides at all.
+    "pcsx2": PS2.id,
+    # Play! is the other PS2 core libretro ships. Not read, and listed on the
+    # same terms as the other near neighbours above: a wrong entry resolves a
+    # mapping the user did not intend, an absent one falls through.
+    "play": PS2.id,
 }
 
 
