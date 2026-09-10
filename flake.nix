@@ -150,7 +150,19 @@
               # front-end read the clone". A front-end on hidraw is reading
               # around it. So switch it off and let SDL use evdev like
               # everything else.
-              export SDL_JOYSTICK_HIDAPI="''${SDL_JOYSTICK_HIDAPI:-0}"
+              # Left ON, after trying the opposite and making it worse.
+              #
+              # Setting this to 0 forces SDL onto evdev, which is where padmap
+              # publishes its clones -- so in principle both ends would agree.
+              # In practice hidraw is the only path that has ever carried Switch
+              # Pro input on this machine: the evdev node can be opened, grabbed
+              # and watched, and never emits a single event. Disabling HIDAPI
+              # therefore took the controller from "works in the front-end, not
+              # in games" to "does not work anywhere".
+              #
+              # The fix is not to move SDL; it is for padmap to speak HID itself
+              # for the pads SDL treats this way. See docs/HIDRAW.md.
+              export SDL_JOYSTICK_HIDAPI="''${SDL_JOYSTICK_HIDAPI:-1}"
 
               # Point the installed theme at this build.
               #
