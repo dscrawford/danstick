@@ -206,6 +206,7 @@ class Server:
         self._assignments: list[Assignment] = []
         self._republisher: virtual.Republisher | None = None
         self._pad_read_seen: set[int] = set()
+        self._last_stale_check = 0.0
         self._confirm_started: dict[str, float] = {}
         # Which button started the hold on each pad. Kept beside
         # _confirm_started rather than in it because a release only ends a
@@ -1656,6 +1657,7 @@ class Server:
         # be applied exactly never.
         self._sync_republish_pause()
         self._reap_dead_pads()
+        self._republish_if_stale()
 
         if self._assigner is None:
             return
@@ -1793,6 +1795,44 @@ class Server:
         self._write_controller_configs()
         log.info("republishing %d pad(s); launch config at %s",
                  len(vpads), self.launch_config_path)
+
+    # How often to check that a hidraw pad is still the device we opened.
+    # Cheap (one stat per pad) but not free, and a reconnect takes seconds to
+    # settle anyway, so there is nothing to gain from checking every tick.
+    STALE_CHECK_SECONDS = 2.0
+
+    def _republish_if_stale(self) -> None:
+        """Re-open a pad whose device was replaced under us.
+
+        A Bluetooth controller that drops and reconnects comes back as a new
+        uhid instance, usually on a different hidraw number. The descriptor we
+        hold is not closed and never errors -- it just stops being readable,
+        so the selector never fires and the read path never gets to notice.
+        Input stops with nothing logged and nothing failed.
+
+        Restarting the republisher is the whole fix: it rebuilds from the
+        stored assignments, and building a pad re-resolves its node by
+        vendor/product, so the new one is found the same way the first was.
+        """
+        if self._republisher is None:
+            return
+        now = time.monotonic()
+        if now - self._last_stale_check < self.STALE_CHECK_SECONDS:
+            return
+        self._last_stale_check = now
+        stale = self._republisher.stale_sources()
+        if not stale:
+            return
+        for vpad in stale:
+            log.warning("player %d: %s was replaced (%s is gone); reopening",
+                        vpad.player, vpad.pad.name, vpad.source.path)
+        try:
+            self._start_republisher()
+        except OSError as error:
+            # The pad may be mid-reconnect and not back yet. Next poll retries;
+            # dying here would take every other player's controller with it.
+            log.warning("could not reopen after a reconnect (%s); "
+                        "will retry", error)
 
     def _reap_dead_pads(self) -> None:
         """Stop watching sources that have gone, so the loop cannot spin.

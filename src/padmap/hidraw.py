@@ -146,6 +146,11 @@ class Source:
         self.path = node
         self.name = pad.name
         self._fd = os.open(node, os.O_RDWR | os.O_NONBLOCK)
+        # Which device this node was when we opened it. See alive().
+        try:
+            self._rdev: int | None = os.stat(node).st_rdev
+        except OSError:
+            self._rdev = None
         self._buttons: dict[int, int] = {}
         self._axes: dict[int, int] = {}
         self._hat = (0, 0)
@@ -161,6 +166,30 @@ class Source:
 
     def fileno(self) -> int:
         return self._fd
+
+    def alive(self) -> bool:
+        """Is this still the device we opened, or has the pad reconnected?
+
+        Has to be asked from outside, on a timer. A Bluetooth pad that drops
+        and comes back gets a new uhid instance and usually a new hidraw
+        number -- and the descriptor we are holding does not error, does not
+        close, and is never readable again. select() cannot report it, so the
+        republisher's read path never runs and never gets the chance to
+        notice. Nothing anywhere fails; input simply stops.
+
+        Observed exactly that: the daemon held /dev/hidraw9 (deleted) while
+        the controller had come back as hidraw8, and went on reporting that it
+        was forwarding, because that line is logged once.
+
+        Comparing st_rdev rather than just existence, so a node number reused
+        by some *other* device is caught too.
+        """
+        if self._rdev is None:
+            return True         # nothing to compare; assume the best
+        try:
+            return os.stat(self.path).st_rdev == self._rdev
+        except OSError:
+            return False
 
     def grab(self) -> None:
         """No-op, and not an oversight.

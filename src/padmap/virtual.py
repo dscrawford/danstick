@@ -410,6 +410,22 @@ class Republisher:
         elif fd in self._by_ui_fd:
             self._handle_feedback(self._by_ui_fd[fd])
 
+    def stale_sources(self) -> list[VirtualPad]:
+        """Pads whose underlying device has been replaced under them.
+
+        Only hidraw sources can end up in this state, and only they implement
+        `alive`. An evdev node that disappears makes its descriptor readable
+        and returns ENODEV, which `_forward` already handles; a hidraw node
+        that disappears is simply never readable again, so nothing in the
+        event path can detect it. Hence a poll.
+        """
+        stale = []
+        for vpad in self.pads:
+            check = getattr(vpad.source, "alive", None)
+            if check is not None and not vpad.gone and not check():
+                stale.append(vpad)
+        return stale
+
     def dead_fds(self) -> list[int]:
         """Source descriptors whose pad has gone, for the caller to drop.
 

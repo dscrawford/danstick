@@ -74,6 +74,10 @@ class FakeRepublisher:
         # Nothing vanishes in these scenarios; the daemon still asks.
         return []
 
+    def stale_sources(self) -> list:
+        # Nor does anything reconnect. Polled once every couple of seconds.
+        return []
+
 # The only pads anything in this file may see. Bound once, at import, so a
 # stray code path that reaches discovery cannot enumerate the real machine.
 _VISIBLE: list[Pad] = []

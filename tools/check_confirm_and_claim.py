@@ -76,6 +76,10 @@ class FakeRepublisher:
         # Nothing vanishes in these scenarios; the daemon still asks.
         return []
 
+    def stale_sources(self) -> list:
+        # Nor does anything reconnect. Polled once every couple of seconds.
+        return []
+
 BTN_A = ecodes.BTN_SOUTH        # 0x130
 BTN_B = ecodes.BTN_EAST         # 0x131
 BTN_START = ecodes.BTN_START    # 0x13b

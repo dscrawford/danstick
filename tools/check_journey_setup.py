@@ -225,6 +225,7 @@ class Journey:
             # set_paused or the journey fails on the double, not the daemon.
             made.set_paused = lambda paused: setattr(made, "paused", paused)
             made.dead_fds = lambda: []
+            made.stale_sources = lambda: []
             self.republishers.append(made)
             return made
 
