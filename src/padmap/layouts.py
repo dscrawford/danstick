@@ -324,6 +324,26 @@ GAMECUBE = Layout(
                 retroarch="input_r2_btn"),
         Control("righttrigger", "Z", 0.80, 0.24, kind="shoulder", radius=0.04,
                 retroarch="input_r_btn"),
+        # The C-stick, captured rather than guessed.
+        #
+        # It has to be asked for, because the automatic path cannot find it on
+        # this hardware. stick_fields assumes a right stick lives on ABS_RX and
+        # ABS_RY; on the MAYFLASH adapter those are the analogue *triggers*,
+        # resting at one end of their travel, and the C-stick is on ABS_Z and
+        # ABS_RZ instead. stick_fields correctly refuses the triggers -- that
+        # is what stopped the pad reading as jammed to the left -- but nothing
+        # then claims the real C-stick, so it was simply absent. Dolphin reads
+        # the GameCube C-stick from the RetroPad right analog stick, so these
+        # are the right canonical names; capturing them is the only part that
+        # was missing.
+        Control("rightstick_up", "C-stick up", 0.50, 0.60, kind="stick",
+                radius=0.032),
+        Control("rightstick_down", "C-stick down", 0.50, 0.72, kind="stick",
+                radius=0.032),
+        Control("rightstick_left", "C-stick left", 0.46, 0.66, kind="stick",
+                radius=0.032),
+        Control("rightstick_right", "C-stick right", 0.54, 0.66, kind="stick",
+                radius=0.032),
     ),
 )
 

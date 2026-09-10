@@ -934,7 +934,12 @@ def check_scope_picker_is_worked_from_the_pad() -> None:
 
 # A GameCube adapter used to play N64 games: the case that forced scopes to
 # exist. Twelve buttons, a hat, two sticks, two analogue triggers.
-GC_KEYS = list(range(0x130, 0x13C))
+# Enough buttons to answer every prompt in the widest layout this file walks,
+# derived rather than counted: the GameCube layout grew a C-stick and this was
+# a fixed 12, so the walk ran off the end of the list. The specific codes below
+# still matter -- 0x130 is A, 0x131 is B and so on -- so only the length moves.
+GC_KEYS = list(range(0x130, 0x130 + max(
+    len(layout.controls) for layout in layouts.ALL.values())))
 GC_AXES = {
     0x00: (0, 255, 128), 0x01: (0, 255, 128),   # left stick
     0x02: (0, 255, 0), 0x05: (0, 255, 0),       # L and R, resting at zero
