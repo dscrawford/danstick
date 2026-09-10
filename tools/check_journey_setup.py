@@ -220,6 +220,7 @@ class Journey:
             # re-applies that on every restart -- so a stand-in has to answer
             # set_paused or the journey fails on the double, not the daemon.
             made.set_paused = lambda paused: setattr(made, "paused", paused)
+            made.dead_fds = lambda: []
             self.republishers.append(made)
             return made
 

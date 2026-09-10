@@ -184,6 +184,10 @@ class VirtualPad:
     # is the hot path, a pad emits at about 8ms, and a fault that repeats
     # would otherwise write a log line per event for as long as the game runs.
     dropped: int = 0
+    # The physical source is gone (ENODEV) and this clone is finished. Read by
+    # the republisher to stop servicing the descriptor, and by the daemon to
+    # unregister it -- see Republisher._forward for what happens without it.
+    gone: bool = False
 
     @property
     def name(self) -> str:
@@ -376,7 +380,10 @@ class Republisher:
         Both directions matter: sources carry button presses inbound, and the
         uinput nodes carry force-feedback requests back out.
         """
-        return list(self._by_source_fd) + list(self._by_ui_fd)
+        # Gone sources are left out: their descriptor is closed or dead, and
+        # select() on it raises EBADF rather than politely reporting nothing.
+        return ([fd for fd, vpad in self._by_source_fd.items() if not vpad.gone]
+                + list(self._by_ui_fd))
 
     def handle_readable(self, fd: int) -> None:
         """Service one descriptor reported readable, in either direction."""
@@ -384,6 +391,15 @@ class Republisher:
             self._forward(self._by_source_fd[fd])
         elif fd in self._by_ui_fd:
             self._handle_feedback(self._by_ui_fd[fd])
+
+    def dead_fds(self) -> list[int]:
+        """Source descriptors whose pad has gone, for the caller to drop.
+
+        The republisher cannot unregister these itself -- the selector belongs
+        to the daemon. Left registered, a dead node reports readable forever
+        and the loop spins on it for as long as the daemon runs.
+        """
+        return [fd for fd, vpad in self._by_source_fd.items() if vpad.gone]
 
     def pump(self, timeout: float | None = 0.5) -> None:
         readable, _, _ = select.select(self.fds, [], [], timeout)
@@ -399,11 +415,34 @@ class Republisher:
             pad.close()
 
     def _forward(self, vpad: VirtualPad) -> None:
+        if vpad.gone:
+            return
         try:
             events = list(vpad.source.read())
         except (BlockingIOError, OSError) as exc:
             if isinstance(exc, OSError) and exc.errno == errno.ENODEV:
-                log.warning("player %d: source disappeared", vpad.player)
+                # Once, and then never again for this pad.
+                #
+                # This used to log on every call and set self._stop, which does
+                # nothing here: _stop only ends run(), and the daemon does not
+                # use run() -- it drives handle_readable from its selector. A
+                # dead node stays readable forever, so the selector woke on it
+                # continuously and this branch wrote a line each time. It filled
+                # /run/user/1000 -- 114 million lines, 3.1GB, the whole tmpfs --
+                # and then everything that needed to write there failed. The
+                # visible symptom was a game exiting instantly with code 1,
+                # because padmap-play could not write its autoconfig:
+                #
+                #   padmap-play: printf: write error: No space left on device
+                #
+                # Which points nowhere near a disconnected controller.
+                log.warning("player %d: source disappeared, dropping the clone",
+                            vpad.player)
+                vpad.gone = True
+                # Both, not one instead of the other. `_stop` is what ends
+                # run(), which `padmap run` uses and which has its own check
+                # for exactly this; `gone` is what stops the *daemon* -- which
+                # never calls run() -- from servicing the descriptor forever.
                 self._stop = True
             return
         # Drained above whether or not we are paused: an evdev node that is not

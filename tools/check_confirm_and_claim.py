@@ -72,6 +72,10 @@ class FakeRepublisher:
     def set_paused(self, paused: bool) -> None:
         self.paused = paused
 
+    def dead_fds(self) -> list[int]:
+        # Nothing vanishes in these scenarios; the daemon still asks.
+        return []
+
 BTN_A = ecodes.BTN_SOUTH        # 0x130
 BTN_B = ecodes.BTN_EAST         # 0x131
 BTN_START = ecodes.BTN_START    # 0x13b

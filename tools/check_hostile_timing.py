@@ -70,6 +70,10 @@ class FakeRepublisher:
     def set_paused(self, paused: bool) -> None:
         self.paused = paused
 
+    def dead_fds(self) -> list[int]:
+        # Nothing vanishes in these scenarios; the daemon still asks.
+        return []
+
 # The only pads anything in this file may see. Bound once, at import, so a
 # stray code path that reaches discovery cannot enumerate the real machine.
 _VISIBLE: list[Pad] = []

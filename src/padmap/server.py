@@ -1645,6 +1645,7 @@ class Server:
         # a pause that only got applied on the paths that fall through would
         # be applied exactly never.
         self._sync_republish_pause()
+        self._reap_dead_pads()
 
         if self._assigner is None:
             return
@@ -1775,6 +1776,24 @@ class Server:
         self._write_controller_configs()
         log.info("republishing %d pad(s); launch config at %s",
                  len(vpads), self.launch_config_path)
+
+    def _reap_dead_pads(self) -> None:
+        """Stop watching sources that have gone, so the loop cannot spin.
+
+        A vanished evdev node reports readable forever. Until the descriptor is
+        unregistered the selector wakes on it continuously, and whatever the
+        callback does it does at that rate -- which is how a single unplugged
+        controller wrote 3.1GB of identical log lines and filled the runtime
+        tmpfs, taking every later write on the machine with it.
+        """
+        if self._republisher is None:
+            return
+        for fd in self._republisher.dead_fds():
+            try:
+                self._selector.unregister(fd)
+            except (KeyError, ValueError, OSError):
+                # Already gone, which is the state we wanted anyway.
+                pass
 
     def _sync_republish_pause(self) -> None:
         """Silence the clone while a wizard is reading the physical pad.
