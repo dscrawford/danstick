@@ -127,6 +127,31 @@
                 export SDL_GAMECONTROLLER_IGNORE_DEVICES_EXCEPT="0x1209/0x0001"
               fi
 
+              # Keep SDL on evdev, off hidraw.
+              #
+              # SDL uses its own HIDAPI drivers for the controllers it knows
+              # best -- Switch, PlayStation, Xbox -- reading /dev/hidraw*
+              # directly instead of the evdev node. That breaks padmap at the
+              # root, in two ways at once, and both were observed here:
+              #
+              #   * the udev hide rules become meaningless. ID_INPUT_JOYSTICK
+              #     only affects evdev enumeration, so Pegasus went on seeing
+              #     every physical pad it was supposed to be blind to -- which
+              #     is why a wizard prompt of "press B" was also delivered to
+              #     the UI as a cancel.
+              #   * the pad stops producing evdev events at all. With SDL
+              #     holding /dev/hidraw8 and the controller in its own report
+              #     mode, hid-nintendo logged "timeout waiting for input
+              #     report" and the evdev node -- open, grabbed and registered
+              #     by padmap -- never once became readable. Proven from the
+              #     process: pegasus had hidraw8 open and event26 not.
+              #
+              # padmap's whole design is "clone the evdev node and let the
+              # front-end read the clone". A front-end on hidraw is reading
+              # around it. So switch it off and let SDL use evdev like
+              # everything else.
+              export SDL_JOYSTICK_HIDAPI="''${SDL_JOYSTICK_HIDAPI:-0}"
+
               # Point the installed theme at this build.
               #
               # The theme is QML read from ~/.config at startup, so it goes
