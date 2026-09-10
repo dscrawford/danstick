@@ -193,9 +193,29 @@ def check_generated_rules() -> None:
     rules = hide.generate_rules(pads)
     lines = rule_lines(rules)
 
-    if len(lines) != 4:
-        fail(f"{len(lines)} rule lines for 4 adapters -- either an adapter is "
-             f"unhidden or one is listed twice:\n{rules}")
+    # Two lines per adapter, not one: a USB match and a Bluetooth match.
+    #
+    # ATTRS{idVendor} resolves against a USB parent, and a pad arriving over
+    # Bluetooth has none -- so for years that rule quietly covered nothing on
+    # a wireless pad. A Switch Pro paired over Bluetooth was enumerated by
+    # RetroArch right beside padmap's clone, both answering to 057e:2009, and
+    # the game bound the wrong one. The second line matches the uhid path,
+    # which carries the bus and the ids.
+    if len(lines) != 8:
+        fail(f"{len(lines)} rule lines for 4 adapters -- expected two each, a "
+             f"USB match and a Bluetooth one. Either an adapter is unhidden, "
+             f"one is listed twice, or a transport lost its rule:\n{rules}")
+    usb = [ln for ln in lines if "ATTRS{idVendor}" in ln]
+    bt = [ln for ln in lines if "uhid/0005:" in ln]
+    if len(usb) != 4 or len(bt) != 4:
+        fail(f"{len(usb)} USB rules and {len(bt)} Bluetooth rules for 4 "
+             f"adapters; a pad hidden on one transport is still visible on "
+             f"the other")
+    for line in bt:
+        if "/devices/virtual/input/" in line:
+            fail(f"a Bluetooth rule could match padmap's own virtual pads, "
+                 f"which would hide the very devices RetroArch is supposed "
+                 f"to see: {line}")
     for line in lines:
         if 'SUBSYSTEM=="input"' not in line:
             fail(f"a rule does not match the input subsystem, so it applies "
@@ -246,9 +266,15 @@ def check_generated_rules() -> None:
 def check_generate_rules_dedupes_and_skips() -> None:
     print("\ngenerating from the raw scan, four ports and an id-less pad:")
     rules = hide.generate_rules(CUBE + [NAMELESS])
-    if len(rule_lines(rules)) != 1:
+    # One adapter, so one pair of rules: a USB match and a Bluetooth one. The
+    # four ports still collapse to a single vid/pid -- that is what is being
+    # checked here -- they simply produce two lines rather than one now.
+    if len(rule_lines(rules)) != 2:
         fail(f"four ports of one adapter produced {len(rule_lines(rules))} "
-             f"identical rules")
+             f"rule lines; expected exactly two, one per transport")
+    if len(set(rule_lines(rules))) != 2:
+        fail("the two rules for one adapter are identical, so a transport is "
+             "covered twice and the other not at all")
     if covered_pairs(rules) != [(0x0079, 0x1843)]:
         fail(f"unexpected pairs: {covered_pairs(rules)}")
     if '"0000"' in rules:

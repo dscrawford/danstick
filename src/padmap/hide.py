@@ -76,6 +76,23 @@ def generate_rules(pads: list[Pad]) -> str:
             f'SUBSYSTEM=="input", ATTRS{{idVendor}}=="{pad.vid:04x}", '
             f'ATTRS{{idProduct}}=="{pad.pid:04x}", ENV{{ID_INPUT_JOYSTICK}}=""'
         )
+        # The same pad again, for when it arrives over Bluetooth.
+        #
+        # ATTRS{idVendor} walks up to a USB parent, and a Bluetooth pad has
+        # none -- so the rule above silently covers nothing and the controller
+        # stays visible. That is not theoretical: a Switch Pro paired over
+        # Bluetooth was enumerated by RetroArch alongside padmap's clone, both
+        # claiming 057e:2009, and the game got the wrong one.
+        #
+        # Bluetooth HID devices hang off uhid, and the directory name carries
+        # the bus and ids: /devices/virtual/misc/uhid/0005:057E:2009.0075/...
+        # so this stays as narrow as the USB rule. It cannot catch padmap's own
+        # pads: those are /devices/virtual/input/, with no uhid anywhere in the
+        # path. Uppercase, because that is how the kernel spells it.
+        lines.append(
+            f'SUBSYSTEM=="input", DEVPATH=="*/uhid/0005:{pad.vid:04X}:'
+            f'{pad.pid:04X}.*", ENV{{ID_INPUT_JOYSTICK}}=""'
+        )
     return "\n".join(lines) + "\n"
 
 
