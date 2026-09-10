@@ -275,16 +275,31 @@
 
             status=0
 
+            # Always leave a log behind.
+            #
+            # RetroArch was being run with no logging flags, so every launch
+            # was invisible: when a controller did not work in game there was
+            # nothing to read, and the only file with the right name was a
+            # stale one from a manual run days earlier -- which is worse than
+            # none, because it looks like evidence. The [Autoconf] lines here
+            # are the only place that says which pad RetroArch matched, in
+            # which port, and against which profile.
+            #
+            # Truncated per launch by --log-file, so this cannot grow without
+            # bound; the previous run is available until the next one starts.
+            logfile="$state/retroarch.log"
+
             # Only pass the override if it exists: before the first
             # assignment there is no file, and RetroArch treats a missing
             # --appendconfig target as a fatal error.
             if [ -f "$config" ]; then
-              retroarch --appendconfig "$config" \
+              retroarch --verbose --log-file "$logfile" \
+                   --appendconfig "$config" \
                    ''${args[@]+"''${args[@]}"} "$@" || status=$?
             else
               echo "padmap: no launch config at $config;" \
                    "controller order will be RetroArch's default" >&2
-              retroarch "$@" || status=$?
+              retroarch --verbose --log-file "$logfile" "$@" || status=$?
             fi
 
             exit "$status"
