@@ -181,7 +181,25 @@ class Source:
         except OSError:
             pass
 
-    def capabilities(self, absinfo: bool = False, **_kw) -> dict[int, Any]:
+    def capabilities(self, absinfo: bool = True, **_kw) -> dict[int, Any]:
+        """Capabilities, defaulting to *with* absinfo -- as evdev does.
+
+        evdev.InputDevice.capabilities() has absinfo=True by default, and
+        `_capabilities_for` calls it with no arguments. Defaulting to False
+        here meant the clone was created from bare axis codes with no ranges,
+        so every axis came out min=max=0. Nothing complained: the pad appeared,
+        was configured, and forwarded input.
+
+        RetroArch then divided by that range in udev_compute_axis:
+
+            int range = info->maximum - info->minimum;
+            int axis  = (value - info->minimum) * 0xffff / range - 0x7fff;
+
+        which is a divide by zero the moment anything polls the pad. The game
+        died with SIGFPE at its first input poll -- on the start screen -- and
+        the backtrace pointed at udev_joypad_poll, three frames under
+        GCPad::GetInput. Nothing in it named padmap.
+        """
         keys = sorted(set(BUTTONS_RIGHT.values())
                       | set(BUTTONS_SHARED.values())
                       | set(BUTTONS_LEFT.values()))
