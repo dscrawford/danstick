@@ -205,6 +205,7 @@ class Server:
         self._assigner: Assigner | None = None
         self._assignments: list[Assignment] = []
         self._republisher: virtual.Republisher | None = None
+        self._pad_read_seen: set[int] = set()
         self._confirm_started: dict[str, float] = {}
         # Which button started the hold on each pad. Kept beside
         # _confirm_started rather than in it because a release only ends a
@@ -1441,6 +1442,15 @@ class Server:
     # -- assignment -------------------------------------------------------
 
     def _on_pad_read(self, fd: Any) -> None:
+        # Once per descriptor: proves the selector is waking on it, and says
+        # which consumer got it. An assigner left open silently swallows every
+        # press, which looks exactly like a controller that stopped working.
+        if int(fd) not in self._pad_read_seen:
+            self._pad_read_seen.add(int(fd))
+            log.info("pad fd %s first read -> %s", fd,
+                     "assigner" if self._assigner is not None
+                     else ("republisher" if self._republisher is not None
+                           else "NOWHERE (no assigner, no republisher)"))
         if self._assigner is not None:
             self._assigner.handle_readable(int(fd))
         elif self._republisher is not None:
@@ -1732,8 +1742,15 @@ class Server:
         self._stop_republisher()
         vpads = [virtual.create(a.pad, a.player) for a in self._assignments]
         self._republisher = virtual.Republisher(vpads)
+        registered = []
         for fd in self._republisher.fds:
             self._selector.register(fd, selectors.EVENT_READ, self._on_pad_read)
+            registered.append(fd)
+        # Which descriptors are being watched, and for which pads. "No input
+        # reaches the game" was traced to _forward never being called at all,
+        # and nothing said whether the fd was registered or simply never woke.
+        log.info("republisher watching fds %s for %s", registered,
+                 [(vp.player, vp.source.fd, vp.source.path) for vp in vpads])
         # A fresh Republisher starts forwarding, and this runs *during* a
         # mapping: beginning one rewrites the SDL mappings and republishes, so
         # the clone the wizard had just silenced is replaced by a live one
