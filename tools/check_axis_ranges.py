@@ -116,10 +116,87 @@ def check_sticks_are_centred_within_range() -> None:
     print("  ok  every resting value is within range")
 
 
+def _report(lx: int, ly: int, rx: int = 2048, ry: int = 2048) -> bytes:
+    """A synthetic 0x30 report with the sticks at the given raw positions.
+
+    Raw meaning as the controller reports them, before any flip: Y grows
+    upwards here, which is the thing the decode has to correct.
+    """
+    data = bytearray(49)
+    data[0] = 0x30
+    data[6] = lx & 0xFF
+    data[7] = ((lx >> 8) & 0x0F) | ((ly & 0x0F) << 4)
+    data[8] = (ly >> 4) & 0xFF
+    data[9] = rx & 0xFF
+    data[10] = ((rx >> 8) & 0x0F) | ((ry & 0x0F) << 4)
+    data[11] = (ry >> 4) & 0xFF
+    return bytes(data)
+
+
+def check_y_is_flipped_and_x_is_not() -> None:
+    print("\npushing the stick up produces a LOW ABS_Y, as evdev expects:")
+
+    class Fake(hidraw.Source):
+        def __init__(self) -> None:            # noqa: D107
+            self._buttons = {}
+            self._axes = {}
+            self._hat = (0, 0)
+
+    source = Fake()
+    # Raw Y at maximum is the stick held fully UP on this controller.
+    events = {(e.code): e.value for e in source._decode(_report(2048, 4095))
+              if e.type == ecodes.EV_ABS}
+    y = events.get(ecodes.ABS_Y)
+    if y is None:
+        raise SystemExit("FAIL: no ABS_Y emitted at all")
+    if y > hidraw.STICK_MAX // 2:
+        raise SystemExit(
+            f"FAIL: stick up produced ABS_Y={y}, in the upper half of "
+            f"0..{hidraw.STICK_MAX}. The controller reports Y increasing "
+            f"upwards and evdev has 0 at the top, so publishing it raw makes "
+            f"the stick inverted vertically in every game -- which is exactly "
+            f"how it was reported")
+    print(f"  ok  raw Y 4095 (up) -> ABS_Y {y}")
+
+    # And X must NOT be flipped, or the fix trades one inversion for another.
+    source = Fake()
+    events = {(e.code): e.value for e in source._decode(_report(4095, 2048))
+              if e.type == ecodes.EV_ABS}
+    x = events.get(ecodes.ABS_X)
+    if x is None or x < hidraw.STICK_MAX // 2:
+        raise SystemExit(
+            f"FAIL: stick right produced ABS_X={x}; X shares evdev's "
+            f"direction already and must be passed through untouched")
+    print(f"  ok  raw X 4095 (right) -> ABS_X {x}")
+
+
+def check_the_dpad_matches_evdev_too() -> None:
+    print("\n...and the d-pad hat points the same way:")
+
+    class Fake(hidraw.Source):
+        def __init__(self) -> None:            # noqa: D107
+            self._buttons = {}
+            self._axes = {}
+            self._hat = (0, 0)
+
+    up = bytearray(_report(2048, 2048))
+    up[5] = 0x02          # d-pad Up
+    events = {e.code: e.value for e in Fake()._decode(bytes(up))
+              if e.type == ecodes.EV_ABS and e.code == ecodes.ABS_HAT0Y}
+    if events.get(ecodes.ABS_HAT0Y) != -1:
+        raise SystemExit(
+            f"FAIL: d-pad up gave ABS_HAT0Y={events.get(ecodes.ABS_HAT0Y)}, "
+            f"expected -1. evdev hats put up at -1, and a hat inverted "
+            f"against the stick is worse than both being wrong together")
+    print("  ok  d-pad up -> ABS_HAT0Y -1")
+
+
 def main() -> int:
     check_hidraw_defaults_to_absinfo()
     check_every_axis_has_a_range()
     check_sticks_are_centred_within_range()
+    check_y_is_flipped_and_x_is_not()
+    check_the_dpad_matches_evdev_too()
     print("\nall checks passed")
     return 0
 

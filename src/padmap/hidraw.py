@@ -294,11 +294,22 @@ class Source:
                 events.append(_Event(ecodes.EV_ABS, ecodes.ABS_HAT0Y, y))
             self._hat = (x, y)
 
+        # Y is inverted on the way out, X is not.
+        #
+        # The controller reports Y increasing *upwards*: push the stick up and
+        # the number grows. evdev is the other way round -- ABS_Y is 0 at the
+        # top, like screen coordinates -- and every consumer downstream assumes
+        # the evdev convention. Published raw, the stick works but is upside
+        # down in every game, which is exactly how it was reported.
+        #
+        # hid-nintendo does the same flip, which is the other reason to do it
+        # here: a profile captured over USB through the kernel driver has to
+        # mean the same thing when the pad comes back over Bluetooth.
         values = {
             "lx": data[6] | ((data[7] & 0x0F) << 8),
-            "ly": (data[7] >> 4) | (data[8] << 4),
+            "ly": STICK_MAX - ((data[7] >> 4) | (data[8] << 4)),
             "rx": data[9] | ((data[10] & 0x0F) << 8),
-            "ry": (data[10] >> 4) | (data[11] << 4),
+            "ry": STICK_MAX - ((data[10] >> 4) | (data[11] << 4)),
         }
         for code, key in AXES:
             value = values[key]
