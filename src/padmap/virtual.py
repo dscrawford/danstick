@@ -34,9 +34,12 @@ import os
 import select
 from dataclasses import dataclass, field
 
+from typing import Any
+
 import evdev
 from evdev import ecodes
 
+from . import hidraw
 from .devices import Pad, VIRTUAL_PHYS_PREFIX, open_device
 from .profiles import AxisCalibration, load as load_profile
 
@@ -219,9 +222,20 @@ def _capabilities_for(source: evdev.InputDevice) -> dict:
 
 
 def create(pad: Pad, player: int, grab: bool = True) -> VirtualPad:
-    source = open_device(pad)
-    if grab:
-        source.grab()
+    # hidraw first, for the pads whose evdev node carries nothing.
+    #
+    # SDL and Steam drive some controllers over /dev/hidraw* in a vendor
+    # report mode; the kernel driver is then starved and its evdev node --
+    # openable, grabbable, watchable -- never emits an event. Everything below
+    # is unchanged either way: a clone fed from hidraw is indistinguishable
+    # from one fed from evdev. See padmap.hidraw and docs/HIDRAW.md.
+    source: Any = hidraw.open_source(pad)
+    if source is None:
+        source = open_device(pad)
+        if grab:
+            source.grab()
+    # A hidraw source has no EVIOCGRAB to take: exclusivity there is by
+    # convention, not by ioctl, which its own grab() says at more length.
 
     # UInput writes ff_effects_max into the uinput setup unconditionally,
     # defaulting to 96 even when EV_FF is absent from `events`. RetroArch

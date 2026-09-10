@@ -208,6 +208,10 @@ class Journey:
             self.created.append(player)
             return SimpleNamespace(
                 player=player, pad=source,
+                # The daemon logs which descriptor it is watching for which
+                # pad, so a clone stand-in needs a source with an fd and a
+                # path -- it does not need them to be real.
+                source=SimpleNamespace(fd=2100 + player, path=source.path),
                 ui=SimpleNamespace(device=SimpleNamespace(
                     path=f"/dev/input/event210{player}")))
 
