@@ -308,7 +308,10 @@ GC_FOR_THIS_GAME = profiles.Mapping(
 )
 
 CORE = "/nix/store/zzz/lib/retroarch/cores/mupen64plus_next_libretro.so"
-UNKNOWN_CORE = "/nix/store/zzz/lib/retroarch/cores/genesis_plus_gx_libretro.so"
+# Must be a core padmap has no layout for. genesis_plus_gx was used here
+# until Genesis support landed; if this one ever gains a layout, the
+# assertions below start failing and want repointing again.
+UNKNOWN_CORE = "/nix/store/zzz/lib/retroarch/cores/flycast_libretro.so"
 
 
 def store(pad: Pad, mappings: dict[str, profiles.Mapping] | None = None,

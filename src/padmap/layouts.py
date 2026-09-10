@@ -415,9 +415,52 @@ SWITCH = Layout(
     ),
 )
 
+# Six face buttons in two rows, no shoulders, and a Mode button nobody uses.
+#
+# Verified against genesis-plus-gx, libretro/libretro.c, the DEVICE_PAD6B case:
+#
+#   JOYPAD_L      -> INPUT_X       JOYPAD_Y     -> INPUT_A
+#   JOYPAD_X      -> INPUT_Y       JOYPAD_B     -> INPUT_B
+#   JOYPAD_R      -> INPUT_Z       JOYPAD_A     -> INPUT_C
+#   JOYPAD_SELECT -> INPUT_MODE    JOYPAD_START -> INPUT_START
+#
+# Note where X and Z come from: RetroPad **L and R**, the shoulders. A Genesis
+# pad has no shoulders, so the core borrowed them for the top row -- and that
+# is why this layout needs no `retroarch=` overrides despite looking like it
+# should. Naming the top-left button `leftshoulder` and the top-right one
+# `rightshoulder` makes the global table emit input_l_btn and input_r_btn,
+# which is exactly what the core reads them from.
+#
+# The alternative -- canonical face names plus overrides -- was rejected: it
+# would put two buttons on input_l_btn/input_r_btn by a different route and
+# leave the layout lying about which control is which.
+#
+# A and C are the crossed pair, as everywhere: SDL's `x` is the left face
+# button and Genesis A is the left of the bottom row, so they coincide.
+GENESIS = Layout(
+    id="genesis",
+    label="Genesis",
+    console_label="Genesis",
+    shapes=_PAD_BODY,
+    controls=(
+        Control("x", "A (bottom left)", 0.62, 0.52),
+        Control("a", "B (bottom middle)", 0.72, 0.52),
+        Control("b", "C (bottom right)", 0.82, 0.52),
+        Control("leftshoulder", "X (top left)", 0.62, 0.38),
+        Control("y", "Y (top middle)", 0.72, 0.38),
+        Control("rightshoulder", "Z (top right)", 0.82, 0.38),
+        Control("dpup", "D-pad up", 0.28, 0.36, kind="dpad", radius=0.045),
+        Control("dpdown", "D-pad down", 0.28, 0.52, kind="dpad", radius=0.045),
+        Control("dpleft", "D-pad left", 0.23, 0.44, kind="dpad", radius=0.045),
+        Control("dpright", "D-pad right", 0.33, 0.44, kind="dpad", radius=0.045),
+        Control("start", "Start", 0.47, 0.46, radius=0.035),
+        Control("back", "Mode", 0.47, 0.56, radius=0.035),
+    ),
+)
+
 ALL: dict[str, Layout] = {
     layout.id: layout
-    for layout in (GENERIC, SNES, N64, ARCADE, GAMECUBE, PS2, SWITCH)
+    for layout in (GENERIC, SNES, N64, ARCADE, GAMECUBE, PS2, SWITCH, GENESIS)
 }
 
 DEFAULT = GENERIC.id
@@ -485,6 +528,11 @@ CORE_LAYOUTS: dict[str, str] = {
     # same terms as the other near neighbours above: a wrong entry resolves a
     # mapping the user did not intend, an absent one falls through.
     "play": PS2.id,
+    # libretro/libretro.c, the DEVICE_PAD6B case -- the reading that showed the
+    # Genesis top row comes from RetroPad L/R, and so needs no overrides.
+    "genesis_plus_gx": GENESIS.id,
+    "picodrive": GENESIS.id,
+    "blastem": GENESIS.id,
 }
 
 

@@ -32,13 +32,15 @@ N64 = "n64"
 GAMECUBE = "gamecube"
 SNES = "snes"
 SWITCH = "switch"
+GENESIS = "genesis"
 PLAYSTATION = "playstation"
 XBOX = "xbox"
 WHEEL = "wheel"
 GAMEPAD = "gamepad"  # the fallback
 
 ICON_NAMES = (
-    ARCADE, N64, GAMECUBE, SNES, SWITCH, PLAYSTATION, XBOX, WHEEL, GAMEPAD,
+    ARCADE, N64, GAMECUBE, SNES, SWITCH, GENESIS, PLAYSTATION, XBOX, WHEEL,
+    GAMEPAD,
 )
 
 # Fallback only, for a pad that has not been configured yet -- a learned
@@ -75,6 +77,7 @@ _BY_NAME: tuple[tuple[str, str], ...] = (
     # console they copy is the more useful answer than the console they plug
     # into. Only pads that are *only* Switch pads should land here.
     (r"pro controller|switch pro|joy-?con|\bnso\b", SWITCH),
+    (r"genesis|mega ?drive|\bm30\b|retro-?bit|saturn", GENESIS),
     (r"dualshock|dualsense|playstation|\bps[3-5]\b", PLAYSTATION),
     (r"xbox|xinput", XBOX),
     (r"wheel|racing|g29|g27|driving", WHEEL),

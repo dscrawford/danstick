@@ -202,7 +202,10 @@ def check_cores_and_keys() -> None:
         ("snes9x_libretro.so", "snes"),
         ("/x/mame2010_libretro.so", "arcade"),
         ("/x/dolphin_libretro.so", "gamecube"),
-        ("/x/genesis_plus_gx_libretro.so", ""),
+        # A core padmap genuinely has no layout for. genesis_plus_gx used to
+        # serve here and no longer can -- it is supported now, which is
+        # exactly the sort of quiet drift this line exists to catch.
+        ("/x/flycast_libretro.so", ""),
         ("", ""),
     ]:
         got = layouts.for_core(core)
