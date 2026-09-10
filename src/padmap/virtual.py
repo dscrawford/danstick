@@ -188,6 +188,10 @@ class VirtualPad:
     # the republisher to stop servicing the descriptor, and by the daemon to
     # unregister it -- see Republisher._forward for what happens without it.
     gone: bool = False
+    # Diagnostics, one line each, because "no input reaches the game" needs to
+    # distinguish withheld-on-purpose from never-read-at-all.
+    forwarded_any: bool = False
+    warned_paused: bool = False
 
     @property
     def name(self) -> str:
@@ -450,7 +454,17 @@ class Republisher:
         # burst the moment the wizard closed. Dropping the events here is the
         # whole point of the pause -- see set_paused.
         if self._paused:
+            # Once per pad. "The clone emits nothing" has two very different
+            # causes -- withheld on purpose, or never read at all -- and they
+            # are indistinguishable from outside without this line.
+            if not vpad.warned_paused:
+                vpad.warned_paused = True
+                log.warning("player %d: DROPPING input, a wizard is open",
+                            vpad.player)
             return
+        if not vpad.forwarded_any and events:
+            vpad.forwarded_any = True
+            log.info("player %d: forwarding input to the clone", vpad.player)
         for event in events:
             if event.type not in FORWARD_TYPES:
                 continue
