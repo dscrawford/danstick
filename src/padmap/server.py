@@ -782,10 +782,18 @@ class Server:
 
         mapping_run = self._mapping
         if mapping_run is not None and pad.path == mapping_run.pad.path:
+            before = mapping_run.conflict
             if mapping_run.feed(event):
                 self._emit_mapping()
                 if mapping_run.finished:
                     self._finish_mapping(store=True)
+            elif mapping_run.conflict and mapping_run.conflict != before:
+                # A refused press records nothing, so the ordinary path sends
+                # nothing and the screen sits exactly as it did -- which is
+                # what "it doesn't accept it" looks like from the sofa. The
+                # refusal is the one case where the run has something to say
+                # without having advanced.
+                self._emit_mapping()
 
     def _tick_calibration(self) -> None:
         run = self._calibration
@@ -1382,8 +1390,21 @@ class Server:
         profile.record(scope, profiles.Mapping(
             buttons=dict(bindings), layout=layout_id))
         profiles.save(profile)
-        log.info("mapped %s for scope %r: %d control(s)",
-                 _clean(pad.name), scope, len(bindings))
+        # Which controls the layout asked for and did not get. A skipped
+        # control is stored as an absence, and an absence emits no RetroArch
+        # key at all -- so the pad is reported as mapped, the wizard says
+        # nothing, and the control is simply dead in game. That is
+        # indistinguishable, from the outside, from a control the wizard never
+        # offered; naming the missing ones here is what tells the two apart.
+        missing = [
+            control.canonical
+            for control in layouts.get(layout_id).controls
+            if control.canonical not in bindings
+        ]
+        log.info("mapped %s for scope %r: %d control(s)%s",
+                 _clean(pad.name), scope, len(bindings),
+                 f"; {len(missing)} unmapped: {', '.join(missing)}"
+                 if missing else "")
 
     def _store_profile(self, pad: Pad, axes: dict[int, Any]) -> None:
         """Write a profile, preserving any icon already chosen for this pad."""

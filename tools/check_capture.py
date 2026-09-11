@@ -441,16 +441,35 @@ def main() -> int:
         raise SystemExit("FAIL: idle stick jitter answered a prompt")
     print("  ok  nothing within the deadband counts")
 
-    print("\na face button prompt refuses a stick:")
+    print("\na face button prompt refuses a nudged stick:")
     # Nudging the stick while being asked for a face button used to bind that
     # button to an axis -- and since the axis is the stick, every later stick
     # movement then pressed it. One mapping ended up with cancel on `-a3`.
+    #
+    # 217 of 0..255 about rest 128 is 0.70 of half-range: past AXIS_THRESHOLD,
+    # so it would answer any other control, and short of
+    # AXIS_AS_BUTTON_THRESHOLD.
     r = run()
-    r.feed(axis(0, 255))
+    r.feed(axis(0, 217))
     if r.index != 0 or r.bindings:
         raise SystemExit(
-            f"FAIL: a stick answered a face-button prompt ({r.bindings})")
-    print("  ok  ignored -- a face button cannot be a stick")
+            f"FAIL: a nudged stick answered a face-button prompt "
+            f"({r.bindings})")
+    print("  ok  ignored -- a nudge cannot be a face button")
+
+    print("\n...but a deliberate push to the stop does answer it:")
+    # An N64 pad has no X or Y, and reports its C cluster as ABS_Z/ABS_RZ
+    # rather than as buttons, so an axis is the only thing it can offer those
+    # prompts. A flat refusal made them unanswerable: pressing C-up for
+    # GameCube Y did nothing at all. Drift and knocks do not reach the stop,
+    # so the accident above is still refused.
+    r = run()
+    r.feed(axis(0, 255))
+    if r.index != 1 or not r.bindings:
+        raise SystemExit(
+            "FAIL: an axis held against the stop did not answer a face-button "
+            "prompt, so a pad with no spare buttons cannot finish the wizard")
+    print(f"  ok  recorded {list(r.bindings.values())[0].sdl()!r}")
 
     print("\n...but a d-pad prompt accepts one:")
     r = to_dpad(run())

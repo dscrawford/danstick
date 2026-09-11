@@ -38,12 +38,35 @@ from .devices import Pad
 
 log = logging.getLogger("padmap.hidraw")
 
+# Where the device tree is read from. A module-level constant so the
+# resolution below can be pointed at a constructed tree in a check: it decides
+# which physical controller a player gets, and it was wrong without anything
+# being able to exercise it short of two identical pads physically present.
+SYS_CLASS = "/sys/class"
+
 # Controllers this module knows how to speak to. Anything absent falls through
 # to the evdev path, which is right for everything padmap grew up on.
 SWITCH_PRO = (0x057E, 0x2009)
 SUPPORTED = {SWITCH_PRO}
 
 REPORT_FULL = 0x30          # INPUT: standard full mode, sticks and buttons
+REPORT_SIMPLE = 0x3F        # INPUT: cut-down mode the pad powers up in
+
+# How many 0x3f reports to tolerate before asking for full mode again.
+#
+# The request at open is not reliable. It is written the instant the node
+# opens, and a pad that has just finished associating over Bluetooth can drop
+# it: the write succeeds, the controller never acts on it, and the pad goes on
+# sending 0x3f for ever. Nothing downstream notices, because reports *are*
+# arriving -- the descriptor is live, `alive()` is true, `read()` never errors
+# -- they are simply all discarded by the report-id filter. The pad looks
+# connected, padmap looks healthy, and not one button works.
+#
+# Retrying costs a 64-byte write. At the pad's ~67 reports/second this waits
+# roughly a second and a half between attempts, which is long enough not to
+# spam a controller that is mid-handshake and short enough that nobody gets
+# as far as unpairing it.
+SIMPLE_REPORTS_BEFORE_RETRY = 100
 SUBCMD_REPORT_MODE = 0x03   # OUTPUT subcommand: set input report mode
 
 # Every subcommand carries a rumble frame whether or not it rumbles; some
@@ -94,30 +117,113 @@ def supported(pad: Pad) -> bool:
     return (pad.vid, pad.pid) in SUPPORTED
 
 
+def _uevent(path: Path) -> dict[str, str]:
+    """A sysfs uevent file as a dict, empty if it cannot be read."""
+    try:
+        text = (path / "uevent").read_text()
+    except OSError:
+        return {}
+    out = {}
+    for line in text.splitlines():
+        key, _, value = line.partition("=")
+        if value:
+            out[key] = value
+    return out
+
+
+def _hid_device_dir(pad: Pad) -> Path | None:
+    """The HID device that owns this pad's evdev node.
+
+    Walks up from /sys/class/input/eventN/device until it finds the directory
+    carrying a `hidraw` subdirectory. That parent-child link is the only thing
+    that ties *this* pad to *its* hidraw node; every other property a pad has
+    is shared with an identical one plugged in beside it.
+    """
+    start = (Path(SYS_CLASS) / "input"
+             / os.path.basename(pad.path) / "device")
+    if not start.exists():
+        # No link to follow. Walking up from a path that does not resolve
+        # climbs through /sys/class, which *contains* a directory called
+        # `hidraw` -- the class directory holding every node on the machine.
+        # That satisfies the test below and hands back whichever node sorts
+        # first, which is the bug this function exists to fix, reintroduced
+        # one level up.
+        return None
+    try:
+        current = Path(os.path.realpath(start))
+    except OSError:
+        return None
+    for _ in range(8):
+        # A real HID device, not merely something with a `hidraw` child: the
+        # uevent is what makes it a device rather than a class directory.
+        if (current / "hidraw").is_dir() and (current / "uevent").is_file():
+            return current
+        if current.parent == current:
+            break
+        current = current.parent
+    return None
+
+
 def node_for(pad: Pad) -> str | None:
     """The /dev/hidraw* belonging to this pad, or None.
 
-    Found through sysfs rather than guessed: HID_ID in the device's uevent
-    carries bus, vendor and product, so a machine with two of the same pad
-    still resolves each to its own node.
+    Resolved through the pad's own device, because vendor and product do not
+    identify a controller -- they identify a *model*. Two Pro Controllers
+    report the same 057e:2009, and the previous version of this function
+    returned the first hidraw node whose uevent carried those ids, to every
+    pad that asked.
+
+    Two of them then read the same physical controller. One player's pad does
+    nothing at all, while the log says both are forwarding and both clones
+    exist. That is what it looked like on this machine: a second Pro
+    Controller paired, and `republisher watching ... [(1, 6, '/dev/hidraw10'),
+    (2, 10, '/dev/hidraw10')]` -- the same node twice.
+
+    Sorting made it worse rather than merely arbitrary. `sorted()` on
+    "hidraw10" and "hidraw8" is a *string* sort, so hidraw10 wins, and the
+    node that gets handed to everybody is whichever one happens to sort first
+    -- not even the one that was there before.
+
+    So: the sysfs walk first, which is exact. Then HID_UNIQ, which on
+    Bluetooth is the controller's own address and distinguishes two of a
+    model. Only then vendor/product, and only when it is unambiguous -- with
+    several candidates and no way to tell them apart, returning the wrong
+    controller is worse than falling back to evdev, because a pad reading
+    somebody else's input cannot be diagnosed from anything it reports.
     """
-    for path in sorted(glob.glob("/sys/class/hidraw/hidraw*")):
-        try:
-            text = (Path(path) / "device" / "uevent").read_text()
-        except OSError:
+    hid = _hid_device_dir(pad)
+    if hid is not None:
+        nodes = sorted(
+            entry.name for entry in (hid / "hidraw").iterdir()
+            if entry.name.startswith("hidraw")
+        )
+        if nodes:
+            return "/dev/" + nodes[0]
+
+    candidates: list[str] = []
+    for path in glob.glob(os.path.join(SYS_CLASS, "hidraw", "hidraw*")):
+        props = _uevent(Path(path) / "device")
+        parts = props.get("HID_ID", "").split(":")
+        if len(parts) != 3:
             continue
-        for line in text.splitlines():
-            if not line.startswith("HID_ID="):
-                continue
-            parts = line.split("=", 1)[1].split(":")
-            if len(parts) != 3:
-                continue
-            try:
-                vendor, product = int(parts[1], 16), int(parts[2], 16)
-            except ValueError:
-                continue
-            if (vendor, product) == (pad.vid, pad.pid):
-                return "/dev/" + os.path.basename(path)
+        try:
+            vendor, product = int(parts[1], 16), int(parts[2], 16)
+        except ValueError:
+            continue
+        if (vendor, product) != (pad.vid, pad.pid):
+            continue
+        if pad.uniq and props.get("HID_UNIQ", "") == pad.uniq:
+            return "/dev/" + os.path.basename(path)
+        candidates.append("/dev/" + os.path.basename(path))
+
+    if len(candidates) == 1:
+        return candidates[0]
+    if candidates:
+        log.warning(
+            "%s: %d hidraw nodes report %04x:%04x (%s) and none could be tied "
+            "to this pad; refusing to guess, falling back to evdev",
+            pad.name, len(candidates), pad.vid, pad.pid,
+            ", ".join(sorted(candidates)))
     return None
 
 
@@ -155,6 +261,13 @@ class Source:
         self._axes: dict[int, int] = {}
         self._hat = (0, 0)
         self._counter = 0
+        # Consecutive 0x3f reports since the last usable one. Reset by a 0x30
+        # rather than only counted up, so a pad that drops back into simple
+        # mode later in the session is caught the same way as one that never
+        # left it.
+        self._simple_seen = 0
+        # Events read but not yet handed out, for read_one().
+        self._pending: list[_Event] = []
         self.info = evdev.device.DeviceInfo(
             bustype=0x05, vendor=pad.vid, product=pad.pid, version=0x8001)
         self._request_full_mode()
@@ -259,6 +372,9 @@ class Source:
         how to handle.
         """
         out: list[_Event] = []
+        if self._pending:
+            out.extend(self._pending)
+            self._pending.clear()
         got = False
         while True:
             try:
@@ -271,14 +387,62 @@ class Source:
                 break
             got = True
             if data[0] == REPORT_FULL and len(data) >= 12:
+                self._simple_seen = 0
                 out.extend(self._decode(data))
+            elif data[0] == REPORT_SIMPLE:
+                self._note_simple_report()
         if not got and not out:
             raise BlockingIOError(11, "Resource temporarily unavailable")
         if out:
             out.append(_Event(ecodes.EV_SYN, ecodes.SYN_REPORT, 0))
         return out
 
+    def read_one(self):
+        """One event, or None when there is nothing.
+
+        Part of the evdev surface because `Assigner._drain` uses it to throw
+        away whatever was queued before a session started. Without it a
+        hidraw pad cannot be handed to the assigner at all -- which is why
+        the setup screen read these pads from their evdev node instead, and
+        why a Switch pad could be republished perfectly while being unmappable
+        on the screen that maps it.
+        """
+        if not self._pending:
+            try:
+                self._pending.extend(self.read())
+            except BlockingIOError:
+                return None
+        if not self._pending:
+            return None
+        return self._pending.pop(0)
+
     # -- the controller ---------------------------------------------------
+    def _note_simple_report(self) -> None:
+        """A 0x3f arrived, which means the pad is not in the mode we asked for.
+
+        Every one of these is discarded by the filter in `read`, so a pad stuck
+        here delivers no input at all while looking perfectly healthy from
+        every other angle: the node exists, the descriptor is live, reports are
+        flowing, nothing raises and nothing is logged. The only visible symptom
+        is that no button does anything -- which is indistinguishable from a
+        mapping problem, and got diagnosed as one.
+
+        So count them and ask again. The first line is the one that matters:
+        it names the actual fault, in the log, at the moment it happens.
+        """
+        self._simple_seen += 1
+        if self._simple_seen == 1:
+            log.warning(
+                "%s: sending report 0x%02x, not the 0x%02x full mode it was "
+                "asked for -- no input can be decoded until it switches; "
+                "re-requesting",
+                self.pad.name, REPORT_SIMPLE, REPORT_FULL)
+        if self._simple_seen % SIMPLE_REPORTS_BEFORE_RETRY == 0:
+            log.warning("%s: still in report 0x%02x after %d reports; "
+                        "re-requesting full mode",
+                        self.pad.name, REPORT_SIMPLE, self._simple_seen)
+            self._request_full_mode()
+
     def _request_full_mode(self) -> None:
         """Ask for report 0x30, which is the one carrying sticks and buttons.
 

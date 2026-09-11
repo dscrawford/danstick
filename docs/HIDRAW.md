@@ -90,3 +90,38 @@ kernel form.
 Until then the boundary should be stated plainly rather than rediscovered:
 **padmap supports controllers whose evdev node carries their input. Pads that
 SDL drives over hidraw are outside what it can currently republish.**
+
+## Report mode is not a one-off
+
+The Pro Controller powers up sending report `0x3f`: buttons and a hat, no
+usable analogue data, and a byte layout unrelated to `0x30`'s. padmap asks for
+`0x30` once, as the node opens, and `Source.read` filters out everything that
+is not `0x30`.
+
+That request is not reliable. It is written the instant the node opens, and a
+pad that has just finished associating over Bluetooth can drop it. The write
+succeeds, so nothing fails and nothing is logged; the controller simply goes
+on sending `0x3f`.
+
+Every other signal then says the controller is healthy:
+
+* the node exists and `alive()` is true -- it compares `st_rdev`, which is
+  unchanged because the device never went away
+* the descriptor is live and not `(deleted)`
+* reports arrive continuously, so `read` never raises `ENODEV`
+* `player N: forwarding input to the clone` is already in the log, written
+  once, at republish time
+
+Measured on the pad here while it was stuck: **3001 hidraw reports in 45
+seconds, 0 events on the virtual pad, nothing in the log.** From outside it is
+indistinguishable from a broken mapping, and was reported as one twice.
+
+Sending a single report-mode subcommand by hand switched it to `0x30`
+immediately, with a `0x21` subcommand acknowledgement in between -- so the pad
+was listening the whole time, it had just missed the first request.
+
+So the mode is now *checked* rather than assumed: a `0x3f` is counted, the
+first one is logged by name, and the request is repeated every
+`SIMPLE_REPORTS_BEFORE_RETRY` reports until a `0x30` arrives. A `0x30` resets
+the count, so a healthy pad is never re-asked and one that drops back into
+simple mode later is caught the same way. See `tools/check_report_mode.py`.

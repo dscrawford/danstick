@@ -14,6 +14,7 @@ with the same accidental input.
 
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
@@ -22,6 +23,8 @@ from . import layouts, profiles
 from .layouts import Layout
 from .mapping import (AxisSpan, Binding, axis_index,
                       retroarch_button_index, sdl_button_index)
+
+log = logging.getLogger("padmap.capture")
 
 # evdev constants, spelled out rather than imported: this module is pure logic
 # and importing evdev drags in a device library for the sake of five numbers.
@@ -50,6 +53,31 @@ AXIS_THRESHOLD = 0.55
 # passes *through* whatever the driver called rest, whether or not the axis
 # settles there.
 AXIS_RELEASE = 0.30
+
+# How far an axis must travel to answer a prompt for a *face button*.
+#
+# Near the stop, and much higher than AXIS_THRESHOLD, because the two cases
+# have opposite failure modes. For a stick or a shoulder, an axis is the
+# expected answer and the only risk is drift. For a face button an axis is the
+# unusual answer, and binding one by accident is expensive in a way no other
+# misbinding is: the axis is typically also the stick, so every later stick
+# movement presses that button for the rest of the session. That is how a
+# mapping ended up with cancel on `-a3`.
+#
+# This used to be a flat refusal -- no axis could ever answer a button -- which
+# is right for a pad that has buttons to spare and wrong for one that does not.
+# An N64 pad mapped against the GameCube layout has to answer X and Y from
+# somewhere, and the C cluster (which that pad reports as ABS_Z/ABS_RZ, not as
+# buttons) is the only thing left. The refusal made those prompts unanswerable:
+# pressing C-up for Y did nothing at all, with no log line and no change on
+# screen.
+#
+# A push past this is not something drift or a knocked stick produces; it is
+# someone holding a direction against the stop. So the accident the flat
+# refusal existed to prevent is still prevented, and the deliberate act is
+# allowed. A digital button reported as an axis -- which is what an N64 C
+# direction is -- reads full scale, so it clears this comfortably.
+AXIS_AS_BUTTON_THRESHOLD = 0.90
 
 # SDL hat bits, which is also how a hat binding is written.
 HAT_UP, HAT_RIGHT, HAT_DOWN, HAT_LEFT = 1, 2, 4, 8
@@ -423,6 +451,25 @@ def scope_options(
     return options
 
 
+_HAT_NAMES = {HAT_UP: "up", HAT_RIGHT: "right",
+              HAT_DOWN: "down", HAT_LEFT: "left"}
+
+
+def _describe(key: tuple[str, int, int]) -> str:
+    """A claimed input, in the terms the log reader has to match it against.
+
+    Raw evdev codes for buttons and axes, because that is what a `padmon`
+    trace and an `evtest` dump show; the hat is named instead, since its value
+    is a direction bit and "8" means nothing to anyone.
+    """
+    kind, code, value = key
+    if kind == "hat":
+        return f"hat {_HAT_NAMES.get(value, value)}"
+    if kind == "axis":
+        return f"axis code {code} {'+' if value > 0 else '-'}"
+    return f"button code {code}"
+
+
 @dataclass
 class MappingRun:
     """One pass through a layout, recording what the user presses."""
@@ -455,6 +502,15 @@ class MappingRun:
 
     _down_at: dict[int, float] = field(default_factory=dict)
     _blocked_until: float = 0.0
+    # Which control each claimed input answered, so a refusal can name it.
+    # `claimed` alone can say "no" but not "because R already has it", and
+    # that second half is the entire difference between a wizard that looks
+    # broken and one that tells you what to do about it.
+    _claimed_by: dict[tuple[str, int, int], str] = field(default_factory=dict)
+    # The last refusal, for the front-end to show. Cleared once the prompt
+    # moves on, because a stale conflict pinned under a later control names a
+    # clash that is not happening.
+    conflict: str = ""
     # Axes that have returned near centre since they last answered a prompt.
     # Absent means armed: an axis that has never been touched is ready.
     _axis_armed: dict[int, bool] = field(default_factory=dict)
@@ -481,6 +537,7 @@ class MappingRun:
         """Move past a control this pad does not have."""
         if not self.finished:
             self.index += 1
+            self.conflict = ""
             # Same gap as a capture: the button being released after a
             # skip-hold must not answer the control it moved on to.
             self._blocked_until = self.now() + CAPTURE_GAP_SECONDS
@@ -491,9 +548,41 @@ class MappingRun:
             return False
         self.bindings[control.canonical] = binding
         self.claimed.add(key)
+        self._claimed_by[key] = control.canonical
         self.index += 1
+        self.conflict = ""
         self._blocked_until = self.now() + CAPTURE_GAP_SECONDS
         return True
+
+    def _refuse(self, key: tuple[str, int, int]) -> bool:
+        """Report an input that is already answering an earlier control.
+
+        One input must not answer two prompts: an axis springing back through
+        centre, or a button still travelling, would otherwise walk several
+        controls from a single press. That rule is right, and it is also
+        invisible -- the press simply does nothing, which from the outside is
+        indistinguishable from a dead button, an unsupported control, or a
+        wizard that has hung.
+
+        It bites hardest where a pad has fewer inputs than the layout has
+        controls. Mapping an N64 pad to the GameCube layout, the C directions
+        are the only spare axis halves, so whichever prompt reaches them first
+        takes them and every later prompt for the same physical stick is
+        refused in silence.
+
+        Naming the control that holds it turns that into something actionable:
+        the user can restart the wizard and answer the earlier prompt
+        differently, which is the only remedy.
+        """
+        holder = self._claimed_by.get(key, "")
+        control = self.current
+        asked = control.canonical if control else "(finished)"
+        self.conflict = holder
+        log.info(
+            "mapping: ignored %s for %r -- already bound to %r; "
+            "restart the wizard and give %r a different input to free it",
+            _describe(key), asked, holder or "an earlier control", holder)
+        return False
 
     def feed(self, event: Any) -> bool:
         """Offer one evdev event. True if it answered the current prompt.
@@ -556,7 +645,7 @@ class MappingRun:
 
         key = ("button", event.code, 0)
         if key in self.claimed:
-            return False
+            return self._refuse(key)
 
         index = sdl_button_index(self.keys, event.code)
         if index is None:
@@ -595,11 +684,33 @@ class MappingRun:
 
         control = self.current
         if control is not None and control.kind == "button":
-            # A face button cannot be a stick. Without this, nudging the stick
-            # while being asked for "X" binds X to an axis -- and since that
-            # axis is also the stick, every later stick movement presses X.
-            # Exactly how a mapping ended up with cancel on `-a3`.
-            return False
+            # The hat stays refused outright. A d-pad direction answering a
+            # face button is a mistake in every case anyone has had, and a
+            # device that reports a hat it does not have -- or sends ABS
+            # events while declaring no axes at all -- would otherwise fill
+            # face buttons in from noise.
+            if event.code in (ABS_HAT0X, ABS_HAT0Y):
+                return False
+            span = self.axes.get(event.code)
+            if span is None:
+                return False
+            # An axis may answer, but only if it is meant: see
+            # AXIS_AS_BUTTON_THRESHOLD. A nudge is refused, a push held
+            # against the stop is taken.
+            travel = abs(deflection(span, event.value))
+            if travel < AXIS_AS_BUTTON_THRESHOLD:
+                # Only once the axis has actually moved. A resting axis
+                # streams events continuously and logging those would bury
+                # the session in noise.
+                if travel >= AXIS_THRESHOLD:
+                    sign = 1 if deflection(span, event.value) > 0 else -1
+                    log.info(
+                        "mapping: ignored %s for %r -- an axis may only "
+                        "answer a face button when pushed to the stop "
+                        "(%.2f of %.2f needed)",
+                        _describe(("axis", event.code, sign)),
+                        control.canonical, travel, AXIS_AS_BUTTON_THRESHOLD)
+                return False
 
         if event.code in (ABS_HAT0X, ABS_HAT0Y):
             if event.value == 0:
@@ -612,7 +723,7 @@ class MappingRun:
                 return False
             key = ("hat", 0, bit)
             if key in self.claimed:
-                return False
+                return self._refuse(key)
             self._axis_armed[event.code] = False
             return self._record(Binding("hat", 0, bit), key)
 
@@ -633,7 +744,7 @@ class MappingRun:
         sign = 1 if position > 0 else -1
         key = ("axis", event.code, sign)
         if key in self.claimed:
-            return False
+            return self._refuse(key)
         # By axis *index*, not evdev code: ABS_RZ is code 5 but may be axis 3.
         index = axis_index(list(self.axes), event.code)
         if index is None:
@@ -655,6 +766,10 @@ class MappingRun:
             "control": control.canonical if control else "",
             "label": control.label if control else "",
             "done": self.finished,
+            # The control holding the input the user just pressed, or "".
+            # Carried so a theme can say "already used for R" rather than
+            # leaving a press that does nothing look like a dead button.
+            "conflict": self.conflict,
             "captured": {
                 name: binding.sdl()
                 for name, binding in self.bindings.items()

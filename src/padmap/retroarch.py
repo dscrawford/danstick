@@ -226,6 +226,41 @@ def derive_profile(
     return header + "\n".join(lines) + "\n"
 
 
+def _log_unmapped(
+    pad, scope: str, layout_id: str, bindings: dict
+) -> None:
+    """Name the layout's controls that this mapping has no binding for.
+
+    A mapping captured before its layout gained a control keeps working and
+    keeps being chosen: nothing revisits a stored capture when the layout
+    changes underneath it. The controls that did not exist at capture time are
+    then absent rather than wrong, so they emit no RetroArch key, and the pad
+    is still reported as mapped. In game the new control is simply dead.
+
+    That is how the GameCube C-stick behaved after the layout gained it: pads
+    mapped the day before carried twelve controls, the layout wanted sixteen,
+    and the four it could not supply were never mentioned anywhere. Without
+    this line the only evidence is a profile that is missing keys the reader
+    has to already know should be there.
+
+    Logged rather than repaired, because the repair is a question for the user
+    -- the wizard has to ask which button the new control is -- and a launch is
+    the wrong moment to ask it.
+    """
+    from . import layouts
+    try:
+        controls = layouts.get(layout_id).controls
+    except (KeyError, ValueError):
+        return
+    missing = [c.canonical for c in controls if c.canonical not in bindings]
+    if missing and bindings:
+        log.info(
+            "%s: mapping for scope %r (%s) is missing %d of the layout's "
+            "controls: %s -- remap this pad for that console to bind them",
+            pad.name, scope or "default", layout_id, len(missing),
+            ", ".join(missing))
+
+
 def install_profiles(
     assignments: list[Assignment], dest: Path | None = None,
     console: str = "", game: str = "", context: str = "",
@@ -274,6 +309,7 @@ def install_profiles(
         scope, resolved = controllercfg.resolved_mapping(
             assignment.pad, console, game)
         bindings = dict(resolved.buttons)
+        _log_unmapped(assignment.pad, scope, resolved.layout, bindings)
         if bindings:
             # The user pressed these buttons themselves. Copying libretro's
             # entry instead would give two sets of bindings for one

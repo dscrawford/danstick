@@ -21,6 +21,7 @@ from typing import Callable, Iterable
 import evdev
 from evdev import ecodes
 
+from . import hidraw
 from .devices import Pad, open_device
 
 log = logging.getLogger("padmap.assign")
@@ -77,7 +78,13 @@ class Assigner:
 
     def __enter__(self) -> "Assigner":
         for pad in self.pads:
-            device = open_device(pad)
+            # The same source the republisher picks, not always the evdev
+            # node. A pad that has to be read over hidraw has to be read that
+            # way *here too*: the assigner is what the setup screen and the
+            # mapping wizard listen through, so reading a different device
+            # from the one being republished means the screen that maps a
+            # controller cannot see the controller it is mapping.
+            device = hidraw.open_source(pad) or open_device(pad)
             if self._grab:
                 # Keep setup presses out of whatever else has focus.
                 try:

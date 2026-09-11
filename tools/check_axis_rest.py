@@ -259,22 +259,41 @@ def check_deflection_threshold_is_a_floor() -> None:
 
 def check_button_prompt_refuses_an_axis() -> None:
     """Reported as cancel bound to `-a3`, then firing on every stick nudge."""
-    print("\na face-button prompt refuses every kind of axis:")
+    print("\na face-button prompt refuses a nudged axis, and every hat:")
+    # 217 and 39 are 0.70 of half-range either side of rest 128: past
+    # AXIS_THRESHOLD, so they would answer a stick, d-pad or shoulder prompt,
+    # and short of AXIS_AS_BUTTON_THRESHOLD. The hat is refused at any value,
+    # deliberate or not -- a d-pad direction answering a face button has never
+    # been anything but a mistake, and a device reporting a hat it does not
+    # have would otherwise fill face buttons in from noise.
     r = run("snes", axes=CENTRED)
     if r.current.kind != "button":
         raise SystemExit("FAIL: the layout no longer opens on a face button")
-    for event in (axis(0, 255), axis(0, 0), axis(1, 255), axis(2, 0),
-                  axis(5, 255), axis(0x10, 1), axis(0x11, -1)):
+    for event in (axis(0, 217), axis(0, 39), axis(1, 217), axis(2, 39),
+                  axis(5, 217), axis(0x10, 1), axis(0x11, -1)):
         if r.feed(event):
             raise SystemExit(
-                f"FAIL: an axis answered a face-button prompt (code "
+                f"FAIL: a nudge answered a face-button prompt (code "
                 f"{event.code}, value {event.value}). The axis is the stick, "
                 f"so every later stick movement then presses that button.")
     if r.index != 0 or r.bindings:
         raise SystemExit(
             f"FAIL: a face-button prompt was filled in by a stick "
             f"({r.bindings})")
-    print("  ok  sticks, triggers and hats all ignored, nothing bound")
+    print("  ok  nudged sticks and triggers ignored, hats ignored outright")
+
+    print("\n...and accepts one held against the stop:")
+    # The N64-on-GameCube case: that pad reports its C cluster as ABS_Z/ABS_RZ
+    # and has no X or Y at all, so an axis is the only answer available. A
+    # flat refusal left those prompts unanswerable and silent.
+    # A run of its own: `r` must keep pointing at the one whose nudge was
+    # refused, because the next property is about what that refusal cost it.
+    deliberate = run("snes", axes=CENTRED)
+    if not deliberate.feed(axis(0, 255)):
+        raise SystemExit(
+            "FAIL: an axis at the stop did not answer a face-button prompt; a "
+            "pad whose only spare inputs are axes cannot finish the wizard")
+    print("  ok  a deliberate push is taken")
 
     print("\n...and refusing costs the axis nothing later on:")
     # The refusal must not claim the code or disarm it, or the stick the user
