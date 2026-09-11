@@ -26,6 +26,7 @@ which is the whole point of bothering.
 from __future__ import annotations
 
 import glob
+import json
 import logging
 import os
 from pathlib import Path
@@ -44,10 +45,25 @@ log = logging.getLogger("padmap.hidraw")
 # being able to exercise it short of two identical pads physically present.
 SYS_CLASS = "/sys/class"
 
-# Controllers this module knows how to speak to. Anything absent falls through
-# to the evdev path, which is right for everything padmap grew up on.
-SWITCH_PRO = (0x057E, 0x2009)
-SUPPORTED = {SWITCH_PRO}
+# Kernel drivers whose devices speak the protocol implemented below.
+#
+# Matched against what the kernel says the device *is*, rather than against a
+# list of product ids. `hid-nintendo` binds the Pro Controller, both Joy-Cons
+# and the SNES and N64 pads for Switch Online, and they share the output-report
+# and subcommand protocol this module speaks -- so one entry here covers the
+# family, including models that did not exist when it was written.
+#
+# It replaced `SUPPORTED = {(0x057E, 0x2009)}`, which was an allowlist of
+# exactly one controller. Every other pad that needs hidraw -- a Joy-Con, an
+# Online pad, a second Nintendo model bought later -- silently took the evdev
+# path instead, where the node opens, grabs and watches without ever emitting
+# an event. The symptom is a controller that does nothing, with no error.
+#
+# Still a literal, and deliberately: a driver name names a protocol, and the
+# decoding below genuinely is protocol-specific. What it is not is a statement
+# about one product. For anything this gets wrong, hidraw.json overrides it
+# without a code change -- see `load_overrides`.
+HID_DRIVERS = frozenset({"nintendo"})
 
 REPORT_FULL = 0x30          # INPUT: standard full mode, sticks and buttons
 REPORT_SIMPLE = 0x3F        # INPUT: cut-down mode the pad powers up in
@@ -113,8 +129,52 @@ AXES = (
 )
 
 
-def supported(pad: Pad) -> bool:
-    return (pad.vid, pad.pid) in SUPPORTED
+def _config_path() -> Path:
+    base = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
+    return Path(base) / "padmap" / "hidraw.json"
+
+
+def load_overrides(path: Path | None = None) -> dict[str, bool]:
+    """User decisions about the hidraw path: {"057e:2017": true}.
+
+    The escape hatch that keeps `HID_DRIVERS` from being another allowlist.
+    A pad the kernel binds to some driver padmap has never heard of, but which
+    speaks this protocol, can be switched on here; one that matches the driver
+    and is better off on evdev can be switched off. Neither needs a release.
+    """
+    target = path or _config_path()
+    try:
+        raw = json.loads(target.read_text())
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    return {
+        str(key).lower(): bool(value)
+        for key, value in raw.items()
+        if isinstance(value, bool)
+    }
+
+
+def driver_for(pad: Pad) -> str:
+    """The kernel driver bound to this pad's HID device, or "".
+
+    Read from the device rather than inferred, because it is the one thing
+    that says which protocol the hardware speaks without naming a product.
+    """
+    hid = _hid_device_dir(pad)
+    if hid is None:
+        return ""
+    return _uevent(hid).get("DRIVER", "")
+
+
+def supported(pad: Pad, overrides: dict[str, bool] | None = None) -> bool:
+    """Whether padmap should read this pad over hidraw rather than evdev."""
+    overrides = overrides if overrides is not None else load_overrides()
+    key = f"{pad.vid:04x}:{pad.pid:04x}"
+    if key in overrides:
+        return overrides[key]
+    return driver_for(pad) in HID_DRIVERS
 
 
 def _uevent(path: Path) -> dict[str, str]:

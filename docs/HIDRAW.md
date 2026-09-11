@@ -125,3 +125,40 @@ first one is logged by name, and the request is repeated every
 `SIMPLE_REPORTS_BEFORE_RETRY` reports until a `0x30` arrives. A `0x30` resets
 the count, so a healthy pad is never re-asked and one that drops back into
 simple mode later is caught the same way. See `tools/check_report_mode.py`.
+
+## Which pads take this path
+
+Not a list of product ids. It was one, for a while:
+
+    SWITCH_PRO = (0x057E, 0x2009)
+    SUPPORTED = {SWITCH_PRO}
+
+That is an allowlist of a single controller. A Joy-Con, a SNES or N64 pad for
+Switch Online, or a second Nintendo model bought later all fell through to the
+evdev path -- where the node opens, grabs and watches without ever emitting an
+event. The symptom is a controller that does nothing, with no error anywhere,
+because a number was missing from a set.
+
+A product id names a product. What decides whether this module can read a
+device is which *protocol* it speaks, and the kernel already answers that: the
+driver bound to the HID device.
+
+    $ grep DRIVER /sys/class/hidraw/hidraw8/device/uevent
+    DRIVER=nintendo
+
+`hid-nintendo` binds the Pro Controller, both Joy-Cons and the Online pads,
+and they share the output-report and subcommand protocol implemented here. So
+`HID_DRIVERS` holds driver names, one per protocol family, and covers hardware
+that did not exist when it was written.
+
+It is still a literal, and that is deliberate -- the decoding genuinely is
+protocol-specific, which is why SDL ships a HIDAPI driver per family too. What
+it no longer is, is a statement about one product.
+
+For anything the family rule gets wrong in either direction,
+`~/.config/padmap/hidraw.json` settles it without a code change:
+
+    {"057e:2017": true, "057e:2009": false}
+
+Checked by `tools/check_hidraw_supported.py`, which deliberately uses a
+made-up vendor and product so that a rule matching on ids cannot pass it.
