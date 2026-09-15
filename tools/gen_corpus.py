@@ -1277,6 +1277,106 @@ def calibration_machine() -> None:
     ])
 
 
+# -- the Switch Pro decode ---------------------------------------------------
+def switch_reports() -> None:
+    """Report 0x30 turned into evdev events, and the overrides that select it.
+
+    The pad powers up sending 0x3f -- a cut-down report with no analogue data
+    at all -- and has to be *asked* for 0x30. Every 0x3f is discarded by the
+    report-id filter, so a pad stuck in simple mode delivers no input while
+    looking perfectly healthy: node present, descriptor live, reports
+    flowing, nothing raised and nothing logged. The only visible symptom is
+    that no button does anything.
+    """
+    from padmap import hidraw
+
+    def fresh():
+        source = object.__new__(hidraw.Source)
+        source._buttons = {}
+        source._axes = {}
+        source._hat = (0, 0)
+        return source
+
+    def report(right=0, shared=0, left=0, lx=2048, ly=2048, rx=2048, ry=2048):
+        data = bytearray(64)
+        data[0] = 0x30
+        data[3], data[4], data[5] = right, shared, left
+        # The controller reports Y increasing upwards; the decode flips it.
+        for at, x, y in ((6, lx, 4095 - ly), (9, rx, 4095 - ry)):
+            data[at] = x & 0xFF
+            data[at + 1] = ((x >> 8) & 0x0F) | ((y & 0x0F) << 4)
+            data[at + 2] = (y >> 4) & 0xFF
+        return bytes(data)
+
+    # One control at a time, from a settled source, so each case is the
+    # change and not the opening frame.
+    cases = []
+    singles = [("right", bit) for bit in (0x01, 0x02, 0x04, 0x08, 0x40, 0x80)]
+    singles += [("shared", bit) for bit in (0x01, 0x02, 0x04, 0x08, 0x10, 0x20)]
+    singles += [("left", bit) for bit in (0x01, 0x02, 0x04, 0x08, 0x40, 0x80)]
+    for byte, bit in singles:
+        source = fresh()
+        source._decode(report())
+        events = source._decode(report(**{byte: bit}))
+        cases.append({
+            "byte": byte, "bit": bit,
+            "events": [[e.type, e.code, e.value] for e in events],
+        })
+    # Combinations, and the d-pad's opposite-cancels rule.
+    for label, kwargs in (
+        ("a and b", {"right": 0x04 | 0x08}),
+        ("up", {"left": 0x02}),
+        ("up and down", {"left": 0x01 | 0x02}),
+        ("left and right", {"left": 0x04 | 0x08}),
+        ("up and right", {"left": 0x02 | 0x04}),
+        ("all four", {"left": 0x0F}),
+        ("sticks pushed", {"lx": 4095, "ly": 4095, "rx": 0, "ry": 0}),
+        ("sticks at zero", {"lx": 0, "ly": 0, "rx": 0, "ry": 0}),
+        ("a nudge inside the fuzz", {"lx": 2050}),
+        ("a move past the fuzz", {"lx": 2100}),
+    ):
+        source = fresh()
+        source._decode(report())
+        events = source._decode(report(**kwargs))
+        cases.append({
+            "byte": label, "bit": None,
+            "events": [[e.type, e.code, e.value] for e in events],
+        })
+    write("switch_decode", cases)
+
+    # The opening frame: what a freshly opened source emits for a neutral pad.
+    source = fresh()
+    write("switch_first_frame", [{
+        "events": [[e.type, e.code, e.value] for e in source._decode(report())],
+    }])
+
+    # load_overrides, over the shapes the file arrives in.
+    import tempfile
+    override_shapes = [
+        None, "", "not json", "[]", "{}",
+        '{"057e:2009": true}',
+        '{"057E:2009": true}',
+        '{"057e:2009": false}',
+        '{"057e:2009": 1}',
+        '{"057e:2009": "yes"}',
+        '{"057e:2009": null}',
+        '{"057e:2009": true, "0079:1843": false}',
+        '"a string"',
+        '{"": true}',
+    ]
+    rows = []
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "hidraw.json"
+        for raw in override_shapes:
+            if raw is None:
+                path.unlink(missing_ok=True)
+            else:
+                path.write_text(raw)
+            rows.append({"file": raw,
+                         "overrides": hidraw.load_overrides(path)})
+    write("hidraw_overrides", rows)
+
+
 def main() -> int:
     print(f"recording the Python's answers into {OUT.relative_to(REPO)}:")
     bindings()
@@ -1300,6 +1400,7 @@ def main() -> int:
     mame_titles()
     capabilities()
     calibration_machine()
+    switch_reports()
     return 0
 
 

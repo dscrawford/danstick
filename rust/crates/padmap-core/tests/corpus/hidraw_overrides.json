@@ -1,0 +1,69 @@
+[
+ {
+  "file": null,
+  "overrides": {}
+ },
+ {
+  "file": "",
+  "overrides": {}
+ },
+ {
+  "file": "not json",
+  "overrides": {}
+ },
+ {
+  "file": "[]",
+  "overrides": {}
+ },
+ {
+  "file": "{}",
+  "overrides": {}
+ },
+ {
+  "file": "{\"057e:2009\": true}",
+  "overrides": {
+   "057e:2009": true
+  }
+ },
+ {
+  "file": "{\"057E:2009\": true}",
+  "overrides": {
+   "057e:2009": true
+  }
+ },
+ {
+  "file": "{\"057e:2009\": false}",
+  "overrides": {
+   "057e:2009": false
+  }
+ },
+ {
+  "file": "{\"057e:2009\": 1}",
+  "overrides": {}
+ },
+ {
+  "file": "{\"057e:2009\": \"yes\"}",
+  "overrides": {}
+ },
+ {
+  "file": "{\"057e:2009\": null}",
+  "overrides": {}
+ },
+ {
+  "file": "{\"057e:2009\": true, \"0079:1843\": false}",
+  "overrides": {
+   "0079:1843": false,
+   "057e:2009": true
+  }
+ },
+ {
+  "file": "\"a string\"",
+  "overrides": {}
+ },
+ {
+  "file": "{\"\": true}",
+  "overrides": {
+   "": true
+  }
+ }
+]
