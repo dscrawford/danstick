@@ -1377,6 +1377,97 @@ def switch_reports() -> None:
     write("hidraw_overrides", rows)
 
 
+# -- rewriting the user's retroarch.cfg --------------------------------------
+def clean_config() -> None:
+    """Stripping padmap's leaked settings back out, byte for byte.
+
+    The only code in padmap that writes to the user's RetroArch config, and
+    the contract is narrow: the lines it reports are the only lines that may
+    differ. Everything else -- a CRLF ending, a latin-1 ROM path in
+    system_directory, an unquoted value, a file with no trailing newline --
+    has to come back out exactly as it went in.
+
+    Recorded as hex because the interesting cases are not valid UTF-8, which
+    is the whole reason the Python reads bytes and decodes with
+    surrogateescape rather than using read_text.
+    """
+    import tempfile
+
+    from padmap import retroarch
+
+    VIRT = "padmap Player 1"
+    configs = [
+        "",
+        "\n",
+        "# just a comment\n",
+        f'input_player1_reserved_device = "{VIRT}"\n',
+        f'input_player1_reserved_device = "{VIRT}"\ninput_player1_device_reservation_type = "2"\n',
+        'input_player1_reserved_device = "Real Controller"\n',
+        'input_player1_device_reservation_type = "2"\n',
+        f'input_player1_reserved_device="{VIRT}"\n',
+        f'input_player1_reserved_device = {VIRT}\n',
+        f'  input_player1_reserved_device  =  "{VIRT}"   \n',
+        f'input_player1_reserved_device = "{VIRT}"\r\n',
+        f'input_player1_reserved_device = "{VIRT}"',
+        f'input_player3_reserved_device = "{VIRT}"\ninput_player3_device_reservation_type = "2"\n',
+        'video_fullscreen = "true"\n',
+        f'video_fullscreen = "true"\ninput_player1_reserved_device = "{VIRT}"\nvideo_vsync = "true"\n',
+        f'input_player1_reserved_device = "{VIRT}"\ninput_player1_reserved_device = "{VIRT}"\n',
+        'input_libretro_device_p1 = "1"\n',
+        f'input_player1_reserved_device = "{VIRT}"\n\n\n',
+        'not a setting line at all\n',
+        '=leading equals\n',
+    ]
+    cases = []
+    with tempfile.TemporaryDirectory() as tmp:
+        for index, text in enumerate(configs):
+            path = Path(tmp) / f"cfg{index}"
+            raw = text.encode("utf-8")
+            path.write_bytes(raw)
+            changes, _ = retroarch.clean_user_config(path, dry_run=True)
+            # Run it for real to capture the bytes written.
+            path.write_bytes(raw)
+            retroarch.clean_user_config(path)
+            cases.append({
+                "in": raw.hex(), "changes": changes,
+                "out": path.read_bytes().hex(),
+            })
+
+        # Bytes that are not UTF-8: a latin-1 path in a setting the cleaner
+        # must not touch, beside one it must.
+        hostile = (b'system_directory = "/roms/caf\xe9"\n'
+                   b'input_player1_reserved_device = "padmap Player 1"\n')
+        path = Path(tmp) / "hostile"
+        path.write_bytes(hostile)
+        changes, _ = retroarch.clean_user_config(path, dry_run=True)
+        path.write_bytes(hostile)
+        retroarch.clean_user_config(path)
+        cases.append({"in": hostile.hex(), "changes": changes,
+                      "out": path.read_bytes().hex()})
+    write("clean_user_config", cases)
+
+    # parse_profile_text: an autoconfig read back as settings.
+    profile_texts = [
+        "",
+        'input_device = "Pad"\n',
+        'input_device="Pad"\n',
+        "input_device = Pad\n",
+        "  input_device = Pad  \n",
+        "# comment\ninput_device = Pad\n",
+        'input_a_btn = "0"\ninput_b_btn = "1"\n',
+        "input_device = Pad\r\n",
+        "not a line\ninput_device = Pad\n",
+        'input_device = "has spaces"\n',
+        'input_device = ""\n',
+        "input_device =\n",
+        'input_device = "Pad"\ninput_device = "Other"\n',
+    ]
+    write("parse_profile_text", [
+        {"text": text, "settings": retroarch.parse_profile_text(text)}
+        for text in profile_texts
+    ])
+
+
 def main() -> int:
     print(f"recording the Python's answers into {OUT.relative_to(REPO)}:")
     bindings()
@@ -1401,6 +1492,7 @@ def main() -> int:
     capabilities()
     calibration_machine()
     switch_reports()
+    clean_config()
     return 0
 
 

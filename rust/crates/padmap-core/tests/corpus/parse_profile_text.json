@@ -1,0 +1,79 @@
+[
+ {
+  "settings": {},
+  "text": ""
+ },
+ {
+  "settings": {
+   "input_device": "Pad"
+  },
+  "text": "input_device = \"Pad\"\n"
+ },
+ {
+  "settings": {
+   "input_device": "Pad"
+  },
+  "text": "input_device=\"Pad\"\n"
+ },
+ {
+  "settings": {
+   "input_device": "Pad"
+  },
+  "text": "input_device = Pad\n"
+ },
+ {
+  "settings": {
+   "input_device": "Pad  "
+  },
+  "text": "  input_device = Pad  \n"
+ },
+ {
+  "settings": {
+   "input_device": "Pad"
+  },
+  "text": "# comment\ninput_device = Pad\n"
+ },
+ {
+  "settings": {
+   "input_a_btn": "0",
+   "input_b_btn": "1"
+  },
+  "text": "input_a_btn = \"0\"\ninput_b_btn = \"1\"\n"
+ },
+ {
+  "settings": {
+   "input_device": "Pad"
+  },
+  "text": "input_device = Pad\r\n"
+ },
+ {
+  "settings": {
+   "input_device": "Pad"
+  },
+  "text": "not a line\ninput_device = Pad\n"
+ },
+ {
+  "settings": {
+   "input_device": "has spaces"
+  },
+  "text": "input_device = \"has spaces\"\n"
+ },
+ {
+  "settings": {
+   "input_device": ""
+  },
+  "text": "input_device = \"\"\n"
+ },
+ {
+  "settings": {
+   "input_device": ""
+  },
+  "text": "input_device =\n"
+ },
+ {
+  "settings": {
+   "input_device": "Other"
+  },
+  "text": "input_device = \"Pad\"\ninput_device = \"Other\"\n"
+ }
+]
