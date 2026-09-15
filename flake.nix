@@ -40,6 +40,58 @@
           pkgs.cargo-nextest
         ];
 
+        # `padmap` and `padmap-rs` as commands inside the dev shell, running
+        # the working tree rather than a store copy.
+        #
+        # packages.padmap already exists, but it bakes in ${./src}: entering
+        # the shell and editing a file would leave `padmap list` running the
+        # source as it was when the flake was last evaluated. In a dev shell
+        # that is the wrong answer every time, and a silent one -- the command
+        # runs, it just is not your code.
+        #
+        # So these resolve from PADMAP_DEV_ROOT, which the shellHook pins to
+        # the directory the shell was entered from. Pinned at entry rather
+        # than read as $PWD per call, because `cd rust` must not change which
+        # padmap you are running.
+        devRoot = ''
+          if [ -z "''${PADMAP_DEV_ROOT:-}" ]; then
+            echo "padmap: PADMAP_DEV_ROOT is unset." >&2
+            echo "padmap: this wrapper only works inside the dev shell." >&2
+            exit 1
+          fi
+        '';
+
+        devPadmap = pkgs.writeShellScriptBin "padmap" ''
+          set -euo pipefail
+          ${devRoot}
+          # PYTHONPATH, PADMAP_AUTOCONFIG_DIRS, PADMAP_MAME_TITLES and
+          # PADMAP_PLAY all come from the shell environment; the wrapper adds
+          # nothing but the entry point, so what runs here and what a client
+          # of the daemon runs are the same program.
+          #
+          # PADMAP_BUILD_ID is deliberately *not* set. packages.padmap sets it
+          # to a store path, which is the right identity there because the
+          # path changes with every edit. Here the source is mutable, so a
+          # baked-in value would be frozen at shell entry and `ensure-daemon`
+          # would call a daemon current after you had edited under it --
+          # exactly the failure the build id exists to catch. Left unset,
+          # protocol.build_id falls back to the newest mtime in src/padmap,
+          # which does change when you edit.
+          exec ${pythonEnv}/bin/python3 -m padmap.cli "$@"
+        '';
+
+        # Note this builds on first use and after every edit. That is the
+        # point -- `padmap-rs list` should never be stale -- but it means the
+        # first call after touching a source file pauses to compile, and cargo
+        # writes its progress to stderr so it is visible rather than a hang.
+        devPadmapRs = pkgs.writeShellScriptBin "padmap-rs" ''
+          set -euo pipefail
+          ${devRoot}
+          exec cargo run --quiet --release \
+            --manifest-path "$PADMAP_DEV_ROOT/rust/Cargo.toml" \
+            --bin padmap-rs -- "$@"
+        '';
+
         # Everything a crate that opens a device node needs to link.
         rustBuildInputs = [ pkgs.udev ];
         rustNativeBuildInputs = [ pkgs.pkg-config ];
@@ -68,6 +120,11 @@
             pkgs.udev # udevadm, for inspecting ID_INPUT_JOYSTICK
             pkgs.evemu # replay a recorded device, for latency measurement
             pkgs.linuxPackages.perf # where the forwarding path actually goes
+            devPadmap # `padmap ...`, running the working tree
+            devPadmapRs # `padmap-rs ...`, likewise
+            # The launch wrapper as the real thing, so a `padmap launch` from
+            # this shell takes the same path a packaged one does.
+            self.packages.${system}.padmap-play
           ] ++ rustToolchain ++ rustNativeBuildInputs;
 
           # Without this the module falls back to globbing /nix/store, which
@@ -75,6 +132,9 @@
           PADMAP_AUTOCONFIG_DIRS = autoconfigDir;
 
           shellHook = ''
+            # Pinned once, at entry. The wrappers read this instead of $PWD so
+            # that `cd rust` does not change which padmap `padmap list` runs.
+            export PADMAP_DEV_ROOT="$PWD"
             export PYTHONPATH="$PWD/src''${PYTHONPATH:+:$PYTHONPATH}"
             # The same two the `padmap` wrapper sets. Without them a launch
             # from this shell resolves no MAME set names and invokes a bare
@@ -84,13 +144,16 @@
             # cargo writes here; keeping it out of the source tree means a
             # `nix build` of the flake never sees a 2GB target/ in its source.
             export CARGO_HOME="''${CARGO_HOME:-$PWD/.cargo-home}"
-            echo "padmap dev shell"
-            echo "  python3 -m padmap.cli list    - what is plugged in"
-            echo "  python3 -m padmap.cli setup   - assign player order"
-            echo "  python3 -m padmap.cli run     - republish assigned pads"
-            echo "  python3 -m padmap.cli map     - record which button is which"
-            echo "  nix run .#padmap-start        - daemon + udev hide rules"
-            echo "  (cd rust && cargo test)       - the Rust port's tests"
+            echo "padmap dev shell -- these run $PADMAP_DEV_ROOT, not a store copy"
+            echo "  padmap list          - what is plugged in"
+            echo "  padmap setup         - assign player order"
+            echo "  padmap run           - republish assigned pads"
+            echo "  padmap map           - record which button is which"
+            echo "  padmap launch        - republish, then start RetroArch"
+            echo "  padmap hide          - udev rules hiding the physical pads (root)"
+            echo "  padmap --help        - the rest"
+            echo "  padmap-rs list|run|hide  - the Rust port (rebuilds on first use)"
+            echo "  (cd rust && cargo test)  - the Rust port's tests"
             echo "  (cd rust && cargo clippy --all-targets -- -D warnings)"
             echo
             if [ ! -w /dev/uinput ]; then

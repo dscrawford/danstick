@@ -63,6 +63,14 @@ player slot it happened to claim.
     nix run .#padmap-start          # daemon + udev hide rules
     nix develop                     # python, cargo, clippy, evemu, perf
 
+Inside the dev shell, `padmap` and `padmap-rs` are on `PATH` and run the
+working tree, not a store copy — so `padmap list` reflects the file you just
+edited. They stay pointed at the directory the shell was entered from, so
+`cd rust` does not change which padmap you are running.
+
+    padmap list                     # same CLI as `nix run .#padmap --`
+    padmap-rs list                  # the Rust port; rebuilds on first use
+
 There is a Rust port in progress under `rust/` — see
 [docs/RUSTIFY.md](docs/RUSTIFY.md) for what is ported and what is not, and
 [docs/LATENCY.md](docs/LATENCY.md) for what padmap actually costs a
