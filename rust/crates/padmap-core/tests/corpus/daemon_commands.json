@@ -1,0 +1,341 @@
+[
+ {
+  "message": {},
+  "ok": true,
+  "value": null
+ },
+ {
+  "message": {
+   "cmd": null
+  },
+  "ok": true,
+  "value": null
+ },
+ {
+  "message": {
+   "cmd": ""
+  },
+  "ok": true,
+  "value": null
+ },
+ {
+  "message": {
+   "cmd": "nope"
+  },
+  "ok": true,
+  "value": null
+ },
+ {
+  "message": {
+   "cmd": 7
+  },
+  "ok": true,
+  "value": null
+ },
+ {
+  "message": {
+   "cmd": "status"
+  },
+  "ok": true,
+  "value": {
+   "cmd": "status"
+  }
+ },
+ {
+  "message": {
+   "cmd": "reset"
+  },
+  "ok": true,
+  "value": {
+   "cmd": "reset"
+  }
+ },
+ {
+  "message": {
+   "cmd": "accept"
+  },
+  "ok": true,
+  "value": {
+   "cmd": "accept"
+  }
+ },
+ {
+  "message": {
+   "cmd": "cancel"
+  },
+  "ok": true,
+  "value": {
+   "cmd": "cancel"
+  }
+ },
+ {
+  "message": {
+   "cmd": "skip_control"
+  },
+  "ok": true,
+  "value": {
+   "cmd": "skip_control"
+  }
+ },
+ {
+  "message": {
+   "cmd": "configure_end"
+  },
+  "ok": true,
+  "value": {
+   "cmd": "configure_end"
+  }
+ },
+ {
+  "message": {
+   "cmd": "begin"
+  },
+  "ok": true,
+  "value": {
+   "cmd": "begin",
+   "players": 4
+  }
+ },
+ {
+  "message": {
+   "cmd": "begin",
+   "players": 2
+  },
+  "ok": true,
+  "value": {
+   "cmd": "begin",
+   "players": 2
+  }
+ },
+ {
+  "message": {
+   "cmd": "begin",
+   "players": "3"
+  },
+  "ok": true,
+  "value": {
+   "cmd": "begin",
+   "players": 3
+  }
+ },
+ {
+  "message": {
+   "cmd": "begin",
+   "players": 2.9
+  },
+  "ok": true,
+  "value": {
+   "cmd": "begin",
+   "players": 2
+  }
+ },
+ {
+  "message": {
+   "cmd": "begin",
+   "players": true
+  },
+  "ok": true,
+  "value": {
+   "cmd": "begin",
+   "players": 1
+  }
+ },
+ {
+  "message": {
+   "cmd": "begin",
+   "players": -1
+  },
+  "ok": true,
+  "value": {
+   "cmd": "begin",
+   "players": -1
+  }
+ },
+ {
+  "error": "ValueError",
+  "message": {
+   "cmd": "begin",
+   "players": "three"
+  },
+  "ok": false
+ },
+ {
+  "error": "TypeError",
+  "message": {
+   "cmd": "begin",
+   "players": null
+  },
+  "ok": false
+ },
+ {
+  "message": {
+   "cmd": "map"
+  },
+  "ok": true,
+  "value": {
+   "cmd": "map",
+   "layout": "",
+   "player": 0,
+   "scope": ""
+  }
+ },
+ {
+  "message": {
+   "cmd": "map",
+   "layout": "n64",
+   "player": 1,
+   "scope": "console"
+  },
+  "ok": true,
+  "value": {
+   "cmd": "map",
+   "layout": "n64",
+   "player": 1,
+   "scope": "console"
+  }
+ },
+ {
+  "message": {
+   "cmd": "map",
+   "player": "2"
+  },
+  "ok": true,
+  "value": {
+   "cmd": "map",
+   "layout": "",
+   "player": 2,
+   "scope": ""
+  }
+ },
+ {
+  "message": {
+   "cmd": "map",
+   "layout": 7,
+   "player": 1
+  },
+  "ok": true,
+  "value": {
+   "cmd": "map",
+   "layout": "",
+   "player": 1,
+   "scope": ""
+  }
+ },
+ {
+  "message": {
+   "cmd": "map_for_game",
+   "console": "n64",
+   "key": "mario64",
+   "player": 1,
+   "title": "Mario 64"
+  },
+  "ok": true,
+  "value": {
+   "cmd": "map_for_game",
+   "console": "n64",
+   "key": "mario64",
+   "player": 1,
+   "title": "Mario 64"
+  }
+ },
+ {
+  "message": {
+   "cmd": "map_for_game"
+  },
+  "ok": true,
+  "value": {
+   "cmd": "map_for_game",
+   "console": "",
+   "key": "",
+   "player": 0,
+   "title": ""
+  }
+ },
+ {
+  "message": {
+   "cmd": "set_icon",
+   "icon": "xbox",
+   "player": 1
+  },
+  "ok": true,
+  "value": {
+   "cmd": "set_icon",
+   "icon": "xbox",
+   "player": 1
+  }
+ },
+ {
+  "message": {
+   "cmd": "set_icon",
+   "icon": null,
+   "player": 1
+  },
+  "ok": true,
+  "value": {
+   "cmd": "set_icon",
+   "icon": "",
+   "player": 1
+  }
+ },
+ {
+  "message": {
+   "cmd": "choose_layout",
+   "player": 3
+  },
+  "ok": true,
+  "value": {
+   "cmd": "choose_layout",
+   "player": 3
+  }
+ },
+ {
+  "message": {
+   "cmd": "choose_scope"
+  },
+  "ok": true,
+  "value": {
+   "cmd": "choose_scope",
+   "player": 0
+  }
+ },
+ {
+  "message": {
+   "cmd": "forget_pad",
+   "player": 2
+  },
+  "ok": true,
+  "value": {
+   "cmd": "forget_pad",
+   "player": 2
+  }
+ },
+ {
+  "message": {
+   "cmd": "calibrate",
+   "player": 4
+  },
+  "ok": true,
+  "value": {
+   "cmd": "calibrate",
+   "player": 4
+  }
+ },
+ {
+  "error": "ValueError",
+  "message": {
+   "cmd": "calibrate",
+   "player": "x"
+  },
+  "ok": false
+ },
+ {
+  "message": {
+   "cmd": "status",
+   "extra": "ignored"
+  },
+  "ok": true,
+  "value": {
+   "cmd": "status"
+  }
+ }
+]

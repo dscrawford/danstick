@@ -1,0 +1,20 @@
+[
+ {
+  "commands": [
+   "begin",
+   "reset",
+   "accept",
+   "cancel",
+   "map",
+   "choose_layout",
+   "choose_scope",
+   "map_for_game",
+   "forget_pad",
+   "skip_control",
+   "calibrate",
+   "configure_end",
+   "set_icon",
+   "status"
+  ]
+ }
+]

@@ -1575,6 +1575,66 @@ def launch_flags() -> None:
     write("launch_args", rows)
 
 
+def _try_any(call) -> dict:
+    """Like `_try`, but records the exception type as well.
+
+    `int(None)` is a TypeError and `int("x")` a ValueError, and both reach a
+    client as the same error reply -- but the port has to refuse both, and
+    recording which is which is what says so.
+    """
+    try:
+        return {"ok": True, "value": call()}
+    except Exception as error:                          # noqa: BLE001
+        return {"ok": False, "error": type(error).__name__}
+
+
+# -- the daemon's command surface -------------------------------------------
+def daemon_commands() -> None:
+    """What a client asked for, as the arguments the handler takes.
+
+    The process boundary. The socket lives in XDG_RUNTIME_DIR and any process
+    running as this user may write to it, so every field arrives from outside
+    and is coerced rather than trusted -- and where the coercion *raises*, the
+    error reply is part of the contract too, because a front-end reads it.
+    """
+    from padmap.server import COMMANDS, Server
+
+    messages = [
+        {}, {"cmd": None}, {"cmd": ""}, {"cmd": "nope"}, {"cmd": 7},
+        {"cmd": "status"}, {"cmd": "reset"}, {"cmd": "accept"},
+        {"cmd": "cancel"}, {"cmd": "skip_control"}, {"cmd": "configure_end"},
+        {"cmd": "begin"},
+        {"cmd": "begin", "players": 2},
+        {"cmd": "begin", "players": "3"},
+        {"cmd": "begin", "players": 2.9},
+        {"cmd": "begin", "players": True},
+        {"cmd": "begin", "players": -1},
+        {"cmd": "begin", "players": "three"},
+        {"cmd": "begin", "players": None},
+        {"cmd": "map"},
+        {"cmd": "map", "player": 1, "layout": "n64", "scope": "console"},
+        {"cmd": "map", "player": "2"},
+        {"cmd": "map", "player": 1, "layout": 7},
+        {"cmd": "map_for_game", "player": 1, "console": "n64",
+         "key": "mario64", "title": "Mario 64"},
+        {"cmd": "map_for_game"},
+        {"cmd": "set_icon", "player": 1, "icon": "xbox"},
+        {"cmd": "set_icon", "player": 1, "icon": None},
+        {"cmd": "choose_layout", "player": 3},
+        {"cmd": "choose_scope"},
+        {"cmd": "forget_pad", "player": 2},
+        {"cmd": "calibrate", "player": 4},
+        {"cmd": "calibrate", "player": "x"},
+        {"cmd": "status", "extra": "ignored"},
+    ]
+    cases = []
+    for message in messages:
+        cases.append({"message": message,
+                      **_try_any(lambda m=message: Server.parse_command(m))})
+    write("daemon_commands", cases)
+    write("daemon_command_names", [{"commands": list(COMMANDS)}])
+
+
 def main() -> int:
     print(f"recording the Python's answers into {OUT.relative_to(REPO)}:")
     bindings()
@@ -1602,6 +1662,7 @@ def main() -> int:
     clean_config()
     launch_override()
     launch_flags()
+    daemon_commands()
     return 0
 
 

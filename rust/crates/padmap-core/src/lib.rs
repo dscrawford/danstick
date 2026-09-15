@@ -17,6 +17,7 @@ pub mod binding;
 pub mod calibration;
 pub mod capability;
 pub mod capture;
+pub mod command;
 pub mod control;
 pub mod emit;
 pub mod fields;

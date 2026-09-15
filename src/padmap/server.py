@@ -51,6 +51,17 @@ TICK_SECONDS = 0.02
 PAD_SCAN_SECONDS = 1.0
 
 # Set to "1" to keep the setup screen from opening by itself.
+# Every command the socket accepts. Named here rather than only in the
+# if/elif chain, because a command that is defined but never *routed* is a
+# handler that exists, reads correctly, and is unreachable -- and nothing says
+# so until someone presses the key on the setup screen, where the pads are
+# grabbed and there is no other feedback to fall back on.
+COMMANDS = (
+    "begin", "reset", "accept", "cancel", "map", "choose_layout",
+    "choose_scope", "map_for_game", "forget_pad", "skip_control",
+    "calibrate", "configure_end", "set_icon", "status",
+)
+
 ENV_NO_AUTOSETUP = "PADMAP_NO_AUTOSETUP"
 # Announce arrivals but never claim a player slot for them. For a caller that
 # wants to decide the roster itself and treat padmap purely as a source of
@@ -549,6 +560,57 @@ class Server:
                 self._send(client, reply)
             else:
                 self._broadcast(reply)
+
+    @staticmethod
+    def parse_command(message: dict[str, Any]) -> dict[str, Any] | None:
+        """What a client asked for, as the arguments the handler takes.
+
+        Split out of the dispatch so it can be recorded and replayed against
+        the port. This is the process boundary: the socket is in
+        XDG_RUNTIME_DIR and any process running as this user may write to it,
+        so every field here arrives from outside and is coerced rather than
+        trusted. `int(message.get("player", 0))` raises on a string, which
+        `_handle_command` catches and answers as an error -- the shape of that
+        answer is part of the contract too.
+
+        None means the command is not one padmap has.
+        """
+        command = message.get("cmd")
+        if command not in COMMANDS:
+            return None
+
+        def text(field: str) -> str:
+            """A string field, or "" for anything that is not a string.
+
+            Not `str(...)`: a JSON null becomes the four characters "None"
+            and a `true` becomes "True", and those are then stored -- an icon
+            called "None" is written into a profile as though somebody chose
+            it. It is also a cross-language trap, since Rust renders the same
+            boolean "true". Same rule, and the same reason, as
+            `protocol._game_entry`.
+            """
+            value = message.get(field, "")
+            return value if isinstance(value, str) else ""
+
+        out: dict[str, Any] = {"cmd": command}
+        if command == "begin":
+            out["players"] = int(message.get("players", 4))
+        elif command == "map":
+            out["player"] = int(message.get("player", 0))
+            out["layout"] = text("layout")
+            out["scope"] = text("scope")
+        elif command == "map_for_game":
+            out["player"] = int(message.get("player", 0))
+            out["console"] = text("console")
+            out["key"] = text("key")
+            out["title"] = text("title")
+        elif command == "set_icon":
+            out["player"] = int(message.get("player", 0))
+            out["icon"] = text("icon")
+        elif command in ("choose_layout", "choose_scope", "forget_pad",
+                         "calibrate"):
+            out["player"] = int(message.get("player", 0))
+        return out
 
     def _dispatch(self, client: Client, message: dict[str, Any]) -> None:
         command = message.get("cmd")

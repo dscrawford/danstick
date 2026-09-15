@@ -3149,3 +3149,36 @@ away-from-zero), integer division (floor versus truncate), and now rendering a
 non-string. None of them would have been caught by a unit test written from
 reading the other implementation, because reading is exactly where the
 assumption comes from.
+
+---
+
+## `str()` on something that is not a string, four times
+
+Fourth instance of one mistake, found by the differential corpus each time
+after the first:
+
+    protocol._game_entry   str(title)   -> "None" on the scope picker
+    server.parse_command   str(icon)    -> an icon named "None", stored
+
+Both read a field out of something padmap did not write -- a file that can be
+truncated or hand-edited, a socket any local process may write to -- and both
+rendered whatever they found. `str(None)` is the four characters `None`, and
+it goes straight into a picker or a profile as though somebody chose it.
+
+The rule is "strings only" rather than "handle null", and the reason is the
+second half:
+
+    Python  str(True)  -> "True"
+    Rust    true       -> "true"
+
+Two implementations reading one message and disagreeing about its contents, in
+a way neither side's own tests would show. Stringifying needs per-language care
+to stay consistent; dropping anything that is not a string needs none.
+
+**Worth generalising.** Every one of these was at a boundary where padmap reads
+something it did not write, and in every case the coercion was chosen for
+convenience at the call site rather than for what the field means. A field that
+must be a *number* is refused when it is not one, loudly, because a wrong
+number is a real argument. A field that must be a *string* should be emptied
+when it is not one, because an empty layout or icon means "unset" and every
+caller already handles it. Neither should be rendered.
