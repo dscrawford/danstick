@@ -115,12 +115,6 @@ fn cmd_list() -> Result<()> {
     Ok(())
 }
 
-/// Print the udev rules that hide the physical pads.
-///
-/// Printed rather than installed: writing them needs root, and a command that
-/// silently asks for a password on a machine plugged into a television is
-/// worse than one that shows you what to write. The Python's `padmap hide`
-/// installs them when it is already root; this does not yet.
 /// Say when a controller is present but the kernel is not driving it as one.
 ///
 /// "No joypads found" is true and useless when the controller is sitting there
@@ -132,35 +126,62 @@ fn report_dormant() {
     if dormant.is_empty() {
         return;
     }
+    // Unknown means unknown. Guessing a version here would turn a diagnosis
+    // into a claim about a kernel nobody looked at.
+    let Some(running) = lizard::running_kernel() else {
+        return;
+    };
+
     for device in &dormant {
+        let Some(model) = device.late_model() else {
+            continue;
+        };
         let name = if device.name.is_empty() {
-            "an unnamed device"
+            "An unnamed device"
         } else {
             &device.name
         };
+        // Two lines: the model text is a clause, not a word, and the device's
+        // own name is as long as its vendor felt like making it.
+        println!("\n{name} ({:04x}:{:04x})", device.vid, device.pid);
+        println!("is {}.", model.model);
+        println!("It keeps its gamepad state on a vendor-defined HID collection");
         println!(
-            "\n{name} ({:04x}:{:04x}) has a vendor-specific gamepad interface",
-            device.vid, device.pid
-        );
-        println!(
-            "that {} cannot read, so it is a keyboard and a mouse and",
+            "that {} cannot read, so what the machine gets is the",
             device.driver
         );
-        println!("not a controller. Nothing reports an error; it simply is not a pad.");
-        if let Some(node) = &device.hidraw {
-            println!("Its gamepad channel is {}.", node.display());
+        println!("keyboard and mouse it emulates. Nothing reports an error.");
+        if model.receiver {
+            println!();
+            println!("It is a receiver, so it never becomes one pad: once it is driven,");
+            println!("the controllers paired to it appear through it, and none may be");
+            println!("paired yet. A single pad is the wrong thing to wait for.");
         }
-        if let Some(remedy) = device.remedy() {
-            println!("\nThe kernel has a driver for this family that does not claim");
-            println!("this model's id yet. To hand it over:");
-            println!("  {remedy}");
-            println!("\nThat lasts until reboot. If it works, make it stick with a udev");
-            println!("rule; if it does not, the protocol has to be read directly --");
-            println!("see tools/hidprobe.py.");
+        match device.channels.len() {
+            0 => {}
+            1 => println!("Its vendor channel is {}.", device.channels[0].display()),
+            n => {
+                let nodes: Vec<String> = device
+                    .channels
+                    .iter()
+                    .map(|path| path.display().to_string())
+                    .collect();
+                println!("Its {n} slots are {}.", nodes.join(", "));
+            }
+        }
+        println!();
+        for line in model.remedy(running).lines() {
+            println!("{line}");
         }
     }
 }
 
+/// Print the udev rules that hide the physical pads.
+///
+/// Printed rather than installed: writing them needs root, and a command that
+/// silently asks for a password on a machine plugged into a television is
+/// worse than one that shows you what to write. The Python's `padmap hide`
+/// installs them when it is already root; this does not yet.
 fn cmd_hide() -> Result<()> {
     let pads = pad::discover(pad::Filter::default()).context("enumerating input devices")?;
     let hideable: Vec<hide::Hideable> = pads

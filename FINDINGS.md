@@ -2958,3 +2958,88 @@ Two things worth remembering beyond this bug:
   a resting stick reads +16383 -- half deflection, permanently.
 
 Neither is a live bug today; both are traps for the next change here.
+
+---
+
+## The Steam Controller Puck: three wrong answers before the right one
+
+Reported as "it's listed as xbox 360", then "it looks like a keyboard... if
+steam is closed it stops acting like [a controller]", then "still don't see it
+after modprobing". Every one of those was a real symptom, and the first three
+things padmap said about them were wrong in a different way.
+
+**The device.** `28de:1304`, seven USB interfaces:
+
+    0-1  CDC-ACM, internal comms, not HID
+    2-5  four wireless slots  -> hidraw7..10
+         05 01 09 02      mouse,    report 0x40   |
+         05 01 09 06      keyboard, report 0x41   | lizard mode
+         06 00 ff 09 01   usage FF000001, reports 0x42/0x43/0x44/0x45/0x79/0x7b
+    6    pogo-pin dock     -> hidraw11
+         06 00 ff 09 02   usage FF000002, 54 bytes, stripped down
+
+It is a **receiver**, not a controller. Mainline names it "Steam Controller
+(2026) Puck" and gives it `STEAM_QUIRK_IBEX | STEAM_QUIRK_WIRELESS`. Up to four
+controllers connect *through* it. Looking for one pad to appear is the wrong
+thing to wait for, which is why `LateModel` carries a `receiver` flag rather
+than burying the word in a name string.
+
+**Wrong answer 1: the first three bytes of a report descriptor.** `lizard.rs`
+tested `descriptor[0] == 0x06 && descriptor[2] == 0xFF` to find a vendor
+interface. On a slot interface the vendor collection is the *third* top-level
+collection -- the descriptor opens with an emulated mouse -- so the test failed
+on all four slots and passed only on the dock, whose descriptor does start with
+the vendor page. padmap therefore announced the dock as "its gamepad channel",
+and `hidprobe.py` was pointed at it and reported "nothing arrived at all".
+
+That reads exactly like a controller that is asleep. It was a tool aimed at the
+one interface on the device guaranteed to be silent. The descriptor is now
+walked as HID items and every top-level application collection is read; the
+dock is excluded by the same usage mainline excludes it by:
+
+    /* The puck's pogo pin interface should be ignored as it's stripped
+     * down. It has one collection with usage page FF00 with usage ID 2. */
+    return hdev->collection[0].usage != 0xFF000002;
+
+**Wrong answer 2: the sysfs driver directory.** The remedy printed
+`/sys/bus/hid/drivers/steam/new_id`, computed by stripping `hid-` from the
+module name. That is not a rule -- a `hid_driver` registers whatever `.name` it
+likes, and this kernel has `/sys/bus/hid/drivers/hid-steam`. Because the write
+goes through `sudo`, a missing directory fails as a *permission* error, which
+reads as the kernel refusing the write rather than as a bad path. Both
+spellings are now tried against the filesystem instead of computed.
+
+**Wrong answer 3: `new_id` at all.** This is the one that cost the user a
+session. Force-binding is not a workaround here, and padmap said it was.
+v6.18's `hid-steam` has three ids -- `1102`, `1142`, `1205` -- and contains no
+reference to either 2026 codename. Its `steam_raw_event` opens:
+
+    /* All messages are size=64, all values little-endian. */
+    if (size != 64 || data[0] != 1 || data[1] != 0)
+            return 0;
+
+Every report this model sends is 54 bytes or fewer under its own report id, so
+each one is dropped in silence. The bind succeeds and the pad stays dead --
+strictly worse than not binding, because now something *looks* attached.
+
+The legacy interface selector is no better: pre-IBEX it picks "the interface
+that has a feature report", and all five HID interfaces here have feature
+reports `0x01`/`0x02`, the dock included.
+
+**The actual remedy is a kernel version.** `hid-ids.h` gained
+`IBEX`/`IBEX_BLE`/`PROTEUS`/`NEREID` in **v7.3-rc1**, and has them in no earlier
+tag (checked v7.0, v7.1, v7.2 -- absent; v6.18 -- absent). So the remedy table
+is keyed on `(vid, pid) -> first kernel release`, and the advice branches on the
+running kernel: below it, upgrade; at or above it, the module merely needs
+loading.
+
+**What generalises.** Three of these are the same mistake -- deriving a fact
+that was available to be read. The descriptor's shape was inferred from three
+bytes instead of parsed; the sysfs path was computed from a module name instead
+of looked up; the driver's capability was assumed from its existence instead of
+checked against its id table. The fix in each case was to read the thing.
+
+And one that does not generalise but is worth stating: **a diagnosis that names
+a remedy is a claim, and a wrong one is more expensive than silence.** "No
+joypads found" would have left the user to investigate. "Run this as root" sent
+them to do it, twice, for a command that could never have worked.

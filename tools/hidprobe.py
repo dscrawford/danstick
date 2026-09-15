@@ -1,6 +1,6 @@
 """Watch a controller's raw HID reports, so its protocol can be read off it.
 
-    nix develop --command python3 tools/hidprobe.py /dev/hidraw11
+    nix develop --command python3 tools/hidprobe.py /dev/hidraw7
 
 For a pad whose gamepad state is on a vendor-defined interface, which no
 generic driver can decode. The only way to learn what the bytes mean is to
@@ -20,6 +20,13 @@ Reading is enough for most of it. Some pads send nothing until they are asked
 to leave their keyboard-and-mouse mode, which needs a write this tool does not
 make -- if nothing arrives while you are pressing buttons, that is the reason,
 and the device needs its own driver rather than a decode.
+
+Point it at the right node. A device can expose several vendor interfaces and
+only some of them carry input: the Steam Controller Puck has four slot
+interfaces and one pogo-pin dock, and this was first run against the dock,
+which is stripped down and sends nothing at all. It reported "nothing arrived",
+correctly, and that reads exactly like a controller that is asleep. `padmap-rs
+list` names the slots and leaves the dock out; prefer its list to a guess.
 """
 
 from __future__ import annotations
@@ -59,7 +66,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("node", help="the hidraw node, e.g. /dev/hidraw11")
+    parser.add_argument("node", help="the hidraw node; `padmap-rs list` names the right ones")
     parser.add_argument("--settle", type=float, default=1.0)
     parser.add_argument("--raw", action="store_true")
     parser.add_argument("--seconds", type=float, default=0.0,
