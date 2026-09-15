@@ -1,6 +1,7 @@
 //! padmap's republisher, in Rust.
 //!
 //!     padmap-rs list     what is plugged in
+//!     padmap-rs hide     udev rules that hide the physical pads
 //!     padmap-rs run      republish the assigned pads and keep them alive
 //!
 //! Deliberately not the whole of `padmap`. The daemon's socket protocol, the
@@ -18,6 +19,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use log::{info, warn};
+use padmap_core::hide;
 use padmap_input::{assignments, clone, pad, profiles, reactor, republish, runtime};
 
 /// How often the tick runs. Matches the Python's `TICK_SECONDS`.
@@ -31,6 +33,7 @@ fn main() -> Result<()> {
     let mut args = std::env::args().skip(1);
     match args.next().as_deref() {
         Some("list") => cmd_list(),
+        Some("hide") => cmd_hide(),
         Some("run") => cmd_run(),
         Some(other) => {
             eprintln!("padmap-rs: unknown command {other:?}");
@@ -45,7 +48,7 @@ fn main() -> Result<()> {
 }
 
 fn usage() {
-    eprintln!("usage: padmap-rs list | run");
+    eprintln!("usage: padmap-rs list | hide | run");
 }
 
 fn cmd_list() -> Result<()> {
@@ -100,6 +103,38 @@ fn cmd_list() -> Result<()> {
         println!("\nNo config-file scheme can tell these apart. This is why");
         println!("assignment is done by pressing a button.");
     }
+    Ok(())
+}
+
+/// Print the udev rules that hide the physical pads.
+///
+/// Printed rather than installed: writing them needs root, and a command that
+/// silently asks for a password on a machine plugged into a television is
+/// worse than one that shows you what to write. The Python's `padmap hide`
+/// installs them when it is already root; this does not yet.
+fn cmd_hide() -> Result<()> {
+    let pads = pad::discover(pad::Filter::default()).context("enumerating input devices")?;
+    let hideable: Vec<hide::Hideable> = pads
+        .iter()
+        .map(|pad| hide::Hideable {
+            name: pad.name.clone(),
+            vid: pad.vid,
+            pid: pad.pid,
+        })
+        .collect();
+    let targets = hide::targets(&hideable, &[]);
+    if targets.is_empty() {
+        println!("No pads with usable ids; there is nothing safe to match on.");
+        return Ok(());
+    }
+    print!("{}", hide::generate_rules(&targets));
+    eprintln!();
+    eprintln!("Write that to /run/udev/rules.d/99-padmap.rules and reload:");
+    eprintln!("  sudo udevadm control --reload-rules");
+    eprintln!("  sudo udevadm trigger --subsystem-match=input");
+    eprintln!();
+    eprintln!("While it is installed and padmap is NOT running, these");
+    eprintln!("controllers are invisible. Delete the file to undo it.");
     Ok(())
 }
 

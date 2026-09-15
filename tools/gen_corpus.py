@@ -607,6 +607,95 @@ def stored_profiles() -> None:
     write("stored_profiles", cases)
 
 
+
+def icon_choices() -> None:
+    """Which picture every plausible controller name gets.
+
+    An ordered list of regexes, and the order is the whole rule: an arcade
+    stick that mentions Steam is an arcade stick because the arcade pattern is
+    first. Reimplementing that by hand is how the two answers drift apart, and
+    the drift is invisible -- a wrong icon looks like a design choice.
+    """
+    from padmap import icons
+
+    class _Pad:
+        def __init__(self, vid: int, pid: int, name: str) -> None:
+            self.vid, self.pid, self.name = vid, pid, name
+
+    names = [
+        "", "Unknown Device", "USB Gamepad",
+        "Microsoft X-Box 360 pad 0", "Microsoft X-Box One pad",
+        "Xbox Wireless Controller", "X Box pad", "xinput device",
+        "MAYFLASH Arcade Fightstick F300", "Qanba Drone", "HORI Fighting Stick",
+        "Street Fighter IV Arcade", "Generic Joystick",
+        "Nintendo Co., Ltd. N64 Controller", "N64 Adapter", "Nintendo 64 pad",
+        "retrolink n64 usb", "Mayflash GameCube Adapter", "Wii U GC adapter",
+        "my gc pad", "SNES Controller", "Super Nintendo pad", "SFC gamepad",
+        "Nintendo Switch Pro Controller", "Joy-Con (L)", "joycon right",
+        "NSO controller", "Sega Genesis pad", "Mega Drive 6B",
+        "8BitDo M30", "retro-bit saturn", "Sony DualShock 4",
+        "DualSense Wireless Controller", "PlayStation 3 Controller", "PS5 pad",
+        "Steam Controller", "Steam Deck", "Valve Software Steam Controller Puck",
+        "Steampunk Arcade Fightstick", "Logitech G29 Driving Force",
+        "racing wheel", "G27 Racing Wheel",
+        # Ordering traps: each of these matches more than one pattern.
+        "Nintendo Switch Online SNES Controller",
+        "GameCube style Switch Pro Controller",
+        "Valve xinput emulator",
+        "N64 arcade stick",
+    ]
+    ids = [(0x1234, 0x5678), (0x0079, 0x1843), (0x045E, 0x028E),
+           (0x057E, 0x2019), icons.STEAM_VIRTUAL_ID, (0x28DE, 0x1304)]
+    cases = []
+    for vid, pid in ids:
+        for name in names:
+            cases.append({
+                "in": {"vid": vid, "pid": pid, "name": name},
+                "out": icons.for_pad(_Pad(vid, pid, name), overrides={}),
+            })
+    write("icons", cases)
+
+
+
+def hide_rules() -> None:
+    """The udev rules text, byte for byte.
+
+    udev matches these literally: a stray space, a lowercase hex digit where
+    the kernel writes uppercase, and the rule covers nothing at all -- with no
+    error anywhere, because a rule that matches no device is a legal rule.
+    """
+    from padmap import hide
+
+    class _Pad:
+        def __init__(self, name: str, vid: int, pid: int) -> None:
+            self.name, self.vid, self.pid = name, vid, pid
+
+    sets = [
+        [],
+        [_Pad("Switch Pro", 0x057E, 0x2009)],
+        [_Pad("Mayflash GameCube Adapter", 0x0079, 0x1843)] * 4,
+        [_Pad("Nameless", 0, 0)],
+        [_Pad("Half", 0x0079, 0)],
+        [_Pad("A", 0x0079, 0x1830), _Pad("B", 0x057E, 0x2009),
+         _Pad("C", 0x28DE, 0x11FF)],
+        [_Pad('Quoted "Pad"', 0x1234, 0x5678)],
+        [_Pad("ff ff", 0xFFFF, 0xFFFF)],
+    ]
+    cases = []
+    for pads in sets:
+        shape = [{"name": p.name, "vid": p.vid, "pid": p.pid} for p in pads]
+        cases.append({
+            "in": shape,
+            "out": {
+                "rules": hide.generate_rules(pads),
+                "nix": hide.nix_module_snippet(pads),
+                "targets": [{"name": p.name, "vid": p.vid, "pid": p.pid}
+                            for p in hide.targets(pads)],
+            },
+        })
+    write("hide_rules", cases)
+
+
 def main() -> int:
     print(f"recording the Python's answers into {OUT.relative_to(REPO)}:")
     bindings()
@@ -622,6 +711,8 @@ def main() -> int:
     printable()
     signatures()
     stored_profiles()
+    icon_choices()
+    hide_rules()
     return 0
 
 

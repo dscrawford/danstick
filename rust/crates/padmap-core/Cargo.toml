@@ -12,6 +12,9 @@ serde_json = { workspace = true }
 # Python's str.isprintable is a Unicode-category test, and its result is a
 # profile's filename -- an approximation orphans files that already exist.
 unicode-general-category = "1"
+# The icon name table is an ordered list of regexes and has to keep matching
+# exactly what Python's `re` matched; hand-rolling it is how the two diverge.
+regex = "1"
 
 [dev-dependencies]
 # Property tests for the arithmetic: the invariants worth asserting here are

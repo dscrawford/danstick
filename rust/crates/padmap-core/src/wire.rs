@@ -1,10 +1,12 @@
 //! Framing for the daemon's unix socket: newline-delimited JSON.
 //!
-//! Chosen over D-Bus or a custom binary framing because the client is a small
-//! C++ patch inside Pegasus -- a QLocalSocket plus QJsonDocument is a few dozen
-//! lines, with no extra dependency and nothing to generate. That makes the
-//! format a hard compatibility boundary: the Rust daemon has to be a drop-in
-//! for the Python one on the same socket, or the front-end stops working.
+//! Chosen over D-Bus or a custom binary framing so that writing a client is a
+//! few dozen lines in any language, with no extra dependency and nothing to
+//! generate. That is the whole point of padmap: a program attaches to the
+//! socket, drives the controllers, and needs no library from here to do it.
+//!
+//! It is also a hard compatibility boundary while the port is in progress --
+//! the Rust daemon has to be a drop-in for the Python one on the same socket.
 
 use serde_json::{Map, Value};
 
@@ -189,8 +191,10 @@ mod tests {
     fn several_messages_in_one_read_all_come_out_in_order() {
         let mut reader = LineReader::new();
         let messages = feed_str(&mut reader, "{\"n\":1}\n{\"n\":2}\n{\"n\":3}\n");
-        let numbers: Vec<i64> =
-            messages.iter().map(|m| m["n"].as_i64().expect("n")).collect();
+        let numbers: Vec<i64> = messages
+            .iter()
+            .map(|m| m["n"].as_i64().expect("n"))
+            .collect();
         assert_eq!(numbers, [1, 2, 3]);
     }
 
@@ -286,7 +290,11 @@ mod tests {
         }
         let elapsed = started.elapsed();
         assert_eq!(got.len(), 1);
-        assert!(elapsed.as_secs() < 5, "took {elapsed:?} for {} bytes", encoded.len());
+        assert!(
+            elapsed.as_secs() < 5,
+            "took {elapsed:?} for {} bytes",
+            encoded.len()
+        );
     }
 
     #[test]

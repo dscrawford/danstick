@@ -1,0 +1,2210 @@
+[
+ {
+  "in": {
+   "name": "",
+   "pid": 22136,
+   "vid": 4660
+  },
+  "out": "gamepad"
+ },
+ {
+  "in": {
+   "name": "Unknown Device",
+   "pid": 22136,
+   "vid": 4660
+  },
+  "out": "gamepad"
+ },
+ {
+  "in": {
+   "name": "USB Gamepad",
+   "pid": 22136,
+   "vid": 4660
+  },
+  "out": "gamepad"
+ },
+ {
+  "in": {
+   "name": "Microsoft X-Box 360 pad 0",
+   "pid": 22136,
+   "vid": 4660
+  },
+  "out": "xbox"
+ },
+ {
+  "in": {
+   "name": "Microsoft X-Box One pad",
+   "pid": 22136,
+   "vid": 4660
+  },
+  "out": "xbox"
+ },
+ {
+  "in": {
+   "name": "Xbox Wireless Controller",
+   "pid": 22136,
+   "vid": 4660
+  },
+  "out": "xbox"
+ },
+ {
+  "in": {
+   "name": "X Box pad",
+   "pid": 22136,
+   "vid": 4660
+  },
+  "out": "xbox"
+ },
+ {
+  "in": {
+   "name": "xinput device",
+   "pid": 22136,
+   "vid": 4660
+  },
+  "out": "xbox"
+ },
+ {
+  "in": {
+   "name": "MAYFLASH Arcade Fightstick F300",
+   "pid": 22136,
+   "vid": 4660
+  },
+  "out": "arcade"
+ },
+ {
+  "in": {
+   "name": "Qanba Drone",
+   "pid": 22136,
+   "vid": 4660
+  },
+  "out": "arcade"
+ },
+ {
+  "in": {
+   "name": "HORI Fighting Stick",
+   "pid": 22136,
+   "vid": 4660
+  },
+  "out": "arcade"
+ },
+ {
+  "in": {
+   "name": "Street Fighter IV Arcade",
+   "pid": 22136,
+   "vid": 4660
+  },
+  "out": "arcade"
+ },
+ {
+  "in": {
+   "name": "Generic Joystick",
+   "pid": 22136,
+   "vid": 4660
+  },
+  "out": "arcade"
+ },
+ {
+  "in": {
+   "name": "Nintendo Co., Ltd. N64 Controller",
+   "pid": 22136,
+   "vid": 4660
+  },
+  "out": "n64"
+ },
+ {
+  "in": {
+   "name": "N64 Adapter",
+   "pid": 22136,
+   "vid": 4660
+  },
+  "out": "n64"
+ },
+ {
+  "in": {
+   "name": "Nintendo 64 pad",
+   "pid": 22136,
+   "vid": 4660
+  },
+  "out": "n64"
+ },
+ {
+  "in": {
+   "name": "retrolink n64 usb",
+   "pid": 22136,
+   "vid": 4660
+  },
+  "out": "n64"
+ },
+ {
+  "in": {
+   "name": "Mayflash GameCube Adapter",
+   "pid": 22136,
+   "vid": 4660
+  },
+  "out": "gamecube"
+ },
+ {
+  "in": {
+   "name": "Wii U GC adapter",
+   "pid": 22136,
+   "vid": 4660
+  },
+  "out": "gamecube"
+ },
+ {
+  "in": {
+   "name": "my gc pad",
+   "pid": 22136,
+   "vid": 4660
+  },
+  "out": "gamecube"
+ },
+ {
+  "in": {
+   "name": "SNES Controller",
+   "pid": 22136,
+   "vid": 4660
+  },
+  "out": "snes"
+ },
+ {
+  "in": {
+   "name": "Super Nintendo pad",
+   "pid": 22136,
+   "vid": 4660
+  },
+  "out": "snes"
+ },
+ {
+  "in": {
+   "name": "SFC gamepad",
+   "pid": 22136,
+   "vid": 4660
+  },
+  "out": "snes"
+ },
+ {
+  "in": {
+   "name": "Nintendo Switch Pro Controller",
+   "pid": 22136,
+   "vid": 4660
+  },
+  "out": "switch"
+ },
+ {
+  "in": {
+   "name": "Joy-Con (L)",
+   "pid": 22136,
+   "vid": 4660
+  },
+  "out": "switch"
+ },
+ {
+  "in": {
+   "name": "joycon right",
+   "pid": 22136,
+   "vid": 4660
+  },
+  "out": "switch"
+ },
+ {
+  "in": {
+   "name": "NSO controller",
+   "pid": 22136,
+   "vid": 4660
+  },
+  "out": "switch"
+ },
+ {
+  "in": {
+   "name": "Sega Genesis pad",
+   "pid": 22136,
+   "vid": 4660
+  },
+  "out": "genesis"
+ },
+ {
+  "in": {
+   "name": "Mega Drive 6B",
+   "pid": 22136,
+   "vid": 4660
+  },
+  "out": "genesis"
+ },
+ {
+  "in": {
+   "name": "8BitDo M30",
+   "pid": 22136,
+   "vid": 4660
+  },
+  "out": "genesis"
+ },
+ {
+  "in": {
+   "name": "retro-bit saturn",
+   "pid": 22136,
+   "vid": 4660
+  },
+  "out": "genesis"
+ },
+ {
+  "in": {
+   "name": "Sony DualShock 4",
+   "pid": 22136,
+   "vid": 4660
+  },
+  "out": "playstation"
+ },
+ {
+  "in": {
+   "name": "DualSense Wireless Controller",
+   "pid": 22136,
+   "vid": 4660
+  },
+  "out": "playstation"
+ },
+ {
+  "in": {
+   "name": "PlayStation 3 Controller",
+   "pid": 22136,
+   "vid": 4660
+  },
+  "out": "playstation"
+ },
+ {
+  "in": {
+   "name": "PS5 pad",
+   "pid": 22136,
+   "vid": 4660
+  },
+  "out": "playstation"
+ },
+ {
+  "in": {
+   "name": "Steam Controller",
+   "pid": 22136,
+   "vid": 4660
+  },
+  "out": "steam"
+ },
+ {
+  "in": {
+   "name": "Steam Deck",
+   "pid": 22136,
+   "vid": 4660
+  },
+  "out": "steam"
+ },
+ {
+  "in": {
+   "name": "Valve Software Steam Controller Puck",
+   "pid": 22136,
+   "vid": 4660
+  },
+  "out": "steam"
+ },
+ {
+  "in": {
+   "name": "Steampunk Arcade Fightstick",
+   "pid": 22136,
+   "vid": 4660
+  },
+  "out": "arcade"
+ },
+ {
+  "in": {
+   "name": "Logitech G29 Driving Force",
+   "pid": 22136,
+   "vid": 4660
+  },
+  "out": "wheel"
+ },
+ {
+  "in": {
+   "name": "racing wheel",
+   "pid": 22136,
+   "vid": 4660
+  },
+  "out": "wheel"
+ },
+ {
+  "in": {
+   "name": "G27 Racing Wheel",
+   "pid": 22136,
+   "vid": 4660
+  },
+  "out": "wheel"
+ },
+ {
+  "in": {
+   "name": "Nintendo Switch Online SNES Controller",
+   "pid": 22136,
+   "vid": 4660
+  },
+  "out": "snes"
+ },
+ {
+  "in": {
+   "name": "GameCube style Switch Pro Controller",
+   "pid": 22136,
+   "vid": 4660
+  },
+  "out": "gamecube"
+ },
+ {
+  "in": {
+   "name": "Valve xinput emulator",
+   "pid": 22136,
+   "vid": 4660
+  },
+  "out": "steam"
+ },
+ {
+  "in": {
+   "name": "N64 arcade stick",
+   "pid": 22136,
+   "vid": 4660
+  },
+  "out": "arcade"
+ },
+ {
+  "in": {
+   "name": "",
+   "pid": 6211,
+   "vid": 121
+  },
+  "out": "gamecube"
+ },
+ {
+  "in": {
+   "name": "Unknown Device",
+   "pid": 6211,
+   "vid": 121
+  },
+  "out": "gamecube"
+ },
+ {
+  "in": {
+   "name": "USB Gamepad",
+   "pid": 6211,
+   "vid": 121
+  },
+  "out": "gamecube"
+ },
+ {
+  "in": {
+   "name": "Microsoft X-Box 360 pad 0",
+   "pid": 6211,
+   "vid": 121
+  },
+  "out": "xbox"
+ },
+ {
+  "in": {
+   "name": "Microsoft X-Box One pad",
+   "pid": 6211,
+   "vid": 121
+  },
+  "out": "xbox"
+ },
+ {
+  "in": {
+   "name": "Xbox Wireless Controller",
+   "pid": 6211,
+   "vid": 121
+  },
+  "out": "xbox"
+ },
+ {
+  "in": {
+   "name": "X Box pad",
+   "pid": 6211,
+   "vid": 121
+  },
+  "out": "xbox"
+ },
+ {
+  "in": {
+   "name": "xinput device",
+   "pid": 6211,
+   "vid": 121
+  },
+  "out": "xbox"
+ },
+ {
+  "in": {
+   "name": "MAYFLASH Arcade Fightstick F300",
+   "pid": 6211,
+   "vid": 121
+  },
+  "out": "arcade"
+ },
+ {
+  "in": {
+   "name": "Qanba Drone",
+   "pid": 6211,
+   "vid": 121
+  },
+  "out": "arcade"
+ },
+ {
+  "in": {
+   "name": "HORI Fighting Stick",
+   "pid": 6211,
+   "vid": 121
+  },
+  "out": "arcade"
+ },
+ {
+  "in": {
+   "name": "Street Fighter IV Arcade",
+   "pid": 6211,
+   "vid": 121
+  },
+  "out": "arcade"
+ },
+ {
+  "in": {
+   "name": "Generic Joystick",
+   "pid": 6211,
+   "vid": 121
+  },
+  "out": "arcade"
+ },
+ {
+  "in": {
+   "name": "Nintendo Co., Ltd. N64 Controller",
+   "pid": 6211,
+   "vid": 121
+  },
+  "out": "n64"
+ },
+ {
+  "in": {
+   "name": "N64 Adapter",
+   "pid": 6211,
+   "vid": 121
+  },
+  "out": "n64"
+ },
+ {
+  "in": {
+   "name": "Nintendo 64 pad",
+   "pid": 6211,
+   "vid": 121
+  },
+  "out": "n64"
+ },
+ {
+  "in": {
+   "name": "retrolink n64 usb",
+   "pid": 6211,
+   "vid": 121
+  },
+  "out": "n64"
+ },
+ {
+  "in": {
+   "name": "Mayflash GameCube Adapter",
+   "pid": 6211,
+   "vid": 121
+  },
+  "out": "gamecube"
+ },
+ {
+  "in": {
+   "name": "Wii U GC adapter",
+   "pid": 6211,
+   "vid": 121
+  },
+  "out": "gamecube"
+ },
+ {
+  "in": {
+   "name": "my gc pad",
+   "pid": 6211,
+   "vid": 121
+  },
+  "out": "gamecube"
+ },
+ {
+  "in": {
+   "name": "SNES Controller",
+   "pid": 6211,
+   "vid": 121
+  },
+  "out": "snes"
+ },
+ {
+  "in": {
+   "name": "Super Nintendo pad",
+   "pid": 6211,
+   "vid": 121
+  },
+  "out": "snes"
+ },
+ {
+  "in": {
+   "name": "SFC gamepad",
+   "pid": 6211,
+   "vid": 121
+  },
+  "out": "snes"
+ },
+ {
+  "in": {
+   "name": "Nintendo Switch Pro Controller",
+   "pid": 6211,
+   "vid": 121
+  },
+  "out": "switch"
+ },
+ {
+  "in": {
+   "name": "Joy-Con (L)",
+   "pid": 6211,
+   "vid": 121
+  },
+  "out": "switch"
+ },
+ {
+  "in": {
+   "name": "joycon right",
+   "pid": 6211,
+   "vid": 121
+  },
+  "out": "switch"
+ },
+ {
+  "in": {
+   "name": "NSO controller",
+   "pid": 6211,
+   "vid": 121
+  },
+  "out": "switch"
+ },
+ {
+  "in": {
+   "name": "Sega Genesis pad",
+   "pid": 6211,
+   "vid": 121
+  },
+  "out": "genesis"
+ },
+ {
+  "in": {
+   "name": "Mega Drive 6B",
+   "pid": 6211,
+   "vid": 121
+  },
+  "out": "genesis"
+ },
+ {
+  "in": {
+   "name": "8BitDo M30",
+   "pid": 6211,
+   "vid": 121
+  },
+  "out": "genesis"
+ },
+ {
+  "in": {
+   "name": "retro-bit saturn",
+   "pid": 6211,
+   "vid": 121
+  },
+  "out": "genesis"
+ },
+ {
+  "in": {
+   "name": "Sony DualShock 4",
+   "pid": 6211,
+   "vid": 121
+  },
+  "out": "playstation"
+ },
+ {
+  "in": {
+   "name": "DualSense Wireless Controller",
+   "pid": 6211,
+   "vid": 121
+  },
+  "out": "playstation"
+ },
+ {
+  "in": {
+   "name": "PlayStation 3 Controller",
+   "pid": 6211,
+   "vid": 121
+  },
+  "out": "playstation"
+ },
+ {
+  "in": {
+   "name": "PS5 pad",
+   "pid": 6211,
+   "vid": 121
+  },
+  "out": "playstation"
+ },
+ {
+  "in": {
+   "name": "Steam Controller",
+   "pid": 6211,
+   "vid": 121
+  },
+  "out": "steam"
+ },
+ {
+  "in": {
+   "name": "Steam Deck",
+   "pid": 6211,
+   "vid": 121
+  },
+  "out": "steam"
+ },
+ {
+  "in": {
+   "name": "Valve Software Steam Controller Puck",
+   "pid": 6211,
+   "vid": 121
+  },
+  "out": "steam"
+ },
+ {
+  "in": {
+   "name": "Steampunk Arcade Fightstick",
+   "pid": 6211,
+   "vid": 121
+  },
+  "out": "arcade"
+ },
+ {
+  "in": {
+   "name": "Logitech G29 Driving Force",
+   "pid": 6211,
+   "vid": 121
+  },
+  "out": "wheel"
+ },
+ {
+  "in": {
+   "name": "racing wheel",
+   "pid": 6211,
+   "vid": 121
+  },
+  "out": "wheel"
+ },
+ {
+  "in": {
+   "name": "G27 Racing Wheel",
+   "pid": 6211,
+   "vid": 121
+  },
+  "out": "wheel"
+ },
+ {
+  "in": {
+   "name": "Nintendo Switch Online SNES Controller",
+   "pid": 6211,
+   "vid": 121
+  },
+  "out": "snes"
+ },
+ {
+  "in": {
+   "name": "GameCube style Switch Pro Controller",
+   "pid": 6211,
+   "vid": 121
+  },
+  "out": "gamecube"
+ },
+ {
+  "in": {
+   "name": "Valve xinput emulator",
+   "pid": 6211,
+   "vid": 121
+  },
+  "out": "steam"
+ },
+ {
+  "in": {
+   "name": "N64 arcade stick",
+   "pid": 6211,
+   "vid": 121
+  },
+  "out": "arcade"
+ },
+ {
+  "in": {
+   "name": "",
+   "pid": 654,
+   "vid": 1118
+  },
+  "out": "xbox"
+ },
+ {
+  "in": {
+   "name": "Unknown Device",
+   "pid": 654,
+   "vid": 1118
+  },
+  "out": "xbox"
+ },
+ {
+  "in": {
+   "name": "USB Gamepad",
+   "pid": 654,
+   "vid": 1118
+  },
+  "out": "xbox"
+ },
+ {
+  "in": {
+   "name": "Microsoft X-Box 360 pad 0",
+   "pid": 654,
+   "vid": 1118
+  },
+  "out": "xbox"
+ },
+ {
+  "in": {
+   "name": "Microsoft X-Box One pad",
+   "pid": 654,
+   "vid": 1118
+  },
+  "out": "xbox"
+ },
+ {
+  "in": {
+   "name": "Xbox Wireless Controller",
+   "pid": 654,
+   "vid": 1118
+  },
+  "out": "xbox"
+ },
+ {
+  "in": {
+   "name": "X Box pad",
+   "pid": 654,
+   "vid": 1118
+  },
+  "out": "xbox"
+ },
+ {
+  "in": {
+   "name": "xinput device",
+   "pid": 654,
+   "vid": 1118
+  },
+  "out": "xbox"
+ },
+ {
+  "in": {
+   "name": "MAYFLASH Arcade Fightstick F300",
+   "pid": 654,
+   "vid": 1118
+  },
+  "out": "arcade"
+ },
+ {
+  "in": {
+   "name": "Qanba Drone",
+   "pid": 654,
+   "vid": 1118
+  },
+  "out": "arcade"
+ },
+ {
+  "in": {
+   "name": "HORI Fighting Stick",
+   "pid": 654,
+   "vid": 1118
+  },
+  "out": "arcade"
+ },
+ {
+  "in": {
+   "name": "Street Fighter IV Arcade",
+   "pid": 654,
+   "vid": 1118
+  },
+  "out": "arcade"
+ },
+ {
+  "in": {
+   "name": "Generic Joystick",
+   "pid": 654,
+   "vid": 1118
+  },
+  "out": "arcade"
+ },
+ {
+  "in": {
+   "name": "Nintendo Co., Ltd. N64 Controller",
+   "pid": 654,
+   "vid": 1118
+  },
+  "out": "n64"
+ },
+ {
+  "in": {
+   "name": "N64 Adapter",
+   "pid": 654,
+   "vid": 1118
+  },
+  "out": "n64"
+ },
+ {
+  "in": {
+   "name": "Nintendo 64 pad",
+   "pid": 654,
+   "vid": 1118
+  },
+  "out": "n64"
+ },
+ {
+  "in": {
+   "name": "retrolink n64 usb",
+   "pid": 654,
+   "vid": 1118
+  },
+  "out": "n64"
+ },
+ {
+  "in": {
+   "name": "Mayflash GameCube Adapter",
+   "pid": 654,
+   "vid": 1118
+  },
+  "out": "gamecube"
+ },
+ {
+  "in": {
+   "name": "Wii U GC adapter",
+   "pid": 654,
+   "vid": 1118
+  },
+  "out": "gamecube"
+ },
+ {
+  "in": {
+   "name": "my gc pad",
+   "pid": 654,
+   "vid": 1118
+  },
+  "out": "gamecube"
+ },
+ {
+  "in": {
+   "name": "SNES Controller",
+   "pid": 654,
+   "vid": 1118
+  },
+  "out": "snes"
+ },
+ {
+  "in": {
+   "name": "Super Nintendo pad",
+   "pid": 654,
+   "vid": 1118
+  },
+  "out": "snes"
+ },
+ {
+  "in": {
+   "name": "SFC gamepad",
+   "pid": 654,
+   "vid": 1118
+  },
+  "out": "snes"
+ },
+ {
+  "in": {
+   "name": "Nintendo Switch Pro Controller",
+   "pid": 654,
+   "vid": 1118
+  },
+  "out": "switch"
+ },
+ {
+  "in": {
+   "name": "Joy-Con (L)",
+   "pid": 654,
+   "vid": 1118
+  },
+  "out": "switch"
+ },
+ {
+  "in": {
+   "name": "joycon right",
+   "pid": 654,
+   "vid": 1118
+  },
+  "out": "switch"
+ },
+ {
+  "in": {
+   "name": "NSO controller",
+   "pid": 654,
+   "vid": 1118
+  },
+  "out": "switch"
+ },
+ {
+  "in": {
+   "name": "Sega Genesis pad",
+   "pid": 654,
+   "vid": 1118
+  },
+  "out": "genesis"
+ },
+ {
+  "in": {
+   "name": "Mega Drive 6B",
+   "pid": 654,
+   "vid": 1118
+  },
+  "out": "genesis"
+ },
+ {
+  "in": {
+   "name": "8BitDo M30",
+   "pid": 654,
+   "vid": 1118
+  },
+  "out": "genesis"
+ },
+ {
+  "in": {
+   "name": "retro-bit saturn",
+   "pid": 654,
+   "vid": 1118
+  },
+  "out": "genesis"
+ },
+ {
+  "in": {
+   "name": "Sony DualShock 4",
+   "pid": 654,
+   "vid": 1118
+  },
+  "out": "playstation"
+ },
+ {
+  "in": {
+   "name": "DualSense Wireless Controller",
+   "pid": 654,
+   "vid": 1118
+  },
+  "out": "playstation"
+ },
+ {
+  "in": {
+   "name": "PlayStation 3 Controller",
+   "pid": 654,
+   "vid": 1118
+  },
+  "out": "playstation"
+ },
+ {
+  "in": {
+   "name": "PS5 pad",
+   "pid": 654,
+   "vid": 1118
+  },
+  "out": "playstation"
+ },
+ {
+  "in": {
+   "name": "Steam Controller",
+   "pid": 654,
+   "vid": 1118
+  },
+  "out": "steam"
+ },
+ {
+  "in": {
+   "name": "Steam Deck",
+   "pid": 654,
+   "vid": 1118
+  },
+  "out": "steam"
+ },
+ {
+  "in": {
+   "name": "Valve Software Steam Controller Puck",
+   "pid": 654,
+   "vid": 1118
+  },
+  "out": "steam"
+ },
+ {
+  "in": {
+   "name": "Steampunk Arcade Fightstick",
+   "pid": 654,
+   "vid": 1118
+  },
+  "out": "arcade"
+ },
+ {
+  "in": {
+   "name": "Logitech G29 Driving Force",
+   "pid": 654,
+   "vid": 1118
+  },
+  "out": "wheel"
+ },
+ {
+  "in": {
+   "name": "racing wheel",
+   "pid": 654,
+   "vid": 1118
+  },
+  "out": "wheel"
+ },
+ {
+  "in": {
+   "name": "G27 Racing Wheel",
+   "pid": 654,
+   "vid": 1118
+  },
+  "out": "wheel"
+ },
+ {
+  "in": {
+   "name": "Nintendo Switch Online SNES Controller",
+   "pid": 654,
+   "vid": 1118
+  },
+  "out": "snes"
+ },
+ {
+  "in": {
+   "name": "GameCube style Switch Pro Controller",
+   "pid": 654,
+   "vid": 1118
+  },
+  "out": "gamecube"
+ },
+ {
+  "in": {
+   "name": "Valve xinput emulator",
+   "pid": 654,
+   "vid": 1118
+  },
+  "out": "steam"
+ },
+ {
+  "in": {
+   "name": "N64 arcade stick",
+   "pid": 654,
+   "vid": 1118
+  },
+  "out": "arcade"
+ },
+ {
+  "in": {
+   "name": "",
+   "pid": 8217,
+   "vid": 1406
+  },
+  "out": "n64"
+ },
+ {
+  "in": {
+   "name": "Unknown Device",
+   "pid": 8217,
+   "vid": 1406
+  },
+  "out": "n64"
+ },
+ {
+  "in": {
+   "name": "USB Gamepad",
+   "pid": 8217,
+   "vid": 1406
+  },
+  "out": "n64"
+ },
+ {
+  "in": {
+   "name": "Microsoft X-Box 360 pad 0",
+   "pid": 8217,
+   "vid": 1406
+  },
+  "out": "xbox"
+ },
+ {
+  "in": {
+   "name": "Microsoft X-Box One pad",
+   "pid": 8217,
+   "vid": 1406
+  },
+  "out": "xbox"
+ },
+ {
+  "in": {
+   "name": "Xbox Wireless Controller",
+   "pid": 8217,
+   "vid": 1406
+  },
+  "out": "xbox"
+ },
+ {
+  "in": {
+   "name": "X Box pad",
+   "pid": 8217,
+   "vid": 1406
+  },
+  "out": "xbox"
+ },
+ {
+  "in": {
+   "name": "xinput device",
+   "pid": 8217,
+   "vid": 1406
+  },
+  "out": "xbox"
+ },
+ {
+  "in": {
+   "name": "MAYFLASH Arcade Fightstick F300",
+   "pid": 8217,
+   "vid": 1406
+  },
+  "out": "arcade"
+ },
+ {
+  "in": {
+   "name": "Qanba Drone",
+   "pid": 8217,
+   "vid": 1406
+  },
+  "out": "arcade"
+ },
+ {
+  "in": {
+   "name": "HORI Fighting Stick",
+   "pid": 8217,
+   "vid": 1406
+  },
+  "out": "arcade"
+ },
+ {
+  "in": {
+   "name": "Street Fighter IV Arcade",
+   "pid": 8217,
+   "vid": 1406
+  },
+  "out": "arcade"
+ },
+ {
+  "in": {
+   "name": "Generic Joystick",
+   "pid": 8217,
+   "vid": 1406
+  },
+  "out": "arcade"
+ },
+ {
+  "in": {
+   "name": "Nintendo Co., Ltd. N64 Controller",
+   "pid": 8217,
+   "vid": 1406
+  },
+  "out": "n64"
+ },
+ {
+  "in": {
+   "name": "N64 Adapter",
+   "pid": 8217,
+   "vid": 1406
+  },
+  "out": "n64"
+ },
+ {
+  "in": {
+   "name": "Nintendo 64 pad",
+   "pid": 8217,
+   "vid": 1406
+  },
+  "out": "n64"
+ },
+ {
+  "in": {
+   "name": "retrolink n64 usb",
+   "pid": 8217,
+   "vid": 1406
+  },
+  "out": "n64"
+ },
+ {
+  "in": {
+   "name": "Mayflash GameCube Adapter",
+   "pid": 8217,
+   "vid": 1406
+  },
+  "out": "gamecube"
+ },
+ {
+  "in": {
+   "name": "Wii U GC adapter",
+   "pid": 8217,
+   "vid": 1406
+  },
+  "out": "gamecube"
+ },
+ {
+  "in": {
+   "name": "my gc pad",
+   "pid": 8217,
+   "vid": 1406
+  },
+  "out": "gamecube"
+ },
+ {
+  "in": {
+   "name": "SNES Controller",
+   "pid": 8217,
+   "vid": 1406
+  },
+  "out": "snes"
+ },
+ {
+  "in": {
+   "name": "Super Nintendo pad",
+   "pid": 8217,
+   "vid": 1406
+  },
+  "out": "snes"
+ },
+ {
+  "in": {
+   "name": "SFC gamepad",
+   "pid": 8217,
+   "vid": 1406
+  },
+  "out": "snes"
+ },
+ {
+  "in": {
+   "name": "Nintendo Switch Pro Controller",
+   "pid": 8217,
+   "vid": 1406
+  },
+  "out": "switch"
+ },
+ {
+  "in": {
+   "name": "Joy-Con (L)",
+   "pid": 8217,
+   "vid": 1406
+  },
+  "out": "switch"
+ },
+ {
+  "in": {
+   "name": "joycon right",
+   "pid": 8217,
+   "vid": 1406
+  },
+  "out": "switch"
+ },
+ {
+  "in": {
+   "name": "NSO controller",
+   "pid": 8217,
+   "vid": 1406
+  },
+  "out": "switch"
+ },
+ {
+  "in": {
+   "name": "Sega Genesis pad",
+   "pid": 8217,
+   "vid": 1406
+  },
+  "out": "genesis"
+ },
+ {
+  "in": {
+   "name": "Mega Drive 6B",
+   "pid": 8217,
+   "vid": 1406
+  },
+  "out": "genesis"
+ },
+ {
+  "in": {
+   "name": "8BitDo M30",
+   "pid": 8217,
+   "vid": 1406
+  },
+  "out": "genesis"
+ },
+ {
+  "in": {
+   "name": "retro-bit saturn",
+   "pid": 8217,
+   "vid": 1406
+  },
+  "out": "genesis"
+ },
+ {
+  "in": {
+   "name": "Sony DualShock 4",
+   "pid": 8217,
+   "vid": 1406
+  },
+  "out": "playstation"
+ },
+ {
+  "in": {
+   "name": "DualSense Wireless Controller",
+   "pid": 8217,
+   "vid": 1406
+  },
+  "out": "playstation"
+ },
+ {
+  "in": {
+   "name": "PlayStation 3 Controller",
+   "pid": 8217,
+   "vid": 1406
+  },
+  "out": "playstation"
+ },
+ {
+  "in": {
+   "name": "PS5 pad",
+   "pid": 8217,
+   "vid": 1406
+  },
+  "out": "playstation"
+ },
+ {
+  "in": {
+   "name": "Steam Controller",
+   "pid": 8217,
+   "vid": 1406
+  },
+  "out": "steam"
+ },
+ {
+  "in": {
+   "name": "Steam Deck",
+   "pid": 8217,
+   "vid": 1406
+  },
+  "out": "steam"
+ },
+ {
+  "in": {
+   "name": "Valve Software Steam Controller Puck",
+   "pid": 8217,
+   "vid": 1406
+  },
+  "out": "steam"
+ },
+ {
+  "in": {
+   "name": "Steampunk Arcade Fightstick",
+   "pid": 8217,
+   "vid": 1406
+  },
+  "out": "arcade"
+ },
+ {
+  "in": {
+   "name": "Logitech G29 Driving Force",
+   "pid": 8217,
+   "vid": 1406
+  },
+  "out": "wheel"
+ },
+ {
+  "in": {
+   "name": "racing wheel",
+   "pid": 8217,
+   "vid": 1406
+  },
+  "out": "wheel"
+ },
+ {
+  "in": {
+   "name": "G27 Racing Wheel",
+   "pid": 8217,
+   "vid": 1406
+  },
+  "out": "wheel"
+ },
+ {
+  "in": {
+   "name": "Nintendo Switch Online SNES Controller",
+   "pid": 8217,
+   "vid": 1406
+  },
+  "out": "snes"
+ },
+ {
+  "in": {
+   "name": "GameCube style Switch Pro Controller",
+   "pid": 8217,
+   "vid": 1406
+  },
+  "out": "gamecube"
+ },
+ {
+  "in": {
+   "name": "Valve xinput emulator",
+   "pid": 8217,
+   "vid": 1406
+  },
+  "out": "steam"
+ },
+ {
+  "in": {
+   "name": "N64 arcade stick",
+   "pid": 8217,
+   "vid": 1406
+  },
+  "out": "arcade"
+ },
+ {
+  "in": {
+   "name": "",
+   "pid": 4607,
+   "vid": 10462
+  },
+  "out": "steam"
+ },
+ {
+  "in": {
+   "name": "Unknown Device",
+   "pid": 4607,
+   "vid": 10462
+  },
+  "out": "steam"
+ },
+ {
+  "in": {
+   "name": "USB Gamepad",
+   "pid": 4607,
+   "vid": 10462
+  },
+  "out": "steam"
+ },
+ {
+  "in": {
+   "name": "Microsoft X-Box 360 pad 0",
+   "pid": 4607,
+   "vid": 10462
+  },
+  "out": "steam"
+ },
+ {
+  "in": {
+   "name": "Microsoft X-Box One pad",
+   "pid": 4607,
+   "vid": 10462
+  },
+  "out": "steam"
+ },
+ {
+  "in": {
+   "name": "Xbox Wireless Controller",
+   "pid": 4607,
+   "vid": 10462
+  },
+  "out": "steam"
+ },
+ {
+  "in": {
+   "name": "X Box pad",
+   "pid": 4607,
+   "vid": 10462
+  },
+  "out": "steam"
+ },
+ {
+  "in": {
+   "name": "xinput device",
+   "pid": 4607,
+   "vid": 10462
+  },
+  "out": "steam"
+ },
+ {
+  "in": {
+   "name": "MAYFLASH Arcade Fightstick F300",
+   "pid": 4607,
+   "vid": 10462
+  },
+  "out": "steam"
+ },
+ {
+  "in": {
+   "name": "Qanba Drone",
+   "pid": 4607,
+   "vid": 10462
+  },
+  "out": "steam"
+ },
+ {
+  "in": {
+   "name": "HORI Fighting Stick",
+   "pid": 4607,
+   "vid": 10462
+  },
+  "out": "steam"
+ },
+ {
+  "in": {
+   "name": "Street Fighter IV Arcade",
+   "pid": 4607,
+   "vid": 10462
+  },
+  "out": "steam"
+ },
+ {
+  "in": {
+   "name": "Generic Joystick",
+   "pid": 4607,
+   "vid": 10462
+  },
+  "out": "steam"
+ },
+ {
+  "in": {
+   "name": "Nintendo Co., Ltd. N64 Controller",
+   "pid": 4607,
+   "vid": 10462
+  },
+  "out": "steam"
+ },
+ {
+  "in": {
+   "name": "N64 Adapter",
+   "pid": 4607,
+   "vid": 10462
+  },
+  "out": "steam"
+ },
+ {
+  "in": {
+   "name": "Nintendo 64 pad",
+   "pid": 4607,
+   "vid": 10462
+  },
+  "out": "steam"
+ },
+ {
+  "in": {
+   "name": "retrolink n64 usb",
+   "pid": 4607,
+   "vid": 10462
+  },
+  "out": "steam"
+ },
+ {
+  "in": {
+   "name": "Mayflash GameCube Adapter",
+   "pid": 4607,
+   "vid": 10462
+  },
+  "out": "steam"
+ },
+ {
+  "in": {
+   "name": "Wii U GC adapter",
+   "pid": 4607,
+   "vid": 10462
+  },
+  "out": "steam"
+ },
+ {
+  "in": {
+   "name": "my gc pad",
+   "pid": 4607,
+   "vid": 10462
+  },
+  "out": "steam"
+ },
+ {
+  "in": {
+   "name": "SNES Controller",
+   "pid": 4607,
+   "vid": 10462
+  },
+  "out": "steam"
+ },
+ {
+  "in": {
+   "name": "Super Nintendo pad",
+   "pid": 4607,
+   "vid": 10462
+  },
+  "out": "steam"
+ },
+ {
+  "in": {
+   "name": "SFC gamepad",
+   "pid": 4607,
+   "vid": 10462
+  },
+  "out": "steam"
+ },
+ {
+  "in": {
+   "name": "Nintendo Switch Pro Controller",
+   "pid": 4607,
+   "vid": 10462
+  },
+  "out": "steam"
+ },
+ {
+  "in": {
+   "name": "Joy-Con (L)",
+   "pid": 4607,
+   "vid": 10462
+  },
+  "out": "steam"
+ },
+ {
+  "in": {
+   "name": "joycon right",
+   "pid": 4607,
+   "vid": 10462
+  },
+  "out": "steam"
+ },
+ {
+  "in": {
+   "name": "NSO controller",
+   "pid": 4607,
+   "vid": 10462
+  },
+  "out": "steam"
+ },
+ {
+  "in": {
+   "name": "Sega Genesis pad",
+   "pid": 4607,
+   "vid": 10462
+  },
+  "out": "steam"
+ },
+ {
+  "in": {
+   "name": "Mega Drive 6B",
+   "pid": 4607,
+   "vid": 10462
+  },
+  "out": "steam"
+ },
+ {
+  "in": {
+   "name": "8BitDo M30",
+   "pid": 4607,
+   "vid": 10462
+  },
+  "out": "steam"
+ },
+ {
+  "in": {
+   "name": "retro-bit saturn",
+   "pid": 4607,
+   "vid": 10462
+  },
+  "out": "steam"
+ },
+ {
+  "in": {
+   "name": "Sony DualShock 4",
+   "pid": 4607,
+   "vid": 10462
+  },
+  "out": "steam"
+ },
+ {
+  "in": {
+   "name": "DualSense Wireless Controller",
+   "pid": 4607,
+   "vid": 10462
+  },
+  "out": "steam"
+ },
+ {
+  "in": {
+   "name": "PlayStation 3 Controller",
+   "pid": 4607,
+   "vid": 10462
+  },
+  "out": "steam"
+ },
+ {
+  "in": {
+   "name": "PS5 pad",
+   "pid": 4607,
+   "vid": 10462
+  },
+  "out": "steam"
+ },
+ {
+  "in": {
+   "name": "Steam Controller",
+   "pid": 4607,
+   "vid": 10462
+  },
+  "out": "steam"
+ },
+ {
+  "in": {
+   "name": "Steam Deck",
+   "pid": 4607,
+   "vid": 10462
+  },
+  "out": "steam"
+ },
+ {
+  "in": {
+   "name": "Valve Software Steam Controller Puck",
+   "pid": 4607,
+   "vid": 10462
+  },
+  "out": "steam"
+ },
+ {
+  "in": {
+   "name": "Steampunk Arcade Fightstick",
+   "pid": 4607,
+   "vid": 10462
+  },
+  "out": "steam"
+ },
+ {
+  "in": {
+   "name": "Logitech G29 Driving Force",
+   "pid": 4607,
+   "vid": 10462
+  },
+  "out": "steam"
+ },
+ {
+  "in": {
+   "name": "racing wheel",
+   "pid": 4607,
+   "vid": 10462
+  },
+  "out": "steam"
+ },
+ {
+  "in": {
+   "name": "G27 Racing Wheel",
+   "pid": 4607,
+   "vid": 10462
+  },
+  "out": "steam"
+ },
+ {
+  "in": {
+   "name": "Nintendo Switch Online SNES Controller",
+   "pid": 4607,
+   "vid": 10462
+  },
+  "out": "steam"
+ },
+ {
+  "in": {
+   "name": "GameCube style Switch Pro Controller",
+   "pid": 4607,
+   "vid": 10462
+  },
+  "out": "steam"
+ },
+ {
+  "in": {
+   "name": "Valve xinput emulator",
+   "pid": 4607,
+   "vid": 10462
+  },
+  "out": "steam"
+ },
+ {
+  "in": {
+   "name": "N64 arcade stick",
+   "pid": 4607,
+   "vid": 10462
+  },
+  "out": "steam"
+ },
+ {
+  "in": {
+   "name": "",
+   "pid": 4868,
+   "vid": 10462
+  },
+  "out": "steam"
+ },
+ {
+  "in": {
+   "name": "Unknown Device",
+   "pid": 4868,
+   "vid": 10462
+  },
+  "out": "steam"
+ },
+ {
+  "in": {
+   "name": "USB Gamepad",
+   "pid": 4868,
+   "vid": 10462
+  },
+  "out": "steam"
+ },
+ {
+  "in": {
+   "name": "Microsoft X-Box 360 pad 0",
+   "pid": 4868,
+   "vid": 10462
+  },
+  "out": "xbox"
+ },
+ {
+  "in": {
+   "name": "Microsoft X-Box One pad",
+   "pid": 4868,
+   "vid": 10462
+  },
+  "out": "xbox"
+ },
+ {
+  "in": {
+   "name": "Xbox Wireless Controller",
+   "pid": 4868,
+   "vid": 10462
+  },
+  "out": "xbox"
+ },
+ {
+  "in": {
+   "name": "X Box pad",
+   "pid": 4868,
+   "vid": 10462
+  },
+  "out": "xbox"
+ },
+ {
+  "in": {
+   "name": "xinput device",
+   "pid": 4868,
+   "vid": 10462
+  },
+  "out": "xbox"
+ },
+ {
+  "in": {
+   "name": "MAYFLASH Arcade Fightstick F300",
+   "pid": 4868,
+   "vid": 10462
+  },
+  "out": "arcade"
+ },
+ {
+  "in": {
+   "name": "Qanba Drone",
+   "pid": 4868,
+   "vid": 10462
+  },
+  "out": "arcade"
+ },
+ {
+  "in": {
+   "name": "HORI Fighting Stick",
+   "pid": 4868,
+   "vid": 10462
+  },
+  "out": "arcade"
+ },
+ {
+  "in": {
+   "name": "Street Fighter IV Arcade",
+   "pid": 4868,
+   "vid": 10462
+  },
+  "out": "arcade"
+ },
+ {
+  "in": {
+   "name": "Generic Joystick",
+   "pid": 4868,
+   "vid": 10462
+  },
+  "out": "arcade"
+ },
+ {
+  "in": {
+   "name": "Nintendo Co., Ltd. N64 Controller",
+   "pid": 4868,
+   "vid": 10462
+  },
+  "out": "n64"
+ },
+ {
+  "in": {
+   "name": "N64 Adapter",
+   "pid": 4868,
+   "vid": 10462
+  },
+  "out": "n64"
+ },
+ {
+  "in": {
+   "name": "Nintendo 64 pad",
+   "pid": 4868,
+   "vid": 10462
+  },
+  "out": "n64"
+ },
+ {
+  "in": {
+   "name": "retrolink n64 usb",
+   "pid": 4868,
+   "vid": 10462
+  },
+  "out": "n64"
+ },
+ {
+  "in": {
+   "name": "Mayflash GameCube Adapter",
+   "pid": 4868,
+   "vid": 10462
+  },
+  "out": "gamecube"
+ },
+ {
+  "in": {
+   "name": "Wii U GC adapter",
+   "pid": 4868,
+   "vid": 10462
+  },
+  "out": "gamecube"
+ },
+ {
+  "in": {
+   "name": "my gc pad",
+   "pid": 4868,
+   "vid": 10462
+  },
+  "out": "gamecube"
+ },
+ {
+  "in": {
+   "name": "SNES Controller",
+   "pid": 4868,
+   "vid": 10462
+  },
+  "out": "snes"
+ },
+ {
+  "in": {
+   "name": "Super Nintendo pad",
+   "pid": 4868,
+   "vid": 10462
+  },
+  "out": "snes"
+ },
+ {
+  "in": {
+   "name": "SFC gamepad",
+   "pid": 4868,
+   "vid": 10462
+  },
+  "out": "snes"
+ },
+ {
+  "in": {
+   "name": "Nintendo Switch Pro Controller",
+   "pid": 4868,
+   "vid": 10462
+  },
+  "out": "switch"
+ },
+ {
+  "in": {
+   "name": "Joy-Con (L)",
+   "pid": 4868,
+   "vid": 10462
+  },
+  "out": "switch"
+ },
+ {
+  "in": {
+   "name": "joycon right",
+   "pid": 4868,
+   "vid": 10462
+  },
+  "out": "switch"
+ },
+ {
+  "in": {
+   "name": "NSO controller",
+   "pid": 4868,
+   "vid": 10462
+  },
+  "out": "switch"
+ },
+ {
+  "in": {
+   "name": "Sega Genesis pad",
+   "pid": 4868,
+   "vid": 10462
+  },
+  "out": "genesis"
+ },
+ {
+  "in": {
+   "name": "Mega Drive 6B",
+   "pid": 4868,
+   "vid": 10462
+  },
+  "out": "genesis"
+ },
+ {
+  "in": {
+   "name": "8BitDo M30",
+   "pid": 4868,
+   "vid": 10462
+  },
+  "out": "genesis"
+ },
+ {
+  "in": {
+   "name": "retro-bit saturn",
+   "pid": 4868,
+   "vid": 10462
+  },
+  "out": "genesis"
+ },
+ {
+  "in": {
+   "name": "Sony DualShock 4",
+   "pid": 4868,
+   "vid": 10462
+  },
+  "out": "playstation"
+ },
+ {
+  "in": {
+   "name": "DualSense Wireless Controller",
+   "pid": 4868,
+   "vid": 10462
+  },
+  "out": "playstation"
+ },
+ {
+  "in": {
+   "name": "PlayStation 3 Controller",
+   "pid": 4868,
+   "vid": 10462
+  },
+  "out": "playstation"
+ },
+ {
+  "in": {
+   "name": "PS5 pad",
+   "pid": 4868,
+   "vid": 10462
+  },
+  "out": "playstation"
+ },
+ {
+  "in": {
+   "name": "Steam Controller",
+   "pid": 4868,
+   "vid": 10462
+  },
+  "out": "steam"
+ },
+ {
+  "in": {
+   "name": "Steam Deck",
+   "pid": 4868,
+   "vid": 10462
+  },
+  "out": "steam"
+ },
+ {
+  "in": {
+   "name": "Valve Software Steam Controller Puck",
+   "pid": 4868,
+   "vid": 10462
+  },
+  "out": "steam"
+ },
+ {
+  "in": {
+   "name": "Steampunk Arcade Fightstick",
+   "pid": 4868,
+   "vid": 10462
+  },
+  "out": "arcade"
+ },
+ {
+  "in": {
+   "name": "Logitech G29 Driving Force",
+   "pid": 4868,
+   "vid": 10462
+  },
+  "out": "wheel"
+ },
+ {
+  "in": {
+   "name": "racing wheel",
+   "pid": 4868,
+   "vid": 10462
+  },
+  "out": "wheel"
+ },
+ {
+  "in": {
+   "name": "G27 Racing Wheel",
+   "pid": 4868,
+   "vid": 10462
+  },
+  "out": "wheel"
+ },
+ {
+  "in": {
+   "name": "Nintendo Switch Online SNES Controller",
+   "pid": 4868,
+   "vid": 10462
+  },
+  "out": "snes"
+ },
+ {
+  "in": {
+   "name": "GameCube style Switch Pro Controller",
+   "pid": 4868,
+   "vid": 10462
+  },
+  "out": "gamecube"
+ },
+ {
+  "in": {
+   "name": "Valve xinput emulator",
+   "pid": 4868,
+   "vid": 10462
+  },
+  "out": "steam"
+ },
+ {
+  "in": {
+   "name": "N64 arcade stick",
+   "pid": 4868,
+   "vid": 10462
+  },
+  "out": "arcade"
+ }
+]

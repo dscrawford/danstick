@@ -17,11 +17,14 @@ pub mod calibration;
 pub mod capture;
 pub mod control;
 pub mod fields;
+pub mod hide;
+pub mod icons;
 pub mod layout;
 pub mod profile;
 pub mod retroarch;
 pub mod scope;
 pub mod sdl;
+pub mod wire;
 
 pub use binding::{Binding, BindingKind};
 pub use calibration::AxisCalibration;

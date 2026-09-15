@@ -603,3 +603,92 @@ fn a_stored_profile_reads_back_and_writes_out_the_way_the_python_did() {
         );
     }
 }
+
+#[test]
+fn every_controller_name_gets_the_same_icon_as_the_python() {
+    // An ordered list of regexes, where the order is the rule. A wrong icon
+    // looks like a design choice rather than a defect, so nobody reports it.
+    use padmap_core::icons;
+    let cases = corpus("icons");
+    assert!(cases.len() > 200, "the sweep is meant to be broad");
+    for case in &cases {
+        let input = &case["in"];
+        let got = icons::for_pad(
+            input["vid"].as_u64().expect("vid") as u16,
+            input["pid"].as_u64().expect("pid") as u16,
+            input["name"].as_str().expect("name"),
+            None,
+            &BTreeMap::new(),
+        );
+        assert_eq!(got, case["out"].as_str().expect("an icon"), "for {input}");
+    }
+}
+
+#[test]
+fn the_udev_rules_match_the_python_rule_for_rule() {
+    // The *rules*, not the file. udev ignores comments and blank lines, and
+    // the two implementations differ in both deliberately: the Python header
+    // names RetroArch, which is no longer the only consumer, and it emits a
+    // blank line after the header that this does not. What udev actually acts
+    // on has to be identical, and a stray space or a lowercase hex digit where
+    // the kernel writes uppercase makes a rule that matches nothing at all --
+    // legally, and with no error anywhere.
+    use padmap_core::hide::{self, Hideable};
+
+    fn effective(rules: &str) -> Vec<&str> {
+        rules
+            .lines()
+            .map(str::trim_end)
+            .filter(|line| !line.is_empty() && !line.starts_with('#'))
+            .collect()
+    }
+
+    for case in corpus("hide_rules") {
+        let pads: Vec<Hideable> = case["in"]
+            .as_array()
+            .expect("pads")
+            .iter()
+            .map(|raw| Hideable {
+                name: raw["name"].as_str().expect("name").to_owned(),
+                vid: raw["vid"].as_u64().expect("vid") as u16,
+                pid: raw["pid"].as_u64().expect("pid") as u16,
+            })
+            .collect();
+        let out = &case["out"];
+
+        let mine = hide::generate_rules(&pads);
+        let theirs = out["rules"].as_str().expect("rules");
+        assert_eq!(
+            effective(&mine),
+            effective(theirs),
+            "rules for {:?}",
+            case["in"]
+        );
+        // And what each file says it covers has to agree, which is the part
+        // `unhidden` reads back.
+        assert_eq!(hide::covered(&mine), hide::covered(theirs), "coverage");
+
+        assert_eq!(
+            hide::nix_module_snippet(&pads),
+            out["nix"].as_str().expect("nix"),
+            "nix snippet for {:?}",
+            case["in"]
+        );
+        let wanted: Vec<(u16, u16)> = out["targets"]
+            .as_array()
+            .expect("targets")
+            .iter()
+            .map(|raw| {
+                (
+                    raw["vid"].as_u64().expect("vid") as u16,
+                    raw["pid"].as_u64().expect("pid") as u16,
+                )
+            })
+            .collect();
+        let got: Vec<(u16, u16)> = hide::targets(&pads, &[])
+            .iter()
+            .map(|p| (p.vid, p.pid))
+            .collect();
+        assert_eq!(got, wanted, "targets for {:?}", case["in"]);
+    }
+}
