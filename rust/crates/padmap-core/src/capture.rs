@@ -127,7 +127,13 @@ pub fn deflection(span: AxisSpan, value: i32) -> f64 {
     if span.maximum <= span.minimum {
         return 0.0;
     }
-    f64::from(value - span.rest) / (f64::from(span.maximum - span.minimum) / 2.0)
+    // Widened before subtracting. A driver reporting an absinfo near the ends
+    // of i32 -- which is nonsense, and which padmap has already met once in the
+    // shape of a profile declaring a range of 2^40 -- would otherwise overflow
+    // here, on the path a wizard runs per event.
+    let travel = i64::from(value) - i64::from(span.rest);
+    let span = i64::from(span.maximum) - i64::from(span.minimum);
+    travel as f64 / (span as f64 / 2.0)
 }
 
 /// A raw input already spoken for, in the terms a log reader has to match it
@@ -861,7 +867,7 @@ pub fn scope_options(
     }
     let mut seen: BTreeSet<&str> = BTreeSet::new();
     for (game_console, key, title) in recent {
-        if key.is_empty() || !seen.insert(key.as_str()) {
+        if key.is_empty() {
             continue;
         }
         // Same rule as game_scope_options: padmap records every launch,
@@ -873,6 +879,14 @@ pub fn scope_options(
         // another. That is precisely how a mapping ended up with cancel on an
         // axis.
         if game_console.is_empty() {
+            continue;
+        }
+        // Marked seen only once the entry is actually offered. The same ROM
+        // appears in the recent list both with and without a console -- the
+        // launcher records every launch, including one whose core it cannot
+        // name -- and burning the key on the console-less sighting drops the
+        // usable one behind it.
+        if !seen.insert(key.as_str()) {
             continue;
         }
         let scope = crate::scope::game(key);

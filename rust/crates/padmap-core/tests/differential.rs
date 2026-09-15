@@ -25,7 +25,9 @@ use padmap_core::{layout, retroarch, scope, sdl};
 use serde_json::Value;
 
 fn corpus(name: &str) -> Vec<Value> {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/corpus").join(format!("{name}.json"));
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/corpus")
+        .join(format!("{name}.json"));
     let text = std::fs::read_to_string(&path)
         .unwrap_or_else(|error| panic!("{}: {error} -- run tools/gen_corpus.py", path.display()));
     serde_json::from_str(&text).unwrap_or_else(|error| panic!("{}: {error}", path.display()))
@@ -40,7 +42,10 @@ fn bindings_from(raw: &Value) -> BTreeMap<Control, Binding> {
         .expect("a recorded capture is an object")
         .iter()
         .map(|(name, value)| {
-            (name.parse::<Control>().expect("a recorded control name"), binding_from(value))
+            (
+                name.parse::<Control>().expect("a recorded control name"),
+                binding_from(value),
+            )
         })
         .collect()
 }
@@ -58,11 +63,18 @@ fn expect_fallible(recorded: &Value, actual: Result<String, impl std::fmt::Displ
     let ok = recorded["ok"].as_bool().expect("ok is a bool");
     match (ok, actual) {
         (true, Ok(value)) => {
-            assert_eq!(value, recorded["value"].as_str().expect("a value"), "{what}");
+            assert_eq!(
+                value,
+                recorded["value"].as_str().expect("a value"),
+                "{what}"
+            );
         }
         (false, Err(_)) => {}
         (true, Err(error)) => {
-            panic!("{what}: the Python answered {:?}, this refused ({error})", recorded["value"])
+            panic!(
+                "{what}: the Python answered {:?}, this refused ({error})",
+                recorded["value"]
+            )
         }
         (false, Ok(value)) => panic!(
             "{what}: the Python refused ({}), this answered {value:?}",
@@ -79,14 +91,22 @@ fn bindings_spell_the_same_thing_to_both_consumers() {
         let binding = binding_from(&case["in"]);
         let out = &case["out"];
         let what = format!("{binding:?}");
-        assert_eq!(binding.sdl_visible(), out["sdl_visible"], "sdl_visible for {what}");
+        assert_eq!(
+            binding.sdl_visible(),
+            out["sdl_visible"],
+            "sdl_visible for {what}"
+        );
         assert_eq!(
             binding.retroarch_visible(),
             out["retroarch_visible"],
             "retroarch_visible for {what}"
         );
         expect_fallible(&out["sdl"], binding.sdl(), &format!("sdl() for {what}"));
-        expect_fallible(&out["retroarch"], binding.retroarch(), &format!("retroarch() for {what}"));
+        expect_fallible(
+            &out["retroarch"],
+            binding.retroarch(),
+            &format!("retroarch() for {what}"),
+        );
     }
 }
 
@@ -97,7 +117,11 @@ fn both_consumers_number_buttons_the_way_the_python_did() {
         let code = case["in"]["code"].as_u64().expect("a code") as u16;
         let expected_sdl = case["out"]["sdl"].as_i64().map(|value| value as i32);
         let expected_ra = case["out"]["retroarch"].as_i64().map(|value| value as i32);
-        assert_eq!(sdl_button_index(&keys, code), expected_sdl, "sdl {code:#x} in {keys:x?}");
+        assert_eq!(
+            sdl_button_index(&keys, code),
+            expected_sdl,
+            "sdl {code:#x} in {keys:x?}"
+        );
         assert_eq!(
             retroarch_button_index(&keys, code),
             expected_ra,
@@ -112,7 +136,11 @@ fn axes_are_numbered_the_way_the_python_did() {
         let codes = u16s(&case["in"]["codes"]);
         let code = case["in"]["code"].as_u64().expect("a code") as u16;
         let expected = case["out"].as_i64().map(|value| value as i32);
-        assert_eq!(axis_index(&codes, code), expected, "{code:#x} in {codes:x?}");
+        assert_eq!(
+            axis_index(&codes, code),
+            expected,
+            "{code:#x} in {codes:x?}"
+        );
     }
 }
 
@@ -131,7 +159,11 @@ fn every_recorded_guid_is_reproduced_exactly() {
             input["version"].as_u64().expect("version") as u16,
             input["name"].as_str().expect("name"),
         );
-        assert_eq!(computed, case["out"].as_str().expect("a guid"), "for {input}");
+        assert_eq!(
+            computed,
+            case["out"].as_str().expect("a guid"),
+            "for {input}"
+        );
     }
 }
 
@@ -151,7 +183,12 @@ fn a_hostile_device_name_is_cleaned_the_same_way() {
             &fields,
             input["platform"].as_str().expect("platform"),
         );
-        assert_eq!(built, case["out"].as_str().expect("a line"), "for {:?}", input["name"]);
+        assert_eq!(
+            built,
+            case["out"].as_str().expect("a line"),
+            "for {:?}",
+            input["name"]
+        );
     }
 }
 
@@ -199,7 +236,10 @@ fn a_database_line_is_parsed_the_same_way() {
                         )
                     })
                     .collect();
-                assert_eq!(actual, wanted, "{raw:?} -- field order is part of the answer");
+                assert_eq!(
+                    actual, wanted,
+                    "{raw:?} -- field order is part of the answer"
+                );
             }
             (parsed, expected) => {
                 panic!("{raw:?}: the Python said {expected:?}, this said {parsed:?}")
@@ -290,7 +330,11 @@ fn the_shadowed_axis_rule_drops_the_same_lines() {
             .iter()
             .map(|line| line.as_str().expect("a line").to_owned())
             .collect();
-        assert_eq!(retroarch::drop_shadowed_axis_halves(input.clone()), wanted, "for {input:?}");
+        assert_eq!(
+            retroarch::drop_shadowed_axis_halves(input.clone()),
+            wanted,
+            "for {input:?}"
+        );
     }
 }
 
@@ -312,10 +356,22 @@ fn every_recorded_axis_reading_rescales_to_the_same_count() {
             reach_max: input["reach_max"].as_i64().map(|value| value as i32),
         };
         let out = &case["out"];
-        assert_eq!(cal.low(), out["low"].as_i64().expect("low"), "low for {input}");
-        assert_eq!(cal.high(), out["high"].as_i64().expect("high"), "high for {input}");
+        assert_eq!(
+            cal.low(),
+            out["low"].as_i64().expect("low"),
+            "low for {input}"
+        );
+        assert_eq!(
+            cal.high(),
+            out["high"].as_i64().expect("high"),
+            "high for {input}"
+        );
         assert_eq!(cal.fits(), out["fits_evdev"], "fits for {input}");
-        assert_eq!(cal.midpoint(), out["midpoint"].as_i64().expect("midpoint"), "mid for {input}");
+        assert_eq!(
+            cal.midpoint(),
+            out["midpoint"].as_i64().expect("midpoint"),
+            "mid for {input}"
+        );
         for pair in out["applied"].as_array().expect("readings") {
             let value = pair[0].as_i64().expect("a reading") as i32;
             let wanted = pair[1].as_i64().expect("a result") as i32;
@@ -362,7 +418,11 @@ fn every_core_resolves_to_the_same_console() {
     assert!(cases.len() > 50);
     for case in &cases {
         let core = case["in"].as_str().expect("a core");
-        assert_eq!(layout::for_core(core), case["out"].as_str().expect("a layout id"), "{core:?}");
+        assert_eq!(
+            layout::for_core(core),
+            case["out"].as_str().expect("a layout id"),
+            "{core:?}"
+        );
     }
 }
 
@@ -376,13 +436,25 @@ fn every_layout_carries_the_same_coordinates_labels_and_overrides() {
         let wanted = &case["out"];
         let layout = layout::get(id);
         assert_eq!(layout.id, wanted["id"].as_str().expect("id"), "{id}: id");
-        assert_eq!(layout.label, wanted["label"].as_str().expect("label"), "{id}: label");
-        assert_eq!(layout.image, wanted["image"].as_str().expect("image"), "{id}: image");
+        assert_eq!(
+            layout.label,
+            wanted["label"].as_str().expect("label"),
+            "{id}: label"
+        );
+        assert_eq!(
+            layout.image,
+            wanted["image"].as_str().expect("image"),
+            "{id}: image"
+        );
 
         let shapes = wanted["shapes"].as_array().expect("shapes");
         assert_eq!(layout.shapes.len(), shapes.len(), "{id}: shape count");
         for (shape, wanted) in layout.shapes.iter().zip(shapes) {
-            assert_eq!(shape.kind, wanted["kind"].as_str().expect("kind"), "{id}: shape kind");
+            assert_eq!(
+                shape.kind,
+                wanted["kind"].as_str().expect("kind"),
+                "{id}: shape kind"
+            );
             let points: Vec<f64> = wanted["points"]
                 .as_array()
                 .expect("points")
@@ -390,19 +462,47 @@ fn every_layout_carries_the_same_coordinates_labels_and_overrides() {
                 .map(|value| value.as_f64().expect("a coordinate"))
                 .collect();
             assert_eq!(shape.points, points, "{id}: shape points");
-            assert_eq!(shape.radius, wanted["radius"].as_f64().expect("radius"), "{id}: radius");
+            assert_eq!(
+                shape.radius,
+                wanted["radius"].as_f64().expect("radius"),
+                "{id}: radius"
+            );
         }
 
         let controls = wanted["controls"].as_array().expect("controls");
         assert_eq!(layout.controls.len(), controls.len(), "{id}: control count");
         for (control, wanted) in layout.controls.iter().zip(controls) {
             let name = wanted["canonical"].as_str().expect("canonical");
-            assert_eq!(control.canonical.as_str(), name, "{id}: canonical, in order");
-            assert_eq!(control.label, wanted["label"].as_str().expect("label"), "{id}/{name}");
-            assert_eq!(control.x, wanted["x"].as_f64().expect("x"), "{id}/{name}: x");
-            assert_eq!(control.y, wanted["y"].as_f64().expect("y"), "{id}/{name}: y");
-            assert_eq!(control.kind, wanted["kind"].as_str().expect("kind"), "{id}/{name}: kind");
-            assert_eq!(control.radius, wanted["radius"].as_f64().expect("radius"), "{id}/{name}");
+            assert_eq!(
+                control.canonical.as_str(),
+                name,
+                "{id}: canonical, in order"
+            );
+            assert_eq!(
+                control.label,
+                wanted["label"].as_str().expect("label"),
+                "{id}/{name}"
+            );
+            assert_eq!(
+                control.x,
+                wanted["x"].as_f64().expect("x"),
+                "{id}/{name}: x"
+            );
+            assert_eq!(
+                control.y,
+                wanted["y"].as_f64().expect("y"),
+                "{id}/{name}: y"
+            );
+            assert_eq!(
+                control.kind,
+                wanted["kind"].as_str().expect("kind"),
+                "{id}/{name}: kind"
+            );
+            assert_eq!(
+                control.radius,
+                wanted["radius"].as_f64().expect("radius"),
+                "{id}/{name}"
+            );
             assert_eq!(
                 control.retroarch,
                 wanted["retroarch"].as_str().expect("retroarch"),
@@ -420,7 +520,9 @@ fn the_corpus_covers_every_layout_the_port_ships() {
         .iter()
         .map(|case| case["in"].as_str().expect("an id").to_owned())
         .collect();
-    let shipped: BTreeSet<String> =
-        layout::all().iter().map(|layout| layout.id.clone()).collect();
+    let shipped: BTreeSet<String> = layout::all()
+        .iter()
+        .map(|layout| layout.id.clone())
+        .collect();
     assert_eq!(recorded, shipped, "run tools/gen_corpus.py");
 }

@@ -205,8 +205,14 @@ mod tests {
     fn a_directory_shaped_rom_keys_off_its_directory_name() {
         // Caught by the differential corpus: `Path(...).name` strips trailing
         // separators and a bare `rsplit('/')` does not.
-        assert_eq!(game_key("ps2", "/roms/ps2/Final Fantasy X/"), "ps2/final-fantasy-x");
-        assert_eq!(game_key("ps2", "/roms/ps2/Final Fantasy X"), "ps2/final-fantasy-x");
+        assert_eq!(
+            game_key("ps2", "/roms/ps2/Final Fantasy X/"),
+            "ps2/final-fantasy-x"
+        );
+        assert_eq!(
+            game_key("ps2", "/roms/ps2/Final Fantasy X"),
+            "ps2/final-fantasy-x"
+        );
         assert_eq!(game_key("n64", "/"), "");
         assert_eq!(game_key("n64", "///"), "");
     }

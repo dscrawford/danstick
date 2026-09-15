@@ -258,7 +258,11 @@ pub fn for_core(core: &str) -> &'static str {
     if core.is_empty() {
         return "";
     }
-    let mut name = core.rsplit('/').next().unwrap_or(core);
+    // Trailing separators first, as `pathlib.Path(...).name` does and as
+    // scope::game_key already did. The two read a path the same way or they
+    // disagree about which console a launch is, which is a mapping resolved
+    // against the wrong control set.
+    let mut name = core.trim_end_matches('/').rsplit('/').next().unwrap_or("");
     // Strip the platform's library suffix, however it is spelled, then the
     // libretro marker: `mupen64plus_next_libretro.so` -> `mupen64plus_next`.
     for suffix in [".so", ".dll", ".dylib"] {
@@ -409,6 +413,15 @@ mod tests {
         ] {
             assert_eq!(for_core(core), "n64", "{core} did not resolve");
         }
+    }
+
+    #[test]
+    fn a_trailing_separator_does_not_lose_the_core_name() {
+        // scope::game_key trims one and this did not, so the two disagreed
+        // about which console a launch was.
+        assert_eq!(for_core("mame/"), "arcade");
+        assert_eq!(for_core("/usr/lib/libretro/mame/"), "arcade");
+        assert_eq!(for_core("/"), "");
     }
 
     #[test]

@@ -146,7 +146,16 @@ impl AxisCalibration {
             mid as f64 + scaled * (i64::from(self.maximum) - mid) as f64
         };
 
-        let clamped = out.clamp(f64::from(self.minimum), f64::from(self.maximum));
+        // `f64::clamp` panics when min > max, and this runs per controller
+        // event: a profile whose declared range is inverted -- hand-edited, or
+        // an absinfo read off a lying adapter -- would unwind out of the
+        // forwarding path and take every player's controller with it. The
+        // Python wrote the same clamp as `max(minimum, min(maximum, out))`,
+        // which quietly answers `minimum` and keeps the daemon running. Do
+        // that, in that order.
+        let clamped = out
+            .min(f64::from(self.maximum))
+            .max(f64::from(self.minimum));
         // Ties to even, which is what Python's `round` does. The difference is
         // one count on an axis, but a Rust port that disagrees with the Python
         // on a recorded capture is indistinguishable from one that is wrong.
