@@ -26,7 +26,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import devices, hide, retroarch, safeio, virtual
+from . import devices, hide, icons, retroarch, safeio, virtual
 from .assign import HOLD_SECONDS, Assigner, Assignment
 
 STATE_DIR = Path(
@@ -70,6 +70,24 @@ def cmd_list(_args: argparse.Namespace) -> int:
         print(f"\n{hidden} pad(s) marked -- are hidden from RetroArch by udev")
         print("rules (ID_INPUT_JOYSTICK cleared). padmap can still republish")
         print("them; RetroArch sees only the virtual pads.")
+
+    # Steam, if it is running, takes a controller over hidraw and publishes a
+    # uinput pad called "Microsoft X-Box 360 pad" in its place. That pad works
+    # -- padmap can republish it like any other -- but it is the only thing on
+    # the machine that looks like a joypad, and a user who plugged in a Steam
+    # Controller and is told they have an Xbox 360 pad has no way to tell a
+    # misdetection from an emulation. Say which it is.
+    steam_pads = [
+        pad for pad in pads
+        if (pad.vid, pad.pid) == icons.STEAM_VIRTUAL_ID
+    ]
+    if steam_pads:
+        print(f"\n{len(steam_pads)} pad(s) above are Steam's virtual gamepad, not a")
+        print("controller. Steam holds the real one over /dev/hidraw* and emulates")
+        print("an Xbox 360 pad for anything else to read -- which is why the name")
+        print("says Xbox. Mapping it maps whatever Steam is forwarding.")
+        print("To hand padmap the controller itself, close Steam or turn off Steam")
+        print("Input for it; padmap has no driver for Valve's own HID protocol.")
 
     groups = devices.ambiguous_groups(pads)
     if groups:

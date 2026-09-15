@@ -35,12 +35,13 @@ SWITCH = "switch"
 GENESIS = "genesis"
 PLAYSTATION = "playstation"
 XBOX = "xbox"
+STEAM = "steam"
 WHEEL = "wheel"
 GAMEPAD = "gamepad"  # the fallback
 
 ICON_NAMES = (
-    ARCADE, N64, GAMECUBE, SNES, SWITCH, GENESIS, PLAYSTATION, XBOX, WHEEL,
-    GAMEPAD,
+    ARCADE, N64, GAMECUBE, SNES, SWITCH, GENESIS, PLAYSTATION, XBOX, STEAM,
+    WHEEL, GAMEPAD,
 )
 
 # Fallback only, for a pad that has not been configured yet -- a learned
@@ -64,7 +65,23 @@ _BY_ID: dict[tuple[int, int], str] = {
     # pad would be asked to press an X and a Y it does not have.
     (0x057E, 0x2017): SNES,       # SNES pad for Switch Online
     (0x057E, 0x2019): N64,        # N64 pad for Switch Online
+    # Observed on the machine this was written on, both under Valve's 0x28DE.
+    # Everything else Valve makes is matched by name instead -- see _BY_NAME --
+    # rather than by ids quoted from memory.
+    (0x28DE, 0x1304): STEAM,      # Steam Controller Puck (the wireless dongle)
 }
+
+# Steam's virtual gamepad, which is the one device whose *name* must not be
+# believed.
+#
+# With Steam running, it takes the controller over hidraw and presents this in
+# its place: a uinput pad on Valve's vendor id, called "Microsoft X-Box 360
+# pad". The name is a deliberate impersonation -- it is what makes games treat
+# it as XInput -- so the rule below that a name beats a vendor id is exactly
+# backwards here, and this is checked before the name table rather than after
+# it. A user seeing "Xbox 360" for a Steam Controller is seeing Steam's
+# emulation, not a misdetection.
+STEAM_VIRTUAL_ID = (0x28DE, 0x11FF)
 
 # Ordered: first match wins. Case-insensitive.
 _BY_NAME: tuple[tuple[str, str], ...] = (
@@ -79,7 +96,12 @@ _BY_NAME: tuple[tuple[str, str], ...] = (
     (r"pro controller|switch pro|joy-?con|\bnso\b", SWITCH),
     (r"genesis|mega ?drive|\bm30\b|retro-?bit|saturn", GENESIS),
     (r"dualshock|dualsense|playstation|\bps[3-5]\b", PLAYSTATION),
-    (r"xbox|xinput", XBOX),
+    (r"steam ?(controller|deck|puck)|\bvalve\b", STEAM),
+    # "x-box", with the hyphen, because that is what the kernel's own xpad
+    # driver calls every 360 pad: "Microsoft X-Box 360 pad". Matching only
+    # "xbox" meant the most common controller on Linux fell through to the
+    # generic icon, which is what it had been doing.
+    (r"x-? ?box|xinput", XBOX),
     (r"wheel|racing|g29|g27|driving", WHEEL),
 )
 
@@ -136,6 +158,11 @@ def for_pad(pad: Pad, overrides: dict[str, str] | None = None) -> str:
     key = f"{pad.vid:04x}:{pad.pid:04x}"
     if key in overrides:
         return overrides[key]
+
+    # Before the name, because this is the one name that is somebody else's.
+    # See STEAM_VIRTUAL_ID.
+    if (pad.vid, pad.pid) == STEAM_VIRTUAL_ID:
+        return STEAM
 
     # Name patterns come before the built-in ID table: a device that says
     # "Fightstick" in its name is better evidence than a resold vendor ID.

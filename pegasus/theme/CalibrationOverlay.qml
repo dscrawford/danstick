@@ -22,9 +22,14 @@ FocusScope {
 
     signal finished()
 
+    // Every icon padmap knows, in picking order. Must match icons.ICON_NAMES;
+    // tools/check_icons.py fails if it does not. It had already fallen behind
+    // by two -- "switch" and "genesis" existed, shipped an SVG each, and could
+    // not be chosen here -- which is the failure mode a second copy of a list
+    // always has.
     readonly property var iconChoices: [
-        "gamepad", "arcade", "n64", "gamecube",
-        "snes", "playstation", "xbox", "wheel",
+        "gamepad", "arcade", "n64", "gamecube", "snes",
+        "playstation", "xbox", "steam", "switch", "genesis", "wheel",
     ]
     property int iconIndex: 0
 
