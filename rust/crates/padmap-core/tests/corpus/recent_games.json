@@ -1,0 +1,177 @@
+[
+ {
+  "file": null,
+  "last": {},
+  "recent": []
+ },
+ {
+  "file": "",
+  "last": {},
+  "recent": []
+ },
+ {
+  "file": "not json at all",
+  "last": {},
+  "recent": []
+ },
+ {
+  "file": "[]",
+  "last": {},
+  "recent": []
+ },
+ {
+  "file": "{}",
+  "last": {},
+  "recent": []
+ },
+ {
+  "file": "{\"games\": []}",
+  "last": {},
+  "recent": []
+ },
+ {
+  "file": "{\"key\": \"a\", \"console\": \"n64\", \"title\": \"T\"}",
+  "last": {
+   "console": "n64",
+   "key": "a",
+   "title": "T"
+  },
+  "recent": [
+   {
+    "console": "n64",
+    "key": "a",
+    "title": "T"
+   }
+  ]
+ },
+ {
+  "file": "{\"key\": \"a\"}",
+  "last": {
+   "console": "",
+   "key": "a",
+   "title": ""
+  },
+  "recent": [
+   {
+    "console": "",
+    "key": "a",
+    "title": ""
+   }
+  ]
+ },
+ {
+  "file": "{\"console\": \"n64\", \"title\": \"T\"}",
+  "last": {},
+  "recent": []
+ },
+ {
+  "file": "{\"games\": [{\"key\": \"a\", \"console\": \"n64\", \"title\": \"A\"}]}",
+  "last": {
+   "console": "n64",
+   "key": "a",
+   "title": "A"
+  },
+  "recent": [
+   {
+    "console": "n64",
+    "key": "a",
+    "title": "A"
+   }
+  ]
+ },
+ {
+  "file": "{\"games\": [{\"key\": \"a\"}, {\"key\": \"b\"}, {\"key\": \"c\"}, {\"key\": \"d\"}, {\"key\": \"e\"}, {\"key\": \"f\"}, {\"key\": \"g\"}]}",
+  "last": {
+   "console": "",
+   "key": "a",
+   "title": ""
+  },
+  "recent": [
+   {
+    "console": "",
+    "key": "a",
+    "title": ""
+   },
+   {
+    "console": "",
+    "key": "b",
+    "title": ""
+   },
+   {
+    "console": "",
+    "key": "c",
+    "title": ""
+   },
+   {
+    "console": "",
+    "key": "d",
+    "title": ""
+   },
+   {
+    "console": "",
+    "key": "e",
+    "title": ""
+   }
+  ]
+ },
+ {
+  "file": "{\"games\": [{\"key\": \"\"}, {\"key\": \"b\"}]}",
+  "last": {
+   "console": "",
+   "key": "b",
+   "title": ""
+  },
+  "recent": [
+   {
+    "console": "",
+    "key": "b",
+    "title": ""
+   }
+  ]
+ },
+ {
+  "file": "{\"games\": [null, 3, \"x\", {\"key\": \"b\"}]}",
+  "last": {
+   "console": "",
+   "key": "b",
+   "title": ""
+  },
+  "recent": [
+   {
+    "console": "",
+    "key": "b",
+    "title": ""
+   }
+  ]
+ },
+ {
+  "file": "{\"games\": {\"key\": \"a\"}}",
+  "last": {},
+  "recent": []
+ },
+ {
+  "file": "{\"games\": [{\"key\": \"a\", \"console\": 7, \"title\": null}]}",
+  "last": {
+   "console": "",
+   "key": "a",
+   "title": ""
+  },
+  "recent": [
+   {
+    "console": "",
+    "key": "a",
+    "title": ""
+   }
+  ]
+ },
+ {
+  "file": "\"a string\"",
+  "last": {},
+  "recent": []
+ },
+ {
+  "file": "42",
+  "last": {},
+  "recent": []
+ }
+]

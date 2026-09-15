@@ -31,9 +31,31 @@ So, per module, in this order:
 4. **Decide the disagreements.** A failure is not automatically a Rust bug. It
    is a divergence, and the question is which side is right. Where the Python
    was wrong, move the case to an explicit test that says so.
-5. **Delete the Python module and its test suites in the same commit.** Not
-   before — a suite retired ahead of its module is how a port loses the only
-   thing that would have caught a divergence.
+5. **Delete the Python, when it has no callers left.** See below: that is
+   later than this list makes it sound.
+
+### Porting goes bottom-up; deleting goes top-down
+
+The first version of this plan said "delete the Python module and its suites
+in the same commit that replaces it", and phase 1 proved that impossible on
+the first try. `protocol.py` has no *outgoing* dependencies, which is what
+makes it a leaf and a good place to start — but it has ten *incoming* ones,
+and every one of them is still Python. A leaf by import order is the last
+thing that can be removed, not the first.
+
+So the two directions are opposite, and both are right:
+
+* **Port** bottom-up, because a module cannot be written before what it
+  depends on.
+* **Delete** top-down, because a module cannot be removed before what depends
+  on *it*.
+
+Which means Python shrinks late, and mostly at once, when `cli` and `server`
+flip. That is worth knowing in advance rather than discovering at phase 5: the
+intermediate state is both implementations installed, which is exactly the
+state the differential corpus exists to police. The rule that survives is the
+narrower one — **a test suite is deleted in the same commit as the module it
+tests, never before.**
 
 ### What a corpus cannot record
 
@@ -69,11 +91,19 @@ depends on.
 
 | module | lines | note |
 |---|---:|---|
-| `safeio` | 47 | trivial; `std::fs` plus a lossy decode |
+| `safeio` | 47 | **nothing to port** — see below |
 | `protocol` | 455 | the wire format. Corpus: `encode`, `LineReader.feed` |
 | `mapping` | 578 | `sdl_guid`, `stick_fields`, `rests_centred` — mostly corpused already |
 | `layouts` | 621 | already loaded by `padmap-core/src/layout.rs`; finish and delete |
 | `titles` | 250 | a regex pass over 43MB of XML; a build-time product |
+
+`safeio` is the odd one. All 47 lines exist because Python's
+`Path.read_text()` raises `UnicodeDecodeError` on a bad byte — a `ValueError`,
+which `except OSError` misses — and that hole was found in six separate
+places. Rust has no such trap: `String::from_utf8_lossy(&fs::read(path)?)` is
+the whole of it, and it is already what `triton.rs` and `lizard.rs` do. There
+is no `safeio.rs` to write. The module dies with its last Python caller and
+contributes no Rust.
 
 **Phase 2 — devices** (404 lines). The root of everything else. Rust
 `pad::discover` already does most of it; the gap is `_ask_udev_about`'s

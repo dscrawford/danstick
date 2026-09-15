@@ -21,6 +21,7 @@ line moving here is a behaviour change, which is the point.
 
 from __future__ import annotations
 
+import os
 import json
 import sys
 from pathlib import Path
@@ -776,6 +777,141 @@ class _ProfilePad:
     retroarch_visible = True
 
 
+# -- runtime state ----------------------------------------------------------
+def runtime_paths() -> None:
+    """Where padmap keeps per-session state, and how it compares two of them.
+
+    `_same_runtime` is the interesting one. Compared as raw strings,
+    `/run/user/1000` and `/run/user/1000/` are two different daemons -- and
+    they are not, they bind the same socket, because every path here is built
+    with `/ "padmap"` and a trailing separator disappears the moment it is. A
+    daemon started from a shell where the variable carried a slash was
+    invisible to every caller, so `ensure-daemon` started a second one on the
+    socket the first was already listening on.
+    """
+    from padmap import protocol
+
+    cases = []
+    for one, other in (
+        ("/run/user/1000", "/run/user/1000"),
+        ("/run/user/1000", "/run/user/1000/"),
+        ("/run/user/1000/", "/run/user/1000"),
+        ("/run/user/1000//", "/run/user/1000"),
+        ("/run/user/1000/.", "/run/user/1000"),
+        ("/run/user/1000/../1000", "/run/user/1000"),
+        ("/run/user/1000", "/run/user/1001"),
+        ("/tmp", "/tmp/"),
+        ("", ""),
+        ("", "/tmp"),
+        ("relative", "relative/"),
+    ):
+        cases.append({"one": one, "other": other,
+                      "same": protocol._same_runtime(one, other)})
+    write("same_runtime", cases)
+
+    # The paths themselves, against a known runtime dir -- recorded as the
+    # trailing part, because the prefix is whatever XDG_RUNTIME_DIR says.
+    previous = os.environ.get("XDG_RUNTIME_DIR")
+    os.environ["XDG_RUNTIME_DIR"] = "/run/user/1000"
+    try:
+        paths = {
+            "runtime_dir": str(protocol.runtime_dir()),
+            "socket": str(protocol.socket_path()),
+            "log": str(protocol.daemon_log_path()),
+            "prompted": str(protocol.prompted_path()),
+            "playing": str(protocol.playing_marker()),
+            "last_game": str(protocol.last_game_path()),
+        }
+        del os.environ["XDG_RUNTIME_DIR"]
+        unset = {"runtime_dir": str(protocol.runtime_dir())}
+    finally:
+        if previous is None:
+            os.environ.pop("XDG_RUNTIME_DIR", None)
+        else:
+            os.environ["XDG_RUNTIME_DIR"] = previous
+    write("runtime_paths", [{"env": "/run/user/1000", "paths": paths},
+                            {"env": None, "paths": unset}])
+
+
+def recent_games() -> None:
+    """What `lastgame.json` is read back as, over the shapes it arrives in.
+
+    Never raises: this decorates a picker, and a missing or malformed file
+    means fewer options rather than a failure. The pre-list format -- a bare
+    object rather than {"games": [...]} -- is in here because a user upgrading
+    mid-session would otherwise lose the per-game scope for the game they are
+    playing right now, which is exactly when they want it.
+    """
+    import tempfile
+
+    from padmap import protocol
+
+    shapes = [
+        None,
+        "",
+        "not json at all",
+        "[]",
+        "{}",
+        '{"games": []}',
+        '{"key": "a", "console": "n64", "title": "T"}',
+        '{"key": "a"}',
+        '{"console": "n64", "title": "T"}',
+        '{"games": [{"key": "a", "console": "n64", "title": "A"}]}',
+        '{"games": [{"key": "a"}, {"key": "b"}, {"key": "c"}, '
+        '{"key": "d"}, {"key": "e"}, {"key": "f"}, {"key": "g"}]}',
+        '{"games": [{"key": ""}, {"key": "b"}]}',
+        '{"games": [null, 3, "x", {"key": "b"}]}',
+        '{"games": {"key": "a"}}',
+        '{"games": [{"key": "a", "console": 7, "title": null}]}',
+        '"a string"',
+        "42",
+    ]
+    cases = []
+    previous = os.environ.get("XDG_RUNTIME_DIR")
+    with tempfile.TemporaryDirectory() as tmp:
+        os.environ["XDG_RUNTIME_DIR"] = tmp
+        try:
+            for raw in shapes:
+                path = protocol.last_game_path()
+                path.parent.mkdir(parents=True, exist_ok=True)
+                if raw is None:
+                    path.unlink(missing_ok=True)
+                else:
+                    path.write_text(raw)
+                cases.append({
+                    "file": raw,
+                    "recent": protocol.read_recent_games(),
+                    "last": protocol.read_last_game(),
+                })
+
+            # And what writing does: newest first, deduplicated by key.
+            # Replaying a game moves it to the front rather than filling the
+            # list with copies of itself.
+            protocol.last_game_path().unlink(missing_ok=True)
+            writes = []
+            for console, key, title in (
+                ("n64", "mario64", "Mario 64"),
+                ("snes", "smw", "Super Mario World"),
+                ("n64", "mario64", "Mario 64"),
+                ("gc", "melee", "Melee"),
+                ("ps2", "ico", "Ico"),
+                ("gba", "metroid", "Metroid"),
+                ("nes", "smb", "SMB"),
+            ):
+                protocol.write_last_game(console, key, title)
+                writes.append({
+                    "wrote": {"console": console, "key": key, "title": title},
+                    "recent": protocol.read_recent_games(),
+                })
+        finally:
+            if previous is None:
+                os.environ.pop("XDG_RUNTIME_DIR", None)
+            else:
+                os.environ["XDG_RUNTIME_DIR"] = previous
+    write("recent_games", cases)
+    write("recent_games_writes", writes)
+
+
 def main() -> int:
     print(f"recording the Python's answers into {OUT.relative_to(REPO)}:")
     bindings()
@@ -794,6 +930,8 @@ def main() -> int:
     icon_choices()
     hide_rules()
     emitted_files()
+    runtime_paths()
+    recent_games()
     return 0
 
 

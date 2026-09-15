@@ -1,0 +1,19 @@
+[
+ {
+  "env": "/run/user/1000",
+  "paths": {
+   "last_game": "/run/user/1000/padmap/lastgame.json",
+   "log": "/run/user/1000/padmap/padmap.log",
+   "playing": "/run/user/1000/padmap/playing",
+   "prompted": "/run/user/1000/padmap/prompted",
+   "runtime_dir": "/run/user/1000/padmap",
+   "socket": "/run/user/1000/padmap/padmap.sock"
+  }
+ },
+ {
+  "env": null,
+  "paths": {
+   "runtime_dir": "/tmp/padmap"
+  }
+ }
+]
