@@ -386,9 +386,11 @@ def calibration() -> None:
         else:
             probes = list(range(low, high + 1))
         cases.append({
+            # The key names a profile actually uses on disk, so a rename on
+            # either side shows up here rather than in a user's file.
             "in": {
-                "center": cal.center, "minimum": cal.minimum,
-                "maximum": cal.maximum, "flat": cal.flat,
+                "center": cal.center, "min": cal.minimum,
+                "max": cal.maximum, "flat": cal.flat,
                 "reach_min": cal.reach_min, "reach_max": cal.reach_max,
             },
             "out": {
@@ -465,6 +467,146 @@ def cores() -> None:
     ])
 
 
+# -- profiles ----------------------------------------------------------------
+def printable() -> None:
+    """Every codepoint the port has to agree with Python about.
+
+    `str.isprintable` decides which characters survive into a signature, and a
+    signature is a profile's *filename*. Disagreeing by one codepoint orphans
+    every profile whose controller's name contains it -- silently, because a
+    profile that cannot be found reads as "never configured" and the wizard
+    simply opens again.
+
+    Surrogates are skipped: Python will hold one in a str and Rust's `char`
+    cannot exist as one, so there is nothing to compare.
+    """
+    points = set(range(0x0, 0x600))
+    points |= set(range(0x2000, 0x2100))      # the separator and format blocks
+    points |= set(range(0xE000, 0xE010))      # private use
+    points |= set(range(0xFE00, 0xFF10))      # variation selectors, halfwidth
+    points |= {0x1F3AE, 0x1F600, 0xE0001, 0x10FFFF, 0x10FFFE}
+    points |= set(range(0x0870, 0x0890))      # recently assigned, and not
+    cases = []
+    for point in sorted(points):
+        if 0xD800 <= point <= 0xDFFF:
+            continue
+        cases.append({"in": point, "out": chr(point).isprintable()})
+    write("printable", cases)
+
+
+def signatures() -> None:
+    names = [
+        "N64 Adapter",
+        "Pro Controller",
+        "  padded  ",
+        "\x18 an adapter whose name starts with a control character",
+        "\x18\x18\x18",
+        "Pok\u00e9mon pad",
+        "\u65e5\u672c\u8a9e",
+        "tab\there",
+        "new\nline",
+        "zero\u200bwidth",
+        "nbsp\u00a0space",
+        "",
+        " ",
+        "a" * 400,
+        "MAYFLASH GameCube Adapter",
+        "Sony Interactive Entertainment Wireless Controller",
+        "slash/and\\backslash",
+        "colon:in:name",
+        "....",
+        "--_--",
+    ]
+    cases = []
+    for vid, pid in ((0x0079, 0x1879), (0x057e, 0x2009), (0x0000, 0x0000), (0xffff, 0xffff)):
+        for name in names:
+            sig = profiles.signature(_FakePad(vid, pid, name))
+            cases.append({
+                "in": {"vid": vid, "pid": pid, "name": name},
+                "out": {"signature": sig, "filename": profiles._filename(sig)},
+            })
+    write("signatures", cases)
+
+
+class _FakePad:
+    """Only the three fields `profiles.signature` reads.
+
+    A real Pad needs a device node; the signature is a pure function of these.
+    """
+
+    def __init__(self, vid: int, pid: int, name: str) -> None:
+        self.vid = vid
+        self.pid = pid
+        self.name = name
+
+
+def stored_profiles() -> None:
+    """Whole profiles, in and out, including the shapes a damaged file has."""
+    button = Binding("button", 1).to_json()
+    raws: list = [
+        None,
+        [1, 2],
+        "text",
+        {},
+        {"signature": "0079:1879:Pad", "name": "Pad", "icon": "n64"},
+        # Written before scopes: flat buttons/layout, no mappings.
+        {"signature": "s", "layout": "n64", "buttons": {"a": button}},
+        # Older still: buttons with no layout at all.
+        {"signature": "s", "buttons": {"a": button}},
+        # Legacy keys present *and* scoped mappings -- the scoped ones win.
+        {"signature": "s", "layout": "snes", "buttons": {"a": button},
+         "mappings": {"": {"layout": "n64", "buttons": {"b": button}}}},
+        # Junk in one axis slot, and one axis that is fine.
+        {"signature": "s", "axes": {
+            "0": {"center": 128, "min": 0, "max": 255},
+            "1": "not an object",
+            "2": {"center": 1},
+            "notanumber": {"center": 128, "min": 0, "max": 255},
+        }},
+        # Every scope populated.
+        {"signature": "s", "mappings": {
+            "": {"layout": "gamecube", "buttons": {"a": button}},
+            "console:n64": {"layout": "n64", "buttons": {"b": button}},
+            "game:n64/mario": {"layout": "n64", "buttons": {"x": button}},
+        }},
+        # A scope with an empty capture, which must not shadow a general one.
+        {"signature": "s", "mappings": {
+            "": {"layout": "gamecube", "buttons": {"a": button}},
+            "console:n64": {"layout": "n64", "buttons": {}},
+        }},
+        # A control name padmap does not know.
+        {"signature": "s", "mappings": {
+            "": {"layout": "", "buttons": {"a": button, "guide": button}}}},
+        # A calibration no evdev value can carry.
+        {"signature": "s", "axes": {
+            "0": {"center": 0, "min": -1099511627776, "max": 1099511627776}}},
+        # Deliberately NOT here: a profile whose signature/name/icon are not
+        # strings. Python's `str(raw.get(...))` stringifies whatever it finds,
+        # so `None` is written back as the literal "None" and `["x"]` as
+        # "['x']". The port answers "" instead, and that divergence is pinned
+        # in profile.rs rather than frozen here -- writing a lie that looks
+        # like data back to a user's file is not behaviour worth reproducing.
+    ]
+    cases = []
+    for raw in raws:
+        profile = profiles.Profile.from_json(raw)  # type: ignore[arg-type]
+        resolved = {
+            f"{console}|{game}": profile.resolve(console, game)[0]
+            for console, game in (("", ""), ("n64", ""), ("n64", "n64/mario"),
+                                  ("snes", ""), ("", "n64/mario"))
+        }
+        cases.append({
+            "in": raw,
+            "out": {
+                "json": profile.to_json(),
+                "has_bindings": profile.has_bindings(),
+                "layout": profile.layout,
+                "resolved": resolved,
+            },
+        })
+    write("stored_profiles", cases)
+
+
 def main() -> int:
     print(f"recording the Python's answers into {OUT.relative_to(REPO)}:")
     bindings()
@@ -477,6 +619,9 @@ def main() -> int:
     calibration()
     scopes()
     cores()
+    printable()
+    signatures()
+    stored_profiles()
     return 0
 
 

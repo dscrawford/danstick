@@ -865,8 +865,8 @@ fn a_calibration_round_trips_through_the_exact_python_json_keys() {
     // silently reverts to "never measured" on upgrade.
     let raw = serde_json::json!({
         "center": 174,
-        "minimum": 0,
-        "maximum": 255,
+        "min": 0,
+        "max": 255,
         "flat": 4,
         "reach_min": 20,
         "reach_max": 250
@@ -887,7 +887,7 @@ fn an_unmeasured_reach_reads_back_as_unmeasured_rather_than_as_zero() {
     // falls back to the declared range, the second pins the bottom of travel
     // to zero. A `#[serde(default)]` that produced `Some(0)` would silently
     // clamp every axis of every profile written before reach was recorded.
-    let raw = serde_json::json!({"center": 128, "minimum": 0, "maximum": 255});
+    let raw = serde_json::json!({"center": 128, "min": 0, "max": 255});
     let cal: AxisCalibration = serde_json::from_value(raw).expect("parse");
     assert_eq!(cal.reach_min, None);
     assert_eq!(cal.reach_max, None);
@@ -901,7 +901,7 @@ fn an_unmeasured_reach_reads_back_as_unmeasured_rather_than_as_zero() {
 
 #[test]
 fn an_absent_dead_band_reads_back_as_no_band_at_all() {
-    let raw = serde_json::json!({"center": 128, "minimum": 0, "maximum": 255});
+    let raw = serde_json::json!({"center": 128, "min": 0, "max": 255});
     let cal: AxisCalibration = serde_json::from_value(raw).expect("parse");
     assert_eq!(
         cal.flat, 0,
@@ -919,7 +919,7 @@ fn a_half_written_profile_missing_a_required_field_is_refused_rather_than_guesse
     // `center`, `minimum` and `maximum` have no sensible default: guessing
     // them produces an axis that is wrong in a way nothing reports. Parsing
     // must fail so the caller can fall back to "uncalibrated".
-    let raw = serde_json::json!({"minimum": 0, "maximum": 255});
+    let raw = serde_json::json!({"min": 0, "max": 255});
     let parsed: Result<AxisCalibration, _> = serde_json::from_value(raw);
     assert!(
         parsed.is_err(),

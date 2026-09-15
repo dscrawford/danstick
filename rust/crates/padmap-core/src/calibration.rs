@@ -31,7 +31,11 @@ pub const EVDEV_VALUE_MAX: i64 = (1 << 31) - 1;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AxisCalibration {
     pub center: i32,
+    // `min` and `max` on disk. The stored profile is user data that predates
+    // this port and outlives it, so the field names are the file's, not ours.
+    #[serde(rename = "min")]
     pub minimum: i32,
+    #[serde(rename = "max")]
     pub maximum: i32,
     /// Half-width of the dead band around centre, in raw units.
     #[serde(default)]
@@ -333,8 +337,10 @@ mod tests {
 
     #[test]
     fn a_calibration_round_trips_through_the_python_json_shape() {
+        // `min`/`max`, because that is what a stored profile on disk says.
+        // Renaming either orphans every axis a user has already calibrated.
         let raw = serde_json::json!({
-            "center": 174, "minimum": 0, "maximum": 255,
+            "center": 174, "min": 0, "max": 255,
             "flat": 4, "reach_min": 20, "reach_max": 250
         });
         let cal: AxisCalibration = serde_json::from_value(raw.clone()).expect("parse");
@@ -345,7 +351,7 @@ mod tests {
 
     #[test]
     fn an_unmeasured_reach_reads_back_as_unmeasured_not_as_zero() {
-        let raw = serde_json::json!({"center": 128, "minimum": 0, "maximum": 255});
+        let raw = serde_json::json!({"center": 128, "min": 0, "max": 255});
         let cal: AxisCalibration = serde_json::from_value(raw).expect("parse");
         assert_eq!(cal.reach_min, None);
         assert_eq!(cal.reach_max, None);

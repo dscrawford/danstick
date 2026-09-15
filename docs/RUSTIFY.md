@@ -28,10 +28,11 @@ port and pinned a dozen shared quirks that nobody had written down.
 
 ## Shape
 
-    padmap-core    vocabulary, layouts, mappings, scopes, calibration, the
-                   wizard state machines, wire framing. No I/O, no clock, no
-                   unsafe, no Linux. 627 tests.
-    padmap-input   evdev, uinput, udev. The only crate that opens a device.
+    padmap-core    vocabulary, layouts, mappings, scopes, calibration,
+                   profiles, the wizard state machines, wire framing. No I/O,
+                   no clock, no unsafe, no Linux.
+    padmap-input   evdev, uinput, udev, the profile store. The only crate that
+                   opens a device.
     padmap-rs      a binary: `list` and `run`.
 
 The cut line is the unix socket, not a language boundary inside one process.
@@ -58,20 +59,24 @@ dependency whose API has broken seven times in nineteen months.
 * **The forwarding path**: discovery through libudev, epoll with the tick on a
   timerfd, frame-batched writes, force-feedback proxying, calibration applied
   in transit.
+* **The profile store**, reading and writing the same files the Python does --
+  same directory, same filenames, same JSON including the two keys written only
+  so a rollback still finds the controller mapped.
+  `tools/check_rust_calibration.py` writes a profile with the *Python* and
+  checks every value of an axis through the *Rust* republisher against the
+  Python's own `AxisCalibration.apply`.
 
 ## Not done, and what each one costs
 
 | | cost of the gap |
 | --- | --- |
-| calibration is not read from the profile store | a pad that does not centre itself reads deflected under `padmap-rs run` |
 | hidraw (Switch family) | those pads fall back to an evdev node that carries nothing, so they do nothing |
 | the daemon socket, sessions, the wizard | `padmap-rs` cannot be driven by the front-end; use `padmap serve` |
 | `padmap hide`, `export-pegasus`, `fetch-art`, `clean-config` | still Python, and should stay that way -- see below |
 
-Order to continue in: the profile store (pure logic plus two file reads, and it
-unblocks calibration), then hidraw decoding (the report decoders are pure
-functions over byte slices, so they test from a recording), then the socket
-protocol, then the session state machine.
+Order to continue in: hidraw decoding (the report decoders are pure functions
+over byte slices, so they test from a recording), then the socket protocol,
+then the session state machine.
 
 ## What should not be ported
 
@@ -103,7 +108,13 @@ protocol, then the session state machine.
 * **`str.isprintable()` is a Unicode-category test** and its result is a
   profile's *filename*. Getting it wrong orphans every existing profile
   silently, because a missing profile means "never configured" and the wizard
-  just reopens. Not yet ported; do this one carefully.
+  just reopens. Ported against `unicode-general-category` and checked on 2,117
+  codepoints from the corpus, not approximated.
+* **A stored axis is `min`/`max` on disk**, not `minimum`/`maximum`. The Rust
+  struct serialises as the file does, because the file is older than the port.
+* **`str(raw.get(...))` stringifies anything**, so the Python writes `None`
+  back as the literal "None". Deliberately not reproduced -- see the
+  `divergences` module in `profile.rs`.
 * **evdev 0.13.2 mis-encodes `UI_SET_PHYS`.** `libc::c_char` where the kernel
   header says `char*`; the size is part of the ioctl number, so the kernel
   answers EINVAL. Worked around by matching clones on their name as well as

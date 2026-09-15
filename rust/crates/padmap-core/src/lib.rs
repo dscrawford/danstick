@@ -18,6 +18,7 @@ pub mod capture;
 pub mod control;
 pub mod fields;
 pub mod layout;
+pub mod profile;
 pub mod retroarch;
 pub mod scope;
 pub mod sdl;

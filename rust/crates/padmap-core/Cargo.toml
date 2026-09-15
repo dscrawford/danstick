@@ -9,6 +9,9 @@ license.workspace = true
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
+# Python's str.isprintable is a Unicode-category test, and its result is a
+# profile's filename -- an approximation orphans files that already exist.
+unicode-general-category = "1"
 
 [dev-dependencies]
 # Property tests for the arithmetic: the invariants worth asserting here are

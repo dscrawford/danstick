@@ -8,6 +8,7 @@
 pub mod assignments;
 pub mod clone;
 pub mod pad;
+pub mod profiles;
 pub mod reactor;
 pub mod republish;
 pub mod runtime;

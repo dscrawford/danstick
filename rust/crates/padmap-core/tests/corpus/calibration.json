@@ -3,8 +3,8 @@
   "in": {
    "center": 128,
    "flat": 0,
-   "maximum": 255,
-   "minimum": 0,
+   "max": 255,
+   "min": 0,
    "reach_max": null,
    "reach_min": null
   },
@@ -1085,8 +1085,8 @@
   "in": {
    "center": 174,
    "flat": 0,
-   "maximum": 255,
-   "minimum": 0,
+   "max": 255,
+   "min": 0,
    "reach_max": null,
    "reach_min": null
   },
@@ -2167,8 +2167,8 @@
   "in": {
    "center": 128,
    "flat": 10,
-   "maximum": 255,
-   "minimum": 0,
+   "max": 255,
+   "min": 0,
    "reach_max": null,
    "reach_min": null
   },
@@ -3249,8 +3249,8 @@
   "in": {
    "center": 128,
    "flat": 20,
-   "maximum": 255,
-   "minimum": 0,
+   "max": 255,
+   "min": 0,
    "reach_max": null,
    "reach_min": null
   },
@@ -4331,8 +4331,8 @@
   "in": {
    "center": 200,
    "flat": 0,
-   "maximum": 255,
-   "minimum": 0,
+   "max": 255,
+   "min": 0,
    "reach_max": 255,
    "reach_min": 160
   },
@@ -5413,8 +5413,8 @@
   "in": {
    "center": 128,
    "flat": 0,
-   "maximum": 255,
-   "minimum": 0,
+   "max": 255,
+   "min": 0,
    "reach_max": 200,
    "reach_min": 40
   },
@@ -6495,8 +6495,8 @@
   "in": {
    "center": 128,
    "flat": 0,
-   "maximum": 255,
-   "minimum": 0,
+   "max": 255,
+   "min": 0,
    "reach_max": 240,
    "reach_min": 200
   },
@@ -7577,8 +7577,8 @@
   "in": {
    "center": 0,
    "flat": 0,
-   "maximum": 32767,
-   "minimum": -32768,
+   "max": 32767,
+   "min": -32768,
    "reach_max": null,
    "reach_min": null
   },
@@ -8239,8 +8239,8 @@
   "in": {
    "center": -1,
    "flat": 0,
-   "maximum": 0,
-   "minimum": -1,
+   "max": 0,
+   "min": -1,
    "reach_max": null,
    "reach_min": null
   },
@@ -8305,8 +8305,8 @@
   "in": {
    "center": 17,
    "flat": 3,
-   "maximum": 127,
-   "minimum": -128,
+   "max": 127,
+   "min": -128,
    "reach_max": 90,
    "reach_min": -100
   },
@@ -9387,8 +9387,8 @@
   "in": {
    "center": 0,
    "flat": 0,
-   "maximum": 0,
-   "minimum": 0,
+   "max": 0,
+   "min": 0,
    "reach_max": null,
    "reach_min": null
   },
@@ -9449,8 +9449,8 @@
   "in": {
    "center": 128,
    "flat": 0,
-   "maximum": 128,
-   "minimum": 128,
+   "max": 128,
+   "min": 128,
    "reach_max": null,
    "reach_min": null
   },
@@ -9511,8 +9511,8 @@
   "in": {
    "center": 128,
    "flat": 1000,
-   "maximum": 255,
-   "minimum": 0,
+   "max": 255,
+   "min": 0,
    "reach_max": null,
    "reach_min": null
   },

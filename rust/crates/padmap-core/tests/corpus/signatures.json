@@ -1,0 +1,882 @@
+[
+ {
+  "in": {
+   "name": "N64 Adapter",
+   "pid": 6265,
+   "vid": 121
+  },
+  "out": {
+   "filename": "0079_1879_N64_Adapter.json",
+   "signature": "0079:1879:N64 Adapter"
+  }
+ },
+ {
+  "in": {
+   "name": "Pro Controller",
+   "pid": 6265,
+   "vid": 121
+  },
+  "out": {
+   "filename": "0079_1879_Pro_Controller.json",
+   "signature": "0079:1879:Pro Controller"
+  }
+ },
+ {
+  "in": {
+   "name": "  padded  ",
+   "pid": 6265,
+   "vid": 121
+  },
+  "out": {
+   "filename": "0079_1879_padded.json",
+   "signature": "0079:1879:padded"
+  }
+ },
+ {
+  "in": {
+   "name": "\u0018 an adapter whose name starts with a control character",
+   "pid": 6265,
+   "vid": 121
+  },
+  "out": {
+   "filename": "0079_1879_an_adapter_whose_name_starts_with_a_control_character.json",
+   "signature": "0079:1879:an adapter whose name starts with a control character"
+  }
+ },
+ {
+  "in": {
+   "name": "\u0018\u0018\u0018",
+   "pid": 6265,
+   "vid": 121
+  },
+  "out": {
+   "filename": "0079_1879_.json",
+   "signature": "0079:1879:"
+  }
+ },
+ {
+  "in": {
+   "name": "Pok\u00e9mon pad",
+   "pid": 6265,
+   "vid": 121
+  },
+  "out": {
+   "filename": "0079_1879_Pok_mon_pad.json",
+   "signature": "0079:1879:Pok\u00e9mon pad"
+  }
+ },
+ {
+  "in": {
+   "name": "\u65e5\u672c\u8a9e",
+   "pid": 6265,
+   "vid": 121
+  },
+  "out": {
+   "filename": "0079_1879_.json",
+   "signature": "0079:1879:\u65e5\u672c\u8a9e"
+  }
+ },
+ {
+  "in": {
+   "name": "tab\there",
+   "pid": 6265,
+   "vid": 121
+  },
+  "out": {
+   "filename": "0079_1879_tabhere.json",
+   "signature": "0079:1879:tabhere"
+  }
+ },
+ {
+  "in": {
+   "name": "new\nline",
+   "pid": 6265,
+   "vid": 121
+  },
+  "out": {
+   "filename": "0079_1879_newline.json",
+   "signature": "0079:1879:newline"
+  }
+ },
+ {
+  "in": {
+   "name": "zero\u200bwidth",
+   "pid": 6265,
+   "vid": 121
+  },
+  "out": {
+   "filename": "0079_1879_zerowidth.json",
+   "signature": "0079:1879:zerowidth"
+  }
+ },
+ {
+  "in": {
+   "name": "nbsp\u00a0space",
+   "pid": 6265,
+   "vid": 121
+  },
+  "out": {
+   "filename": "0079_1879_nbspspace.json",
+   "signature": "0079:1879:nbspspace"
+  }
+ },
+ {
+  "in": {
+   "name": "",
+   "pid": 6265,
+   "vid": 121
+  },
+  "out": {
+   "filename": "0079_1879_.json",
+   "signature": "0079:1879:"
+  }
+ },
+ {
+  "in": {
+   "name": " ",
+   "pid": 6265,
+   "vid": 121
+  },
+  "out": {
+   "filename": "0079_1879_.json",
+   "signature": "0079:1879:"
+  }
+ },
+ {
+  "in": {
+   "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "pid": 6265,
+   "vid": 121
+  },
+  "out": {
+   "filename": "0079_1879_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json",
+   "signature": "0079:1879:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }
+ },
+ {
+  "in": {
+   "name": "MAYFLASH GameCube Adapter",
+   "pid": 6265,
+   "vid": 121
+  },
+  "out": {
+   "filename": "0079_1879_MAYFLASH_GameCube_Adapter.json",
+   "signature": "0079:1879:MAYFLASH GameCube Adapter"
+  }
+ },
+ {
+  "in": {
+   "name": "Sony Interactive Entertainment Wireless Controller",
+   "pid": 6265,
+   "vid": 121
+  },
+  "out": {
+   "filename": "0079_1879_Sony_Interactive_Entertainment_Wireless_Controller.json",
+   "signature": "0079:1879:Sony Interactive Entertainment Wireless Controller"
+  }
+ },
+ {
+  "in": {
+   "name": "slash/and\\backslash",
+   "pid": 6265,
+   "vid": 121
+  },
+  "out": {
+   "filename": "0079_1879_slash_and_backslash.json",
+   "signature": "0079:1879:slash/and\\backslash"
+  }
+ },
+ {
+  "in": {
+   "name": "colon:in:name",
+   "pid": 6265,
+   "vid": 121
+  },
+  "out": {
+   "filename": "0079_1879_colon_in_name.json",
+   "signature": "0079:1879:colon:in:name"
+  }
+ },
+ {
+  "in": {
+   "name": "....",
+   "pid": 6265,
+   "vid": 121
+  },
+  "out": {
+   "filename": "0079_1879_.....json",
+   "signature": "0079:1879:...."
+  }
+ },
+ {
+  "in": {
+   "name": "--_--",
+   "pid": 6265,
+   "vid": 121
+  },
+  "out": {
+   "filename": "0079_1879_--_--.json",
+   "signature": "0079:1879:--_--"
+  }
+ },
+ {
+  "in": {
+   "name": "N64 Adapter",
+   "pid": 8201,
+   "vid": 1406
+  },
+  "out": {
+   "filename": "057e_2009_N64_Adapter.json",
+   "signature": "057e:2009:N64 Adapter"
+  }
+ },
+ {
+  "in": {
+   "name": "Pro Controller",
+   "pid": 8201,
+   "vid": 1406
+  },
+  "out": {
+   "filename": "057e_2009_Pro_Controller.json",
+   "signature": "057e:2009:Pro Controller"
+  }
+ },
+ {
+  "in": {
+   "name": "  padded  ",
+   "pid": 8201,
+   "vid": 1406
+  },
+  "out": {
+   "filename": "057e_2009_padded.json",
+   "signature": "057e:2009:padded"
+  }
+ },
+ {
+  "in": {
+   "name": "\u0018 an adapter whose name starts with a control character",
+   "pid": 8201,
+   "vid": 1406
+  },
+  "out": {
+   "filename": "057e_2009_an_adapter_whose_name_starts_with_a_control_character.json",
+   "signature": "057e:2009:an adapter whose name starts with a control character"
+  }
+ },
+ {
+  "in": {
+   "name": "\u0018\u0018\u0018",
+   "pid": 8201,
+   "vid": 1406
+  },
+  "out": {
+   "filename": "057e_2009_.json",
+   "signature": "057e:2009:"
+  }
+ },
+ {
+  "in": {
+   "name": "Pok\u00e9mon pad",
+   "pid": 8201,
+   "vid": 1406
+  },
+  "out": {
+   "filename": "057e_2009_Pok_mon_pad.json",
+   "signature": "057e:2009:Pok\u00e9mon pad"
+  }
+ },
+ {
+  "in": {
+   "name": "\u65e5\u672c\u8a9e",
+   "pid": 8201,
+   "vid": 1406
+  },
+  "out": {
+   "filename": "057e_2009_.json",
+   "signature": "057e:2009:\u65e5\u672c\u8a9e"
+  }
+ },
+ {
+  "in": {
+   "name": "tab\there",
+   "pid": 8201,
+   "vid": 1406
+  },
+  "out": {
+   "filename": "057e_2009_tabhere.json",
+   "signature": "057e:2009:tabhere"
+  }
+ },
+ {
+  "in": {
+   "name": "new\nline",
+   "pid": 8201,
+   "vid": 1406
+  },
+  "out": {
+   "filename": "057e_2009_newline.json",
+   "signature": "057e:2009:newline"
+  }
+ },
+ {
+  "in": {
+   "name": "zero\u200bwidth",
+   "pid": 8201,
+   "vid": 1406
+  },
+  "out": {
+   "filename": "057e_2009_zerowidth.json",
+   "signature": "057e:2009:zerowidth"
+  }
+ },
+ {
+  "in": {
+   "name": "nbsp\u00a0space",
+   "pid": 8201,
+   "vid": 1406
+  },
+  "out": {
+   "filename": "057e_2009_nbspspace.json",
+   "signature": "057e:2009:nbspspace"
+  }
+ },
+ {
+  "in": {
+   "name": "",
+   "pid": 8201,
+   "vid": 1406
+  },
+  "out": {
+   "filename": "057e_2009_.json",
+   "signature": "057e:2009:"
+  }
+ },
+ {
+  "in": {
+   "name": " ",
+   "pid": 8201,
+   "vid": 1406
+  },
+  "out": {
+   "filename": "057e_2009_.json",
+   "signature": "057e:2009:"
+  }
+ },
+ {
+  "in": {
+   "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "pid": 8201,
+   "vid": 1406
+  },
+  "out": {
+   "filename": "057e_2009_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json",
+   "signature": "057e:2009:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }
+ },
+ {
+  "in": {
+   "name": "MAYFLASH GameCube Adapter",
+   "pid": 8201,
+   "vid": 1406
+  },
+  "out": {
+   "filename": "057e_2009_MAYFLASH_GameCube_Adapter.json",
+   "signature": "057e:2009:MAYFLASH GameCube Adapter"
+  }
+ },
+ {
+  "in": {
+   "name": "Sony Interactive Entertainment Wireless Controller",
+   "pid": 8201,
+   "vid": 1406
+  },
+  "out": {
+   "filename": "057e_2009_Sony_Interactive_Entertainment_Wireless_Controller.json",
+   "signature": "057e:2009:Sony Interactive Entertainment Wireless Controller"
+  }
+ },
+ {
+  "in": {
+   "name": "slash/and\\backslash",
+   "pid": 8201,
+   "vid": 1406
+  },
+  "out": {
+   "filename": "057e_2009_slash_and_backslash.json",
+   "signature": "057e:2009:slash/and\\backslash"
+  }
+ },
+ {
+  "in": {
+   "name": "colon:in:name",
+   "pid": 8201,
+   "vid": 1406
+  },
+  "out": {
+   "filename": "057e_2009_colon_in_name.json",
+   "signature": "057e:2009:colon:in:name"
+  }
+ },
+ {
+  "in": {
+   "name": "....",
+   "pid": 8201,
+   "vid": 1406
+  },
+  "out": {
+   "filename": "057e_2009_.....json",
+   "signature": "057e:2009:...."
+  }
+ },
+ {
+  "in": {
+   "name": "--_--",
+   "pid": 8201,
+   "vid": 1406
+  },
+  "out": {
+   "filename": "057e_2009_--_--.json",
+   "signature": "057e:2009:--_--"
+  }
+ },
+ {
+  "in": {
+   "name": "N64 Adapter",
+   "pid": 0,
+   "vid": 0
+  },
+  "out": {
+   "filename": "0000_0000_N64_Adapter.json",
+   "signature": "0000:0000:N64 Adapter"
+  }
+ },
+ {
+  "in": {
+   "name": "Pro Controller",
+   "pid": 0,
+   "vid": 0
+  },
+  "out": {
+   "filename": "0000_0000_Pro_Controller.json",
+   "signature": "0000:0000:Pro Controller"
+  }
+ },
+ {
+  "in": {
+   "name": "  padded  ",
+   "pid": 0,
+   "vid": 0
+  },
+  "out": {
+   "filename": "0000_0000_padded.json",
+   "signature": "0000:0000:padded"
+  }
+ },
+ {
+  "in": {
+   "name": "\u0018 an adapter whose name starts with a control character",
+   "pid": 0,
+   "vid": 0
+  },
+  "out": {
+   "filename": "0000_0000_an_adapter_whose_name_starts_with_a_control_character.json",
+   "signature": "0000:0000:an adapter whose name starts with a control character"
+  }
+ },
+ {
+  "in": {
+   "name": "\u0018\u0018\u0018",
+   "pid": 0,
+   "vid": 0
+  },
+  "out": {
+   "filename": "0000_0000_.json",
+   "signature": "0000:0000:"
+  }
+ },
+ {
+  "in": {
+   "name": "Pok\u00e9mon pad",
+   "pid": 0,
+   "vid": 0
+  },
+  "out": {
+   "filename": "0000_0000_Pok_mon_pad.json",
+   "signature": "0000:0000:Pok\u00e9mon pad"
+  }
+ },
+ {
+  "in": {
+   "name": "\u65e5\u672c\u8a9e",
+   "pid": 0,
+   "vid": 0
+  },
+  "out": {
+   "filename": "0000_0000_.json",
+   "signature": "0000:0000:\u65e5\u672c\u8a9e"
+  }
+ },
+ {
+  "in": {
+   "name": "tab\there",
+   "pid": 0,
+   "vid": 0
+  },
+  "out": {
+   "filename": "0000_0000_tabhere.json",
+   "signature": "0000:0000:tabhere"
+  }
+ },
+ {
+  "in": {
+   "name": "new\nline",
+   "pid": 0,
+   "vid": 0
+  },
+  "out": {
+   "filename": "0000_0000_newline.json",
+   "signature": "0000:0000:newline"
+  }
+ },
+ {
+  "in": {
+   "name": "zero\u200bwidth",
+   "pid": 0,
+   "vid": 0
+  },
+  "out": {
+   "filename": "0000_0000_zerowidth.json",
+   "signature": "0000:0000:zerowidth"
+  }
+ },
+ {
+  "in": {
+   "name": "nbsp\u00a0space",
+   "pid": 0,
+   "vid": 0
+  },
+  "out": {
+   "filename": "0000_0000_nbspspace.json",
+   "signature": "0000:0000:nbspspace"
+  }
+ },
+ {
+  "in": {
+   "name": "",
+   "pid": 0,
+   "vid": 0
+  },
+  "out": {
+   "filename": "0000_0000_.json",
+   "signature": "0000:0000:"
+  }
+ },
+ {
+  "in": {
+   "name": " ",
+   "pid": 0,
+   "vid": 0
+  },
+  "out": {
+   "filename": "0000_0000_.json",
+   "signature": "0000:0000:"
+  }
+ },
+ {
+  "in": {
+   "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "pid": 0,
+   "vid": 0
+  },
+  "out": {
+   "filename": "0000_0000_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json",
+   "signature": "0000:0000:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }
+ },
+ {
+  "in": {
+   "name": "MAYFLASH GameCube Adapter",
+   "pid": 0,
+   "vid": 0
+  },
+  "out": {
+   "filename": "0000_0000_MAYFLASH_GameCube_Adapter.json",
+   "signature": "0000:0000:MAYFLASH GameCube Adapter"
+  }
+ },
+ {
+  "in": {
+   "name": "Sony Interactive Entertainment Wireless Controller",
+   "pid": 0,
+   "vid": 0
+  },
+  "out": {
+   "filename": "0000_0000_Sony_Interactive_Entertainment_Wireless_Controller.json",
+   "signature": "0000:0000:Sony Interactive Entertainment Wireless Controller"
+  }
+ },
+ {
+  "in": {
+   "name": "slash/and\\backslash",
+   "pid": 0,
+   "vid": 0
+  },
+  "out": {
+   "filename": "0000_0000_slash_and_backslash.json",
+   "signature": "0000:0000:slash/and\\backslash"
+  }
+ },
+ {
+  "in": {
+   "name": "colon:in:name",
+   "pid": 0,
+   "vid": 0
+  },
+  "out": {
+   "filename": "0000_0000_colon_in_name.json",
+   "signature": "0000:0000:colon:in:name"
+  }
+ },
+ {
+  "in": {
+   "name": "....",
+   "pid": 0,
+   "vid": 0
+  },
+  "out": {
+   "filename": "0000_0000_.....json",
+   "signature": "0000:0000:...."
+  }
+ },
+ {
+  "in": {
+   "name": "--_--",
+   "pid": 0,
+   "vid": 0
+  },
+  "out": {
+   "filename": "0000_0000_--_--.json",
+   "signature": "0000:0000:--_--"
+  }
+ },
+ {
+  "in": {
+   "name": "N64 Adapter",
+   "pid": 65535,
+   "vid": 65535
+  },
+  "out": {
+   "filename": "ffff_ffff_N64_Adapter.json",
+   "signature": "ffff:ffff:N64 Adapter"
+  }
+ },
+ {
+  "in": {
+   "name": "Pro Controller",
+   "pid": 65535,
+   "vid": 65535
+  },
+  "out": {
+   "filename": "ffff_ffff_Pro_Controller.json",
+   "signature": "ffff:ffff:Pro Controller"
+  }
+ },
+ {
+  "in": {
+   "name": "  padded  ",
+   "pid": 65535,
+   "vid": 65535
+  },
+  "out": {
+   "filename": "ffff_ffff_padded.json",
+   "signature": "ffff:ffff:padded"
+  }
+ },
+ {
+  "in": {
+   "name": "\u0018 an adapter whose name starts with a control character",
+   "pid": 65535,
+   "vid": 65535
+  },
+  "out": {
+   "filename": "ffff_ffff_an_adapter_whose_name_starts_with_a_control_character.json",
+   "signature": "ffff:ffff:an adapter whose name starts with a control character"
+  }
+ },
+ {
+  "in": {
+   "name": "\u0018\u0018\u0018",
+   "pid": 65535,
+   "vid": 65535
+  },
+  "out": {
+   "filename": "ffff_ffff_.json",
+   "signature": "ffff:ffff:"
+  }
+ },
+ {
+  "in": {
+   "name": "Pok\u00e9mon pad",
+   "pid": 65535,
+   "vid": 65535
+  },
+  "out": {
+   "filename": "ffff_ffff_Pok_mon_pad.json",
+   "signature": "ffff:ffff:Pok\u00e9mon pad"
+  }
+ },
+ {
+  "in": {
+   "name": "\u65e5\u672c\u8a9e",
+   "pid": 65535,
+   "vid": 65535
+  },
+  "out": {
+   "filename": "ffff_ffff_.json",
+   "signature": "ffff:ffff:\u65e5\u672c\u8a9e"
+  }
+ },
+ {
+  "in": {
+   "name": "tab\there",
+   "pid": 65535,
+   "vid": 65535
+  },
+  "out": {
+   "filename": "ffff_ffff_tabhere.json",
+   "signature": "ffff:ffff:tabhere"
+  }
+ },
+ {
+  "in": {
+   "name": "new\nline",
+   "pid": 65535,
+   "vid": 65535
+  },
+  "out": {
+   "filename": "ffff_ffff_newline.json",
+   "signature": "ffff:ffff:newline"
+  }
+ },
+ {
+  "in": {
+   "name": "zero\u200bwidth",
+   "pid": 65535,
+   "vid": 65535
+  },
+  "out": {
+   "filename": "ffff_ffff_zerowidth.json",
+   "signature": "ffff:ffff:zerowidth"
+  }
+ },
+ {
+  "in": {
+   "name": "nbsp\u00a0space",
+   "pid": 65535,
+   "vid": 65535
+  },
+  "out": {
+   "filename": "ffff_ffff_nbspspace.json",
+   "signature": "ffff:ffff:nbspspace"
+  }
+ },
+ {
+  "in": {
+   "name": "",
+   "pid": 65535,
+   "vid": 65535
+  },
+  "out": {
+   "filename": "ffff_ffff_.json",
+   "signature": "ffff:ffff:"
+  }
+ },
+ {
+  "in": {
+   "name": " ",
+   "pid": 65535,
+   "vid": 65535
+  },
+  "out": {
+   "filename": "ffff_ffff_.json",
+   "signature": "ffff:ffff:"
+  }
+ },
+ {
+  "in": {
+   "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "pid": 65535,
+   "vid": 65535
+  },
+  "out": {
+   "filename": "ffff_ffff_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json",
+   "signature": "ffff:ffff:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }
+ },
+ {
+  "in": {
+   "name": "MAYFLASH GameCube Adapter",
+   "pid": 65535,
+   "vid": 65535
+  },
+  "out": {
+   "filename": "ffff_ffff_MAYFLASH_GameCube_Adapter.json",
+   "signature": "ffff:ffff:MAYFLASH GameCube Adapter"
+  }
+ },
+ {
+  "in": {
+   "name": "Sony Interactive Entertainment Wireless Controller",
+   "pid": 65535,
+   "vid": 65535
+  },
+  "out": {
+   "filename": "ffff_ffff_Sony_Interactive_Entertainment_Wireless_Controller.json",
+   "signature": "ffff:ffff:Sony Interactive Entertainment Wireless Controller"
+  }
+ },
+ {
+  "in": {
+   "name": "slash/and\\backslash",
+   "pid": 65535,
+   "vid": 65535
+  },
+  "out": {
+   "filename": "ffff_ffff_slash_and_backslash.json",
+   "signature": "ffff:ffff:slash/and\\backslash"
+  }
+ },
+ {
+  "in": {
+   "name": "colon:in:name",
+   "pid": 65535,
+   "vid": 65535
+  },
+  "out": {
+   "filename": "ffff_ffff_colon_in_name.json",
+   "signature": "ffff:ffff:colon:in:name"
+  }
+ },
+ {
+  "in": {
+   "name": "....",
+   "pid": 65535,
+   "vid": 65535
+  },
+  "out": {
+   "filename": "ffff_ffff_.....json",
+   "signature": "ffff:ffff:...."
+  }
+ },
+ {
+  "in": {
+   "name": "--_--",
+   "pid": 65535,
+   "vid": 65535
+  },
+  "out": {
+   "filename": "ffff_ffff_--_--.json",
+   "signature": "ffff:ffff:--_--"
+  }
+ }
+]

@@ -5,8 +5,7 @@
 //!
 //! Deliberately not the whole of `padmap`. The daemon's socket protocol, the
 //! assignment session, the mapping wizard and every offline command stay in
-//! Python for now; this is the forwarding path, which is the part the input lag
-//! is in and the part a language change can actually help.
+//! Python for now; this is the forwarding path and the profile store it reads.
 //!
 //! It reads and writes the same `assignments.json` the Python does, so the two
 //! can be swapped for each other while the port is in progress -- which is also
@@ -19,7 +18,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use log::{info, warn};
-use padmap_input::{assignments, clone, pad, reactor, republish, runtime};
+use padmap_input::{assignments, clone, pad, profiles, reactor, republish, runtime};
 
 /// How often the tick runs. Matches the Python's `TICK_SECONDS`.
 const TICK: Duration = Duration::from_millis(20);
@@ -123,15 +122,25 @@ fn cmd_run() -> Result<()> {
     }
 
     let mode = clone::IdentityMode::from_env();
-    // Calibration comes from the profile store, which is still Python's. Until
-    // that is ported a Rust-republished pad is forwarded verbatim, which is
-    // correct for a controller that centres itself and visibly wrong for one
-    // that does not -- so it is a gap worth stating rather than hiding.
-    let no_calibration: BTreeMap<u16, padmap_core::calibration::AxisCalibration> = BTreeMap::new();
 
     let mut vpads = Vec::new();
     for (player, pad) in found {
-        match clone::create(pad, player, mode, &no_calibration, true) {
+        // The same store the Python writes, read by the same filename. A pad
+        // with no profile is forwarded verbatim, which is correct for a
+        // controller that centres itself; one with a measured resting position
+        // is corrected in transit, which is the only place every consumer
+        // benefits at once.
+        let axes: BTreeMap<u16, padmap_core::calibration::AxisCalibration> =
+            profiles::load(pad, None)
+                .map(|stored| stored.axes)
+                .unwrap_or_default();
+        if !axes.is_empty() {
+            info!(
+                "player {player}: {} calibrated axis/axes from the profile store",
+                axes.len()
+            );
+        }
+        match clone::create(pad, player, mode, &axes, true) {
             Ok(vpad) => vpads.push(vpad),
             Err(error) => warn!("player {player}: {error}"),
         }

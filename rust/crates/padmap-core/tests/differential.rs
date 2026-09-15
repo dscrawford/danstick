@@ -349,8 +349,8 @@ fn every_recorded_axis_reading_rescales_to_the_same_count() {
         let input = &case["in"];
         let cal = AxisCalibration {
             center: input["center"].as_i64().expect("center") as i32,
-            minimum: input["minimum"].as_i64().expect("minimum") as i32,
-            maximum: input["maximum"].as_i64().expect("maximum") as i32,
+            minimum: input["min"].as_i64().expect("min") as i32,
+            maximum: input["max"].as_i64().expect("max") as i32,
             flat: input["flat"].as_i64().expect("flat") as i32,
             reach_min: input["reach_min"].as_i64().map(|value| value as i32),
             reach_max: input["reach_max"].as_i64().map(|value| value as i32),
@@ -525,4 +525,81 @@ fn the_corpus_covers_every_layout_the_port_ships() {
         .map(|layout| layout.id.clone())
         .collect();
     assert_eq!(recorded, shipped, "run tools/gen_corpus.py");
+}
+
+#[test]
+fn every_codepoint_is_printable_to_the_same_answer_as_python() {
+    // The one that decides a profile's filename. A single codepoint's
+    // disagreement orphans every profile whose controller name contains it,
+    // silently, because a profile that cannot be found reads as "never
+    // configured" and the wizard simply opens again.
+    let cases = corpus("printable");
+    assert!(cases.len() > 2000, "the sweep is meant to be broad");
+    for case in &cases {
+        let point = case["in"].as_u64().expect("a codepoint") as u32;
+        let character = char::from_u32(point).expect("a recorded codepoint is a char");
+        assert_eq!(
+            padmap_core::profile::printable(character),
+            case["out"].as_bool().expect("a verdict"),
+            "U+{point:04X}"
+        );
+    }
+}
+
+#[test]
+fn a_controller_name_becomes_the_same_signature_and_the_same_filename() {
+    for case in corpus("signatures") {
+        let input = &case["in"];
+        let signature = padmap_core::profile::signature(
+            input["vid"].as_u64().expect("vid") as u16,
+            input["pid"].as_u64().expect("pid") as u16,
+            input["name"].as_str().expect("name"),
+        );
+        assert_eq!(
+            signature,
+            case["out"]["signature"].as_str().expect("a signature"),
+            "for {input}"
+        );
+        assert_eq!(
+            padmap_core::profile::filename(&signature),
+            case["out"]["filename"].as_str().expect("a filename"),
+            "for {input}"
+        );
+    }
+}
+
+#[test]
+fn a_stored_profile_reads_back_and_writes_out_the_way_the_python_did() {
+    use padmap_core::profile::Profile;
+    for case in corpus("stored_profiles") {
+        let input = &case["in"];
+        let (profile, _rejected) = Profile::from_value(input);
+        let expected = &case["out"];
+
+        assert_eq!(
+            profile.has_bindings(),
+            expected["has_bindings"],
+            "for {input}"
+        );
+        assert_eq!(
+            profile.layout(),
+            expected["layout"].as_str().expect("layout"),
+            "for {input}"
+        );
+
+        for (key, wanted) in expected["resolved"].as_object().expect("resolved") {
+            let (console, game) = key.split_once('|').expect("console|game");
+            assert_eq!(
+                profile.resolve(console, game).0,
+                wanted.as_str().expect("a scope"),
+                "resolve({console:?}, {game:?}) for {input}"
+            );
+        }
+
+        assert_eq!(
+            profile.to_value(),
+            expected["json"],
+            "written form, for {input}"
+        );
+    }
 }
