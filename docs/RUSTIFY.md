@@ -66,6 +66,13 @@ dependency whose API has broken seven times in nineteen months.
   checks every value of an axis through the *Rust* republisher against the
   Python's own `AxisCalibration.apply`.
 
+## The plan for the rest
+
+[docs/PORT-PLAN.md](PORT-PLAN.md) is the ordered plan for deleting the
+remaining 13,599 lines of Python: the method (record the Python's answers,
+fail against them, implement, delete both in one commit), the dependency
+order, and the three things that need a decision rather than a translation.
+
 ## Not done, and what each one costs
 
 | | cost of the gap |
