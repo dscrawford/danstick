@@ -27,6 +27,7 @@ pub mod profile;
 pub mod retroarch;
 pub mod scope;
 pub mod sdl;
+pub mod titles;
 pub mod wire;
 
 pub use binding::{Binding, BindingKind};

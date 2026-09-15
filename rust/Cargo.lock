@@ -388,6 +388,7 @@ dependencies = [
  "regex",
  "serde",
  "serde_json",
+ "thiserror",
  "unicode-general-category",
 ]
 
