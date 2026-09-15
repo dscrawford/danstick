@@ -21,7 +21,9 @@ use anyhow::{Context, Result};
 use log::{info, warn};
 use padmap_core::emit::{self, Identity};
 use padmap_core::hide;
-use padmap_input::{artefacts, assignments, clone, pad, profiles, reactor, republish, runtime};
+use padmap_input::{
+    artefacts, assignments, clone, lizard, pad, profiles, reactor, republish, runtime,
+};
 
 /// How often the tick runs. Matches the Python's `TICK_SECONDS`.
 const TICK: Duration = Duration::from_millis(20);
@@ -56,6 +58,10 @@ fn cmd_list() -> Result<()> {
     let pads = pad::discover(pad::Filter::default()).context("enumerating input devices")?;
     if pads.is_empty() {
         println!("No joypads found.");
+        // The case that matters most: a controller is plugged in and the
+        // kernel is not treating it as one, so "none found" is true and
+        // useless.
+        report_dormant();
         return Ok(());
     }
 
@@ -93,6 +99,8 @@ fn cmd_list() -> Result<()> {
         println!("them; RetroArch sees only the virtual pads.");
     }
 
+    report_dormant();
+
     let groups = pad::ambiguous_groups(&pads);
     if !groups.is_empty() {
         println!("\nIndistinguishable by every static attribute:");
@@ -113,6 +121,50 @@ fn cmd_list() -> Result<()> {
 /// silently asks for a password on a machine plugged into a television is
 /// worse than one that shows you what to write. The Python's `padmap hide`
 /// installs them when it is already root; this does not yet.
+/// Say when a controller is present but the kernel is not driving it as one.
+///
+/// "No joypads found" is true and useless when the controller is sitting there
+/// pretending to be a keyboard. Nothing else on the machine will say so: the
+/// device enumerates perfectly and every layer below this one is behaving
+/// correctly.
+fn report_dormant() {
+    let dormant = lizard::dormant();
+    if dormant.is_empty() {
+        return;
+    }
+    for device in &dormant {
+        let name = if device.name.is_empty() {
+            "an unnamed device"
+        } else {
+            &device.name
+        };
+        println!(
+            "\n{name} ({:04x}:{:04x}) has a vendor-specific gamepad interface",
+            device.vid, device.pid
+        );
+        println!(
+            "that {} cannot read, so it is a keyboard and a mouse and",
+            device.driver
+        );
+        println!("not a controller. Nothing reports an error; it simply is not a pad.");
+        if let Some(node) = &device.hidraw {
+            println!("Its gamepad channel is {}.", node.display());
+        }
+        match device.remedy() {
+            Some(remedy) => {
+                println!("\nThe kernel has a driver for this family that does not claim");
+                println!("this model's id yet. To hand it over:");
+                println!("  {remedy}");
+                println!("\nThat lasts until reboot. If it works, make it stick with a udev");
+                println!("rule; if it does not, the protocol has to be read directly --");
+                println!("see tools/hidprobe.py.");
+            }
+            // `lizard::dormant` only reports devices that have one.
+            None => {}
+        }
+    }
+}
+
 fn cmd_hide() -> Result<()> {
     let pads = pad::discover(pad::Filter::default()).context("enumerating input devices")?;
     let hideable: Vec<hide::Hideable> = pads

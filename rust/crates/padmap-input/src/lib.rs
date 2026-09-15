@@ -8,6 +8,7 @@
 pub mod artefacts;
 pub mod assignments;
 pub mod clone;
+pub mod lizard;
 pub mod pad;
 pub mod profiles;
 pub mod reactor;
