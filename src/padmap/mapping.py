@@ -1,9 +1,9 @@
 """Button mapping: what the user pressed, and what each consumer needs to hear.
 
 One capture, two very different outputs. RetroArch reads its own autoconfig
-files and refers to buttons by evdev code; Pegasus reads SDL's game controller
-database and refers to them by SDL's own button numbering, under a GUID it
-computes from the device. Neither will tell you it has read a mapping wrong --
+files and refers to buttons by evdev code; anything built on SDL reads SDL's
+game controller database and refers to them by SDL's own button numbering,
+under a GUID it computes from the device. Neither will tell you it has read a mapping wrong --
 it simply behaves as though the button does not exist -- so both formats are
 verified against artefacts produced by the real thing rather than by
 inspection.
@@ -212,7 +212,7 @@ BTN_JOYSTICK = 0x120
 # whose .retroarch() was "13" on a pad RetroArch numbers 0..11. RetroArch
 # binds a button that does not exist -- or, if the pad has enough BTN_MISC
 # codes, a real but entirely different one -- without complaining, and still
-# reports the pad as configured: the control works in Pegasus and is dead in
+# reports the pad as configured: the control works in the front-end and is dead in
 # every game. A negative index keeps the two answers apart; no real button
 # index is negative.
 RA_INVISIBLE = -1

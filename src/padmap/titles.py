@@ -60,11 +60,10 @@ def _flatten(value: str) -> str:
 
     <description> is matched with re.S, so a MAME description that the dump
     wrapped across two lines arrives here as "Puck\\n            Man". That
-    newline is not cosmetic: metadata.pegasus.txt is line oriented, so a title
-    holding one injects a key (see pegasus.one_line, which stops the injection
-    on the way out). Normalising here as well means the *table* never holds a
-    title no human typed, which is what artwork matching and the export report
-    read.
+    newline is not cosmetic: a title reaches line-oriented files and
+    line-oriented reports, so one holding a newline can write a line of its
+    own. Normalising here means the *table* never holds a title no human
+    typed, which is what artwork matching and the fetch-art report read.
 
     Only runs of whitespace that span a line break collapse. Spaces inside a
     single line are left exactly as they are, because "Double  Dragon" is a
@@ -222,7 +221,7 @@ def find_titles() -> dict[str, Title]:
     An empty result is not an error: without it, entries simply keep their
     raw set names, which is what RetroArch shows today.
 
-    Damage is therefore reported, not raised. pegasus.export calls this on
+    Damage is therefore reported, not raised. A caller runs this on
     its first line, so a table caught half-written -- the Nix build
     interrupted, the file copied while it was being generated -- used to end
     the whole export with a JSONDecodeError, and the user lost every

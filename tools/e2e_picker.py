@@ -8,8 +8,9 @@ console that was showing. This drives the real `padmap serve`.
 
 Safe to run on a live machine, by construction:
 
-  * its own XDG_RUNTIME_DIR, XDG_CONFIG_HOME and profile directory, so it
-    cannot write to the daemon or the front-end the user is running
+  * its own XDG_RUNTIME_DIR, XDG_CONFIG_HOME, profile directory and
+    PADMAP_SDL_DB, so it cannot write to the daemon the user is running, nor
+    to the SDL database every other SDL program on the machine reads
   * PADMAP_ONLY_DEVICE restricts discovery to one uinput pad this script
     creates and owns, so no real controller is ever grabbed
   * the pad's signature is written into the *live* daemon's `prompted` file
@@ -36,7 +37,7 @@ from evdev import ecodes
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "src"))
 
-from padmap import protocol  # noqa: E402
+from padmap import controllercfg, protocol  # noqa: E402
 
 # Deliberately not a name any real controller has, and padmap's own vid with a
 # product id the virtual pads never use.
@@ -326,8 +327,11 @@ def check_scoped_mapping(daemon, pad, profile_dir: str, runtime: str) -> None:
         raise SystemExit(f"FAIL: wrong layout emitted:\n{n64_text}")
     print(f"  ok  {result.stderr.strip().splitlines()[-2]}")
 
-    last = json.loads(
+    # A list of the last few launches, newest first: the scope picker offers
+    # "...for this game" from the front of it.
+    recorded = json.loads(
         (Path(runtime) / "padmap" / "lastgame.json").read_text())
+    last = recorded["games"][0]
     if last["console"] != "n64" or "goldeneye" not in last["key"]:
         raise SystemExit(f"FAIL: the game was not recorded ({last})")
     print(f"  ok  recorded {last['title']!r} for the scope picker")
@@ -353,6 +357,12 @@ def main() -> int:
     config = tempfile.mkdtemp()
     profiles = tempfile.mkdtemp()
     runtime = tempfile.mkdtemp()
+    # The generated SDL database is read by every SDL program on the machine,
+    # so a run that rewrote the real one would hand all of them a mapping for
+    # a pad that existed for eight seconds. Set before the daemon is built:
+    # it inherits this environment.
+    os.environ[controllercfg.ENV_SDL_DB] = str(
+        Path(config) / "sdl_controllers.txt")
 
     guard_live_daemon()
     pad = Pad()
@@ -451,14 +461,14 @@ def main() -> int:
         print("\naccepting writes both files:")
         daemon.send(cmd="accept")
         daemon.pump(1.5)
-        sdl = Path(config) / "pegasus-frontend" / "sdl_controllers.txt"
+        sdl = controllercfg.sdl_config_path()
         lines = [line for line in sdl.read_text().splitlines()
                  if line and not line.startswith("#")]
         if len(lines) != 1 or "padmap Player 1" not in lines[0]:
             raise SystemExit(f"FAIL: SDL mapping not written ({lines})")
         # Mirrored identity by default, so the GUID is the source pad's -- a
         # line under any other one is never looked up, silently.
-        from padmap import controllercfg, devices
+        from padmap import devices
         source = [p for p in devices.discover() if PAD_NAME in p.name]
         expected = controllercfg.virtual_guid(1, source[0]) if source else ""
         if not lines[0].startswith(expected):

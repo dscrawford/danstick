@@ -243,7 +243,7 @@ class Server:
         #
         # Persisted, because the daemon is now restarted on every front-end
         # launch to pick up code changes -- keeping this in memory would turn
-        # "asked once" into "asked every single time you start Pegasus" for
+        # "asked once" into "asked every single time you start a front-end" for
         # any controller the user chose not to configure. It lives in
         # XDG_RUNTIME_DIR, so declining lasts for the login session and a
         # fresh boot offers again.
@@ -483,7 +483,7 @@ class Server:
             )
         elif command == "status":
             self._send(client, self._state_event())
-            # Every connect, not only after a capture. Pegasus reads
+            # Every connect, not only after a capture. An SDL client reads
             # sdl_controllers.txt once at startup, so a front-end that
             # started before the daemon last wrote it -- or reconnected after
             # a daemon restart -- is running on whatever the file said at the
@@ -920,7 +920,7 @@ class Server:
         log.info("wrote %d SDL mapping(s) to %s", len(lines), path)
 
         # Writing the file is not enough, and this is the whole of the
-        # reported bug: Pegasus loads sdl_controllers.txt once, in
+        # reported bug: a front-end loads its SDL database once, in
         # GamepadManagerSDL2::start, and never looks at it again. A mapping
         # captured mid-session therefore does nothing until the front-end is
         # relaunched -- which is the worst possible moment for it, because it
@@ -1355,52 +1355,7 @@ class Server:
 
     def _store_mapping(self, pad: Pad, layout_id: str, bindings: dict,
                        scope: str = "") -> None:
-        """Keep the capture against the *controller*, under one scope.
-
-        Everything else on the profile is carried over rather than rebuilt:
-        recording an N64 mapping is not a reason to forget the calibration,
-        the icon, or the mapping for every other console.
-        """
-        existing = profiles.load(pad)
-        # Only layout ids that are also icon names, which is all of them bar
-        # "generic": the icon is a filename in the theme, and generic.svg
-        # does not exist, so storing it would leave the pad with no picture
-        # at all rather than the fallback one.
-        #
-        # And only from a capture with no scope. A GameCube controller mapped
-        # *for N64 games* is captured against the N64 layout, and taking the
-        # icon from it would relabel the pad as an N64 controller -- which it
-        # is not, and which is the picture the user then sees on the setup
-        # screen forever after. Only "this is what my controller is", which
-        # is what the unscoped flow asks, may say what it looks like.
-        icon = existing.icon if existing else ""
-        if not icon and not scope and layout_id in icons.ICON_NAMES:
-            icon = layout_id
-        profile = profiles.Profile(
-            signature=profiles.signature(pad),
-            name=_clean(pad.name),
-            icon=icon,
-            axes=existing.axes if existing else {},
-            mappings=dict(existing.mappings) if existing else {},
-        )
-        # The console this capture is for travels with it. Emission needs it
-        # to pick the RetroArch keys the core actually reads; without it every
-        # pad gets the gamepad table and the console-specific buttons are
-        # bound to controls their core never looks at.
-        profile.record(scope, profiles.Mapping(
-            buttons=dict(bindings), layout=layout_id))
-        profiles.save(profile)
-        # Which controls the layout asked for and did not get. A skipped
-        # control is stored as an absence, and an absence emits no RetroArch
-        # key at all -- so the pad is reported as mapped, the wizard says
-        # nothing, and the control is simply dead in game. That is
-        # indistinguishable, from the outside, from a control the wizard never
-        # offered; naming the missing ones here is what tells the two apart.
-        missing = [
-            control.canonical
-            for control in layouts.get(layout_id).controls
-            if control.canonical not in bindings
-        ]
+        missing = controllercfg.store_mapping(pad, layout_id, bindings, scope)
         log.info("mapped %s for scope %r: %d control(s)%s",
                  _clean(pad.name), scope, len(bindings),
                  f"; {len(missing)} unmapped: {', '.join(missing)}"
@@ -1811,7 +1766,7 @@ class Server:
         # Also here, not only on accept. The pads going live is what makes
         # these files describe reality, and that happens on every restore --
         # otherwise a mapping cleared with `forget`, or one captured under a
-        # previous version, stays in Pegasus's database until the next time
+        # previous version, stays in the SDL database until the next time
         # someone completes an assignment.
         self._write_controller_configs()
         log.info("republishing %d pad(s); launch config at %s",
@@ -1880,7 +1835,7 @@ class Server:
         but it republishes that pad as `padmap Player N`, and the clone is what
         the front-end actually watches. So every answer to a wizard prompt was
         also delivered to the UI as ordinary controller input: "press B" was
-        read by Pegasus as "go back", and the step cancelled itself with the
+        read by the front-end as "go back", and the step cancelled itself with the
         button it had just asked for.
 
         Driven from state rather than from the begin/finish methods, because

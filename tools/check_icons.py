@@ -2,12 +2,14 @@
 
     python3 tools/check_icons.py
 
-Three lists of the same thing, in three languages: `icons.ICON_NAMES`, the SVG
-files in the theme, and `iconChoices` in CalibrationOverlay.qml. Nothing makes
-them agree, and when they disagree nothing says so -- an icon with no SVG draws
-as a blank square, and an icon missing from the picker simply cannot be chosen.
-Both had already happened: "switch" and "genesis" shipped artwork and were
-unreachable in the picker.
+`icons.ICON_NAMES` and the SVG files under assets/icons are two lists of the
+same thing, and nothing makes them agree: an icon with no artwork draws as a
+blank square in whatever renders it, and artwork no name refers to is dead
+weight nobody notices.
+
+There used to be a third copy, `iconChoices` in the front-end theme, and it had
+already fallen two behind -- "switch" and "genesis" shipped artwork and could
+not be chosen. The theme is gone; the lesson is why this file exists.
 
 Also pins the two identification rules that are easy to get subtly wrong, both
 of which were found by a user asking why their Steam Controller said Xbox.
@@ -24,8 +26,7 @@ sys.path.insert(0, str(REPO / "src"))
 
 from padmap import icons  # noqa: E402
 
-THEME = REPO / "pegasus" / "theme"
-OVERLAY = THEME / "CalibrationOverlay.qml"
+ICON_DIR = REPO / "assets" / "icons"
 
 
 class _Pad:
@@ -35,20 +36,12 @@ class _Pad:
         self.name, self.vid, self.pid = name, vid, pid
 
 
-def picker_choices() -> list[str]:
-    text = OVERLAY.read_text()
-    match = re.search(r"iconChoices:\s*\[(.*?)\]", text, re.S)
-    if match is None:
-        raise SystemExit("FAIL: could not find iconChoices in the overlay")
-    return re.findall(r'"([^"]+)"', match.group(1))
-
-
 def main() -> int:
     failures = 0
     names = set(icons.ICON_NAMES)
 
     print("every icon name has artwork:")
-    shipped = {path.stem for path in (THEME / "icons").glob("*.svg")}
+    shipped = {path.stem for path in ICON_DIR.glob("*.svg")}
     missing = sorted(names - shipped)
     if missing:
         failures += 1
@@ -59,19 +52,6 @@ def main() -> int:
     if extra:
         failures += 1
         print(f"  FAIL: {extra} ship artwork no name refers to")
-
-    print("\nevery icon name can be picked:")
-    choices = picker_choices()
-    unreachable = sorted(names - set(choices))
-    if unreachable:
-        failures += 1
-        print(f"  FAIL: {unreachable} cannot be chosen in the calibration picker")
-    else:
-        print(f"  ok  all {len(choices)} offered")
-    unknown = sorted(set(choices) - names)
-    if unknown:
-        failures += 1
-        print(f"  FAIL: the picker offers {unknown}, which padmap does not know")
 
     print("\nthe kernel's own name for an Xbox pad is recognised:")
     # xpad calls every one of them "Microsoft X-Box 360 pad" -- with the

@@ -40,12 +40,13 @@ art. Measured on this machine that lifts arcade from 3639 to 5154 of 8302
 and closes N64 and GameCube completely.
 
 Downloaded files are stored under the *playlist* name and under the
-escaping `pegasus.art_name` produces, not under the upstream name, so
-`pegasus.art_index` finds them with no knowledge of any of the above.
+escaping `art_name` below produces, not under the upstream name, so a
+consumer finds them with no knowledge of any of the above.
 """
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import shutil
@@ -59,15 +60,48 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TextIO
 
-from .pegasus import art_name, thumbnail_dir
 from .titles import Title, find_titles
 
 # Override so tests can point at a fixture server instead of the internet.
 ENV_SERVER = "PADMAP_THUMBNAIL_SERVER"
 
+
+log = logging.getLogger("padmap.artwork")
+
+ENV_THUMBNAILS = "PADMAP_THUMBNAILS"
+
+
+def thumbnail_dir() -> Path:
+    """Where RetroArch keeps its thumbnails.
+
+    RetroArch's own directory, not one of padmap's: a pack already downloaded
+    through RetroArch is the one the user has, and writing beside it means
+    RetroArch finds what padmap fetched without being told anything.
+    """
+    return Path(
+        os.environ.get(ENV_THUMBNAILS)
+        or Path(
+            os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")
+        ) / "retroarch" / "thumbnails"
+    )
+
+
+def art_name(label: str) -> str:
+    """RetroArch's on-disk name for a playlist label.
+
+    RetroArch stores thumbnails under the label with the characters that are
+    awkward in a filename replaced by underscore. Mirrored so a pack already
+    downloaded through RetroArch is reused as-is.
+    """
+    out = label
+    for bad in "&*/:`<>?\\|":
+        out = out.replace(bad, "_")
+    return out
+
+
 DEFAULT_SERVER = "https://thumbnails.libretro.com"
 
-# The three kinds RetroArch stores and pegasus.ART_KINDS consumes. Boxarts
+# The three kinds RetroArch stores. Boxarts
 # is the default and usually the only one worth fetching: it is what a grid
 # shows, and the full arcade set is ~2.4 GB per kind.
 KINDS = ("Named_Boxarts", "Named_Snaps", "Named_Titles")
@@ -363,7 +397,7 @@ def plan_playlist(
             out.missing += 1
             continue
         out.matched += 1
-        # The local name is the one pegasus.entry_assets will ask for, which
+        # The local name is the one a consumer will ask for, which
         # is derived from the label -- never from the upstream name, which
         # may be a differently-regioned variant.
         local = target / (art_name(label or Path(rom).stem) + ".png")
@@ -489,6 +523,20 @@ def prune_partials(root: Path) -> int:
 
 
 def read_playlist_items(path: Path) -> tuple[list[dict[str, str]], str]:
+    """The entries of a RetroArch playlist, and the core it names.
+
+    A `.lpl` is JSON that padmap does not own: RetroArch writes it, users edit
+    it, and a write cut short by a full disk leaves half of one. Every shape
+    that is not a playlist has to come back as an empty one rather than as an
+    exception, because the caller is a batch that walks every file in a
+    directory and one bad playlist must not cost the other nine.
+
+    The entries are filtered too, not just the list around them. `plan_playlist`
+    reads each with `item.get("label")`, so a single non-object in `items` --
+    `{"items": [1, 2, 3]}` -- raised AttributeError out of `padmap fetch-art`
+    and ended the run. Validating the container and trusting its contents is
+    the shape of that bug.
+    """
     import json
 
     try:
@@ -500,7 +548,11 @@ def read_playlist_items(path: Path) -> tuple[list[dict[str, str]], str]:
     items = data.get("items")
     if not isinstance(items, list):
         return [], ""
-    return items, str(data.get("default_core_name", ""))
+    entries = [item for item in items if isinstance(item, dict)]
+    if len(entries) != len(items):
+        log.warning("%s: ignoring %d playlist entr(y/ies) that are not objects",
+                    path, len(items) - len(entries))
+    return entries, str(data.get("default_core_name", ""))
 
 
 def plan_all(

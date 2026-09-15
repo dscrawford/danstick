@@ -1,5 +1,5 @@
 {
-  description = "Switch-style controller assignment and launcher for RetroArch";
+  description = "Switch-style controller assignment, as stable virtual gamepads";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -85,11 +85,9 @@
 
           shellHook = ''
             export PYTHONPATH="$PWD/src''${PYTHONPATH:+:$PYTHONPATH}"
-            # The same two the `padmap` wrapper sets. Without them an
-            # export-pegasus run from this shell silently writes a bare
-            # `retroarch` launch line and resolves no MAME set names -- it
-            # looks like it worked and produces a library that cannot launch
-            # anything and shows 8302 raw set names.
+            # The same two the `padmap` wrapper sets. Without them a launch
+            # from this shell resolves no MAME set names and invokes a bare
+            # `retroarch`, which looks like it worked.
             export PADMAP_MAME_TITLES="${self.packages.${system}.mame-titles}/share/padmap/mame-titles.json"
             export PADMAP_PLAY="${self.packages.${system}.padmap-play}/bin/padmap-play"
             # cargo writes here; keeping it out of the source tree means a
@@ -99,7 +97,8 @@
             echo "  python3 -m padmap.cli list    - what is plugged in"
             echo "  python3 -m padmap.cli setup   - assign player order"
             echo "  python3 -m padmap.cli run     - republish assigned pads"
-            echo "  nix run .#padmap-start        - start everything (daemon + Pegasus)"
+            echo "  python3 -m padmap.cli map     - record which button is which"
+            echo "  nix run .#padmap-start        - daemon + udev hide rules"
             echo "  (cd rust && cargo test)       - the Rust port's tests"
             echo "  (cd rust && cargo clippy --all-targets -- -D warnings)"
             echo
@@ -135,131 +134,6 @@
           '';
         };
 
-        # Pegasus with the padmap API exposed to QML as `Api.padmap`.
-        #
-        # The patch is deliberately tiny -- five lines across three existing
-        # files plus one new directory -- because all the device handling
-        # stays in the padmap daemon and this is only a socket client. That
-        # keeps rebasing onto new upstream revisions cheap.
-        packages.pegasus =
-          let
-            patched = pkgs.pegasus-frontend.overrideAttrs (old: {
-              pname = "pegasus-frontend-padmap";
-              patches = (old.patches or [ ]) ++ [ ./pegasus/0001-padmap-api.patch ];
-            });
-          in
-          pkgs.writeShellApplication {
-            name = "pegasus-fe";
-            text = ''
-              # SDL does not honour the ID_INPUT_JOYSTICK udev rules that
-              # `padmap hide` installs -- it classifies devices from evdev
-              # capability bits itself, so the physical pads stay visible to
-              # Pegasus and their quirks leak through. Measured here: an N64
-              # adapter absent from SDL's database gets a *guessed* layout
-              # with Accept on raw button 0, and its worn stick rests at 45%
-              # deflection against a 0.5 navigation deadzone.
-              #
-              # This hint is the SDL-level equivalent of the udev rules,
-              # restricting Pegasus to padmap's virtual pads (pid.codes
-              # 1209:0001). Off by default: with it on and the daemon not
-              # republishing, Pegasus has no controller at all and you would
-              # need a keyboard to get to the setup screen.
-              if [ "''${PADMAP_ONLY_VIRTUAL:-0}" = "1" ]; then
-                export SDL_GAMECONTROLLER_IGNORE_DEVICES_EXCEPT="0x1209/0x0001"
-              fi
-
-              # Keep SDL on evdev, off hidraw.
-              #
-              # SDL uses its own HIDAPI drivers for the controllers it knows
-              # best -- Switch, PlayStation, Xbox -- reading /dev/hidraw*
-              # directly instead of the evdev node. That breaks padmap at the
-              # root, in two ways at once, and both were observed here:
-              #
-              #   * the udev hide rules become meaningless. ID_INPUT_JOYSTICK
-              #     only affects evdev enumeration, so Pegasus went on seeing
-              #     every physical pad it was supposed to be blind to -- which
-              #     is why a wizard prompt of "press B" was also delivered to
-              #     the UI as a cancel.
-              #   * the pad stops producing evdev events at all. With SDL
-              #     holding /dev/hidraw8 and the controller in its own report
-              #     mode, hid-nintendo logged "timeout waiting for input
-              #     report" and the evdev node -- open, grabbed and registered
-              #     by padmap -- never once became readable. Proven from the
-              #     process: pegasus had hidraw8 open and event26 not.
-              #
-              # padmap's whole design is "clone the evdev node and let the
-              # front-end read the clone". A front-end on hidraw is reading
-              # around it. So switch it off and let SDL use evdev like
-              # everything else.
-              # Left ON, after trying the opposite and making it worse.
-              #
-              # Setting this to 0 forces SDL onto evdev, which is where padmap
-              # publishes its clones -- so in principle both ends would agree.
-              # In practice hidraw is the only path that has ever carried Switch
-              # Pro input on this machine: the evdev node can be opened, grabbed
-              # and watched, and never emits a single event. Disabling HIDAPI
-              # therefore took the controller from "works in the front-end, not
-              # in games" to "does not work anywhere".
-              #
-              # The fix is not to move SDL; it is for padmap to speak HID itself
-              # for the pads SDL treats this way. See docs/HIDRAW.md.
-              export SDL_JOYSTICK_HIDAPI="''${SDL_JOYSTICK_HIDAPI:-1}"
-
-              # Point the installed theme at this build.
-              #
-              # The theme is QML read from ~/.config at startup, so it goes
-              # stale exactly the way the daemon and padmap-play did: the
-              # link was made once, by hand, and every rebuild after that
-              # changed the store path without changing where it pointed. A
-              # theme fix would then be live in the repo, present in the
-              # build, and simply not running -- with the symptom unchanged,
-              # which is a genuinely hard thing to see.
-              #
-              # Only ever replaces a symlink or nothing. If a real directory
-              # is there, someone put their own theme in it and it is not
-              # ours to overwrite.
-              themes="''${XDG_CONFIG_HOME:-$HOME/.config}/pegasus-frontend/themes"
-              want="${self.packages.${system}.pegasus-theme}/share/pegasus-frontend/themes/padmap"
-              if [ -d "$themes/padmap" ] && [ ! -L "$themes/padmap" ]; then
-                echo "padmap: $themes/padmap is a real directory; leaving it" >&2
-              elif [ "$(readlink "$themes/padmap" 2>/dev/null)" != "$want" ]; then
-                mkdir -p "$themes"
-                ln -sfn "$want" "$themes/padmap"
-                echo "padmap: theme updated to $want" >&2
-              fi
-
-              # The daemon holds the modules it started with, so one left
-              # running across a rebuild keeps serving the previous version:
-              # still answering, still writing a launch.cfg that looks
-              # right, just generated by the old code. Nothing on disk shows
-              # it. Checking here, before the front-end that will depend on
-              # it starts, is the cheapest place to catch that -- and the
-              # daemon restores its assignments on startup, so a restart
-              # costs no controller order.
-              #
-              # Non-fatal: a front-end that refuses to open because a daemon
-              # would not start is worse than one with no controllers, since
-              # the latter can still be driven by keyboard to fix things.
-              if [ "''${PADMAP_SKIP_DAEMON_CHECK:-0}" != "1" ]; then
-                ${self.packages.${system}.padmap}/bin/padmap ensure-daemon \
-                  || echo "padmap: continuing without a current daemon" >&2
-              fi
-
-              # Absolute path, not PATH lookup: this wrapper is also called
-              # pegasus-fe and would otherwise be able to re-exec itself.
-              exec ${patched}/bin/pegasus-fe "$@"
-            '';
-          };
-
-        # MAME set name -> real title, for arcade playlists.
-        #
-        # Pinned to the MAME *2010* XML because that matches the mame2010
-        # core the playlists were scanned with; set names drift between MAME
-        # versions, so a newer dump resolves fewer of them. Measured: 8215 of
-        # 8302 entries (99.0%).
-        #
-        # The 43MB XML is parsed at build time into a ~1MB JSON table, so the
-        # runtime never touches the original.
         packages.mame-titles =
           let
             xml = pkgs.fetchurl {
@@ -281,23 +155,6 @@
               "
             '';
 
-        # Pegasus looks for themes in ~/.config/pegasus-frontend/themes, so
-        # this is installed by symlinking rather than by being on PATH.
-        packages.pegasus-theme = pkgs.runCommand "padmap-pegasus-theme" { } ''
-          mkdir -p "$out/share/pegasus-frontend/themes/padmap"
-          cp -r ${./pegasus/theme}/. "$out/share/pegasus-frontend/themes/padmap/"
-        '';
-
-        # What a front-end actually spawns to play a game.
-        #
-        # Pegasus inherits only its own environment, and RetroArch is not
-        # installed system-wide here -- it has only ever been on PATH inside
-        # padmap's own wrapper. So the launch command has to be an absolute
-        # path to something that carries RetroArch with it.
-        #
-        # Owning --appendconfig here too means the generated metadata does not
-        # have to name the config path, and a front-end that knows nothing
-        # about padmap still gets the assigned controller order.
         packages.padmap-play = pkgs.writeShellApplication {
           name = "padmap-play";
           runtimeInputs = [ pkgs.retroarch pythonEnv ];
@@ -384,43 +241,35 @@
           '';
         };
 
-        # One command for "start the machine": make the daemon current, then
-        # hand off to the front-end.
-        #
-        # Nothing here that `packages.pegasus` does not already do -- the
-        # wrapper runs the same check, because Pegasus also gets started by
-        # a session manager or a .desktop file, and the check has to happen
-        # wherever it is started from. What this adds is a name that says so.
-        # PADMAP_SKIP_DAEMON_CHECK stops the two from doing it twice.
+        # One command for "bring the machine up": make the daemon current and
+        # refresh the udev rules. It launches nothing afterwards -- padmap is a
+        # virtual gamepad, and what reads the pads it publishes is the user's
+        # business. Run it from a session manager or a .desktop file before
+        # whatever does.
         packages.padmap-start = pkgs.writeShellApplication {
           name = "padmap-start";
           text = ''
-            # Same escape hatch as the Pegasus wrapper, so the switch means
-            # the same thing whichever entry point is used.
             if [ "''${PADMAP_SKIP_DAEMON_CHECK:-0}" != "1" ]; then
               ${self.packages.${system}.padmap}/bin/padmap ensure-daemon \
                 || echo "padmap: continuing without a current daemon" >&2
             fi
 
-            # Refresh the udev rules that hide the physical pads from the
-            # front-end's own enumeration.
+            # Refresh the udev rules that hide the physical pads from anything
+            # else enumerating them.
             #
             # They go stale in two ways, and both end in the same baffling
             # symptom. They live in /run/udev/rules.d, which is tmpfs, so a
             # reboot removes them entirely; and they only ever name the
             # controllers that were plugged in when they were written, so any
-            # pad bought since is not covered. Either way the front-end sees
-            # the *physical* pad as well as padmap's clone, and a wizard that
-            # asks the user to press B has that B delivered to the UI as a
-            # cancel -- the configuration screen closes on the button it just
-            # requested, with nothing anywhere saying why. Diagnosed the hard
-            # way from `Gamepad: Connected device 0x0 (Nintendo Switch Pro
-            # Controller)` in Pegasus's own lastrun.log.
+            # pad bought since is not covered. Either way a front-end sees the
+            # *physical* pad as well as padmap's clone, and a wizard that asks
+            # the user to press B has that B delivered to the UI as a cancel --
+            # the configuration screen closes on the button it just requested,
+            # with nothing anywhere saying why.
             #
             # -n so it can never sit at a password prompt on a machine that is
             # plugged into a television. If it cannot elevate, say what to do
-            # and carry on: a front-end that starts with stale rules is worse
-            # than one that starts, but far better than one that does not.
+            # and carry on.
             if [ "''${PADMAP_SKIP_HIDE:-0}" != "1" ]; then
               if ! sudo -n ${self.packages.${system}.padmap}/bin/padmap hide \
                      >/dev/null 2>&1; then
@@ -431,10 +280,8 @@
               fi
             fi
 
-            # The check has happened (or was deliberately skipped); either
-            # way Pegasus should not repeat it.
+            # Anything started after this need not repeat the check.
             export PADMAP_SKIP_DAEMON_CHECK=1
-            exec ${self.packages.${system}.pegasus}/bin/pegasus-fe "$@"
           '';
         };
 
@@ -443,6 +290,14 @@
           runtimeInputs = [ pythonEnv pkgs.udev ];
           text = ''exec python3 ${./tools/paddump.py} "$@"'';
         };
+
+        # The controller artwork, for whatever draws a setup screen. Named
+        # by `icons.ICON_NAMES`, stored in a profile, and sent over the socket,
+        # so a client needs the files even though padmap never renders them.
+        packages.icons = pkgs.runCommand "padmap-icons" { } ''
+          mkdir -p "$out/share/padmap/icons"
+          cp ${./assets/icons}/*.svg "$out/share/padmap/icons/"
+        '';
 
         packages.default = self.packages.${system}.padmap;
 

@@ -11,8 +11,8 @@ not have been.
 The contract for a damaged file is the same everywhere, and it has two halves:
 
   * It must not raise out of a read path. `padmap ensure-daemon` (S18) reads
-    the udev rules, the exported collections and the prompted list before it
-    has decided anything; the daemon reads a profile per pad, once a second,
+    the udev rules and the prompted list before it has decided anything; the
+    daemon reads a profile per pad, once a second,
     on the same thread that forwards controller events. A read path that can
     throw is a startup that can die, and the user's symptom is "the front-end
     came up and no controller does anything".
@@ -30,14 +30,15 @@ symlink, and no read permission -- through the real entry points rather than
 the parsers underneath them, because the guard that matters is the one on the
 path `ensure-daemon` actually takes.
 
-Stories: S18 (ensure-daemon), S20 (forget), S21 (clean-config),
-S22 (export-pegasus), with S1/S4/S14 where a damaged file decides whether a
-controller is offered the wizard or a game launches with bindings.
+Stories: S18 (ensure-daemon), S20 (forget), S21 (clean-config), with
+S1/S4/S14 where a damaged file decides whether a controller is offered the
+wizard or a game launches with bindings.
 
 Nothing here touches real user state: XDG_RUNTIME_DIR, XDG_CONFIG_HOME,
-XDG_DATA_HOME and PADMAP_PROFILE_DIR are redirected into a temp tree before
-padmap is imported, hide's two rules paths are pointed into it, no device is
-opened, no uinput node is created and no command is sent to the live daemon.
+XDG_DATA_HOME, PADMAP_PROFILE_DIR and PADMAP_SDL_DB are redirected into a temp
+tree before padmap is imported, hide's two rules paths are pointed into it, no
+device is opened, no uinput node is created and no command is sent to the live
+daemon.
 
 Lines marked "gap:" are defects found by this file and reported rather than
 fixed; each names its reproduction. Everything else is asserted.
@@ -62,13 +63,17 @@ os.environ["XDG_RUNTIME_DIR"] = str(_SANDBOX / "run")
 os.environ["XDG_CONFIG_HOME"] = str(_SANDBOX / "config")
 os.environ["XDG_DATA_HOME"] = str(_SANDBOX / "data")
 os.environ["PADMAP_PROFILE_DIR"] = str(_SANDBOX / "devices")
+# Named outright rather than left to follow XDG_CONFIG_HOME: this file is read
+# by every SDL program on the machine, and damaging the real one would take
+# the user's own mappings with it.
+os.environ["PADMAP_SDL_DB"] = str(_SANDBOX / "config" / "sdl_controllers.txt")
 for _sub in ("run/padmap", "config", "data", "devices"):
     (_SANDBOX / _sub).mkdir(parents=True, exist_ok=True)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from padmap import (  # noqa: E402
-    cli, controllercfg, hide, launch, mapping, pegasus, profiles, protocol,
+    cli, controllercfg, hide, launch, mapping, profiles, protocol,
     retroarch, server,
 )
 from padmap.devices import Pad  # noqa: E402
@@ -623,215 +628,6 @@ def check_damaged_assignments() -> None:
     path.unlink()
 
 
-# -- S22: RetroArch playlists and exported collections ------------------------
-
-def check_damaged_playlist() -> None:
-    heading("S22: a damaged .lpl yields no collection instead of raising")
-
-    path = _SANDBOX / "playlists" / "Nintendo 64.lpl"
-    path.parent.mkdir(parents=True, exist_ok=True)
-
-    cases = damaged(b'{"items": [{"path": "/roms/n64/Zel')
-    shape_gap = {
-        "items holding scalars": b'{"items": [1, 2, 3]}',
-        "items holding null": b'{"items": [null]}',
-        "items that is a number": b'{"items": 5}',
-        "items that is a string": b'{"items": "abc"}',
-        "an item path that is a number": b'{"items": [{"path": 5}]}',
-        "a default_core_path that is a number": (
-            b'{"items": [{"path": "/roms/a.z64"}], "default_core_path": 5}'),
-    }
-    for label, data in cases.items():
-        path.write_bytes(data)
-        degrades(
-            f"pegasus.read_playlist over a playlist that is {label}",
-            lambda: pegasus.read_playlist(path), None,
-            gap_on=(NESTING,) if label == "deeply nested JSON" else (),
-            gap_note=("read_playlist catches (OSError, ValueError); deep "
-                      "nesting is a RecursionError, and export-pegasus walks "
-                      "every .lpl in the directory, so one such file aborts "
-                      "the whole export. Repro: write '['*200000+']'*200000 "
-                      "to a .lpl and run `padmap export-pegasus`."))
-
-    for label, data in shape_gap.items():
-        path.write_bytes(data)
-        degrades(
-            f"pegasus.read_playlist over a playlist with {label}",
-            lambda: pegasus.read_playlist(path), None,
-            gap_on=(TypeError, AttributeError),
-            gap_note=("read_playlist checks that the top level is an object "
-                      "with an 'items' key and then trusts everything below "
-                      "it: `for item in data['items']` and `item.get(...)`. "
-                      "A playlist RetroArch half-wrote, or one hand-edited, "
-                      "takes `padmap export-pegasus` (S22) down with a "
-                      "TypeError, and every remaining collection goes "
-                      "unexported. Repro: echo '{\"items\": [1, 2, 3]}' > "
-                      "Foo.lpl; padmap export-pegasus."))
-
-    for label in not_a_readable_file(path, b'{"items": []}'):
-        degrades(f"pegasus.read_playlist with {label}",
-                 lambda: pegasus.read_playlist(path), None)
-
-    path.write_text(json.dumps({
-        "default_core_path": "/x/mupen64plus_next_libretro.so",
-        "items": [{"path": "/roms/n64/Zelda.z64", "label": "Zelda"}]}))
-    collection = pegasus.read_playlist(path)
-    if collection is None or len(collection.entries) != 1:
-        fail("an intact playlist did not read back, so every check above "
-             "would pass on a reader that always returned None")
-    ok("an intact playlist still reads back")
-    path.unlink()
-
-
-def check_export_is_not_abandoned_by_one_bad_playlist() -> None:
-    heading("S22: one damaged playlist must not cost every other collection")
-
-    playlists = _SANDBOX / "export-in"
-    out = _SANDBOX / "export-out"
-    for directory in (playlists, out):
-        shutil.rmtree(directory, ignore_errors=True)
-        directory.mkdir(parents=True)
-
-    good = playlists / "Nintendo 64.lpl"
-    good.write_text(json.dumps({
-        "default_core_path": "/x/mupen64plus_next_libretro.so",
-        "items": [{"path": "/roms/n64/Zelda.z64", "label": "Zelda"}]}))
-
-    exported, _ = pegasus.export(playlists, out)
-    if [name for name, *_ in exported] != ["Nintendo 64"]:
-        fail(f"export of a single sound playlist produced {exported!r}")
-    ok("a sound playlist exports")
-
-    # A playlist that is a directory, empty, or unparseable is skipped and the
-    # good one still goes out -- this is the behaviour the shape cases below
-    # ought to share.
-    (playlists / "Directory.lpl").mkdir()
-    (playlists / "Empty.lpl").write_bytes(b"")
-    (playlists / "Truncated.lpl").write_bytes(b'{"items": [{"pa')
-    exported, written = pegasus.export(playlists, out)
-    if [name for name, *_ in exported] != ["Nintendo 64"]:
-        fail(f"a directory, an empty and a truncated .lpl beside a sound one "
-             f"changed the export to {exported!r}: the collections a user can "
-             f"still play must survive the one they cannot")
-    if len(written) != 1 or not (written[0] / "metadata.pegasus.txt").is_file():
-        fail("the sound collection was not written beside the damaged ones")
-    ok("a directory, an empty and a truncated .lpl are skipped and the sound "
-       "collection is still written")
-
-    (playlists / "Shape.lpl").write_bytes(b'{"items": [1, 2, 3]}')
-    try:
-        exported, _ = pegasus.export(playlists, out)
-    except (TypeError, AttributeError) as error:
-        gap(f"one .lpl whose items are not objects raised "
-            f"{type(error).__name__} out of pegasus.export, so no collection "
-            f"is exported at all -- the whole library disappears from Pegasus "
-            f"because of one file. Repro: echo '{{\"items\": [1, 2, 3]}}' > "
-            f"Foo.lpl; padmap export-pegasus.")
-    else:
-        if [name for name, *_ in exported] != ["Nintendo 64"]:
-            fail(f"a wrongly shaped .lpl beside a sound one changed the export "
-                 f"to {exported!r}")
-        ok("a wrongly shaped .lpl is skipped and the sound collection is still "
-           "written")
-
-
-def check_damaged_installed_collections() -> None:
-    heading("S18/S22: a damaged metadata.pegasus.txt must not break "
-            "ensure-daemon")
-
-    game_dirs = pegasus.game_dirs_file()
-    game_dirs.parent.mkdir(parents=True, exist_ok=True)
-    collection = _SANDBOX / "collections" / "n64"
-    collection.mkdir(parents=True, exist_ok=True)
-    metadata = collection / "metadata.pegasus.txt"
-    game_dirs.write_text(f"{collection}\n")
-
-    # The truncation deliberately stops before any `launch:` line: a metadata
-    # file whose launcher really is a hard-coded store path is *supposed* to
-    # be reported, and the answer being [] is only the right one for damage
-    # that says nothing about a launcher at all.
-    cases = damaged(b"collection: Nintendo 6",
-                    wrong_shape=b'{"collection": "N64"}')
-    # Deliberately not in the loop above: this one's contract is the
-    # opposite. Every other damaged shape means "nothing to report"; a launch
-    # line nothing can parse is a launch line nothing can VERIFY, and the
-    # whole job of stale_collections is to notice a collection still invoking
-    # a frozen store path. Skipping it would leave the collection most in need
-    # of re-exporting as the one never reported. It must not raise either --
-    # ensure-daemon calls this on every start.
-    metadata.write_bytes(
-        b'collection: N64\nlaunch: /nix/store/abc/bin/padmap-play "unclosed\n')
-    try:
-        reported = pegasus.stale_collections()
-    except Exception as error:                          # noqa: BLE001
-        raise SystemExit(
-            f"FAIL: an unbalanced quote raised {type(error).__name__} out of "
-            f"stale_collections; ensure-daemon calls it on every start, so "
-            f"padmap would not start at all")
-    if metadata not in reported:
-        raise SystemExit(
-            "FAIL: a launch line that cannot be parsed was treated as "
-            "current. Nothing can verify which launcher it names, so the "
-            "collection most likely to be broken is the one not reported")
-    print("  ok  an unparseable launch line is reported as stale, not skipped")
-
-    for label, data in cases.items():
-        metadata.write_bytes(data)
-        degrades(
-            f"pegasus.stale_collections over metadata that is {label}",
-            pegasus.stale_collections, [],
-            gap_on=(ValueError,),
-            gap_note=("stale_collections runs shlex.split() on the launch "
-                      "line with no guard, and shlex raises ValueError('No "
-                      "closing quotation') on an unbalanced quote. `padmap "
-                      "ensure-daemon` (S18) calls this unconditionally before "
-                      "it has started or checked anything, so a single "
-                      "hand-edited collection file stops padmap starting at "
-                      "all. Repro: put 'launch: /x/padmap-play \"unclosed' in "
-                      "a metadata.pegasus.txt listed in game_dirs.txt and run "
-                      "`padmap ensure-daemon`."))
-
-    for label in not_a_readable_file(metadata, b"launch: /x/padmap-play\n"):
-        degrades(
-            f"pegasus.stale_collections with a metadata file that is {label}",
-            pegasus.stale_collections, [],
-            gap_on=(PermissionError,),
-            gap_note=("stale_collections tests is_file() and then reads, with "
-                      "no guard between: a metadata.pegasus.txt left "
-                      "root-owned by a `sudo padmap export-pegasus` passes the "
-                      "test and raises PermissionError on the read, out of "
-                      "`padmap ensure-daemon`. Repro: chmod 000 a listed "
-                      "metadata.pegasus.txt and run `padmap ensure-daemon`."))
-
-    metadata.write_text("launch: /x/padmap-play\n")
-    for label, data in damaged(b"/home/user/collect").items():
-        game_dirs.write_bytes(data)
-        degrades(
-            f"pegasus.stale_collections over a game_dirs.txt that is {label}",
-            pegasus.stale_collections, [])
-
-    for label in not_a_readable_file(game_dirs, f"{collection}\n".encode()):
-        degrades(f"pegasus.stale_collections with a game_dirs.txt that is "
-                 f"{label}", pegasus.stale_collections, [],
-                 gap_on=(PermissionError,),
-                 gap_note=("same is_file()-then-read gap, on game_dirs.txt. "
-                           "Repro: chmod 000 ~/.config/pegasus-frontend/"
-                           "game_dirs.txt and run `padmap ensure-daemon`."))
-
-    # The control: a collection that really does name a hard-coded launcher is
-    # still reported, which is the only reason this function exists.
-    game_dirs.write_text(f"{collection}\n")
-    metadata.write_text(
-        "collection: N64\nlaunch: /nix/store/old-padmap/bin/padmap-play "
-        '"{file.path}"\n')
-    if pegasus.stale_collections() != [metadata]:
-        fail("a collection launching through a hard-coded store path was not "
-             "reported, so every check above would pass on a function that "
-             "always returned []")
-    ok("a collection that really is stale is still reported")
-    game_dirs.unlink()
-
-
 # -- S21: retroarch.cfg -------------------------------------------------------
 
 def check_damaged_retroarch_config() -> None:
@@ -1082,7 +878,7 @@ def check_rewriting_a_damaged_sdl_database() -> None:
         text = written.read_text(errors="replace")
         if ours not in text:
             fail(f"padmap's own line was not written into a database that is "
-                 f"{label}, so Pegasus has nothing to navigate with")
+                 f"{label}, so no SDL program has a mapping for the pad")
         if foreign not in text:
             fail(f"a user's own mapping was dropped while rewriting a database "
                  f"that is {label}: lines for devices padmap does not manage "
@@ -1104,9 +900,6 @@ def main() -> int:
     check_forget_over_a_damaged_profile_store()
     check_damaged_last_game()
     check_damaged_assignments()
-    check_damaged_playlist()
-    check_export_is_not_abandoned_by_one_bad_playlist()
-    check_damaged_installed_collections()
     check_damaged_retroarch_config()
     check_damaged_udev_rules()
     check_damaged_sdl_database()
@@ -1116,7 +909,8 @@ def main() -> int:
     for name, value in (
             ("XDG_RUNTIME_DIR", os.environ["XDG_RUNTIME_DIR"]),
             ("XDG_CONFIG_HOME", os.environ["XDG_CONFIG_HOME"]),
-            ("PADMAP_PROFILE_DIR", os.environ["PADMAP_PROFILE_DIR"])):
+            ("PADMAP_PROFILE_DIR", os.environ["PADMAP_PROFILE_DIR"]),
+            ("PADMAP_SDL_DB", os.environ["PADMAP_SDL_DB"])):
         if not value.startswith(str(_SANDBOX)):
             fail(f"{name} was left pointing at {value}")
     if not str(hide.RULES_PATH).startswith("/etc/udev"):

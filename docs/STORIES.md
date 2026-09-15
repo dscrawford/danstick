@@ -12,6 +12,20 @@ disagree, the code is right and this file is a bug.
 
 ---
 
+> **The front-end was removed.** padmap used to ship a patched Pegasus and a
+> QML theme, and this document was written against them: the stories below
+> that name a keypress ("Details", "Filters", "Prev-page", "M", a number key)
+> were describing that theme's bindings. The daemon commands they exercised
+> are all still there and still reachable over the socket
+> (`src/padmap/protocol.py` lists them), and the mapping wizard is now also
+> reachable from a terminal as `padmap map`. What has gone with the front-end
+> is the library browser and the collection exporter -- stories S22 and S23,
+> deleted rather than rewritten, because their subject does not exist.
+>
+> padmap is a virtual gamepad. What draws a setup screen on top of it is
+> whatever the user points at the socket.
+
+
 ## Reading the key names
 
 The theme talks to Pegasus's *named actions* (`api.keys.isDetails`,
@@ -781,87 +795,6 @@ controller drives two ports — visible as four players in an N64 game.
 *"Cleaning up what already leaked"*: measured on the real config as 7 lines
 changed out of 3382, idempotent on a second run.
 
-## S22 — `padmap export-pegasus` regenerates collections with art and console ids
-
-**Actor and want.** A library that matches the RetroArch playlists, with box
-art, and with the facts the mapping and launch paths need.
-
-**Keys and commands.** `padmap export-pegasus [--playlists DIR] [--out DIR]
-[--no-game-dirs]` → `pegasus.export(playlist_dir, out_dir)`. It writes **one
-directory per collection** and appends each to
-`~/.config/pegasus-frontend/game_dirs.txt`, keeping any line the user added by
-hand and dropping padmap's own previous entries. Every `launch:` line names
-`~/.local/share/padmap/bin/padmap-play`, the stable symlink
-`pegasus.install_player_link()` maintains. `x-console`, `x-gamekey` and
-`x-mame-status` are written per game. Art comes from `pegasus.thumbnail_dir()`,
-filled by `padmap fetch-art`.
-
-**Preconditions.** A playlist directory. `PADMAP_MAME_TITLES` must be set for
-arcade set names to resolve — without it, 3 of 8302 matched.
-
-**Expected outcome.** One collection per system, counts and artwork totals
-reported (art is reported at zero too, because silence there looks like the
-export lost artwork it once had).
-
-**What has gone wrong here before.** *"The launcher path was baked into the
-collections"* — `export-pegasus` wrote an absolute Nix store path into every
-`launch:` line, so months-old collections were still launching games through a
-wrapper whose entire body predated `--nodevice`. "The daemon was current,
-`launch.cfg` and `launch.args` were correct... and none of it mattered,
-because that is not the binary Pegasus ran." Third instance of the same shape:
-*the code was right and the thing being executed was something else.*
-*"Why the tests missed it"*: `e2e_ports.py` wrote its own metadata pointing at
-a freshly built launcher and was blind to the one on disk; `--installed`
-fixes that and reproduced the report exactly the first time it ran. One
-directory per collection, not a merged file, because Pegasus never looks below
-a listed directory and merging makes every game inherit the *first*
-collection's launch command — which is how an N64 ROM was launched with the
-MAME arcade core.
-
----
-
-# Library
-
-## S23 — Games are browsed by console tab
-
-**Actor and want.** Find something to play on a TV, from a controller.
-
-**Keys and commands.** `Q`/`E` (Prev/Next-page, L1/R1) switch tab and wrap;
-`Up` from the first row reaches the tab bar and `Left`/`Right` there switch
-tab; `Down` or Accept returns to the games. `F` (Filters) enters search mode,
-after which **letters are text and nothing else** — only `Esc` (clear and
-leave), `Enter` (keep the filter and leave) and `Backspace` get out.
-`PgDn` (R2) toggles favourite. `Enter` (Accept) launches. `I` opens the setup
-screen (S2), `M` maps for the focused game (S10).
-
-**Preconditions.** Collections arrive after the first paint, so
-`onGamedataReady` drops the art and favourite caches and rebuilds.
-
-**Expected outcome.** A cover grid where a collection has artwork and a list
-where it does not (sampled over the first 400 entries, not counted in full).
-Favourites float to the top **the next time the tab is opened**, not the
-moment they are marked. Games whose `x-mame-status` is `preliminary` — MAME's
-own grade behind its red "THIS GAME DOES NOT WORK" screen — are marked.
-Search filters the current collection only, and switching tab drops the query.
-
-**What has gone wrong here before.** Type-to-search cannot coexist with letter
-keybindings: Pegasus binds Details to `I`, Filters to `F` and prev/next page
-to `Q`/`E`/`A`/`D`, so typing any of those fired an action instead of
-filtering — hence search is a mode. Focus has to be pushed down *twice*, to
-the FocusScope and then to whichever view is live; setting only the inner one
-leaves it with focus but no `activeFocus`, and the grid silently stops
-answering the d-pad. The unfiltered model is the collection's own `games`
-list, and favourites are floated by permuting a `DelegateModel`, because
-building a JS array of 8302 arcade entries costs a wrapper object per game on
-every view change. `floatFavorites` clears `order.model` first because moves
-are cumulative and a second pass scrambles the order it was asked to produce.
-`favorite === true`, not truthy, because it is `undefined` on a front-end that
-does not implement the flag. And *"`console` is a QML global, and the theme
-would not load"*: `theme.qml:45:9: Signal parameter "console" hides global
-variable.` cost the whole file, and with it the whole front-end.
-
----
-
 # Coverage
 
 Which file exercises each story **today**. Established by reading
@@ -892,8 +825,16 @@ asserts.
 | S19 | `sudo padmap hide` covers every physical pad | `check_hide_rules.py` (~30 cases: text, install, idempotence, `/etc` vs `/run`, non-UTF-8, NixOS snippet), `check_autosetup.py` (`unhidden`, install chain) |
 | S20 | `forget` makes a controller be offered again | `check_autosetup.py` (both memories; a controller with no profile at all), `check_scope_store.py` (`forget` takes every scope, is honest twice, touches nobody else), `check_poll_cost.py` (the `prompted` mtime forces a rescan) |
 | S21 | `clean-config` removes padmap leftovers | **NO COVERAGE.** Nothing in `tools/` references `clean_user_config` or `clean-config` |
-| S22 | `export-pegasus` regenerates collections | **NO COVERAGE.** Nothing in `tools/check_*.py` or `tools/e2e_*.py` references `pegasus.export`, `pegasus.render`, `install_player_link` or `stale_collections`; only `preview_library.py` and `preview_favorites.py` import `pegasus`. `e2e_launch.py` tests Pegasus's per-collection launch resolution against **hand-written** metadata, not the exporter's |
-| S23 | Browse by console, art, favourites, search, broken titles marked | `check_library.py` (tabs, art/list mode, focus, search mode), `check_favorites.py` (marking, ordering, no-collision), `check_theme_loads.py` (every QML file compiles; no shadowed globals), `e2e_favorites.py` / `e2e_launch.py` (real Pegasus). **`isBroken` / `x-mame-status` marking and box-art rendering: NO COVERAGE** |
+
+> **Some of the scripts cited below no longer exist.** Removing the front-end
+> took these with it: `e2e_daemon.py`, `e2e_launch.py`, `e2e_ports.py`, `e2e_sdl_reload.py`, `e2e_pegasus.py`, `e2e_favorites.py`, `check_exporter.py`, `check_library.py`, `check_favorites.py`, `check_hostile_library.py`, `check_theme_loads.py`, `check_theme_routing.py`, `check_theme_setup.py`, `preview_library.py`, `preview_favorites.py`. Every one of them either drove the QML theme
+> or built and ran the front-end itself, so there was nothing left for them to
+> assert. A cell naming one of them is overstating the coverage that story
+> actually has, and the honest reading is "less than this says" until somebody
+> re-establishes it against the socket instead. They are left in place rather
+> than quietly deleted so it is visible *what* was being checked and is no
+> longer.
+
 
 ## The rows worth acting on
 
@@ -990,29 +931,6 @@ S1-S23. Grouped by where it lives.
 * **Restore on start** — `Server.restore()` republishes `assignments.json` by
   device *path*, skipping pads that are gone rather than faking them, because
   a dead virtual pad in the enumeration shifts every index after it.
-
-## Front-end paths (`pegasus/theme/`, `pegasus/0001-padmap-api.patch`)
-
-* **`E` (Next-page) on the Controller Order screen** → `openGamepadEditor()`,
-  which cancels the session on the C++ side (the editor reads through SDL and
-  cannot see a pad padmap has grabbed) and closes the setup screen. Setup ends
-  there; `I` from the library resumes it.
-* **The icon chooser** — `Left`/`Right`/`Enter`/`Esc` on the calibration
-  overlay's `icon` step. The only place `set_icon` is reachable from.
-* **The Calibration Overlay's `problem` step and 4 s watchdog** — *any* key
-  dismisses it, deliberately, because the pads are still grabbed and "a screen
-  becomes a trap" if only one specific key works.
-* **`mappingSuggested`** — after a first successful configuration the screen
-  adds a line saying Prev-page re-maps. Surfaced, never acted on: opening the
-  editor needs the pads released, so it has to be the user's decision.
-* **The `say()` note line** on both screens — "Hold a button on the controller
-  first…", "No console known for this game", "★ Added to favourites — moves to
-  the top next time you open…". A key that finds nothing to act on has to say
-  so; silence reads as a broken key.
-* **The daemon-unreachable toast** in `theme.qml` — "padmap daemon is not
-  running — start it with `padmap serve`", shown instead of opening the screen.
-* **`Esc` in the library** clears an active filter *before* it means anything
-  else.
 
 ## Environment switches
 

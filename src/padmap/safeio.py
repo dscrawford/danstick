@@ -1,7 +1,7 @@
 """Reading a text file padmap does not own.
 
 Every file padmap reads but did not write -- the udev rules in /run, the
-`prompted` list in XDG_RUNTIME_DIR, a stored profile, Pegasus' own config --
+`prompted` list in XDG_RUNTIME_DIR, a stored profile, another program's config --
 can be absent, unreadable, or full of bytes that are not UTF-8. The first two
 of those raise `OSError` and every reader guards for it. The third raises
 `UnicodeDecodeError`, which is a `ValueError`, so `except OSError` misses it
@@ -14,7 +14,7 @@ one bad byte: `padmap serve` could not start, `sudo padmap hide` tracebacked,
 `padmap forget` -- the recovery command, run precisely when things are already
 broken -- tracebacked too. Five instances of one mistake is not five bugs; it
 is a missing helper, so this is it. A sixth turned up while converting the
-last two -- `export-pegasus` reading Pegasus' own game_dirs.txt -- which is
+last two -- reading a file another program owns -- which is
 the argument in one line. New code reading a file padmap does not control
 should call this rather than `Path.read_text()`.
 

@@ -344,7 +344,7 @@ class Republisher:
         half the story: the same pad is also being republished, and the clone is
         exactly what the front-end *does* watch. So every press the wizard asked
         for was also delivered to the UI, and a wizard that says "press B" had
-        its answer read by Pegasus as "go back" -- the step cancelled itself with
+        its answer read by the front-end as "go back" -- the step cancelled itself with
         the button it requested. Reported on a Switch Pro, but nothing about it
         is Switch-specific; it needed a pad whose B sits where the front-end's
         cancel is.

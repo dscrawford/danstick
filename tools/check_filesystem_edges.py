@@ -3,7 +3,7 @@
 
 padmap keeps nothing in memory. Who is player 2, what their controller is
 mapped to, which game was played last, what RetroArch and SDL should believe
-about any of it -- all of it is files, written by fourteen different writers
+about any of it -- all of it is files, written by a dozen different writers
 into five different trees. A `padmap hide` run as root, a rebuild that turns a
 directory into a store symlink, a full disk, a home directory restored from a
 backup with the wrong owner, a hand-edit that left a directory where a file
@@ -14,8 +14,8 @@ The contract is NOT the same for all of them, and assuming it is, is the bug
 this file exists to catch. Three different promises are being made:
 
   CREATES ITS TREE. profiles.save, write_sdl_mappings, write_last_game,
-    write_launch_config, write_launch_args, install_profiles, pegasus.export,
-    install_player_link, Server._save_assignments, Server._save_prompted.
+    write_launch_config, write_launch_args, install_profiles,
+    Server._save_assignments, Server._save_prompted.
     A fresh boot has no XDG_RUNTIME_DIR/padmap and a fresh install has no
     ~/.local/share/padmap/devices; a writer that needs its parent to exist
     would fail on exactly the runs that matter most, the first ones.
@@ -44,7 +44,7 @@ NAME_MAX, and a path containing newlines and unicode.
 
 Stories: S17 (per-player profiles), S4/S12 (what a finished wizard writes),
 S14/S16 (what a launch writes), S18 (ensure-daemon), S19 (hide), S20
-(forget), S21 (clean-config), S22 (export-pegasus).
+(forget), S21 (clean-config).
 
 Nothing here touches real user state or hardware: XDG_RUNTIME_DIR,
 XDG_CONFIG_HOME, XDG_DATA_HOME, PADMAP_PROFILE_DIR and RETROARCH_CONFIG_DIR
@@ -81,14 +81,17 @@ os.environ["XDG_CONFIG_HOME"] = str(_SANDBOX / "config")
 os.environ["XDG_DATA_HOME"] = str(_SANDBOX / "data")
 os.environ["PADMAP_PROFILE_DIR"] = str(_SANDBOX / "devices")
 os.environ["RETROARCH_CONFIG_DIR"] = str(_SANDBOX / "retroarch")
-os.environ["PADMAP_PLAY"] = "/nix/store/0000-fake-padmap-play/bin/padmap-play"
+# Named outright rather than left to follow XDG_CONFIG_HOME: every SDL program
+# on the machine reads this file, and a scenario that wrote the real one would
+# take the user's own mappings with it.
+os.environ["PADMAP_SDL_DB"] = str(_SANDBOX / "config" / "sdl_controllers.txt")
 for _sub in ("run/padmap", "config", "data", "devices", "retroarch"):
     (_SANDBOX / _sub).mkdir(parents=True, exist_ok=True)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from padmap import (  # noqa: E402
-    artwork, cli, controllercfg, devices, hide, launch, pegasus, profiles,
+    artwork, cli, controllercfg, devices, hide, launch, profiles,
     protocol, retroarch, server, titles,
 )
 from padmap.assign import Assignment  # noqa: E402
@@ -212,10 +215,6 @@ FILENAME = profiles._filename(SIGNATURE)
 ASSIGNMENTS = [Assignment(player=1, pad=PAD, button=0)]
 VPATHS = {1: "/dev/input/event50"}
 SDL_LINE = {1: "0600c9a7091200000100000001000000,padmap Player 1,a:b0,"}
-PLAYLIST = json.dumps({
-    "default_core_path": "/cores/mupen64plus_next_libretro.so",
-    "items": [{"path": "/roms/n64/Zelda.z64", "label": "Zelda"}],
-})
 
 # 300 characters. NAME_MAX is 255 bytes on every filesystem padmap can be
 # installed on, so this is the "path is very long" case rather than a number
@@ -448,13 +447,13 @@ def check_profile_filenames_are_survivable() -> None:
     ok("and the profile is really there")
 
 
-# -- S4: the SDL database Pegasus reads -------------------------------------
+# -- S4: the SDL database padmap generates ----------------------------------
 
 
 def check_sdl_database_writer() -> None:
     heading("S4 controllercfg.write_sdl_mappings -- contract: creates its tree")
 
-    base = fresh("sdl-deep") / "pegasus-frontend" / "nested"
+    base = fresh("sdl-deep") / "padmap" / "nested"
     creates("sdl_controllers.txt three levels deep is created",
             lambda: controllercfg.write_sdl_mappings(
                 SDL_LINE, base / "sdl_controllers.txt"),
@@ -463,7 +462,7 @@ def check_sdl_database_writer() -> None:
     heading("S4 controllercfg.write_sdl_mappings -- contract: raises OSError")
 
     blocker = blocking_file("sdl-parent-is-a-file")
-    refuses("the pegasus-frontend directory is a plain file",
+    refuses("the config directory is a plain file",
             lambda: controllercfg.write_sdl_mappings(
                 SDL_LINE, blocker / "sdl_controllers.txt"))
 
@@ -514,7 +513,7 @@ def check_sdl_database_keeps_foreign_lines() -> None:
              lambda: controllercfg.write_sdl_mappings(SDL_LINE, target))
     if "padmap Player 1" not in (base / "real-database.txt").read_text():
         fail("a dangling sdl_controllers.txt symlink swallowed the mapping; "
-             "Pegasus reads the link's target and would see nothing")
+             "SDL reads the link's target and would see nothing")
     ok("the link is followed and the mapping lands at its target")
 
     base = fresh("sdl-symlink-out")
@@ -530,8 +529,8 @@ def check_sdl_database_keeps_foreign_lines() -> None:
     ok("the symlink itself survives the rewrite")
     if victim.read_text() != "PRECIOUS\n":
         gap(f"write_sdl_mappings followed a symlink out of "
-            f"$XDG_CONFIG_HOME/pegasus-frontend and rewrote {victim.name}. "
-            f"Reproduce: ln -s ~/anything ~/.config/pegasus-frontend/"
+            f"$XDG_CONFIG_HOME/padmap and rewrote {victim.name}. "
+            f"Reproduce: ln -s ~/anything ~/.config/padmap/"
             f"sdl_controllers.txt and finish the wizard")
 
     if not skip_as_root("a write-only SDL database"):
@@ -541,8 +540,7 @@ def check_sdl_database_keeps_foreign_lines() -> None:
         # and a read that failed cannot tell "the file was empty" from "the
         # file is there and I could not see it". It used to write anyway, and
         # the hand-written mappings went with it -- reproduce by chmod 0222 on
-        # ~/.config/pegasus-frontend/sdl_controllers.txt, then finish the
-        # wizard.
+        # ~/.config/padmap/sdl_controllers.txt, then finish the wizard.
         base = fresh("sdl-write-only")
         target = base / "sdl_controllers.txt"
         target.write_text(mine)
@@ -862,203 +860,10 @@ def check_hide_install_never_raises() -> None:
     target.unlink()
 
 
-# -- S22: the exported Pegasus collections ----------------------------------
+# -- S18: ensure-daemon -----------------------------------------------------
 
 
-def check_pegasus_export_writer() -> None:
-    heading("S22 pegasus.export -- contract: creates its tree")
-
-    playlists = fresh("export-playlists")
-    (playlists / "Nintendo - Nintendo 64.lpl").write_text(PLAYLIST)
-
-    out = fresh("export-out") / "collections" / "nested"
-    results, dirs = survives("exporting into a directory tree that has none",
-                             lambda: pegasus.export(playlists, out))
-    metadata = out / "Nintendo - Nintendo 64" / "metadata.pegasus.txt"
-    if not metadata.is_file():
-        fail("export created no metadata.pegasus.txt; Pegasus shows an empty "
-             "library and nothing says why")
-    ok("a collection directory and its metadata file are created")
-    if [str(d) for d in dirs] != [str(metadata.parent)]:
-        fail(f"export reported {dirs!r} rather than the directory it wrote; "
-             f"that list is what game_dirs.txt is built from, and Pegasus "
-             f"never looks below a directory it was not given")
-    ok("and it reports that directory for game_dirs.txt")
-
-    heading("S22 pegasus.export -- contract: raises OSError")
-
-    blocker = blocking_file("export-out-is-a-file")
-    refuses("the output directory is a plain file",
-            lambda: pegasus.export(playlists, blocker))
-
-    out = fresh("export-metadata-is-a-dir")
-    (out / "Nintendo - Nintendo 64" / "metadata.pegasus.txt").mkdir(parents=True)
-    refuses("metadata.pegasus.txt is a directory",
-            lambda: pegasus.export(playlists, out))
-
-    if not skip_as_root("a read-only export directory"):
-        out = fresh("export-read-only")
-        with read_only(out):
-            refuses("the output directory is read-only",
-                    lambda: pegasus.export(playlists, out))
-
-    heading("S22 pegasus.export -- a playlist with an awkward name")
-
-    playlists = fresh("export-awkward-playlists")
-    # 200 characters, which is what actually fits: the .lpl file itself is
-    # subject to NAME_MAX, so a longer collection name cannot exist to begin
-    # with.
-    long_name = "L" * 200
-    (playlists / f"{long_name}.lpl").write_text(PLAYLIST)
-    (playlists / f"{AWKWARD}.lpl").write_text(PLAYLIST)
-    results, dirs = survives("exporting a 200-character collection name",
-                             lambda: pegasus.export(playlists,
-                                                    fresh("export-awkward")))
-    names = {d.name for d in dirs}
-    if long_name not in names:
-        fail(f"a 200-character playlist name was not exported ({names})")
-    ok("a 200-character collection name is exported")
-    if AWKWARD not in names:
-        fail(f"a playlist name with a newline and a snowman was not exported "
-             f"({names})")
-    ok("a collection name with a newline and a snowman is exported")
-
-
-def check_game_dirs_writer() -> None:
-    heading("S22 cli.cmd_export_pegasus -- game_dirs.txt")
-
-    playlists = fresh("gamedirs-playlists")
-    (playlists / "Nintendo - Nintendo 64.lpl").write_text(PLAYLIST)
-    config = fresh("gamedirs-config")
-
-    def export(out: Path, source: Path = playlists) -> int:
-        return quiet(lambda: cli.cmd_export_pegasus(argparse.Namespace(
-            playlists=str(source), out=str(out), no_game_dirs=False)))
-
-    target = config / "pegasus-frontend" / "game_dirs.txt"
-    with env(XDG_CONFIG_HOME=str(config)):
-        code = survives("export into a config home with no pegasus-frontend "
-                        "directory", lambda: export(fresh("gamedirs-out1")))
-        if code != 0:
-            fail(f"export-pegasus returned {code}")
-        if not target.is_file():
-            fail("game_dirs.txt was not created; Pegasus never looks below a "
-                 "directory it was not given, so the collections that were "
-                 "just written are invisible")
-        ok("game_dirs.txt is created along with its directory")
-
-        # A line the user added by hand, which must survive a re-export.
-        target.write_text("/home/someone/my-own-games\n")
-        export(fresh("gamedirs-out2"))
-        lines = target.read_text().splitlines()
-        if "/home/someone/my-own-games" not in lines:
-            fail(f"a hand-added game_dirs.txt line was dropped by a "
-                 f"re-export ({lines})")
-        ok("a line the user added by hand survives a re-export")
-
-        if not skip_as_root("a read-only game_dirs.txt"):
-            kept = target.read_text()
-            target.chmod(0o444)
-            refuses("game_dirs.txt is read-only",
-                    lambda: export(fresh("gamedirs-out3")))
-            target.chmod(0o644)
-            unchanged("the existing game_dirs.txt is untouched", target, kept)
-
-        target.unlink()
-        target.mkdir()
-        refuses("game_dirs.txt is a directory",
-                lambda: export(fresh("gamedirs-out4")))
-        target.rmdir()
-
-        # A collection whose name contains a newline. game_dirs.txt is read
-        # one directory per line by PegasusProvider, so this is the writer
-        # meeting a value it cannot encode.
-        awkward = fresh("gamedirs-playlists-awkward")
-        (awkward / f"{AWKWARD}.lpl").write_text(PLAYLIST)
-        out = fresh("gamedirs-out5")
-        target.write_text("")
-        export(out, source=awkward)
-        lines = [line for line in target.read_text().splitlines() if line]
-        if len(lines) != 1:
-            gap(f"a collection whose name contains a newline wrote {len(lines)} "
-                f"lines into game_dirs.txt instead of one. Reproduce: name a "
-                f"playlist $'Bad\\nName.lpl' and run `padmap export-pegasus`. "
-                f"Pegasus reads that file one directory per line, so the "
-                f"collection is never scanned and a bogus path is, and the "
-                f"export reports success either way (cli.py, cmd_export_"
-                f"pegasus joins the paths with newlines without checking that "
-                f"none contains one)")
-        else:
-            ok("a collection name containing a newline still writes one line")
-
-
-def check_player_link_writer() -> None:
-    heading("S18/S22 pegasus.install_player_link -- contract: atomic replace")
-
-    with env(XDG_DATA_HOME=str(fresh("link-fresh"))):
-        link = pegasus.player_link()
-        result = survives("installing the launcher symlink with no bin/ yet",
-                          pegasus.install_player_link)
-        if result is None or not link.is_symlink():
-            fail("install_player_link created no symlink; the exported "
-                 "collections invoke games through that fixed path, so a "
-                 "rebuild leaves them on a padmap-play from before whatever "
-                 "was just fixed")
-        ok("bin/ is created and the symlink points at PADMAP_PLAY")
-        if os.readlink(link) != os.environ["PADMAP_PLAY"]:
-            fail(f"the symlink points at {os.readlink(link)}")
-        ok("...at exactly PADMAP_PLAY")
-
-        # A plain file where the link belongs: what an older padmap, or a
-        # copy instead of a link, leaves behind.
-        link.unlink()
-        link.write_text("#!/bin/sh\nexec retroarch\n")
-        survives("a plain file standing where the launcher link belongs",
-                 pegasus.install_player_link)
-        if not link.is_symlink():
-            fail("a plain padmap-play was left in place, so collections keep "
-                 "invoking whatever it happens to contain")
-        ok("a plain file is replaced by the symlink")
-
-        # The one place padmap writes through os.replace rather than
-        # write_text, and the difference is visible: a symlink pointing out
-        # of the tree is replaced, not followed.
-        victim = _SANDBOX / "cases" / "not-the-launcher"
-        victim.write_text("PRECIOUS\n")
-        link.unlink()
-        link.symlink_to(victim)
-        survives("a launcher link pointing out of the data directory",
-                 pegasus.install_player_link)
-        if victim.read_text() != "PRECIOUS\n":
-            fail(f"install_player_link followed a symlink out of "
-                 f"$XDG_DATA_HOME/padmap/bin and wrote over {victim.name}")
-        ok("the link is replaced, not followed: nothing outside is touched")
-        if os.readlink(link) != os.environ["PADMAP_PLAY"]:
-            fail("the replaced link does not point at PADMAP_PLAY")
-        ok("...and it now points at the current padmap-play")
-
-    heading("S18/S22 pegasus.install_player_link -- contract: raises OSError")
-
-    with env(XDG_DATA_HOME=str(fresh("link-blocked"))):
-        link = pegasus.player_link()
-        link.parent.parent.mkdir(parents=True, exist_ok=True)
-        link.parent.write_text("a file called bin\n")
-        refuses("bin/ is a plain file", pegasus.install_player_link)
-
-    with env(XDG_DATA_HOME=str(fresh("link-is-a-dir"))):
-        link = pegasus.player_link()
-        link.mkdir(parents=True)
-        refuses("padmap-play is a directory", pegasus.install_player_link)
-
-    if not skip_as_root("a read-only bin directory"):
-        with env(XDG_DATA_HOME=str(fresh("link-read-only"))):
-            link = pegasus.player_link()
-            link.parent.mkdir(parents=True)
-            with read_only(link.parent):
-                refuses("bin/ is read-only", pegasus.install_player_link)
-
-
-def check_ensure_daemon_survives_the_link() -> None:
+def check_ensure_daemon_reaches_the_daemon_check() -> None:
     heading("S18 `padmap ensure-daemon` -- a daemon must still be checked")
 
     # --check only. Without it this spawns a real daemon, which would take
@@ -1076,30 +881,6 @@ def check_ensure_daemon_survives_the_link() -> None:
              f"running' and exit 1, and this scenario is not reaching the "
              f"code it claims to")
     ok("reaches the daemon check and reports there is none")
-
-    with env(XDG_DATA_HOME=str(fresh("ensure-blocked"))):
-        link = pegasus.player_link()
-        link.parent.parent.mkdir(parents=True, exist_ok=True)
-        link.parent.write_text("a file called bin\n")
-        try:
-            code = ensure()
-        except OSError as error:
-            gap(f"`padmap ensure-daemon` raised {type(error).__name__} and "
-                f"never reached the daemon check, because repointing the "
-                f"launcher symlink is the first thing it does and "
-                f"install_player_link is unguarded (cli.py, cmd_ensure_"
-                f"daemon). Reproduce: rm -rf ~/.local/share/padmap/bin && "
-                f"touch ~/.local/share/padmap/bin && padmap ensure-daemon. "
-                f"The Pegasus wrapper runs this with `|| echo continuing "
-                f"without a current daemon`, so the front-end comes up with "
-                f"NO daemon at all -- no virtual pads, no controllers -- over "
-                f"a symlink that only affects which launcher exported "
-                f"collections call. It has to be reported and stepped over")
-        else:
-            if code != 1:
-                fail(f"ensure-daemon returned {code} rather than reporting no "
-                     f"daemon; the launcher-link failure changed its answer")
-            ok("an unwritable launcher link does not stop the daemon check")
 
 
 # -- the daemon's own writers, which may never take it down -----------------
@@ -1270,7 +1051,7 @@ def check_forget_prompted_writer() -> None:
 
 
 def check_artwork_writer() -> None:
-    heading("S22 artwork._safe -- contract: per-file failure, never raises")
+    heading("artwork._safe -- contract: per-file failure, never raises")
 
     original = artwork.fetch
     artwork.fetch = lambda url, timeout: b"\x89PNG\r\n\x1a\n fake"  # type: ignore[assignment]
@@ -1332,7 +1113,7 @@ def check_artwork_writer() -> None:
 
 
 def check_titles_writer() -> None:
-    heading("S22 titles.dump_json -- contract: creates NOTHING")
+    heading("titles.dump_json -- contract: creates NOTHING")
 
     missing = fresh("titles") / "not-there" / "titles.json"
     refuses("a title table under a directory that does not exist",
@@ -1352,7 +1133,8 @@ def check_nothing_real_was_touched() -> None:
     heading("the sandbox")
 
     for name in ("XDG_RUNTIME_DIR", "XDG_CONFIG_HOME", "XDG_DATA_HOME",
-                 "PADMAP_PROFILE_DIR", "RETROARCH_CONFIG_DIR"):
+                 "PADMAP_PROFILE_DIR", "RETROARCH_CONFIG_DIR",
+                 "PADMAP_SDL_DB"):
         value = os.environ.get(name, "")
         if not value.startswith(str(_SANDBOX)):
             fail(f"{name} was left as {value!r}, outside the sandbox; a "
@@ -1397,10 +1179,7 @@ def main() -> int:
 
     check_hide_install_never_raises()
 
-    check_pegasus_export_writer()
-    check_game_dirs_writer()
-    check_player_link_writer()
-    check_ensure_daemon_survives_the_link()
+    check_ensure_daemon_reaches_the_daemon_check()
 
     check_daemon_state_writers()
     check_daemon_survives_every_failed_write()

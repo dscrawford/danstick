@@ -119,7 +119,7 @@ def game_key(console: str, rom: str) -> str:
     same game to the person holding the controller.
 
     So: the filename stem, normalised, under the console. The stem is already
-    what Pegasus shows as the title, which makes the key legible in the
+    what a front-end shows as the title, which makes the key legible in the
     profile on disk, and the console prefix is what stops `sonic` on an
     arcade board sharing a mapping with `sonic` on a console.
     """
@@ -338,7 +338,7 @@ class Profile:
     # database loses it, since that is keyed on "padmap Player N".
     #
     # SCOPE_UNIVERSAL is the one every other consumer falls back to, and is
-    # the only one Pegasus ever sees: menu navigation is the same job
+    # the only one an SDL client ever sees: menu navigation is the same job
     # whatever is about to be played, so the SDL line is written from the
     # universal mapping alone. Per-console and per-game captures exist for
     # RetroArch's autoconfig, which is the only consumer that knows what is
@@ -387,8 +387,8 @@ class Profile:
 
         The seeding is the part worth explaining. Someone whose first act is
         "map this pad for N64 games" would otherwise end up with no universal
-        mapping at all -- which means no SDL line for Pegasus to navigate
-        with, and nothing for any other console, so the pad they just
+        mapping at all -- which means no SDL line for a front-end to
+        navigate with, and nothing for any other console, so the pad they just
         configured would still be driven by a guess everywhere else. A
         capture the user performed is strictly better than a guess, so the
         first one becomes the default too. Later captures do not disturb it:

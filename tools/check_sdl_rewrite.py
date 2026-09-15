@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """sdl_controllers.txt is rewritten, so what padmap cannot read it must not eat.
 
-Pegasus reads one controller database, `$XDG_CONFIG_HOME/pegasus-frontend/
-sdl_controllers.txt`, and padmap is not the only writer of it: the Gamepad
-Editor writes there, and users type lines into it by hand for controllers
-padmap never sees. That is why `controllercfg.write_sdl_mappings` reads the
+padmap generates one SDL controller database, at
+`controllercfg.sdl_config_path()`, and is not the only writer of it: users type
+lines into it by hand for controllers padmap never sees, and a mapping carried
+over from another database lands there too. That is why `controllercfg.write_sdl_mappings` reads the
 file, keeps every line that is not one of padmap's own, and writes the whole
 thing back -- appending would leave two lines for one GUID and let SDL choose.
 
@@ -183,7 +183,7 @@ def check_unreadable_database_is_not_emptied() -> None:
         return
 
     # The reported case: mode 0222, writable and not readable. Reproduce by
-    # hand with chmod 0222 ~/.config/pegasus-frontend/sdl_controllers.txt and
+    # hand with chmod 0222 on the database and
     # then finishing the mapping wizard.
     target = database("write-only",
                       HAND_WRITTEN + "\n" + SECOND_HAND_WRITTEN + "\n")
@@ -249,7 +249,7 @@ def check_a_directory_where_the_database_should_be() -> None:
 def check_first_run_still_writes() -> None:
     heading("S4 the first run has no database, and must still get one")
 
-    base = fresh("first-run") / "pegasus-frontend" / "nested"
+    base = fresh("first-run") / "padmap" / "nested"
     target = base / "sdl_controllers.txt"
     try:
         written = controllercfg.write_sdl_mappings(NEW_LINE, target)
@@ -347,7 +347,13 @@ def check_carried_lookup_degrades_without_raising() -> None:
         return
 
     base = fresh("carried")
-    target = base / "pegasus-frontend" / "sdl_controllers.txt"
+    # Where padmap itself would look, derived rather than spelled out: the
+    # database moved out of a particular front-end's config directory once
+    # already, and a literal here would have gone on testing the old place.
+    original = os.environ["XDG_CONFIG_HOME"]
+    os.environ["XDG_CONFIG_HOME"] = str(base)
+    target = controllercfg.sdl_config_path()
+    os.environ["XDG_CONFIG_HOME"] = original
     target.parent.mkdir(parents=True)
     # A GUID no real product has, so the fallback below cannot quietly be
     # answered out of SDL's own built-in database and pass for a file read.

@@ -1,8 +1,8 @@
 """Every padmap command line, given arguments nobody would type on purpose.
 
 Maintenance is done from a shell, usually from a script, usually in a hurry:
-`padmap clean-config --config "$CFG"` with CFG unset, `padmap export-pegasus
---out ~/collections` where that name is already a file, `padmap forget --all`
+`padmap clean-config --config "$CFG"` with CFG unset, `padmap fetch-art
+--dest ~/art` where that name is already a file, `padmap forget --all`
 against a profile directory something else has been rummaging in. The promise
 these stories make is not that any of that works -- it is that padmap says
 what is wrong and stops, rather than printing a Python traceback at a user
@@ -12,7 +12,6 @@ who is looking at an arcade cabinet.
     S19  sudo padmap hide installs udev rules
     S20  padmap forget offers a controller setup again
     S21  padmap clean-config removes padmap leftovers from retroarch.cfg
-    S22  padmap export-pegasus regenerates collections
 
 Plus the two argv parsers behind the launch path, which nobody types directly
 but everything depends on:
@@ -554,7 +553,7 @@ def scenario_unknown_commands_and_flags():
     for command, flag in (
         ("forget", "--bogus"),
         ("clean-config", "--bogus"),
-        ("export-pegasus", "--bogus"),
+        ("map", "--bogus"),
         ("fetch-art", "--bogus"),
         ("ensure-daemon", "--bogus"),
         ("hide", "--bogus"),
@@ -598,12 +597,9 @@ def scenario_flag_values_that_look_like_flags():
         (("clean-config", "--config"), "clean-config --config <nothing>"),
         (("clean-config", "--config", "--dry-run"),
          "clean-config --config --dry-run"),
-        (("export-pegasus", "--playlists"),
-         "export-pegasus --playlists <nothing>"),
-        (("export-pegasus", "--playlists", "--out"),
-         "export-pegasus --playlists --out"),
-        (("export-pegasus", "--out", "--no-game-dirs"),
-         "export-pegasus --out --no-game-dirs"),
+        (("map", "--layout"), "map --layout <nothing>"),
+        (("map", "--layout", "--pad"), "map --layout --pad"),
+        (("map", "--scope", "--layout"), "map --scope --layout"),
         (("fetch-art", "--playlists", "--dry-run"),
          "fetch-art --playlists --dry-run"),
         (("fetch-art", "--dest", "--kind"), "fetch-art --dest --kind"),
@@ -617,7 +613,7 @@ def scenario_flag_values_that_look_like_flags():
 
 
 def scenario_numeric_flags():
-    heading("S18/S22: numbers that are not numbers, or are absurd")
+    heading("S18: numbers that are not numbers, or are absurd")
 
     for args, label in (
         (("ensure-daemon", "--timeout", "abc"), "ensure-daemon --timeout abc"),
@@ -801,159 +797,6 @@ def scenario_clean_config_hostile_content():
             "is rewritten with every such byte replaced by U+FFFD, and the "
             "'Original saved to ...' backup is mangled the same way, so the "
             "user's own settings are corrupted and unrecoverable")
-
-
-def scenario_export_pegasus_paths():
-    heading("S22: export-pegasus given directories that are not directories")
-
-    proc = padmap("export-pegasus", "--playlists", "/nonexistent/playlists",
-                  "--out", str(SANDBOX / "out-a"))
-    refused(proc, "a --playlists directory that does not exist",
-            expect_message="No playlist directory at")
-    no_traceback(proc, "a --playlists directory that does not exist")
-
-    plain = SANDBOX / "just-a-file"
-    plain.write_text("not a playlist directory\n")
-    proc = padmap("export-pegasus", "--playlists", str(plain),
-                  "--out", str(SANDBOX / "out-b"))
-    refused(proc, "a --playlists path that is a regular file",
-            expect_message="No playlist directory at")
-    no_traceback(proc, "a --playlists path that is a regular file")
-
-    unreadable = SANDBOX / "unreadable-playlists"
-    unreadable.mkdir(exist_ok=True)
-    (unreadable / "N64.lpl").write_text("{}")
-    os.chmod(unreadable, 0o000)
-    try:
-        proc = padmap("export-pegasus", "--playlists", str(unreadable),
-                      "--out", str(SANDBOX / "out-c"))
-        no_traceback(proc, "a --playlists directory with no read permission")
-        refused(proc, "a --playlists directory with no read permission",
-                expect_message="No usable playlists")
-    finally:
-        os.chmod(unreadable, 0o700)
-
-    empty_dir = SANDBOX / "empty-playlists"
-    empty_dir.mkdir(exist_ok=True)
-    proc = padmap("export-pegasus", "--playlists", str(empty_dir),
-                  "--out", str(SANDBOX / "out-d"))
-    refused(proc, "a --playlists directory with no .lpl files in it",
-            expect_message="No usable playlists")
-    no_traceback(proc, "a --playlists directory with no .lpl files")
-
-
-def good_playlists():
-    """A directory holding one playlist that really does export."""
-    import json
-
-    directory = SANDBOX / "playlists"
-    directory.mkdir(exist_ok=True)
-    (directory / "Nintendo - Nintendo 64.lpl").write_text(json.dumps({
-        "default_core_path": "/cores/mupen64plus_next_libretro.so",
-        "items": [{"path": "/roms/n64/GoldenEye 007 (USA).n64",
-                   "label": "GoldenEye 007 (USA)"}],
-    }))
-    return directory
-
-
-def scenario_export_pegasus_output():
-    heading("S22: export-pegasus given an --out it cannot write")
-
-    playlists = good_playlists()
-
-    # Control: the same playlists really do export, so the failures below are
-    # about the output path and nothing else.
-    good_out = SANDBOX / "out-good"
-    proc = padmap("export-pegasus", "--playlists", str(playlists),
-                  "--out", str(good_out), "--no-game-dirs")
-    check(proc.returncode == 0 and (
-        good_out / "Nintendo - Nintendo 64" / "metadata.pegasus.txt").is_file(),
-        "control: a valid export writes its collection and exits 0",
-        f"the control export failed ({proc.returncode}), so nothing below "
-        f"proves anything: {(proc.stdout + proc.stderr)[:300]!r}")
-
-    occupied = SANDBOX / "out-is-a-file"
-    occupied.write_text("something else already lives here\n")
-    proc = padmap("export-pegasus", "--playlists", str(playlists),
-                  "--out", str(occupied))
-    refused(proc, "an --out path that is an existing file")
-    if traceback_in(proc):
-        gap("`export-pegasus --out <an existing file>` dies with a raw "
-            "NotADirectoryError traceback instead of saying the output path "
-            "is not a directory")
-    else:
-        no_traceback(proc, "an --out path that is an existing file")
-
-    ro_parent = SANDBOX / "readonly-parent"
-    ro_parent.mkdir(exist_ok=True)
-    os.chmod(ro_parent, 0o500)
-    try:
-        proc = padmap("export-pegasus", "--playlists", str(playlists),
-                      "--out", str(ro_parent / "collections"))
-        refused(proc, "an --out directory that cannot be created")
-        if traceback_in(proc):
-            gap("`export-pegasus --out <under an unwritable directory>` dies "
-                "with a raw PermissionError traceback instead of saying it "
-                "cannot write there")
-        else:
-            no_traceback(proc, "an --out directory that cannot be created")
-    finally:
-        os.chmod(ro_parent, 0o700)
-
-    # An empty --out is Path("") -- the current directory.
-    cwd = SANDBOX / "cwd-probe"
-    cwd.mkdir(exist_ok=True)
-    proc = padmap("export-pegasus", "--playlists", str(playlists),
-                  "--out", "", "--no-game-dirs", cwd=cwd)
-    no_traceback(proc, "an empty --out")
-    if proc.returncode == 0 and (cwd / "Nintendo - Nintendo 64").is_dir():
-        gap("`export-pegasus --out \"\"` (an unset shell variable) writes the "
-            "collections into the current working directory instead of "
-            "refusing an empty path")
-
-
-def scenario_export_pegasus_hostile_playlists():
-    heading("S22: export-pegasus on .lpl files that are not playlists")
-
-    import json
-
-    directory = SANDBOX / "hostile-playlists"
-    shutil.rmtree(directory, ignore_errors=True)
-    directory.mkdir()
-    (directory / "truncated.lpl").write_text('{"items": [')
-    (directory / "notjson.lpl").write_text("\x00\x01\x02 not json at all")
-    (directory / "toplevel-list.lpl").write_text("[1, 2, 3]")
-    (directory / "no-items.lpl").write_text('{"default_core_path": "x"}')
-    (directory / "empty.lpl").write_text("")
-    subdir = directory / "adirectory.lpl"
-    subdir.mkdir(exist_ok=True)
-
-    proc = padmap("export-pegasus", "--playlists", str(directory),
-                  "--out", str(SANDBOX / "out-hostile"))
-    no_traceback(proc, "playlists that are truncated, binary, empty or a "
-                       "directory")
-    refused(proc, "playlists that are truncated, binary, empty or a directory",
-            expect_message="No usable playlists")
-
-    # A well-formed playlist whose items are not objects.
-    bad_items = SANDBOX / "bad-items"
-    shutil.rmtree(bad_items, ignore_errors=True)
-    bad_items.mkdir()
-    (bad_items / "N64.lpl").write_text(json.dumps(
-        {"default_core_path": "/cores/mupen64plus_next_libretro.so",
-         "items": ["GoldenEye 007 (USA).n64"]}))
-    proc = padmap("export-pegasus", "--playlists", str(bad_items),
-                  "--out", str(SANDBOX / "out-bad-items"))
-    check(proc.returncode != 0,
-          "a playlist whose items are strings does not exit 0",
-          "export-pegasus reported success on a playlist it could not read")
-    if traceback_in(proc):
-        gap("a .lpl whose \"items\" holds strings rather than objects kills "
-            "`export-pegasus` with AttributeError: 'str' object has no "
-            "attribute 'get' -- one malformed playlist takes the whole export "
-            "down instead of being skipped like every other unreadable one")
-    else:
-        no_traceback(proc, "a playlist whose items are strings")
 
 
 def scenario_forget():
@@ -1152,9 +995,6 @@ def main():
     scenario_ensure_daemon_check()
     scenario_clean_config_paths()
     scenario_clean_config_hostile_content()
-    scenario_export_pegasus_paths()
-    scenario_export_pegasus_output()
-    scenario_export_pegasus_hostile_playlists()
     scenario_forget()
     scenario_hide()
     scenario_launch_passthrough()

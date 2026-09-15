@@ -28,7 +28,6 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "src"))
 
 from padmap import artwork  # noqa: E402
-from padmap.pegasus import art_index, art_name, entry_assets  # noqa: E402
 from padmap.titles import Title  # noqa: E402
 
 FAILURES: list[str] = []
@@ -210,7 +209,7 @@ def main() -> int:
               mame, artwork.index_by_base(mame)),
           "PuckMan (harder_)")
     check("art_name escapes libretro's set",
-          art_name("A&B*C/D:E`F<G>H?I\\J|K"),
+          artwork.art_name("A&B*C/D:E`F<G>H?I\\J|K"),
           "A_B_C_D_E_F_G_H_I_J_K")
 
     print("\nend to end against a fixture server")
@@ -244,22 +243,14 @@ def main() -> int:
 
         boxarts = dest / "n64" / "Named_Boxarts"
         on_disk = sorted(p.name for p in boxarts.iterdir())
-        # Stored under the *label*, not the upstream name, because that is
-        # the only key entry_assets will ever ask art_index for.
+        # Stored under the *label*, not the upstream name, because the
+        # label is the only key a consumer of the tree has to look under.
         check("stored under the playlist label", on_disk,
               ["Banjo-Kazooie (U) [!].png", "Bomberman 64 (USA).png"])
         check("real bytes", (boxarts / "Bomberman 64 (USA).png").read_bytes(),
               PNG)
         check("no .part left behind",
               list(dest.rglob("*.part")), [])
-
-        # The whole point: pegasus must find these with no extra wiring.
-        found = art_index("n64", dest)
-        assets = entry_assets(
-            "Banjo-Kazooie (U) [!]", "/g/n64/Banjo-Kazooie (U) [!].z64", found)
-        check("pegasus picks it up",
-              assets.get("boxFront"),
-              str(boxarts / "Banjo-Kazooie (U) [!].png"))
 
         print("\nresumability")
         plans2, _ = artwork.plan_all(playlists, dest_root=dest)
@@ -282,13 +273,62 @@ def main() -> int:
         check("some failed", report4.failed, 1)
         check("failure is explained", bool(report4.reason), True)
         check("partial tree is clean", list(dest.rglob("*.part")), [])
-        check("what arrived is usable", len(art_index("n64", dest)), 1)
+        check("what arrived is usable",
+              len(list(boxarts.glob("*.png"))), 1)
 
         Fixture.fail_after = -1
         plans5, _ = artwork.plan_all(playlists, dest_root=dest)
         report5 = artwork.run_plan(plans5[0], workers=1, progress=False)
         check("retry completes the tree",
               report5.downloaded + plans5[0].present, 2)
+
+        print("\na playlist padmap does not own")
+        # `.lpl` files are RetroArch's, and users edit them. Every shape that
+        # is not a playlist has to come back empty rather than raise: plan_all
+        # walks a whole directory, and one bad file must not cost the other
+        # nine. This used to be covered against the exporter's reader, which
+        # went with the front-end; artwork.read_playlist_items is the only one
+        # left, and it had the defect the old coverage was written for --
+        # `{"items": [1, 2, 3]}` reached `item.get("label")` and raised
+        # AttributeError out of `padmap fetch-art`.
+        hostile = work / "hostile"
+        hostile.mkdir()
+        shapes = {
+            "not json at all": "{ this is not json",
+            "json but not an object": "[1, 2, 3]",
+            "no items key": '{"version": "1.5"}',
+            "items is not a list": '{"items": {"a": 1}}',
+            "items of numbers": '{"items": [1, 2, 3]}',
+            "items of strings": '{"items": ["a", "b"]}',
+            "items of nulls": '{"items": [null, null]}',
+            "items of lists": '{"items": [[{"label": "x"}]]}',
+            "empty file": "",
+            "deeply nested": '{"items": ' + "[" * 20000 + "]" * 20000 + "}",
+        }
+        for name, text in shapes.items():
+            target = hostile / "Damaged.lpl"
+            target.write_text(text)
+            try:
+                items, _core = artwork.read_playlist_items(target)
+            except Exception as error:  # noqa: BLE001
+                check(f"{name} -> no exception",
+                      f"{type(error).__name__}: {error}", "no exception")
+                continue
+            check(f"{name} -> nothing usable", items, [])
+
+        # ...and one damaged entry costs that entry, not the playlist.
+        target = hostile / "Damaged.lpl"
+        target.write_text(
+            '{"items": [1, {"label": "Keeper", "path": "/r/k.z64"}, null]}')
+        items, _core = artwork.read_playlist_items(target)
+        check("a good entry beside junk survives",
+              [item.get("label") for item in items], ["Keeper"])
+
+        # A binary file, because `errors="replace"` is what stops a non-UTF-8
+        # byte ending the walk before the parse is even reached.
+        target.write_bytes(bytes(range(256)) * 20)
+        check("binary -> nothing usable",
+              artwork.read_playlist_items(target)[0], [])
 
         print("\nunreachable server")
         os.environ[artwork.ENV_SERVER] = "http://127.0.0.1:1"

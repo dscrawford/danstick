@@ -36,8 +36,8 @@ port and pinned a dozen shared quirks that nobody had written down.
     padmap-rs      a binary: `list` and `run`.
 
 The cut line is the unix socket, not a language boundary inside one process.
-The Pegasus front-end is a socket client and knows nothing about which daemon
-it is talking to, so a Rust daemon that binds the same path is a drop-in and a
+A front-end is a socket client and knows nothing about which daemon it is
+talking to, so a Rust daemon that binds the same path is a drop-in and a
 rollback is starting the Python one. Both read the same `assignments.json`.
 
 This is why there is no PyO3 anywhere. A Rust core called from a Python loop

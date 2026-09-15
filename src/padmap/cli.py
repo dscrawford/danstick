@@ -3,7 +3,10 @@
     padmap list      what is plugged in, and what RetroArch would make of it
     padmap setup     assign player order by pressing and holding a button
     padmap ui        the same, as a graphical screen
+    padmap map       record which button is which
+    padmap calibrate measure where each controller's sticks rest
     padmap run       republish assigned pads and keep them alive
+    padmap serve     the same, as a daemon a client can drive over a socket
     padmap launch    run, then start RetroArch bound to the assigned order
     padmap hide      print udev rules hiding the physical pads
     padmap fetch-art download box art for the playlists from libretro
@@ -147,76 +150,6 @@ def _save_assignments(assignments: list[Assignment]) -> None:
          "phys": a.pad.phys, "vid": a.pad.vid, "pid": a.pad.pid}
         for a in assignments
     ], indent=2))
-
-
-def cmd_export_pegasus(args: argparse.Namespace) -> int:
-    from . import pegasus
-
-    playlist_dir = Path(args.playlists).expanduser()
-    if not playlist_dir.is_dir():
-        print(f"No playlist directory at {playlist_dir}")
-        return 1
-
-    out_dir = Path(args.out).expanduser()
-    results, dirs = pegasus.export(playlist_dir, out_dir)
-    if not results:
-        print(f"No usable playlists in {playlist_dir}")
-        return 1
-
-    print(f"Wrote {len(results)} collection(s) to {out_dir}:\n")
-    for name, count, resolved, illustrated in results:
-        # Only mention title resolution where it actually applied. Console
-        # playlists already carry real labels, so "no titles resolved" there
-        # is normal rather than a problem worth reporting.
-        note = ""
-        if resolved:
-            note = f"  ({resolved} MAME titles resolved"
-            note += f", {count - resolved} raw)" if resolved < count else ")"
-        print(f"  {name:<28} {count:>6} games{note}")
-        # Art is reported even at zero: an empty thumbnail tree is the normal
-        # state until a pack is downloaded, and silence there looks like the
-        # export lost artwork it once had.
-        print(f"  {'':<28} {illustrated:>6} with artwork"
-              f" (from {pegasus.thumbnail_dir()})")
-
-    # Each collection needs its own directory listed: Pegasus never looks
-    # below a listed directory, and merging collections into one file makes
-    # every game inherit the first collection's launch command.
-    config = Path(
-        os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")
-    ) / "pegasus-frontend" / "game_dirs.txt"
-
-    wanted = [str(d) for d in dirs]
-    if args.no_game_dirs:
-        print(f"\nAdd these to {config}:")
-        for line in wanted:
-            print(f"  {line}")
-        return 0
-
-    # safeio: game_dirs.txt is Pegasus' file, not padmap's, and read_text on
-    # bytes that are not UTF-8 raises UnicodeDecodeError -- the same hole as
-    # `hide` and `forget` had, in the one command that has already written
-    # every collection by the time it gets here. A traceback now leaves the
-    # games exported and Pegasus never told where they are, which looks from
-    # the front-end like the export did nothing at all.
-    existing = [
-        line.strip() for line in (safeio.read_text(config) or "").splitlines()
-        if line.strip()
-    ]
-    # Drop our own previous entries (including the old merged directory) but
-    # keep anything the user added by hand.
-    keep = [
-        line for line in existing
-        if not line.startswith(str(out_dir))
-    ]
-    config.parent.mkdir(parents=True, exist_ok=True)
-    config.write_text("\n".join(keep + wanted) + "\n")
-    print(f"\nUpdated {config}:")
-    for line in wanted:
-        print(f"  {line}")
-    if keep:
-        print(f"  ({len(keep)} pre-existing entr(y/ies) kept)")
-    return 0
 
 
 def cmd_calibrate(args: argparse.Namespace) -> int:
@@ -411,16 +344,137 @@ def cmd_forget(args: argparse.Namespace) -> int:
         print(f"Cleared {cleared} 'already asked' record(s), so setup is")
         print("offered again without waiting for a reboot.")
 
-    # Pegasus keeps its button mappings separately, and padmap has no business
-    # deleting them silently -- but they are the other half of "reset this
-    # controller", so say where they are.
-    sdl_map = Path(
-        os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")
-    ) / "pegasus-frontend" / "sdl_controllers.txt"
+    # The SDL database padmap writes is a separate file, and padmap has no
+    # business deleting it silently -- but it is the other half of "reset this
+    # controller", so say where it is.
+    from . import controllercfg
+    sdl_map = controllercfg.sdl_config_path()
     if sdl_map.is_file():
-        print(f"\nPegasus button mappings are separate and still present:")
+        print("\nThe SDL mappings padmap wrote are separate and still present:")
         print(f"  {sdl_map}")
         print("Delete that file to reset those too.")
+    return 0
+
+
+def cmd_map(args: argparse.Namespace) -> int:
+    """Walk a controller through a layout, recording what the user presses.
+
+    The same capture state machine the daemon drives for a front-end, from a
+    terminal. It exists because a front-end was previously the only thing that
+    could reach it, and padmap is a virtual gamepad before it is any one
+    front-end's component -- a controller you cannot map is a virtual gamepad
+    that emits the wrong buttons.
+    """
+    import select
+
+    from . import capture, controllercfg, hidraw, layouts, profiles
+
+    pads = devices.discover()
+    if not pads:
+        print("No joypads found.")
+        return 1
+
+    if args.pad:
+        matched = [p for p in pads if args.pad in p.name or args.pad == p.event]
+        if not matched:
+            print(f"No pad matches {args.pad!r}. Connected:")
+            for pad in pads:
+                print(f"  {pad.event}  {pad.name}")
+            return 1
+        pad = matched[0]
+    elif len(pads) == 1:
+        pad = pads[0]
+    else:
+        print("Several pads are connected; name one with --pad:")
+        for pad in pads:
+            print(f"  {pad.event}  {pad.name}")
+        return 1
+
+    # A stored layout is the better default than the generic pad: it is what
+    # this controller was mapped as last time, and re-running the wizard is
+    # usually correcting a control rather than changing the console.
+    stored = profiles.load(pad)
+    layout_id = args.layout or (stored.layout if stored else "")
+    if not layout_id:
+        print("Which controller is this? Pass one with --layout:")
+        for layout in layouts.ALL.values():
+            print(f"  {layout.id:<10} {layout.label}")
+        return 1
+    if layout_id not in layouts.ALL:
+        print(f"Unknown layout {layout_id!r}. Known: {', '.join(layouts.ALL)}")
+        return 1
+    layout = layouts.get(layout_id)
+
+    scope = args.scope or ""
+    keys, _axis_codes = controllercfg.pad_capabilities(pad)
+    axes = controllercfg.pad_axis_spans(pad)
+
+    # The same source the republisher would pick. A pad that has to be read
+    # over hidraw has to be read that way here too, or the thing that maps a
+    # controller cannot see the controller it is mapping.
+    device = hidraw.open_source(pad) or devices.open_device(pad)
+    name = "".join(c for c in pad.name if c.isprintable()).strip()
+    try:
+        try:
+            device.grab()
+        except OSError as error:
+            print(f"warning: could not grab {pad.event} ({error}); presses "
+                  f"will also reach whatever else is listening")
+
+        run = capture.MappingRun(
+            pad=pad, player=1, layout=layout, keys=keys, scope=scope,
+            axes=axes, held=set(device.active_keys()),
+        )
+
+        print(f"\nMapping {name} [{pad.event}] as {layout.label}"
+              f"{f' for {scope}' if scope else ''}.")
+        print(f"Press each control as it is named. Hold any button for "
+              f"{capture.SKIP_HOLD_SECONDS:.1f}s to skip one this pad does "
+              f"not have.")
+        print("Ctrl-C to abandon without saving.\n")
+
+        shown = -1
+        while not run.finished:
+            if run.index != shown:
+                shown = run.index
+                control = run.current
+                if control is not None:
+                    print(f"  [{run.index + 1}/{len(layout.controls)}] "
+                          f"{control.label} ... ", end="", flush=True)
+            readable, _, _ = select.select([device.fd], [], [], 0.02)
+            if readable:
+                try:
+                    events = list(device.read())
+                except (OSError, BlockingIOError):
+                    events = []
+                for event in events:
+                    before = run.index
+                    run.feed(event)
+                    if run.index != before:
+                        recorded = run.bindings.get(
+                            layout.controls[before].canonical)
+                        print("skipped" if recorded is None else recorded.sdl())
+            if run.conflict:
+                print(f"\n      (already bound to {run.conflict!r}; "
+                      f"restart to give that control a different input)")
+                run.conflict = ""
+    except KeyboardInterrupt:
+        print("\n\nabandoned; nothing was saved")
+        return 1
+    finally:
+        try:
+            device.ungrab()
+        except OSError:
+            pass
+        device.close()
+
+    missing = controllercfg.store_mapping(pad, layout_id, run.bindings, scope)
+    print(f"\nSaved {len(run.bindings)} control(s) for {name}"
+          f"{f' under {scope}' if scope else ''}.")
+    if missing:
+        print(f"  {len(missing)} not mapped: {', '.join(missing)}")
+        print("  Those emit no binding at all, so they do nothing in game.")
+    print("\nRun `padmap run` or `padmap launch` to apply it.")
     return 0
 
 
@@ -485,7 +539,7 @@ def _start(assignments: list[Assignment]) -> tuple[virtual.Republisher, dict[int
     pad happened to fail first, and caught as well, because a daemon is not
     the only thing that can hold a controller.
     """
-    from . import pegasus, protocol
+    from . import protocol
 
     running = protocol.daemon_pids()
     if running:
@@ -494,9 +548,9 @@ def _start(assignments: list[Assignment]) -> tuple[virtual.Republisher, dict[int
             f"controllers.\n"
             f"This command republishes them itself, so the two cannot run at "
             f"once.\n\n"
-            f"To launch a game while the daemon runs, use the launcher it "
-            f"maintains:\n"
-            f"  {pegasus.player_link()} -L <core.so> <rom>\n\n"
+            f"To launch a game while the daemon runs, use the launcher that "
+            f"resolves mappings against it:\n"
+            f"  padmap-play -L <core.so> <rom>\n\n"
             f"To use this command instead, stop the daemon first:\n"
             f"  kill {running[0]}")
 
@@ -693,47 +747,7 @@ def cmd_ensure_daemon(args: argparse.Namespace) -> int:
     on startup; before that this would have cost the user their controller
     order on every launch.
     """
-    from . import pegasus, protocol
-
-    # Repoint the stable launcher symlink first, and unconditionally. The
-    # exported Pegasus collections invoke it by that fixed path, so this is
-    # what stops a rebuild leaving them on a padmap-play from before whatever
-    # was just fixed -- the failure that kept four controllers appearing in
-    # N64 games long after the cause was fixed everywhere else.
-    #
-    # Guarded, and reported rather than raised: this was the first statement
-    # in the function and nothing caught it, so a `bin` directory that had
-    # become a plain file (FileExistsError), or a `padmap-play` that was a
-    # directory (IsADirectoryError), or a root-owned one (PermissionError),
-    # ended ensure-daemon before it had even looked for a daemon. Both the
-    # Pegasus and padmap-start wrappers run this as
-    #   padmap ensure-daemon || echo continuing without a current daemon
-    # so the front-end then came up with no daemon, no virtual pads and no
-    # controllers at all -- over a symlink that only decides which launcher
-    # *exported collections* invoke. Getting the daemon up is the job; the
-    # link is a convenience, and a broken one has to be stepped over.
-    link = None
-    try:
-        link = pegasus.install_player_link()
-        if link is not None:
-            print(f"launcher: {link} -> {os.readlink(link)}")
-    except OSError as error:
-        link = None
-        print(f"warning: could not update the launcher link: {error}")
-        print("  exported collections keep invoking the launcher they were "
-              "exported with;")
-        print("  clear that path and re-run, or re-export with:  "
-              "padmap export-pegasus")
-    if link is not None:
-        # Collections exported before the link existed name a store path
-        # directly and will keep invoking it whatever the link says.
-        stale = pegasus.stale_collections()
-        if stale:
-            print(f"warning: {len(stale)} collection(s) still launch games "
-                  f"through a hard-coded path:")
-            for path in stale[:3]:
-                print(f"  {path}")
-            print("  re-export them with:  padmap export-pegasus")
+    from . import protocol
 
     # Rules are generated once from whatever was plugged in at the time, so a
     # controller added later is not in them -- and then RetroArch sees the
@@ -896,14 +910,14 @@ def cmd_clean_config(args: argparse.Namespace) -> int:
 
 
 def cmd_fetch_art(args: argparse.Namespace) -> int:
-    from . import artwork, pegasus
+    from . import artwork
 
     playlist_dir = Path(args.playlists).expanduser()
     if not playlist_dir.is_dir():
         print(f"No playlist directory at {playlist_dir}")
         return 1
 
-    dest = Path(args.dest).expanduser() if args.dest else pegasus.thumbnail_dir()
+    dest = Path(args.dest).expanduser() if args.dest else artwork.thumbnail_dir()
     only = args.playlist or None
 
     print(f"Source:      {artwork.server()}")
@@ -979,7 +993,6 @@ def cmd_fetch_art(args: argparse.Namespace) -> int:
         # Not an error worth a non-zero exit: what did arrive is usable, and
         # re-running picks up only the gaps.
         print("Re-run to retry only what is still missing.")
-    print("\nNow run:  padmap export-pegasus")
     return 0
 
 
@@ -1040,7 +1053,7 @@ def main(argv: list[str] | None = None) -> int:
     setup.set_defaults(func=cmd_setup)
 
     sub.add_parser(
-        "serve", help="run the daemon front-ends connect to"
+        "serve", help="run the daemon a client drives over a socket"
     ).set_defaults(func=cmd_serve)
 
     forget = sub.add_parser(
@@ -1054,24 +1067,6 @@ def main(argv: list[str] | None = None) -> int:
     cal.add_argument("-f", "--force", action="store_true",
                      help="re-measure controllers that already have a profile")
     cal.set_defaults(func=cmd_calibrate)
-
-    export = sub.add_parser(
-        "export-pegasus",
-        help="build Pegasus collections from RetroArch playlists",
-    )
-    export.add_argument(
-        "--playlists", default="~/.config/retroarch/playlists",
-        help="where the .lpl files are (default %(default)s)",
-    )
-    export.add_argument(
-        "--out", default="~/.local/share/padmap/collections",
-        help="where to write the generated metadata (default %(default)s)",
-    )
-    export.add_argument(
-        "--no-game-dirs", action="store_true",
-        help="print the directories instead of updating game_dirs.txt",
-    )
-    export.set_defaults(func=cmd_export_pegasus)
 
     art = sub.add_parser(
         "fetch-art",
@@ -1107,6 +1102,16 @@ def main(argv: list[str] | None = None) -> int:
         help="report what would be fetched, and how big, without fetching",
     )
     art.set_defaults(func=cmd_fetch_art)
+
+    mapper = sub.add_parser(
+        "map", help="record which button is which, from a terminal")
+    mapper.add_argument("--layout", help="which controller this is")
+    mapper.add_argument("--pad", help="name or event node, if several are on")
+    mapper.add_argument(
+        "--scope", default="",
+        help="what the mapping is for: '' for every game, console:<id>, or "
+             "game:<console>/<stem>")
+    mapper.set_defaults(func=cmd_map)
 
     ui = sub.add_parser("ui", help="assign player order in a graphical screen")
     ui.add_argument("-n", "--players", type=int, default=4,

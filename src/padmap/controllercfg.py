@@ -1,4 +1,4 @@
-"""Turn a captured mapping into the files RetroArch and Pegasus actually read.
+"""Turn a captured mapping into the files RetroArch and SDL actually read.
 
 Two consumers, two formats, one capture. Written together and regenerated on
 every accept, which is what makes a mapping follow the controller rather than
@@ -39,10 +39,28 @@ VIRTUAL_VERSION = PADMAP_VERSION
 MARKER = "# padmap"
 
 
+ENV_SDL_DB = "PADMAP_SDL_DB"
+
+
 def sdl_config_path() -> Path:
+    """Where padmap writes the SDL game-controller database it generates.
+
+    padmap's own directory, and overridable, because any SDL application can
+    be pointed at it:
+
+        SDL_GAMECONTROLLERCONFIG_FILE=~/.config/padmap/sdl_controllers.txt
+
+    It used to be written straight into a particular front-end's config
+    directory, which made the mappings that front-end's property rather than
+    the controller's -- every other SDL program on the machine had a pad
+    padmap had mapped and no way to hear about it.
+    """
+    override = os.environ.get(ENV_SDL_DB)
+    if override:
+        return Path(override)
     return Path(
         os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")
-    ) / "pegasus-frontend" / "sdl_controllers.txt"
+    ) / "padmap" / "sdl_controllers.txt"
 
 
 def virtual_guid(player: int, pad: Pad | None = None) -> str:
@@ -99,7 +117,7 @@ def write_sdl_mappings(
     lines: dict[int, str], path: Path | None = None,
     notes: dict[int, str] | None = None,
 ) -> Path:
-    """Replace padmap's lines in Pegasus's controller database, keeping others.
+    """Replace padmap's lines in the SDL controller database, keeping others.
 
     Rewritten rather than appended: appending a second line for the same GUID
     leaves SDL to pick one, and which one is not something to rely on. Lines
@@ -248,7 +266,7 @@ def guessed_fields(
     The face buttons really are a guess -- which physical button is A is
     exactly what the wizard exists to find out, and pads disagree (SDL's own
     database has the measured Fightstick as `a:b1,x:b0`). The order used here
-    is the one SDL and Pegasus both assume when they have nothing better, so
+    is the one SDL assumes when it has nothing better, so
     this can only be as wrong as what happens today, and no more.
 
     Everything below the face buttons is not a guess, and is where the value
@@ -291,11 +309,24 @@ def physical_guid(pad: Pad) -> str:
 def _database_paths() -> list[Path]:
     """Files SDL itself would read a mapping out of.
 
-    The user's own file first: a line in there was either written by Pegasus's
+    The user's own file first: a line in there was either written by a
     Gamepad Editor or typed by hand, and either way it is a statement about
     this machine rather than a database's guess about a product line.
     """
     paths = [sdl_config_path()]
+    # Where the database used to live, read but never written.
+    #
+    # It sat in a particular front-end's config directory until padmap stopped
+    # shipping that front-end. A user who has been here since then has their
+    # hand-written lines in the old file, and dropping it from the search would
+    # orphan exactly the mappings this function exists to carry over -- quietly,
+    # because a carried mapping that is not found is indistinguishable from a
+    # controller SDL never knew about.
+    legacy = Path(
+        os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")
+    ) / "pegasus-frontend" / "sdl_controllers.txt"
+    if legacy not in paths:
+        paths.append(legacy)
     from_env = os.environ.get("SDL_GAMECONTROLLERCONFIG_FILE")
     if from_env:
         paths += [Path(part) for part in from_env.split(os.pathsep) if part]
@@ -614,3 +645,59 @@ def has_mapping(pad: Pad) -> bool:
     """
     profile = profiles.load(pad)
     return profile is not None and profile.has_bindings()
+
+
+def store_mapping(pad: "Pad", layout_id: str, bindings: dict,
+                  scope: str = "") -> list[str]:
+    """Keep a capture against the *controller*, under one scope.
+
+    Shared by the daemon and by `padmap map`, because two implementations of
+    "what a finished capture means" is exactly the shape of thing that drifts
+    -- one of them would keep the icon rule and the other would not, and
+    nothing would say which.
+
+    Everything else on the profile is carried over rather than rebuilt:
+    recording an N64 mapping is not a reason to forget the calibration, the
+    icon, or the mapping for every other console.
+
+    Returns the controls the layout asked for and did not get. A skipped
+    control is stored as an absence, and an absence emits no RetroArch key at
+    all -- so the pad is reported as mapped, nothing is said, and the control
+    is simply dead in game. That is indistinguishable from a control the
+    wizard never offered; naming them is what tells the two apart.
+    """
+    from . import icons
+
+    existing = profiles.load(pad)
+    # Only layout ids that are also icon names, which is all of them bar
+    # "generic": the icon is a filename in the theme, and generic.svg does not
+    # exist, so storing it would leave the pad with no picture at all rather
+    # than the fallback one.
+    #
+    # And only from a capture with no scope. A GameCube controller mapped *for
+    # N64 games* is captured against the N64 layout, and taking the icon from
+    # it would relabel the pad as an N64 controller -- which it is not, and
+    # which is the picture the user then sees forever after.
+    icon = existing.icon if existing else ""
+    if not icon and not scope and layout_id in icons.ICON_NAMES:
+        icon = layout_id
+    name = "".join(ch for ch in pad.name if ch.isprintable()).strip()
+    profile = profiles.Profile(
+        signature=profiles.signature(pad),
+        name=name,
+        icon=icon,
+        axes=existing.axes if existing else {},
+        mappings=dict(existing.mappings) if existing else {},
+    )
+    # The console this capture is for travels with it. Emission needs it to
+    # pick the RetroArch keys the core actually reads; without it every pad
+    # gets the gamepad table and the console-specific buttons are bound to
+    # controls their core never looks at.
+    profile.record(scope, profiles.Mapping(
+        buttons=dict(bindings), layout=layout_id))
+    profiles.save(profile)
+    return [
+        control.canonical
+        for control in layouts.get(layout_id).controls
+        if control.canonical not in bindings
+    ]

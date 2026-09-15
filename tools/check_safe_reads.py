@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Files padmap reads but did not write, and the start-up it must not stop.
 
-Two failures, both found repeatedly, both with the same shape: a command dies
+One failure, found repeatedly, always the same shape: a command dies
 completely over something small and local to it.
 
   * **Not-UTF-8 text.** `Path.read_text()` raises `UnicodeDecodeError` on a
@@ -12,20 +12,12 @@ completely over something small and local to it.
     helper, `padmap.safeio.read_text`, rather than five separate fixes. The
     user-visible cost was real: `sudo padmap hide` tracebacked instead of
     overwriting the corrupt rules file, and `padmap forget` -- the command
-    you run *because* something is already broken -- tracebacked too. A
-    sixth site turned up while converting those two, `export-pegasus`
-    reading Pegasus' own game_dirs.txt, and is covered here as well.
+    you run *because* something is already broken -- tracebacked too.
 
-  * **The launcher symlink.** `ensure-daemon` repoints
-    ~/.local/share/padmap/bin/padmap-play, and used to do it as its first
-    unguarded statement. Anything odd at that path (a `bin` that is a plain
-    file, a `padmap-play` that is a directory, root ownership) ended the
-    command before it had even looked for a daemon. Both the Pegasus and
-    padmap-start wrappers run it as
-        padmap ensure-daemon || echo continuing without a current daemon
-    so the front-end then came up with no daemon, no virtual pads and no
-    controllers at all -- over a symlink that only decides which launcher
-    *exported collections* invoke.
+And the answer `ensure-daemon` exists to give, which the wrappers run as
+    padmap ensure-daemon || echo continuing without a current daemon
+so a wrong answer there is a session with no daemon, no virtual pads and no
+controllers at all.
 
 Nothing here touches the real system: XDG_RUNTIME_DIR, XDG_CONFIG_HOME and
 XDG_DATA_HOME are redirected before padmap is imported, both udev rules paths
@@ -39,7 +31,6 @@ from __future__ import annotations
 import argparse
 import contextlib
 import io
-import json
 import os
 import re
 import sys
@@ -55,7 +46,7 @@ os.environ["XDG_DATA_HOME"] = _SANDBOX
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from padmap import cli, devices, hide, pegasus, protocol, safeio  # noqa: E402
+from padmap import cli, devices, hide, protocol, safeio  # noqa: E402
 from padmap.devices import Pad  # noqa: E402
 
 # One stray byte is all it takes; 0xff cannot start a UTF-8 sequence.
@@ -306,56 +297,7 @@ def check_forget_survives_a_prompted_file_that_is_not_utf8() -> None:
 
 
 # --------------------------------------------------------------------------
-# The same hole in the export, found while converting the others.
-
-
-def check_export_survives_a_game_dirs_that_is_not_utf8() -> None:
-    print("\n`padmap export-pegasus`, over a game_dirs.txt that is not "
-          "UTF-8:")
-    config = Path(_SANDBOX) / "pegasus-frontend" / "game_dirs.txt"
-    config.parent.mkdir(parents=True, exist_ok=True)
-    config.write_bytes(b"/home/arcade/hand-added\n" + BAD_BYTE + b"\n")
-
-    with tempfile.TemporaryDirectory() as tmp:
-        root = Path(tmp)
-        playlists = root / "playlists"
-        playlists.mkdir()
-        (playlists / "Nintendo 64.lpl").write_text(json.dumps({
-            "default_core_path": "/cores/mupen64plus_next_libretro.so",
-            "default_core_name": "Mupen64Plus-Next",
-            "items": [{"path": "/roms/n64/Mario Kart 64.z64",
-                       "label": "Mario Kart 64"}],
-        }))
-        out = root / "collections"
-        args = argparse.Namespace(playlists=str(playlists), out=str(out),
-                                  no_game_dirs=False)
-        buffer = io.StringIO()
-        try:
-            with contextlib.redirect_stdout(buffer):
-                code = cli.cmd_export_pegasus(args)
-        except Exception as error:
-            fail(f"`padmap export-pegasus` raised {type(error).__name__} on "
-                 f"a game_dirs.txt that is not UTF-8. The collections are "
-                 f"already written by then, so the games exist and Pegasus "
-                 f"is never told where they are -- it comes up empty and the "
-                 f"export looks like it failed: {error}")
-        if code != 0:
-            fail(f"export reported failure ({code}) over Pegasus' own "
-                 f"game_dirs.txt: {buffer.getvalue()!r}")
-        written = config.read_text(errors="replace")
-        if str(out) not in written:
-            fail("the exported collection directory was not added to "
-                 "game_dirs.txt, so Pegasus shows none of the games that "
-                 "were just exported")
-        if "/home/arcade/hand-added" not in written:
-            fail("a directory the user added by hand was dropped from "
-                 "game_dirs.txt; their own collections disappear from "
-                 "Pegasus on the next export")
-        print("  ok  the collections are listed and hand-added lines kept")
-
-
-# --------------------------------------------------------------------------
-# BUG 39: ensure-daemon must not die over the launcher symlink.
+# ensure-daemon: the answer it exists to give.
 
 
 @contextlib.contextmanager
@@ -372,7 +314,7 @@ def ensure_daemon_world(state: dict | None):
              "run against the daemon that owns this machine's controllers")
 
     saved = (cli._daemon_state, cli._spawn_daemon, cli._stop_daemon,
-             devices.discover, os.environ.get(pegasus.ENV_PLAY))
+             devices.discover)
     cli._daemon_state = lambda: state           # type: ignore[assignment]
     cli._spawn_daemon = never                   # type: ignore[assignment]
     cli._stop_daemon = never                    # type: ignore[assignment]
@@ -382,11 +324,7 @@ def ensure_daemon_world(state: dict | None):
             yield
         finally:
             (cli._daemon_state, cli._spawn_daemon,     # type: ignore[assignment]
-             cli._stop_daemon, devices.discover) = saved[:4]
-            if saved[4] is None:
-                os.environ.pop(pegasus.ENV_PLAY, None)
-            else:
-                os.environ[pegasus.ENV_PLAY] = saved[4]
+             cli._stop_daemon, devices.discover) = saved
 
 
 def run_ensure_daemon() -> tuple[int, str]:
@@ -398,91 +336,9 @@ def run_ensure_daemon() -> tuple[int, str]:
     return code, out.getvalue()
 
 
-def check_ensure_daemon_steps_over_a_broken_link() -> None:
-    print("\n`padmap ensure-daemon` with the launcher path in the way:")
-    link = pegasus.player_link()
-    if not str(link).startswith(_SANDBOX):
-        fail(f"the launcher link resolved to {link}, outside the sandbox")
-    current = {"build": protocol.build_id()}
-
-    def clear() -> None:
-        for path in sorted(link.parent.rglob("*"), reverse=True):
-            path.rmdir() if path.is_dir() and not path.is_symlink() \
-                else path.unlink()
-        if link.parent.exists() and not link.parent.is_dir():
-            link.parent.unlink()
-        elif link.parent.is_dir():
-            link.parent.rmdir()
-
-    with ensure_daemon_world(current):
-        os.environ[pegasus.ENV_PLAY] = str(Path(_SANDBOX) / "padmap-play")
-
-        # Repro as filed: rm -rf ~/.local/share/padmap/bin && touch <same>
-        clear()
-        link.parent.parent.mkdir(parents=True, exist_ok=True)
-        link.parent.write_bytes(b"")
-        try:
-            code, output = run_ensure_daemon()
-        except Exception as error:
-            fail(f"ensure-daemon raised {type(error).__name__} over the "
-                 f"launcher symlink. The wrappers run it as `padmap "
-                 f"ensure-daemon || echo continuing`, so Pegasus starts with "
-                 f"no daemon, no virtual pads and no controllers -- over a "
-                 f"link that only affects exported collections: {error}")
-        if code != 0:
-            fail(f"ensure-daemon exited {code} with a current daemon running, "
-                 f"because the launcher link could not be written; the "
-                 f"wrappers read that as 'no usable daemon' and start the "
-                 f"front-end without one")
-        if "warning" not in output.lower():
-            fail(f"ensure-daemon said nothing about failing to update the "
-                 f"launcher link, so exported collections keep invoking a "
-                 f"stale launcher with nothing to explain why: {output!r}")
-        if "daemon is current" not in output:
-            fail(f"ensure-daemon never got as far as checking the daemon: "
-                 f"{output!r}")
-        print("  ok  a `bin` that is a plain file is reported and stepped "
-              "over")
-
-        # And the other shape: padmap-play itself is a directory, so the
-        # atomic replace fails rather than the mkdir.
-        clear()
-        link.mkdir(parents=True)
-        try:
-            code, output = run_ensure_daemon()
-        except Exception as error:
-            fail(f"ensure-daemon raised {type(error).__name__} when the "
-                 f"launcher path was a directory; the front-end comes up "
-                 f"with no controllers at all: {error}")
-        if code != 0 or "warning" not in output.lower():
-            fail(f"a directory in place of the launcher link left "
-                 f"ensure-daemon reporting failure ({code}); the daemon was "
-                 f"fine and the front-end loses its controllers anyway")
-        print("  ok  a directory in place of the link is reported and "
-              "stepped over")
-
-        # The link still gets made when nothing is in the way -- the guard
-        # must not have turned the repoint into a no-op. That repoint is what
-        # stops exported collections invoking a padmap-play from before the
-        # last rebuild.
-        clear()
-        code, output = run_ensure_daemon()
-        if not link.is_symlink():
-            fail("the launcher link was not created on a clean run, so "
-                 "exported collections keep invoking whichever padmap-play "
-                 "existed when they were exported")
-        if os.readlink(link) != os.environ[pegasus.ENV_PLAY]:
-            fail(f"the launcher link points at {os.readlink(link)}, not the "
-                 f"current launcher")
-        if code != 0:
-            fail(f"a clean ensure-daemon exited {code}: {output!r}")
-        print("  ok  with the path clear the link is still repointed")
-
-
 def check_ensure_daemon_still_reports_a_stale_daemon() -> None:
-    print("\nand the answer it exists to give is unchanged:")
+    print("\n`padmap ensure-daemon --check`, on a daemon it must not trust:")
     with ensure_daemon_world({"build": "an-older-build"}):
-        os.environ[pegasus.ENV_PLAY] = str(Path(_SANDBOX) / "padmap-play")
         code, output = run_ensure_daemon()
         if code == 0 or "older code" not in output:
             fail(f"a daemon running older code was reported as current "
@@ -492,7 +348,6 @@ def check_ensure_daemon_still_reports_a_stale_daemon() -> None:
         print("  ok  a stale daemon is still reported")
 
     with ensure_daemon_world(None):
-        os.environ[pegasus.ENV_PLAY] = str(Path(_SANDBOX) / "padmap-play")
         code, output = run_ensure_daemon()
         if code == 0 or "no daemon running" not in output:
             fail(f"with no daemon running, --check reported success: "
@@ -510,8 +365,6 @@ def main() -> None:
     # breaks for the user.
     check_hide_has_one_way_of_reading()
     check_forget_survives_a_prompted_file_that_is_not_utf8()
-    check_export_survives_a_game_dirs_that_is_not_utf8()
-    check_ensure_daemon_steps_over_a_broken_link()
     check_ensure_daemon_still_reports_a_stale_daemon()
     print("\nall checks passed")
 

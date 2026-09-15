@@ -1,20 +1,18 @@
 #!/usr/bin/env python3
 """The MAME title table: how it is built, and what a damaged one costs.
 
-Story S22 (`padmap export-pegasus` regenerates the collections) and S23 (games
-are browsed with real names and non-working titles marked).
-
 The table is a *build product read at runtime*: Nix runs titles.parse_mame_xml
-over a 43MB MAME dump, titles.dump_json writes the compact rows, and every
-export reads them back through PADMAP_MAME_TITLES. Three things follow, and
-this file is about all three.
+over a 43MB MAME dump, titles.dump_json writes the compact rows, and
+`padmap fetch-art` reads them back through PADMAP_MAME_TITLES. Three things
+follow, and this file is about all three.
 
   * The reader is fed a file nobody validated on the way in. A build that was
     interrupted, a file copied while it was being written, or a table someone
-    hand-edited all arrive at load_json, and pegasus.export calls find_titles
-    on its *first line* -- so anything that raises there costs the user every
-    collection, not merely the arcade tab's real names. The docstring has
-    always promised "the best available title table, or an empty dict".
+    hand-edited all arrive at load_json, and artwork.plan_all calls
+    find_titles *before it plans anything* -- so anything that raises there
+    costs the user the whole fetch, not merely the arcade playlist's real
+    names. The docstring has always promised "the best available title table,
+    or an empty dict".
 
   * Silence is worse than a crash. A table whose rows were plain strings
     ({"pacman": "Pac-Man"}) loaded without complaint as
@@ -24,12 +22,13 @@ this file is about all three.
 
   * The parser reads <description> with re.S, so a description the dump
     wrapped across two lines used to reach the table with a newline in it.
-    metadata.pegasus.txt is line oriented, which makes such a title a *key*:
-    pegasus.one_line stops that on the way out, and the table is normalised
-    here so it never holds a title no human typed in the first place.
+    A title is matched against upstream file names and printed as one line of
+    the fetch-art report, and neither can hold a line break: the match fails
+    silently and one game takes two lines of the report. The table is
+    normalised here so it never holds a title no human typed in the first
+    place.
 
-    QT_QPA_PLATFORM=offscreen XDG_RUNTIME_DIR=$(mktemp -d) \\
-        nix develop --command python3 tools/check_mame_titles.py
+    nix develop --command python3 tools/check_mame_titles.py
 """
 
 from __future__ import annotations
@@ -42,9 +41,8 @@ import tempfile
 from pathlib import Path
 
 # Every XDG root is redirected *before* padmap is imported: a live daemon owns
-# the pads on this machine and export writes into XDG_DATA_HOME, so a check
-# that regenerated the real collections would cost more than the bugs it
-# looks for.
+# the pads on this machine, so a check that wrote into the real config or data
+# home would cost more than the bugs it looks for.
 SANDBOX = Path(tempfile.mkdtemp(prefix="padmap-mame-titles-"))
 for _var in ("XDG_RUNTIME_DIR", "XDG_CONFIG_HOME", "XDG_DATA_HOME"):
     _dir = SANDBOX / _var.lower()
@@ -54,14 +52,8 @@ for _var in ("XDG_RUNTIME_DIR", "XDG_CONFIG_HOME", "XDG_DATA_HOME"):
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from padmap import pegasus, titles  # noqa: E402
+from padmap import titles  # noqa: E402
 from padmap.titles import Title  # noqa: E402
-
-# A launcher inside the sandbox, so the export below never installs a symlink
-# over the user's own.
-os.environ[pegasus.ENV_PLAY] = str(SANDBOX / "store" / "padmap-play")
-
-ARCADE_CORE = "/cores/mame2010_libretro.so"
 
 
 class Recorder(logging.Handler):
@@ -113,35 +105,19 @@ def heading(what: str) -> None:
     print(f"\n{what}")
 
 
-def playlist(path: Path, labels: list[str]) -> Path:
-    path.write_text(json.dumps({
-        "version": "1.5",
-        "default_core_path": ARCADE_CORE,
-        "default_core_name": "Arcade (MAME 2010)",
-        "scan_file_exts": "zip",
-        "items": [
-            {"path": f"/roms/arcade/{label}.zip", "label": label,
-             "core_path": "DETECT", "core_name": "DETECT",
-             "crc32": "00000000|crc", "db_name": "x.lpl"}
-            for label in labels
-        ],
-    }), encoding="utf-8")
-    return path
-
-
 # ---------------------------------------------------------------------------
 
 
 def check_damaged_table(work: Path) -> None:
-    heading("S22: a title table that will not load is not an export failure")
+    heading("a title table that will not load is not a fetch-art failure")
 
     table = work / "titles.json"
     os.environ[titles.ENV_TITLES] = str(table)
 
     # Every one of these raised straight out of find_titles before the fix:
     # JSONDecodeError, AttributeError, IndexError, TypeError, KeyError. Since
-    # pegasus.export calls find_titles first, each of them ended the export
-    # and left the library as it was.
+    # artwork.plan_all calls find_titles first, each of them ended the fetch
+    # and left the thumbnail tree as it was.
     unloadable = {
         "a build interrupted mid-write": '{"pacman": ["Pac',
         "a file that is empty": "",
@@ -159,12 +135,12 @@ def check_damaged_table(work: Path) -> None:
         except Exception as error:  # noqa: BLE001
             raise SystemExit(
                 f"FAIL: {label} raises {type(error).__name__} out of "
-                f"find_titles ({error}); export-pegasus calls it on its first "
-                "line, so the user loses every collection over a table that "
-                "only costs the arcade tab its real names") from error
+                f"find_titles ({error}); fetch-art calls it before it plans "
+                "anything, so the user loses the whole fetch over a table "
+                "that only costs arcade games their real names") from error
         same(f"{label} loads as no titles at all", got, {})
 
-    heading("S22: one bad row costs that set, not the table")
+    heading("one bad row costs that set, not the table")
 
     rows_dropped = {
         "a row with no columns": '{"pacman": []}',
@@ -194,7 +170,7 @@ def check_damaged_table(work: Path) -> None:
     same("the readable rows of a partly damaged table still name their games",
          sorted(titles.find_titles()), ["10yard", "pacman"])
 
-    heading("S22: a row shaped differently, but still readable")
+    heading("a row shaped differently, but still readable")
 
     readable = {
         "the four columns padmap writes":
@@ -226,20 +202,20 @@ def check_damaged_table(work: Path) -> None:
     got = titles.find_titles()["pacman"]
     need(len(got.title) > 1,
          f"a string row is read a character at a time: {got!r}. Every arcade "
-         "game would be named with one letter and the export report would "
-         "say the table loaded fine")
+         "game would be named with one letter and the fetch-art report "
+         "would say the table loaded fine")
     ok("a string row is never read a character at a time")
 
-    heading("S22: the damage is said out loud")
+    heading("the damage is said out loud")
 
     WARNINGS.take()
     table.write_text('{"pacman": ["Pac', encoding="utf-8")
     titles.find_titles()
     said = WARNINGS.take()
     need(any(str(table) in line for line in said),
-         "a title table that will not parse is ignored without a word; the "
-         "arcade tab silently shows set names and nobody can tell whether "
-         "the table is missing, stale or broken")
+         "a title table that will not parse is ignored without a word; "
+         "arcade games silently keep their set names and nobody can tell "
+         "whether the table is missing, stale or broken")
     ok("a table that will not parse names itself in a warning")
 
     table.write_text(json.dumps({
@@ -250,7 +226,7 @@ def check_damaged_table(work: Path) -> None:
     said = WARNINGS.take()
     need(any("torn" in line for line in said),
          "a row that had to be dropped is dropped in silence; the set it "
-         "named keeps its raw name in the library with nothing to explain it")
+         "named keeps its raw name with nothing to explain it")
     ok("a dropped row names the set it lost")
 
     WARNINGS.take()
@@ -259,7 +235,7 @@ def check_damaged_table(work: Path) -> None:
     titles.find_titles()
     same("a healthy table warns about nothing", WARNINGS.take(), [])
 
-    heading("S22: a table that is not there at all")
+    heading("a table that is not there at all")
 
     os.environ[titles.ENV_TITLES] = str(work / "never-built.json")
     same("a table that was never built means raw set names, not a crash",
@@ -271,50 +247,8 @@ def check_damaged_table(work: Path) -> None:
     same("and no override at all means the same", titles.find_titles(), {})
 
 
-def check_export_survives(work: Path) -> None:
-    heading("S22: export-pegasus against a half-written table")
-
-    playlists = work / "playlists"
-    playlists.mkdir()
-    playlist(playlists / "Arcade.lpl", ["pacman", "10yard"])
-    out = work / "collections"
-
-    table = work / "half-written.json"
-    table.write_text('{"pacman": ["Pac', encoding="utf-8")
-    os.environ[titles.ENV_TITLES] = str(table)
-
-    try:
-        results, written = pegasus.export(playlists, out)
-    except Exception as error:  # noqa: BLE001
-        raise SystemExit(
-            f"FAIL: export-pegasus dies with {type(error).__name__} "
-            f"({error}) when the MAME table is half-written. The user asked "
-            "for their library to be regenerated and got no collections at "
-            "all, over a file that is only there to improve arcade names"
-        ) from error
-    same("every collection is still written", len(results), 1)
-    need(written and (written[0] / "metadata.pegasus.txt").is_file(),
-         "export reported success but wrote no metadata file")
-    text = (written[0] / "metadata.pegasus.txt").read_text(encoding="utf-8")
-    need("game: pacman" in text,
-         "the games fell out of the collection with the table; without "
-         "titles they must keep their raw set names, which is what "
-         "RetroArch shows today")
-    ok("and its games keep their raw set names")
-
-    titles.dump_json({"pacman": Title("Pac-Man", "1980", "Namco", "good")},
-                     table)
-    results, written = pegasus.export(playlists, out)
-    text = (written[0] / "metadata.pegasus.txt").read_text(encoding="utf-8")
-    need("game: Pac-Man" in text,
-         "a repaired table does not reach the collection: rebuilding the "
-         "table has to be enough to fix the names")
-    ok("a repaired table names the games on the next export")
-    del os.environ[titles.ENV_TITLES]
-
-
 def check_xml(work: Path) -> None:
-    heading("S22: building the table out of a MAME dump")
+    heading("building the table out of a MAME dump")
 
     xml = work / "mame.xml"
     xml.write_text(
@@ -370,12 +304,13 @@ def check_xml(work: Path) -> None:
     same("a set with no <driver> carries no grade", table["b"].status, "")
     same("which is also not \"does not work\"", table["b"].working, True)
 
-    heading("S22: a description the dump wrapped across two lines")
+    heading("a description the dump wrapped across two lines")
 
     # <description> is matched with re.S, so the newline used to survive into
-    # the table. metadata.pegasus.txt is line oriented -- "Evil\nlaunch: x"
-    # is a *launch command*, and Pegasus keeps the first one it sees -- so a
-    # title holding a newline is not cosmetic, it is what that game runs.
+    # the table. A title is looked up against upstream file names, which
+    # cannot hold one, and printed as a line of the fetch-art report, which
+    # then has a line that names no game -- so the wrap is not cosmetic, it
+    # is the difference between finding that game's art and not.
     xml.write_text(
         '<mame><game name="wrap"><description>Wrapped\n'
         "            Over Two Lines</description>\n"
@@ -388,9 +323,9 @@ def check_xml(work: Path) -> None:
          (entry.year, entry.manufacturer), ("19 80", "Na mco"))
     for field in (entry.title, entry.year, entry.manufacturer):
         need(not any(c in field for c in "\r\n  "),
-             f"{field!r} still holds a line break; rendered into "
-             "metadata.pegasus.txt the rest of it is read as another key, "
-             "which is how a game title became a launch command")
+             f"{field!r} still holds a line break; it matches no upstream "
+             "file name, and the rest of it arrives as a line of the "
+             "fetch-art report that names no game")
     ok("no field out of the XML holds a line break")
 
     xml.write_text(
@@ -409,7 +344,7 @@ def check_xml(work: Path) -> None:
     xml.write_bytes(b"\x00\x01\x02 not xml at all")
     same("a binary file is an empty table too", titles.parse_mame_xml(xml), {})
 
-    heading("S22: the table survives the round trip Nix does")
+    heading("the table survives the round trip Nix does")
 
     xml.write_text(
         '<mame><game name="wrap"><description>Wrapped\n  Title</description>'
@@ -428,7 +363,6 @@ def main() -> None:
     work = SANDBOX / "work"
     work.mkdir()
     check_damaged_table(work)
-    check_export_survives(work)
     check_xml(work)
     print("\nall checks passed")
 

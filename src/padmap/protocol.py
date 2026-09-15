@@ -1,9 +1,10 @@
 """Wire protocol between the padmap daemon and a front-end.
 
 Newline-delimited JSON over a unix socket. Chosen over D-Bus or a custom
-binary framing because the client is a small C++ patch inside Pegasus: a
-QLocalSocket plus QJsonDocument is a few dozen lines, with no extra
-dependency and nothing to generate.
+binary framing so that writing a client is a few dozen lines in any language,
+with no extra dependency and nothing to generate -- the first one was a small
+C++ patch inside a Qt front-end, and a QLocalSocket plus QJsonDocument was all
+of it.
 
 The daemon is authoritative. Clients send commands and render whatever
 events come back; they hold no assignment state of their own, so a client
@@ -63,10 +64,10 @@ Events (daemon -> client)
                                  mapping is for; one mechanism, two questions
 {"event": "sdl_mapping", "lines": ["03000000...,padmap Player 1,a:b1,...",
  ...]}                           SDL database lines padmap has just written.
-                                 Pegasus reads sdl_controllers.txt once at
-                                 startup, so a mapping written mid-session
-                                 does nothing until it is relaunched; the
-                                 client feeds these to
+                                 SDL reads its database once, when a
+                                 program starts, so a mapping written
+                                 mid-session does nothing until that program
+                                 is relaunched; a client feeds these to
                                  SDL_GameControllerAddMapping instead.
 {"event": "mapping", "player": 1, "layout": <layout>, "index": 3, "total": 14,
  "control": "y", "label": "Y (top face)", "done": false, "captured": {...}}
