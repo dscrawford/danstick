@@ -1,0 +1,123 @@
+[
+ {
+  "axes": [
+   [
+    0,
+    -32768,
+    32767,
+    0
+   ]
+  ],
+  "calibratable": [
+   0
+  ],
+  "what": "a centred stick"
+ },
+ {
+  "axes": [
+   [
+    2,
+    0,
+    255,
+    0
+   ]
+  ],
+  "calibratable": [],
+  "what": "a trigger by code"
+ },
+ {
+  "axes": [
+   [
+    16,
+    -1,
+    1,
+    0
+   ]
+  ],
+  "calibratable": [],
+  "what": "a hat"
+ },
+ {
+  "axes": [
+   [
+    0,
+    0,
+    0,
+    0
+   ]
+  ],
+  "calibratable": [],
+  "what": "a zero-width axis"
+ },
+ {
+  "axes": [
+   [
+    0,
+    10,
+    5,
+    7
+   ]
+  ],
+  "calibratable": [],
+  "what": "an inverted range"
+ },
+ {
+  "axes": [
+   [
+    3,
+    0,
+    255,
+    24
+   ],
+   [
+    4,
+    0,
+    255,
+    25
+   ],
+   [
+    0,
+    0,
+    255,
+    128
+   ],
+   [
+    1,
+    0,
+    255,
+    128
+   ]
+  ],
+  "calibratable": [
+   0,
+   1
+  ],
+  "what": "gamecube triggers on stick codes"
+ },
+ {
+  "axes": [
+   [
+    0,
+    0,
+    255,
+    200
+   ]
+  ],
+  "calibratable": [],
+  "what": "an off-centre stick"
+ },
+ {
+  "axes": [
+   [
+    0,
+    0,
+    255,
+    130
+   ]
+  ],
+  "calibratable": [
+   0
+  ],
+  "what": "a just-off-centre stick"
+ }
+]

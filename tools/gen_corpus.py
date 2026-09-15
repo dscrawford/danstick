@@ -1161,6 +1161,122 @@ def capabilities() -> None:
     write("live_capabilities", live)
 
 
+# -- the calibration machine -------------------------------------------------
+def calibration_machine() -> None:
+    """Rest samples and reach sweeps, turned into a calibration.
+
+    Two rules in here, and both were wrong once in a way nothing reported.
+    `calibratable_axes` decides by *resting position* rather than by axis
+    code, because this machine's GameCube adapter puts its analogue triggers
+    on ABS_RX/ABS_RY -- stick codes -- resting at 24 of 0-255, and centring a
+    trigger costs it half its travel. `merge_reach` ignores a direction that
+    never left the dead band, because recording one makes `apply` compute a
+    span of zero and that whole direction reads dead centre.
+    """
+    from evdev import AbsInfo
+
+    from padmap import calibrate
+
+    def info(minimum, maximum, value, flat=0):
+        return AbsInfo(value=value, min=minimum, max=maximum,
+                       fuzz=0, flat=flat, resolution=0)
+
+    # rest_from_samples: observed wobble -> centre and dead band.
+    rest_cases = [
+        # (min, max, value, flat, samples)
+        (-32768, 32767, 0, 128, [0, 0]),
+        (-32768, 32767, 0, 128, [-40, 60]),
+        (-32768, 32767, 0, 0, [-40, 60]),
+        (0, 255, 128, 0, [126, 131]),
+        (0, 255, 128, 0, []),
+        (0, 255, 24, 0, [24, 24]),
+        (0, 4095, 2048, 128, [2000, 2100]),
+        (-32768, 32767, 5, 0, [-32768, 32767]),
+        (0, 1, 0, 0, [0, 1]),
+        (-1, 1, 0, 0, [-1, 1]),
+    ]
+    cases = []
+    for minimum, maximum, value, flat, samples in rest_cases:
+        axes = {0: info(minimum, maximum, value, flat)}
+        seen = {0: [min(samples), max(samples)]} if samples else {}
+        out = calibrate.rest_from_samples(axes, seen)[0]
+        cases.append({
+            "min": minimum, "max": maximum, "value": value, "flat": flat,
+            "samples": samples,
+            "center": out.center, "cal_flat": out.flat,
+            "cal_min": out.minimum, "cal_max": out.maximum,
+        })
+    write("calibration_rest", cases)
+
+    # merge_reach: which sweeps count as having been measured.
+    from padmap.profiles import AxisCalibration
+
+    merge_cases = [
+        # (center, min, max, flat, reach_low, reach_high)
+        (0, -32768, 32767, 128, -30000, 30000),
+        (0, -32768, 32767, 128, -100, 100),
+        (0, -32768, 32767, 128, -129, 129),
+        (0, -32768, 32767, 128, -128, 128),
+        (0, -32768, 32767, 128, -1, 30000),
+        (0, -32768, 32767, 0, -1, 1),
+        (0, -32768, 32767, 0, 0, 0),
+        (128, 0, 255, 10, 5, 250),
+        (128, 0, 255, 10, 120, 136),
+        (128, 0, 255, 10, 117, 139),
+        (2048, 0, 4095, 128, 0, 4095),
+    ]
+    merged = []
+    for center, minimum, maximum, flat, low, high in merge_cases:
+        cal = AxisCalibration(center=center, minimum=minimum,
+                              maximum=maximum, flat=flat)
+        out = calibrate.merge_reach({0: cal}, {0: (low, high)})[0]
+        merged.append({
+            "center": center, "min": minimum, "max": maximum, "flat": flat,
+            "reach": [low, high],
+            "reach_min": out.reach_min, "reach_max": out.reach_max,
+        })
+    # And the no-sweep-at-all case, which must not pin travel to zero.
+    cal = AxisCalibration(center=0, minimum=-32768, maximum=32767, flat=128)
+    out = calibrate.merge_reach({0: cal}, {})[0]
+    merged.append({
+        "center": 0, "min": -32768, "max": 32767, "flat": 128, "reach": None,
+        "reach_min": out.reach_min, "reach_max": out.reach_max,
+    })
+    write("calibration_reach", merged)
+
+    # calibratable_axes: a stick centres and a trigger does not, and the axis
+    # code cannot carry that difference.
+    class FakeDevice:
+        def __init__(self, entries):
+            self._entries = entries
+
+        def capabilities(self, absinfo=True):
+            from evdev import ecodes as e
+            return {e.EV_ABS: self._entries}
+
+    from evdev import ecodes as e
+    axis_sets = [
+        ("a centred stick", [(e.ABS_X, info(-32768, 32767, 0))]),
+        ("a trigger by code", [(e.ABS_Z, info(0, 255, 0))]),
+        ("a hat", [(e.ABS_HAT0X, info(-1, 1, 0))]),
+        ("a zero-width axis", [(e.ABS_X, info(0, 0, 0))]),
+        ("an inverted range", [(e.ABS_X, info(10, 5, 7))]),
+        # The GameCube adapter: triggers on stick codes, resting at 24/255.
+        ("gamecube triggers on stick codes",
+         [(e.ABS_RX, info(0, 255, 24)), (e.ABS_RY, info(0, 255, 25)),
+          (e.ABS_X, info(0, 255, 128)), (e.ABS_Y, info(0, 255, 128))]),
+        ("an off-centre stick", [(e.ABS_X, info(0, 255, 200))]),
+        ("a just-off-centre stick", [(e.ABS_X, info(0, 255, 130))]),
+    ]
+    write("calibratable_axes", [
+        {"what": what,
+         "axes": [[code, i.min, i.max, i.value] for code, i in entries],
+         "calibratable": sorted(
+             calibrate.calibratable_axes(FakeDevice(entries)))}
+        for what, entries in axis_sets
+    ])
+
+
 def main() -> int:
     print(f"recording the Python's answers into {OUT.relative_to(REPO)}:")
     bindings()
@@ -1183,6 +1299,7 @@ def main() -> int:
     recent_games()
     mame_titles()
     capabilities()
+    calibration_machine()
     return 0
 
 

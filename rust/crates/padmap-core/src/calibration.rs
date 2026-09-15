@@ -360,3 +360,110 @@ mod tests {
         assert_eq!(cal.high(), 255);
     }
 }
+
+/// The dead band never narrower than this fraction of an axis's travel.
+///
+/// A stick that happens to sit perfectly still while being sampled would
+/// otherwise get a band of one unit, and then jitter forever in a game.
+pub const MIN_FLAT_FRACTION: f64 = 0.04;
+
+/// Axes a hat lives on. Never calibrated: a hat has three values and no
+/// centre to measure.
+pub const SKIP_AXES: [u16; 8] = [0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17];
+
+/// The codes a trigger is conventionally reported on.
+///
+/// A shortcut, not the rule -- see [`calibratable`]. ABS_Z, ABS_RZ, ABS_GAS,
+/// ABS_BRAKE. Which is not the same as the codes a given machine's triggers
+/// are actually on.
+pub const TRIGGER_AXES: [u16; 4] = [0x02, 0x05, 0x09, 0x0A];
+
+/// One axis as its driver declares it, which is what calibration starts from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Declared {
+    pub minimum: i32,
+    pub maximum: i32,
+    /// Where it sits right now.
+    pub value: i32,
+    /// The driver's own dead band, if it declares one.
+    pub flat: i32,
+}
+
+impl Declared {
+    /// Is this worth centring?
+    ///
+    /// A trigger must not be. Calibration takes the resting value as the
+    /// centre and maps it to the middle of the declared range, so centring a
+    /// trigger makes it read half pressed while untouched and costs it half
+    /// its travel.
+    ///
+    /// The resting position decides, and the code list is only a shortcut: it
+    /// catches the conventional cases and does not catch the GameCube adapter
+    /// whose analogue triggers are on ABS_RX and ABS_RY -- stick codes --
+    /// resting at 24 of 0-255. A stick centres and a trigger does not, which
+    /// is the difference an axis number cannot carry.
+    pub fn calibratable(&self, code: u16) -> bool {
+        if SKIP_AXES.contains(&code) || TRIGGER_AXES.contains(&code) {
+            return false;
+        }
+        if self.maximum <= self.minimum {
+            return false;
+        }
+        crate::sdl::AxisSpan::new(self.minimum, self.maximum, self.value).rests_centred()
+    }
+
+    /// The calibration implied by watching this axis sit still.
+    ///
+    /// `observed` is the lowest and highest reading seen while the user was
+    /// asked to leave the pad alone; with none, the declared resting value
+    /// stands in for both.
+    pub fn rest_calibration(&self, observed: Option<(i32, i32)>) -> AxisCalibration {
+        let (low, high) = observed.unwrap_or((self.value, self.value));
+        let travel = self.maximum - self.minimum;
+        AxisCalibration {
+            // Floor division, as Python's `//` does it: the two write the same
+            // profile and a reader cannot tell which produced it.
+            center: (low + high).div_euclid(2),
+            minimum: self.minimum,
+            maximum: self.maximum,
+            // Covers the observed wobble, never less than the floor.
+            flat: (high - low)
+                .div_euclid(2)
+                .saturating_add(1)
+                .max((f64::from(travel) * MIN_FLAT_FRACTION) as i32)
+                .max(self.flat.max(0)),
+            reach_min: None,
+            reach_max: None,
+        }
+    }
+}
+
+impl AxisCalibration {
+    /// Fold a measured sweep into a centre calibration.
+    ///
+    /// A direction has to clear the dead band before it counts as measured.
+    /// A reading inside the band is by definition indistinguishable from the
+    /// stick sitting still, and recording it as a reach makes [`apply`]
+    /// compute a span from the edge of the band that is zero or negative --
+    /// so that whole direction reads dead centre.
+    ///
+    /// Not a corner case. The sweep window opens at the axis's declared value
+    /// while the centre comes from the *measured* rest samples, so the two
+    /// disagree by however far the stick dithered while the user let go. An
+    /// axis that jitters up a couple of units and is then never touched
+    /// during the sweep ends one unit below its own centre, which a naive
+    /// `low < center` test records as a reach -- and full left reads dead
+    /// centre. The exact failure measuring reach exists to prevent, with the
+    /// user doing nothing wrong.
+    ///
+    /// [`apply`]: AxisCalibration::apply
+    #[must_use]
+    pub fn merge_reach(&self, observed: Option<(i32, i32)>) -> AxisCalibration {
+        let (low, high) = observed.unwrap_or((self.center, self.center));
+        AxisCalibration {
+            reach_min: (low < self.center - self.flat).then_some(low),
+            reach_max: (high > self.center + self.flat).then_some(high),
+            ..*self
+        }
+    }
+}

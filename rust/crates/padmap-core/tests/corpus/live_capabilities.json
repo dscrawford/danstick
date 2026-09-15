@@ -112,36 +112,6 @@
  {
   "abs_raw": "0",
   "joypad": false,
-  "key_raw": "ffff0000 0 0 0 0"
- },
- {
-  "abs_raw": "100000000",
-  "joypad": false,
-  "key_raw": "3f0003bfff 0 0 483ffff17aff32d bfd4444600000000 1 130ff38b17d007 ffe77bfad941dfed fdbeffdf77cfffff fffffffffffffffe"
- },
- {
-  "abs_raw": "0",
-  "joypad": false,
-  "key_raw": "1000000000007 ff9f207ac14057ff febeffdfffefffff fffffffffffffffe"
- },
- {
-  "abs_raw": "0",
-  "joypad": false,
-  "key_raw": "c000 10000000000000 0"
- },
- {
-  "abs_raw": "100000000",
-  "joypad": false,
-  "key_raw": "33eff 0 0 483ffff17aff32d bfd4444600000000 1 130c730b17c000 267bfad9415fed 9e168000004400 10000002"
- },
- {
-  "abs_raw": "0",
-  "joypad": false,
-  "key_raw": "ff80000000000000 80b0ffcd01cfffff febffbffdffffffe"
- },
- {
-  "abs_raw": "0",
-  "joypad": false,
   "key_raw": "8000 10000000000000 0"
  },
  {
