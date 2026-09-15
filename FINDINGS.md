@@ -408,7 +408,7 @@ The second one is the more dangerous: source correct, behaviour unchanged, and
 nothing in the file contents to indicate it. Any check that reads the generated
 config rather than running it would have passed.
 
-### tools/e2e_ports.py
+### tests/e2e_ports.py
 
 Drives the whole chain with nothing stubbed:
 
@@ -528,10 +528,10 @@ daemon had appeared on the real runtime dir, and had the fallback fired it
 would have SIGTERMed the terminal. Both e2e tools use the same helper for
 their cleanup.
 
-`tools/e2e_daemon.py` now asserts that a daemon on the real runtime dir
+`tests/e2e_daemon.py` now asserts that a daemon on the real runtime dir
 survives the run, so this cannot regress silently.
 
-### tools/e2e_daemon.py
+### tests/e2e_daemon.py
 
 Starts a daemon claiming an obviously stale build id, runs the real Pegasus
 wrapper, and checks the daemon was replaced by one reporting the store build.
@@ -705,7 +705,7 @@ in-memory record of what had been offered would have turned "asked once" into
 not to configure. The prompted set is persisted to `$XDG_RUNTIME_DIR`, so
 declining lasts the login session and a fresh boot offers again.
 
-### tools/check_autosetup.py
+### tests/check_autosetup.py
 
 Eleven cases over a real `Server` with `devices.discover` and `_begin` stubbed
 -- deliberately not a live daemon, since a second one would try to grab pads
@@ -757,7 +757,7 @@ Fixes, in the theme:
 - An error *after* measuring has begun is ignored: the daemon owns the flow
   from there, and an unrelated error should not tear down a measurement.
 
-### tools/check_theme_setup.py
+### tests/check_theme_setup.py
 
 Loads the real theme QML against a stub `api`, so this is checkable without a
 daemon, a front-end, or grabbing a controller. Five cases: opening with a
@@ -976,7 +976,7 @@ verified against artefacts the real software produced, not by inspection:
   `+2`), covered case by case.
 - Controls nobody pressed are omitted rather than emitted as zero.
 
-`tools/check_mapping.py` holds these. Everything above is the foundation only:
+`tests/check_mapping.py` holds these. Everything above is the foundation only:
 the capture flow, its UI, and wiring it in place of the Gamepad Editor handover
 are still to come.
 
@@ -1251,7 +1251,7 @@ now reports:
     [Autoconf] Config files scanned: ... affinity 50
     [Autoconf] padmap Player 1 configured in port 1.
 
-`tools/check_launch.py`, which had been living in a scratch directory all
+`tests/check_launch.py`, which had been living in a scratch directory all
 along, now lives in the repo and asserts the setting is present.
 
 ## "Configured" and "working" are different things
@@ -1441,7 +1441,7 @@ and handed a line padmap had written straight back as though the controller had
 come with it. The probe's environment is scrubbed, and any line naming a
 `padmap Player N` is refused whatever its source.
 
-### tools/e2e_picker.py
+### tests/e2e_picker.py
 
 Both halves are driven through a real daemon on an isolated `XDG_RUNTIME_DIR`,
 restricted with `PADMAP_ONLY_DEVICE` to a single uinput pad the test owns, so
@@ -1672,7 +1672,7 @@ that is **already open**, rather than only affecting ones opened later. If it
 did the latter the code would compile, run, log success and change nothing --
 the shape of failure this project has hit four times.
 
-`tools/check_sdl_live.py` measures it against real SDL with a real uinput pad:
+`tests/check_sdl_live.py` measures it against real SDL with a real uinput pad:
 give the pad a mapping with `a` on b0, open it, replace the mapping with one
 putting `a` on b7, and then *press buttons*. The final assertion is an event,
 not SDL describing its own state: raw b7 arrives as `SDL_CONTROLLER_BUTTON_A`
@@ -1704,7 +1704,7 @@ holds and logs it. A mapping stored under a GUID nothing will ever look up is
 indistinguishable from a working one from the caller's side -- SDL reports
 success either way and never mentions it again.
 
-`tools/e2e_sdl_reload.py` runs the patched Pegasus under Xvfb with a uinput pad
+`tests/e2e_sdl_reload.py` runs the patched Pegasus under Xvfb with a uinput pad
 that exists *before* the frontend starts, so the frontend opens it -- the exact
 state the bug report describes -- then a stub daemon sends one `sdl_mapping`
 event, and the frontend's own log is read back:
@@ -1718,16 +1718,16 @@ GUID SDL computes for that device rather than one padmap merely believes in.
 
 ### New tools
 
-- `tools/check_scopes.py` -- storage, migration of a real legacy profile,
+- `tests/check_scopes.py` -- storage, migration of a real legacy profile,
   resolution order, core and game keys, launch argument parsing, and what
   actually lands in the `.cfg` for four different launches. The two captures
   are told apart by keys only one of them can produce (`input_a_btn` cannot
   appear in an N64 profile at all), not by "something was written".
-- `tools/check_sdl_live.py` -- SDL's live re-binding, both paths, proved with
+- `tests/check_sdl_live.py` -- SDL's live re-binding, both paths, proved with
   presses.
-- `tools/e2e_sdl_reload.py` -- the patched frontend applying a mapping it is
+- `tests/e2e_sdl_reload.py` -- the patched frontend applying a mapping it is
   handed mid-session.
-- `tools/e2e_picker.py` gained a second half: re-open setup, choose "Nintendo 64
+- `tests/e2e_picker.py` gained a second half: re-open setup, choose "Nintendo 64
   games", walk the N64 layout, and then run `padmap.launch` with a real N64 core
   name and a real ROM path and check the emitted profile changed -- and that a
   SNES launch afterwards puts the default back. Both processes, as they run.
@@ -1998,7 +1998,7 @@ failure that leaves nothing behind is worse than doing nothing at all.
 Reported: "got the arcade fightstick connected and configured as player 1 but
 I think the gc autoconfigured joysticks took up the first four slots".
 
-Confirmed by running `tools/e2e_ports.py --live --installed`, which drives the
+Confirmed by running `tests/e2e_ports.py --live --installed`, which drives the
 real chain on a virtual display, and reading RetroArch's own autoconfig log:
 
     [Autoconf] First unconfigured / unreserved player is 2.

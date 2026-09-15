@@ -89,8 +89,8 @@ indistinguishable from a decoder that is wrong.
 ## Running it
 
     XDG_RUNTIME_DIR=$(mktemp -d) nix develop --command \
-        python3 tools/check_fakepad.py
-    nix develop --command python3 tools/check_capture_via_fakepad.py
+        python3 tests/check_fakepad.py
+    nix develop --command python3 tests/check_capture_via_fakepad.py
 
 The two `spawn()` tests skip themselves when `/dev/uinput` is not writable.
 Everything else runs anywhere.

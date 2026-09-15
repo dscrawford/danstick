@@ -62,7 +62,7 @@ dependency whose API has broken seven times in nineteen months.
 * **The profile store**, reading and writing the same files the Python does --
   same directory, same filenames, same JSON including the two keys written only
   so a rollback still finds the controller mapped.
-  `tools/check_rust_calibration.py` writes a profile with the *Python* and
+  `tests/check_rust_calibration.py` writes a profile with the *Python* and
   checks every value of an axis through the *Rust* republisher against the
   Python's own `AxisCalibration.apply`.
 

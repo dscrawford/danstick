@@ -124,7 +124,7 @@ So the mode is now *checked* rather than assumed: a `0x3f` is counted, the
 first one is logged by name, and the request is repeated every
 `SIMPLE_REPORTS_BEFORE_RETRY` reports until a `0x30` arrives. A `0x30` resets
 the count, so a healthy pad is never re-asked and one that drops back into
-simple mode later is caught the same way. See `tools/check_report_mode.py`.
+simple mode later is caught the same way. See `tests/check_report_mode.py`.
 
 ## Which pads take this path
 
@@ -160,5 +160,5 @@ For anything the family rule gets wrong in either direction,
 
     {"057e:2017": true, "057e:2009": false}
 
-Checked by `tools/check_hidraw_supported.py`, which deliberately uses a
+Checked by `tests/check_hidraw_supported.py`, which deliberately uses a
 made-up vendor and product so that a rule matching on ids cannot pass it.

@@ -88,7 +88,7 @@ Verified here:
   correctly excluded;
 * the empty-slot probe: with nothing paired, all four stall and padmap
   reports no controllers rather than four phantom ones;
-* the decode, against synthetic reports -- `tools/check_triton.py`.
+* the decode, against synthetic reports -- `tests/check_triton.py`.
 
 **Not verified: a live controller.** Nothing was paired to this receiver while
 this was written, so no state report has been decoded from real hardware. The
@@ -102,7 +102,7 @@ produces something sensible is unknown.
 
 ## If it does not work
 
-    nix develop --command python3 tools/check_triton.py   # the decode
+    nix develop --command python3 tests/check_triton.py   # the decode
     padmap list                                           # what padmap sees
 
 `padmap list` showing nothing with a controller switched on means the probe

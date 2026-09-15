@@ -145,4 +145,4 @@ not these events.
   pad and is about to rewrite the roster.
 * A failed republish is not fatal and produces no `added` event.
 
-All of these are checked by `tools/check_controller_events.py`.
+All of these are checked by `tests/check_controller_events.py`.

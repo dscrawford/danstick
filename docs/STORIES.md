@@ -798,7 +798,7 @@ changed out of 3382, idempotent on a second run.
 # Coverage
 
 Which file exercises each story **today**. Established by reading
-`tools/check_*.py` and `tools/e2e_*.py`, not by guessing. `tools/preview_*.py`
+`tests/check_*.py` and `tests/e2e_*.py`, not by guessing. `tools/preview_*.py`
 and `tools/spike_*.py` are excluded: previews render, spikes explore, neither
 asserts.
 
