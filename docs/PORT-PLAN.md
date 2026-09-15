@@ -68,19 +68,47 @@ device node is unavailable.
 
 ## Where it stands
 
-Seven modules have a Rust counterpart, and **none of them has replaced its
-Python**: the daemon still calls the Python, so both run. Line counts say how
-finished each is.
+Phases 1 to 4 are done, and phase 5's protocol surface with them. What that
+means precisely: **every pure decision padmap makes is now in Rust and held to
+the Python by a recorded corpus.** There is no corpus file without a Rust
+consumer.
 
-| module | python | rust | state |
-|---|---:|---:|---|
-| `triton` | 686 | 712 | complete, both live |
-| `hide` | 293 | 318 | complete |
-| `assign` | 286 | 312 | complete |
-| `icons` | 178 | 336 | complete |
-| `capture` | 777 | 1286 | complete |
-| `retroarch` | 891 | 300 | **partial** — config writing, `clean_user_config`, launch args missing |
-| `profiles` | 585 | 196 | **partial** — reads profiles, does not write them |
+| phase | state |
+|---|---|
+| 1 — leaves | done. `safeio` contributes no Rust; Rust has no `UnicodeDecodeError` to guard |
+| 2 — `devices` | done, and 286ms faster per scan |
+| 3 — device layer | done: `hidraw`, `virtual`, `calibrate` |
+| 4 — writers | pure surface done: profiles, autoconfig text, the launch override, the config cleaner |
+| 5 — daemon | **protocol surface done** (commands, state event); orchestration outstanding |
+| 6 — front door | outstanding: `cli`, `launch`, `artwork` |
+
+Seven modules have a complete Rust counterpart. None has been deleted, for the
+reason given above: they all still have Python callers.
+
+### What is actually left
+
+Not more algorithms. The daemon's decisions are already ported —
+`assign.rs` has the claim logic, `capture.rs` the wizard, `calibration.rs` the
+arithmetic, `clone.rs` and `republish.rs` the forwarding, `emit.rs` and
+`artefacts.rs` the file writing. What `server.py` still holds is **orchestration
+and I/O**: a Unix socket listener, client bookkeeping, the session lifecycle
+that grabs and releases pads, and the sequencing of three nested modal flows.
+116 of its lines touch a device, a socket or a selector.
+
+That is a different kind of work from everything above, and it needs a
+different kind of test. A corpus cannot record it; it needs a live daemon and a
+live client, which is what `tests/check_daemon_*.py` and `tests/e2e_*.py`
+already are. Those suites are the specification for this phase — they describe
+the behaviour to preserve, and they are the last thing that should be deleted.
+
+Rough remaining shape, by what the code *is* rather than by line count:
+
+| | lines | kind |
+|---|---:|---|
+| `server` orchestration | ~2,400 | socket, selector, session lifecycle, modal sequencing |
+| `cli` | 1,162 | argument parsing and thirteen subcommands, mostly thin |
+| `artwork` | 593 | HTTP against a remote host — see the decision below |
+| `launch` | 214 | resolves a scope and rewrites the autoconfig directory |
 
 ## The order
 
