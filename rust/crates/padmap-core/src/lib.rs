@@ -15,6 +15,7 @@
 pub mod assign;
 pub mod binding;
 pub mod calibration;
+pub mod capability;
 pub mod capture;
 pub mod control;
 pub mod emit;

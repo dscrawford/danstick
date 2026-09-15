@@ -20,15 +20,12 @@
 use std::path::{Path, PathBuf};
 
 use log::debug;
+use padmap_core::capability::{self, Mask};
 
 /// Virtual pads we publish are tagged with this phys prefix so that discovery
 /// never picks up our own output. Without it, restarting the daemon would grab
 /// its own pads and republish them, one layer deeper each time.
 pub const VIRTUAL_PHYS_PREFIX: &str = "padmap/";
-
-/// BTN_JOYSTICK (0x120) through BTN_THUMBR (0x13f): the range udev's `input_id`
-/// builtin uses, together with absolute axes, to decide ID_INPUT_JOYSTICK.
-const BTN_JOYSTICK_RANGE: std::ops::Range<u16> = 0x120..0x140;
 
 /// Test escape hatch: restrict discovery to one device by name.
 ///
@@ -244,7 +241,37 @@ pub fn ambiguous_groups(pads: &[Pad]) -> Vec<Vec<&Pad>> {
 }
 
 /// Is this a joypad by capability, regardless of how udev tagged it?
+///
+/// From sysfs first. Opening every input node to ask two questions means
+/// closing every input node afterwards, and releasing a USB HID descriptor
+/// takes about 11ms while the driver tears down its URB -- measured at 390ms
+/// of a 400ms scan, in 36 calls to close. The bitmaps read here are the same
+/// ones udev's `input_id` builtin reads to decide ID_INPUT_JOYSTICK.
 fn looks_like_joypad(devnode: &Path) -> bool {
+    match capability_verdict(devnode) {
+        Some(verdict) => verdict,
+        // The files were not there, or were not bitmaps. Ask the device, which
+        // is what this used to do always.
+        None => looks_like_joypad_by_opening(devnode),
+    }
+}
+
+/// The sysfs answer, or `None` if it cannot be had.
+fn capability_verdict(devnode: &Path) -> Option<bool> {
+    let name = devnode.file_name()?;
+    let caps = Path::new("/sys/class/input")
+        .join(name)
+        .join("device/capabilities");
+    let read = |leaf: &str| {
+        std::fs::read_to_string(caps.join(leaf))
+            .ok()
+            .as_deref()
+            .and_then(Mask::parse)
+    };
+    capability::joypad(read("abs").as_ref(), read("key").as_ref())
+}
+
+fn looks_like_joypad_by_opening(devnode: &Path) -> bool {
     let Ok(device) = evdev::Device::open(devnode) else {
         return false;
     };
@@ -254,9 +281,10 @@ fn looks_like_joypad(devnode: &Path) -> bool {
     {
         return false;
     }
-    device
-        .supported_keys()
-        .is_some_and(|keys| keys.iter().any(|key| BTN_JOYSTICK_RANGE.contains(&key.0)))
+    device.supported_keys().is_some_and(|keys| {
+        keys.iter()
+            .any(|key| capability::BTN_JOYSTICK_RANGE.contains(&key.0))
+    })
 }
 
 fn property(device: &udev::Device, name: &str) -> Option<String> {

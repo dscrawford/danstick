@@ -1068,6 +1068,99 @@ def mame_titles() -> None:
     ])
 
 
+# -- capability bitmaps ------------------------------------------------------
+def capabilities() -> None:
+    """What makes a device a joypad, read from sysfs rather than by opening it.
+
+    The distinction between `None` and `0` is the load-bearing part. A device
+    with no absolute axes has an `abs` file containing "0", and reading that
+    as "could not be read" sends it down the fallback that *opens* the
+    device -- which is the expensive path this exists to avoid. Releasing a
+    USB HID descriptor takes about 11ms, and that was 390ms of a 400ms scan.
+    Twelve of this machine's input devices are exactly that shape.
+    """
+    from padmap import devices
+
+    raw_cases = [
+        None,
+        "",
+        "   ",
+        "0",
+        "1",
+        "ffffffffffffffff",
+        "1 0",
+        "0 0",
+        "3 ffffffffffffffff",
+        # A real key bitmap: several 64-bit words, most significant first.
+        "7 0 0 0 0 0 0 ffffffff",
+        "10000 0 0 0 0",
+        "notahexnumber",
+        "1 notahex",
+        "ffffffffffffffffff",
+        # Leading and trailing whitespace, as a sysfs read can carry.
+        " 1 2 ",
+    ]
+    cases = []
+    for raw in raw_cases:
+        if raw is None:
+            value = None
+        else:
+            import tempfile
+            with tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / "bits"
+                path.write_text(raw)
+                value = devices._capability_mask(str(path))
+        cases.append({
+            "raw": raw,
+            "none": value is None,
+            "zero": value == 0 if value is not None else None,
+            # Bit indices, not the integer: JSON cannot hold a 768-bit number
+            # and a decimal string would only move the parsing problem.
+            "bits": (
+                sorted(i for i in range(1024) if (value >> i) & 1)
+                if value else []
+            ),
+        })
+    write("capability_masks", cases)
+
+    # The decision, over the shapes the two bitmaps arrive in.
+    BTN_SOUTH, BTN_JOYSTICK, BTN_DPAD_UP = 0x130, 0x120, 0x220
+    KEY_A = 0x1E
+    decisions = [
+        (None, None), (None, 1), (1, None),
+        (0, 0), (0, 1 << BTN_SOUTH),
+        (1, 0), (1, 1 << KEY_A),
+        (1, 1 << BTN_SOUTH), (1, 1 << BTN_JOYSTICK),
+        (1, 1 << 0x13F), (1, 1 << 0x140), (1, 1 << 0x11F),
+        (1, 1 << BTN_DPAD_UP),
+        (1, (1 << KEY_A) | (1 << BTN_SOUTH)),
+        (7, 1 << BTN_SOUTH),
+        ((1 << 200), 1 << BTN_SOUTH),
+    ]
+    write("joypad_by_capability", [
+        {"abs": None if a is None else str(a),
+         "keys": None if k is None else str(k),
+         "verdict": devices._joypad_by_capability(a, k)}
+        for a, k in decisions
+    ])
+
+    # And every input device actually on this machine, which is the set of
+    # shapes nobody would think to write down.
+    import glob as _glob
+    live = []
+    for input_dir in sorted(_glob.glob("/sys/class/input/input*")):
+        events = sorted(Path(p).name for p in _glob.glob(f"{input_dir}/event*"))
+        if not events:
+            continue
+        caps = Path(input_dir) / "capabilities"
+        live.append({
+            "abs_raw": devices._read(str(caps / "abs")),
+            "key_raw": devices._read(str(caps / "key")),
+            "joypad": devices._looks_like_joypad(f"/dev/input/{events[0]}"),
+        })
+    write("live_capabilities", live)
+
+
 def main() -> int:
     print(f"recording the Python's answers into {OUT.relative_to(REPO)}:")
     bindings()
@@ -1089,6 +1182,7 @@ def main() -> int:
     runtime_paths()
     recent_games()
     mame_titles()
+    capabilities()
     return 0
 
 

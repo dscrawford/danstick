@@ -185,9 +185,19 @@ def _capability_mask(path: str) -> int | None:
     value = 0
     for word in raw.split():
         try:
-            value = (value << 64) | int(word, 16)
+            parsed = int(word, 16)
         except ValueError:
             return None
+        # A word wider than the 64 bits the kernel writes means this is not a
+        # kernel bitmap, so the honest answer is "cannot read it" and the
+        # caller asks the device itself. Python would otherwise accept it as
+        # an arbitrary-precision integer and shift the *real* words along by
+        # however much it overflowed, producing a plausible mask describing a
+        # device that does not exist. Rust's u64 rejects it, and the two have
+        # to agree; found by the differential corpus.
+        if parsed < 0 or parsed > 0xFFFF_FFFF_FFFF_FFFF:
+            return None
+        value = (value << 64) | parsed
     return value
 
 
@@ -212,10 +222,23 @@ def _looks_like_joypad(devnode: str) -> bool:
         "/sys/class/input", os.path.basename(devnode), "device", "capabilities")
     absolute = _capability_mask(os.path.join(caps, "abs"))
     keys = _capability_mask(os.path.join(caps, "key"))
-    if absolute is None or keys is None:
+    verdict = _joypad_by_capability(absolute, keys)
+    if verdict is None:
         # Not there to read. Fall back to asking the device itself, which is
         # what this used to do always.
         return _looks_like_joypad_by_opening(devnode)
+    return verdict
+
+
+def _joypad_by_capability(absolute: int | None, keys: int | None) -> bool | None:
+    """The decision itself, given two bitmaps. None means "cannot tell".
+
+    Split out from the reading so it can be recorded and replayed against the
+    Rust port -- it is the part with a rule in it, and the part where the two
+    implementations could silently disagree about what a controller is.
+    """
+    if absolute is None or keys is None:
+        return None
     if not absolute:
         return False
     return any((keys >> code) & 1 for code in _BTN_JOYSTICK_RANGE)
