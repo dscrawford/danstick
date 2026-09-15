@@ -19,8 +19,9 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use log::{info, warn};
+use padmap_core::emit::{self, Identity};
 use padmap_core::hide;
-use padmap_input::{assignments, clone, pad, profiles, reactor, republish, runtime};
+use padmap_input::{artefacts, assignments, clone, pad, profiles, reactor, republish, runtime};
 
 /// How often the tick runs. Matches the Python's `TICK_SECONDS`.
 const TICK: Duration = Duration::from_millis(20);
@@ -184,6 +185,16 @@ fn cmd_run() -> Result<()> {
         anyhow::bail!("no pad could be republished");
     }
 
+    // The two artefacts other programs read. Written before the loop starts,
+    // so a consumer launched immediately afterwards finds them already there:
+    // SDL reads its database once, at startup, and a mapping that lands later
+    // does nothing until that program is restarted.
+    if let Err(error) = publish_artefacts(&vpads) {
+        // Not fatal. A pad that is republished but unmapped still works as a
+        // pad; one that is not republished at all does not exist.
+        warn!("could not write the mapping files: {error}");
+    }
+
     let mut republisher = republish::Republisher::new(vpads);
     let mut reactor = reactor::Reactor::new(TICK).context("creating the event loop")?;
     for (index, vpad) in republisher.pads.iter().enumerate() {
@@ -245,6 +256,89 @@ fn cmd_run() -> Result<()> {
         }
     }
     republisher.close();
+    Ok(())
+}
+
+/// Write the SDL database and the RetroArch autoconfig for these pads.
+///
+/// Both come from the stored profile: a capture the user performed, resolved
+/// under no console context, because at republish time nothing knows what is
+/// about to run. A launcher regenerates the autoconfig with the real context
+/// immediately before starting a game.
+fn publish_artefacts(vpads: &[padmap_input::VirtualPad]) -> Result<()> {
+    let mut sdl_lines = BTreeMap::new();
+    let mut profiles_out = BTreeMap::new();
+    let mut identities = BTreeMap::new();
+
+    for vpad in vpads {
+        let identity = Identity {
+            bustype: vpad.identity.bustype,
+            vendor: vpad.identity.vendor,
+            product: vpad.identity.product,
+            version: vpad.identity.version,
+        };
+        identities.insert(vpad.player, identity);
+
+        let stored = profiles::load(&vpad.pad, None);
+        let (_scope, mapping) = stored
+            .as_ref()
+            .map(|profile| profile.resolve("", ""))
+            .unwrap_or_default();
+        let bindings = mapping.resolved();
+
+        // A pad nobody has mapped still has to be usable, or the user cannot
+        // reach whatever would let them map it. The face buttons in the guess
+        // really are a guess; the d-pad and sticks come from the pad's own
+        // capabilities and are not.
+        let line = if bindings.is_empty() {
+            let (keys, axis_codes) = clone::capabilities(&vpad.source);
+            let spans = clone::axis_spans(&vpad.source);
+            let guessed = padmap_core::guess::guessed_fields(&keys, &axis_codes, Some(&spans));
+            emit::sdl_line(
+                &emit::virtual_guid(vpad.player, identity),
+                &emit::virtual_name(vpad.player),
+                &guessed,
+            )
+        } else {
+            emit::sdl_line_for(vpad.player, identity, &bindings, None)
+        };
+        sdl_lines.insert(vpad.player, line);
+        profiles_out.insert(
+            vpad.player,
+            emit::retroarch_profile(
+                vpad.player,
+                identity,
+                &bindings,
+                "",
+                &mapping.layout,
+                "",
+                "",
+            ),
+        );
+    }
+
+    // A slot with no identity of its own falls back to padmap's, which is
+    // only ever asked about players that are not attached right now.
+    let fallback = Identity {
+        bustype: 0x06,
+        vendor: clone::PADMAP_VID,
+        product: clone::PADMAP_PID,
+        version: clone::PADMAP_VERSION,
+    };
+    let database = artefacts::write_sdl_database(
+        &sdl_lines,
+        &BTreeMap::new(),
+        |player| identities.get(&player).copied().unwrap_or(fallback),
+        None,
+    )?;
+    let written = artefacts::write_autoconfig(&profiles_out, None)?;
+
+    info!("SDL mappings: {}", database.display());
+    if let Some(first) = written.first() {
+        if let Some(dir) = first.parent() {
+            info!("RetroArch autoconfig: {}", dir.display());
+        }
+    }
     Ok(())
 }
 

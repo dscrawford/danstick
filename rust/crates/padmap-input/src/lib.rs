@@ -5,6 +5,7 @@
 //! the `unsafe` boundary would sit if any were needed -- none is, because the
 //! ioctls come from the `evdev` and `rustix` crates rather than from here.
 
+pub mod artefacts;
 pub mod assignments;
 pub mod clone;
 pub mod pad;

@@ -696,6 +696,86 @@ def hide_rules() -> None:
     write("hide_rules", cases)
 
 
+
+def emitted_files() -> None:
+    """The two artefacts other programs read, and the guess behind them.
+
+    Neither consumer complains when it reads one wrong. SDL silently never
+    matches a mapping under a GUID it did not compute; RetroArch binds a button
+    that does not exist and still calls the pad configured. So both are pinned
+    whole rather than sampled.
+    """
+    import os
+    os.environ["PADMAP_PAD_IDENTITY"] = "padmap"
+    from padmap import controllercfg
+
+    captures = [
+        {},
+        {"a": Binding("button", 1), "b": Binding("button", 2)},
+        {"a": Binding("button", 1), "b": Binding("button", 2),
+         "x": Binding("button", 3), "y": Binding("button", 4),
+         "dpup": Binding("hat", 0, 1), "start": Binding("button", 9)},
+        {"rightstick_up": Binding("button", 11),
+         "rightstick_down": Binding("axis", 3, 1)},
+        {"lefttrigger": Binding("axis", 2, -1)},
+    ]
+    profiles_cases = []
+    for layout_id in ("", "n64", "snes", "gamecube", "arcade"):
+        for index, bindings in enumerate(captures):
+            for scope, context in (("", ""), ("console:n64", ""),
+                                   ("game:n64/mario", "Super Mario 64")):
+                profiles_cases.append({
+                    "in": {"player": 1, "bindings": {k: v.to_json()
+                                                     for k, v in bindings.items()},
+                           "layout": layout_id, "scope": scope,
+                           "context": context, "source": "" if index else "upstream"},
+                    "out": controllercfg.retroarch_profile(
+                        1, _ProfilePad(), bindings, "" if index else "upstream",
+                        layout_id, scope, context),
+                })
+    write("retroarch_profiles", profiles_cases)
+
+    guess_cases = []
+    keysets = [
+        [],
+        list(range(0x130, 0x13c)),
+        list(range(0x130, 0x133)),
+        list(range(0x130, 0x150)),
+        [0x130, 0x220, 0x221, 0x222, 0x223],
+        [0x1e, 0x130, 0x131],
+    ]
+    axissets = [[], [0x00, 0x01], [0x00, 0x01, 0x10, 0x11],
+                [0x00, 0x01, 0x03, 0x04], [0x10, 0x11]]
+    for keys in keysets:
+        for codes in axissets:
+            guess_cases.append({
+                "in": {"keys": keys, "axis_codes": codes},
+                "out": list(controllercfg.guessed_fields(keys, codes).items()),
+            })
+    write("guessed_fields", guess_cases)
+
+    guid_cases = []
+    for player in (1, 2, 4, 16):
+        guid_cases.append({
+            "in": {"player": player},
+            "out": controllercfg.virtual_guid(player),
+        })
+    write("virtual_guids", guid_cases)
+
+
+class _ProfilePad:
+    """A pad whose identity is padmap's own, so the corpus needs no hardware."""
+
+    path = "/dev/input/event0"
+    name = "Fixture Pad"
+    phys = ""
+    uniq = ""
+    vid = 0x0079
+    pid = 0x1843
+    syspath = "/sys"
+    retroarch_visible = True
+
+
 def main() -> int:
     print(f"recording the Python's answers into {OUT.relative_to(REPO)}:")
     bindings()
@@ -713,6 +793,7 @@ def main() -> int:
     stored_profiles()
     icon_choices()
     hide_rules()
+    emitted_files()
     return 0
 
 

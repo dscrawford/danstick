@@ -692,3 +692,75 @@ fn the_udev_rules_match_the_python_rule_for_rule() {
         assert_eq!(got, wanted, "targets for {:?}", case["in"]);
     }
 }
+
+/// padmap's own identity, which is what the corpus was recorded under.
+const PADMAP_IDENTITY: padmap_core::emit::Identity = padmap_core::emit::Identity {
+    bustype: 0x06,
+    vendor: 0x1209,
+    product: 0x0001,
+    version: 0x0001,
+};
+
+#[test]
+fn a_virtual_pads_guid_is_the_one_the_python_computed() {
+    for case in corpus("virtual_guids") {
+        let player = case["in"]["player"].as_u64().expect("player") as u32;
+        assert_eq!(
+            padmap_core::emit::virtual_guid(player, PADMAP_IDENTITY),
+            case["out"].as_str().expect("a guid"),
+            "player {player}"
+        );
+    }
+}
+
+#[test]
+fn every_autoconfig_profile_is_what_the_python_wrote() {
+    // RetroArch reads this file and says nothing about what it could not use.
+    let cases = corpus("retroarch_profiles");
+    assert!(cases.len() > 50);
+    for case in &cases {
+        let input = &case["in"];
+        let built = padmap_core::emit::retroarch_profile(
+            input["player"].as_u64().expect("player") as u32,
+            PADMAP_IDENTITY,
+            &bindings_from(&input["bindings"]),
+            input["source"].as_str().expect("source"),
+            input["layout"].as_str().expect("layout"),
+            input["scope"].as_str().expect("scope"),
+            input["context"].as_str().expect("context"),
+        );
+        assert_eq!(
+            built,
+            case["out"].as_str().expect("a profile"),
+            "for {input}"
+        );
+    }
+}
+
+#[test]
+fn an_unmapped_pad_is_guessed_at_identically() {
+    // The half that is not a guess -- the hat, the sticks -- is what decides
+    // whether a menu can be navigated at all before the wizard is reachable.
+    for case in corpus("guessed_fields") {
+        let input = &case["in"];
+        let fields = padmap_core::guess::guessed_fields(
+            &u16s(&input["keys"]),
+            &u16s(&input["axis_codes"]),
+            None,
+        );
+        let actual: Vec<(String, String)> =
+            fields.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+        let wanted: Vec<(String, String)> = case["out"]
+            .as_array()
+            .expect("pairs")
+            .iter()
+            .map(|pair| {
+                (
+                    pair[0].as_str().expect("field").to_owned(),
+                    pair[1].as_str().expect("target").to_owned(),
+                )
+            })
+            .collect();
+        assert_eq!(actual, wanted, "for {input}");
+    }
+}

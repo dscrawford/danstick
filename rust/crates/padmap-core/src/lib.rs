@@ -12,11 +12,14 @@
 
 #![forbid(unsafe_code)]
 
+pub mod assign;
 pub mod binding;
 pub mod calibration;
 pub mod capture;
 pub mod control;
+pub mod emit;
 pub mod fields;
+pub mod guess;
 pub mod hide;
 pub mod icons;
 pub mod layout;

@@ -164,6 +164,9 @@ pub fn forwarded(kind: EventType) -> bool {
 pub struct VirtualPad {
     pub player: u32,
     pub pad: Pad,
+    /// What this clone advertises. Kept, because the SDL GUID is computed from
+    /// it and a mapping written under a different one is never matched.
+    pub identity: Identity,
     pub source: Device,
     pub clone: VirtualDevice,
     /// ABS code -> calibration, applied as events pass through. Correcting here
@@ -243,6 +246,7 @@ pub fn create(
     let mut vpad = VirtualPad {
         player,
         pad: pad.clone(),
+        identity,
         source,
         clone,
         axes,
@@ -503,6 +507,42 @@ impl VirtualPad {
             log::debug!("player {}: rumble write failed: {error}", self.player);
         }
     }
+}
+
+/// The key codes and real axis codes a pad reports, for guessing a mapping.
+///
+/// Axis codes include the hat, because the guess needs to know whether there
+/// is one -- a pad whose d-pad is a hat and whose mapping says otherwise has
+/// no d-pad at all.
+pub fn capabilities(source: &Device) -> (Vec<u16>, Vec<u16>) {
+    let keys: Vec<u16> = source
+        .supported_keys()
+        .map(|set| set.iter().map(|key| key.0).collect())
+        .unwrap_or_default();
+    let axes: Vec<u16> = source
+        .supported_absolute_axes()
+        .map(|set| set.iter().map(|axis| axis.0).collect())
+        .unwrap_or_default();
+    (keys, axes)
+}
+
+/// Every axis's declared travel and where it currently rests.
+///
+/// The rest value is what separates a stick from a trigger, and the evdev code
+/// cannot: the Mayflash GameCube adapter reports its analogue triggers as
+/// ABS_RX and ABS_RY.
+pub fn axis_spans(source: &Device) -> BTreeMap<u16, padmap_core::sdl::AxisSpan> {
+    let Ok(absinfo) = source.get_absinfo() else {
+        return BTreeMap::new();
+    };
+    absinfo
+        .map(|(code, info)| {
+            (
+                code.0,
+                padmap_core::sdl::AxisSpan::new(info.minimum(), info.maximum(), info.value()),
+            )
+        })
+        .collect()
 }
 
 /// Every key currently held on a source, for letting go of them on the clone.
