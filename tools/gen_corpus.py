@@ -1542,6 +1542,39 @@ def launch_override() -> None:
     _ = virtual
 
 
+def launch_flags() -> None:
+    """--nodevice flags for the core ports nobody is assigned to.
+
+    The only working way to empty a port. input_libretro_device_pN reads like
+    the setting for it and RetroArch ignores it from a config file entirely --
+    it lives only in .rmp remap files -- so setting it in the launch override
+    changed nothing at all.
+    """
+    from padmap import retroarch
+    from padmap.assign import Assignment
+    from padmap.devices import Pad
+
+    def pad(n):
+        return Pad(path=f"/dev/input/event{n}", name=f"Pad {n}", phys="",
+                   uniq="", vid=1, pid=1, syspath="")
+
+    order = {0: "/dev/input/event90", 1: "/dev/input/event91"}
+    rows = []
+    for what, players, paths in [
+        ("nobody assigned", [], {}),
+        ("one player", [1], {1: "/dev/input/event90"}),
+        ("two players", [1, 2],
+         {1: "/dev/input/event90", 2: "/dev/input/event91"}),
+        ("player two only", [2], {2: "/dev/input/event91"}),
+        ("a clone not enumerated", [1], {1: "/dev/input/event99"}),
+    ]:
+        assignments = [Assignment(player=p, pad=pad(p), button=0)
+                       for p in players]
+        rows.append({"what": what, "paths": paths, "order": order,
+                     "args": retroarch.launch_args(assignments, paths, order)})
+    write("launch_args", rows)
+
+
 def main() -> int:
     print(f"recording the Python's answers into {OUT.relative_to(REPO)}:")
     bindings()
@@ -1568,6 +1601,7 @@ def main() -> int:
     switch_reports()
     clean_config()
     launch_override()
+    launch_flags()
     return 0
 
 

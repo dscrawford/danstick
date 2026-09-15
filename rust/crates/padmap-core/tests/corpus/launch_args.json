@@ -1,0 +1,213 @@
+[
+ {
+  "args": [
+   "--nodevice",
+   "1",
+   "--nodevice",
+   "2",
+   "--nodevice",
+   "3",
+   "--nodevice",
+   "4",
+   "--nodevice",
+   "5",
+   "--nodevice",
+   "6",
+   "--nodevice",
+   "7",
+   "--nodevice",
+   "8",
+   "--nodevice",
+   "9",
+   "--nodevice",
+   "10",
+   "--nodevice",
+   "11",
+   "--nodevice",
+   "12",
+   "--nodevice",
+   "13",
+   "--nodevice",
+   "14",
+   "--nodevice",
+   "15",
+   "--nodevice",
+   "16"
+  ],
+  "order": {
+   "0": "/dev/input/event90",
+   "1": "/dev/input/event91"
+  },
+  "paths": {},
+  "what": "nobody assigned"
+ },
+ {
+  "args": [
+   "--nodevice",
+   "2",
+   "--nodevice",
+   "3",
+   "--nodevice",
+   "4",
+   "--nodevice",
+   "5",
+   "--nodevice",
+   "6",
+   "--nodevice",
+   "7",
+   "--nodevice",
+   "8",
+   "--nodevice",
+   "9",
+   "--nodevice",
+   "10",
+   "--nodevice",
+   "11",
+   "--nodevice",
+   "12",
+   "--nodevice",
+   "13",
+   "--nodevice",
+   "14",
+   "--nodevice",
+   "15",
+   "--nodevice",
+   "16"
+  ],
+  "order": {
+   "0": "/dev/input/event90",
+   "1": "/dev/input/event91"
+  },
+  "paths": {
+   "1": "/dev/input/event90"
+  },
+  "what": "one player"
+ },
+ {
+  "args": [
+   "--nodevice",
+   "3",
+   "--nodevice",
+   "4",
+   "--nodevice",
+   "5",
+   "--nodevice",
+   "6",
+   "--nodevice",
+   "7",
+   "--nodevice",
+   "8",
+   "--nodevice",
+   "9",
+   "--nodevice",
+   "10",
+   "--nodevice",
+   "11",
+   "--nodevice",
+   "12",
+   "--nodevice",
+   "13",
+   "--nodevice",
+   "14",
+   "--nodevice",
+   "15",
+   "--nodevice",
+   "16"
+  ],
+  "order": {
+   "0": "/dev/input/event90",
+   "1": "/dev/input/event91"
+  },
+  "paths": {
+   "1": "/dev/input/event90",
+   "2": "/dev/input/event91"
+  },
+  "what": "two players"
+ },
+ {
+  "args": [
+   "--nodevice",
+   "1",
+   "--nodevice",
+   "3",
+   "--nodevice",
+   "4",
+   "--nodevice",
+   "5",
+   "--nodevice",
+   "6",
+   "--nodevice",
+   "7",
+   "--nodevice",
+   "8",
+   "--nodevice",
+   "9",
+   "--nodevice",
+   "10",
+   "--nodevice",
+   "11",
+   "--nodevice",
+   "12",
+   "--nodevice",
+   "13",
+   "--nodevice",
+   "14",
+   "--nodevice",
+   "15",
+   "--nodevice",
+   "16"
+  ],
+  "order": {
+   "0": "/dev/input/event90",
+   "1": "/dev/input/event91"
+  },
+  "paths": {
+   "2": "/dev/input/event91"
+  },
+  "what": "player two only"
+ },
+ {
+  "args": [
+   "--nodevice",
+   "1",
+   "--nodevice",
+   "2",
+   "--nodevice",
+   "3",
+   "--nodevice",
+   "4",
+   "--nodevice",
+   "5",
+   "--nodevice",
+   "6",
+   "--nodevice",
+   "7",
+   "--nodevice",
+   "8",
+   "--nodevice",
+   "9",
+   "--nodevice",
+   "10",
+   "--nodevice",
+   "11",
+   "--nodevice",
+   "12",
+   "--nodevice",
+   "13",
+   "--nodevice",
+   "14",
+   "--nodevice",
+   "15",
+   "--nodevice",
+   "16"
+  ],
+  "order": {
+   "0": "/dev/input/event90",
+   "1": "/dev/input/event91"
+  },
+  "paths": {
+   "1": "/dev/input/event99"
+  },
+  "what": "a clone not enumerated"
+ }
+]

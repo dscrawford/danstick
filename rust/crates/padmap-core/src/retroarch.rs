@@ -219,6 +219,40 @@ pub fn reservation_config(players: &[u32], virtual_name: impl Fn(u32) -> String)
     lines.join("\n") + "\n"
 }
 
+/// RetroArch flags emptying every core port nobody is assigned to.
+///
+/// The *only* working way to do it. `input_libretro_device_pN` reads like the
+/// config setting for a port's device type, and RetroArch ignores it from
+/// retroarch.cfg and --appendconfig alike: configuration.c only touches that
+/// key inside `.rmp` remap files. Setting it in the launch override changed
+/// nothing at all.
+///
+/// `--nodevice PORT` runs `input_config_set_device(port, RETRO_DEVICE_NONE)`
+/// during argument parsing, which is what `command_event_init_controllers`
+/// later reads back per core port. Verified with a probe core that logs every
+/// `retro_set_controller_port_device` call: without these an N64 core's four
+/// ports all get RETRO_DEVICE_JOYPAD, with them only the assigned ones do.
+///
+/// `input_max_users` reaches the same result and is deliberately not used:
+/// RetroArch skips reserved slots when finding the first free player slot and
+/// bails if that index reaches it, so constraining it would break the
+/// reservations that are padmap's order-independent binding.
+///
+/// Ports above the core's own count do not exist -- the loop is bounded by
+/// `num_core_ports` -- so emitting flags up to MAX_PLAYERS costs nothing and
+/// needs no knowledge of which core is about to run.
+pub fn launch_args(
+    players: &[u32],
+    virtual_paths: &BTreeMap<u32, String>,
+    order: &BTreeMap<usize, String>,
+) -> Vec<String> {
+    let managed = managed_players(players, virtual_paths, order);
+    (1..=MAX_PLAYERS)
+        .filter(|player| !managed.contains_key(player))
+        .flat_map(|player| ["--nodevice".to_owned(), player.to_string()])
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

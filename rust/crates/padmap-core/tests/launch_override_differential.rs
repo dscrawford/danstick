@@ -182,3 +182,36 @@ fn an_unmanaged_slot_is_cleared_rather_than_left_alone() {
     assert!(text.contains("input_player16_reserved_device = \"\""));
     assert_eq!(text.lines().count(), 32);
 }
+
+#[test]
+fn every_unassigned_core_port_is_emptied_the_same_way() {
+    for case in corpus("launch_args") {
+        let order = as_order(&case["order"]);
+        let paths = as_paths(&case["paths"]);
+        let players: Vec<u32> = paths.keys().copied().collect();
+        let want: Vec<&str> = case["args"]
+            .as_array()
+            .expect("args")
+            .iter()
+            .map(|arg| arg.as_str().expect("an arg"))
+            .collect();
+        assert_eq!(
+            retroarch::launch_args(&players, &paths, &order),
+            want,
+            "{}",
+            case["what"]
+        );
+    }
+}
+
+#[test]
+fn a_port_with_a_player_on_it_is_left_alone() {
+    // The flags are what stop a core that declares four ports handing three
+    // of them a controller nobody assigned. The managed one must not appear.
+    let order = BTreeMap::from([(0usize, "/dev/input/event90".to_owned())]);
+    let paths = BTreeMap::from([(2u32, "/dev/input/event90".to_owned())]);
+    let args = retroarch::launch_args(&[2], &paths, &order);
+    assert!(!args.windows(2).any(|pair| pair == ["--nodevice", "2"]));
+    assert!(args.windows(2).any(|pair| pair == ["--nodevice", "1"]));
+    assert_eq!(args.len(), (retroarch::MAX_PLAYERS as usize - 1) * 2);
+}
