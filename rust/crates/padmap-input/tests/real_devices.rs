@@ -110,7 +110,7 @@ fn clone_of(found: &pad::Pad, player: u32) -> clone::VirtualPad {
     let axes: BTreeMap<u16, padmap_core::calibration::AxisCalibration> = BTreeMap::new();
     // grab=false: something else on this machine may hold the pad, and a test
     // that took exclusive access would take it from a running daemon.
-    let virtual_pad = clone::create(found, player, clone::IdentityMode::Mirror, &axes, false)
+    let mut virtual_pad = clone::create(found, player, clone::IdentityMode::Mirror, &axes, false)
         .expect("create a clone");
     virtual_pad
         .source
@@ -292,4 +292,35 @@ fn discovery_survives_a_machine_with_no_pads_at_all() {
         assert!(!found.name.is_empty() || !found.event().is_empty());
     }
     let _ = pad::ambiguous_groups(&pads);
+}
+
+#[test]
+fn undriven_controllers_are_included_by_default_but_never_for_retroarch() {
+    // `Filter`'s Default is written out rather than derived because one field
+    // is not false; this is what would catch a future `#[derive(Default)]`
+    // silently reverting it.
+    let default = pad::Filter::default();
+    assert!(!default.include_virtual);
+    assert!(!default.retroarch_only);
+    assert!(
+        default.include_undriven,
+        "a controller padmap drives itself must be findable without an env var"
+    );
+
+    // RetroArch cannot see a device with no evdev node, and counting one would
+    // shift every real pad's index by one. Holds whether or not a Steam
+    // Controller is attached: the combination is what is under test.
+    let filtered = pad::discover(pad::Filter {
+        include_virtual: false,
+        retroarch_only: true,
+        include_undriven: true,
+    })
+    .expect("discover must not error");
+    for found in &filtered {
+        assert!(
+            !padmap_input::triton::owns(found),
+            "{} is driven by padmap but retroarch_only asked to exclude it",
+            found.path.display()
+        );
+    }
 }

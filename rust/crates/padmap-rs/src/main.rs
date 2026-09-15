@@ -21,8 +21,10 @@ use anyhow::{Context, Result};
 use log::{info, warn};
 use padmap_core::emit::{self, Identity};
 use padmap_core::hide;
+use std::path::PathBuf;
+
 use padmap_input::{
-    artefacts, assignments, clone, lizard, pad, profiles, reactor, republish, runtime,
+    artefacts, assignments, clone, lizard, pad, profiles, reactor, republish, runtime, triton,
 };
 
 /// How often the tick runs. Matches the Python's `TICK_SECONDS`.
@@ -122,57 +124,35 @@ fn cmd_list() -> Result<()> {
 /// device enumerates perfectly and every layer below this one is behaving
 /// correctly.
 fn report_dormant() {
-    let dormant = lizard::dormant();
-    if dormant.is_empty() {
-        return;
-    }
-    // Unknown means unknown. Guessing a version here would turn a diagnosis
-    // into a claim about a kernel nobody looked at.
-    let Some(running) = lizard::running_kernel() else {
-        return;
-    };
-
-    for device in &dormant {
+    // padmap drives everything it has a protocol for (see `triton.rs`), so
+    // what is left here is a model with no driver, or a receiver with nothing
+    // paired into it. Neither needs more than a line.
+    let driven: Vec<PathBuf> = triton::slots(true)
+        .into_iter()
+        .map(|pad| pad.path)
+        .collect();
+    for device in lizard::dormant() {
+        if device.channels.iter().any(|node| driven.contains(node)) {
+            continue;
+        }
         let Some(model) = device.late_model() else {
             continue;
         };
-        let name = if device.name.is_empty() {
-            "An unnamed device"
+        let what = if model.receiver {
+            " (nothing paired to it)"
         } else {
-            &device.name
+            ""
         };
-        // Two lines: the model text is a clause, not a word, and the device's
-        // own name is as long as its vendor felt like making it.
-        println!("\n{name} ({:04x}:{:04x})", device.vid, device.pid);
-        println!("is {}.", model.model);
-        println!("It keeps its gamepad state on a vendor-defined HID collection");
         println!(
-            "that {} cannot read, so what the machine gets is the",
-            device.driver
+            "\n{} ({:04x}:{:04x}) is not reporting as a controller{what}.",
+            if device.name.is_empty() {
+                "An unnamed device"
+            } else {
+                &device.name
+            },
+            device.vid,
+            device.pid
         );
-        println!("keyboard and mouse it emulates. Nothing reports an error.");
-        if model.receiver {
-            println!();
-            println!("It is a receiver, so it never becomes one pad: once it is driven,");
-            println!("the controllers paired to it appear through it, and none may be");
-            println!("paired yet. A single pad is the wrong thing to wait for.");
-        }
-        match device.channels.len() {
-            0 => {}
-            1 => println!("Its vendor channel is {}.", device.channels[0].display()),
-            n => {
-                let nodes: Vec<String> = device
-                    .channels
-                    .iter()
-                    .map(|path| path.display().to_string())
-                    .collect();
-                println!("Its {n} slots are {}.", nodes.join(", "));
-            }
-        }
-        println!();
-        for line in model.remedy(running).lines() {
-            println!("{line}");
-        }
     }
 }
 
@@ -360,8 +340,8 @@ fn publish_artefacts(vpads: &[padmap_input::VirtualPad]) -> Result<()> {
         // really are a guess; the d-pad and sticks come from the pad's own
         // capabilities and are not.
         let line = if bindings.is_empty() {
-            let (keys, axis_codes) = clone::capabilities(&vpad.source);
-            let spans = clone::axis_spans(&vpad.source);
+            let (keys, axis_codes) = vpad.source.capabilities();
+            let spans = vpad.source.axis_spans();
             let guessed = padmap_core::guess::guessed_fields(&keys, &axis_codes, Some(&spans));
             emit::sdl_line(
                 &emit::virtual_guid(vpad.player, identity),

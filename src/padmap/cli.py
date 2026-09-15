@@ -74,22 +74,17 @@ def cmd_list(_args: argparse.Namespace) -> int:
         print("them; RetroArch sees only the virtual pads.")
 
     # Steam, if it is running, takes a controller over hidraw and publishes a
-    # uinput pad called "Microsoft X-Box 360 pad" in its place. That pad works
-    # -- padmap can republish it like any other -- but it is the only thing on
-    # the machine that looks like a joypad, and a user who plugged in a Steam
-    # Controller and is told they have an Xbox 360 pad has no way to tell a
-    # misdetection from an emulation. Say which it is.
+    # uinput pad called "Microsoft X-Box 360 pad" in its place. A user who
+    # plugged in a Steam Controller and is told they have an Xbox pad cannot
+    # tell a misdetection from an emulation, so say which it is -- in one line,
+    # because there is nothing here for them to do about it.
     steam_pads = [
         pad for pad in pads
         if (pad.vid, pad.pid) == icons.STEAM_VIRTUAL_ID
     ]
     if steam_pads:
-        print(f"\n{len(steam_pads)} pad(s) above are Steam's virtual gamepad, not a")
-        print("controller. Steam holds the real one over /dev/hidraw* and emulates")
-        print("an Xbox 360 pad for anything else to read -- which is why the name")
-        print("says Xbox. Mapping it maps whatever Steam is forwarding.")
-        print("To hand padmap the controller itself, close Steam or turn off Steam")
-        print("Input for it; padmap has no driver for Valve's own HID protocol.")
+        print(f"\n{len(steam_pads)} of the above is Steam emulating an Xbox "
+              "pad, not a controller.")
 
     groups = devices.ambiguous_groups(pads)
     if groups:

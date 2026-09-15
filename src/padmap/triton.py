@@ -42,13 +42,18 @@ from typing import Any
 import evdev
 from evdev import AbsInfo, ecodes
 
-from . import hidraw, safeio
+from . import devices, hidraw, safeio
 from .devices import Pad
 from .hidraw import _Event
 
 log = logging.getLogger("padmap.triton")
 
 VALVE = 0x28DE
+
+# What padmap calls one of these. SDL's name for it, so a mapping captured
+# through padmap and one captured against SDL agree about what the controller
+# is.
+NAME = "Steam Controller"
 # The models whose gamepad state lives behind this protocol. 1304 is the puck;
 # the others are the controller itself, wired and over Bluetooth, and a Steam
 # Machine's built-in receiver. Named in mainline's hid-ids.h as IBEX, IBEX_BLE,
@@ -392,13 +397,22 @@ def slots(probe: bool = True) -> list[Pad]:
         if not nodes:
             continue
         node = f"/dev/{nodes[0]}"
+        # PADMAP_ONLY_DEVICE means "do not touch the machine's real
+        # controllers": it exists so an isolated test daemon cannot fight the
+        # live one for a pad. Filtering the returned list is not enough,
+        # because the probe below is a *write* to real hardware and happens
+        # first -- and `server.py` calls this directly, so it does not even
+        # reach `devices.discover`'s filter.
+        only = os.environ.get(devices.ENV_ONLY)
+        if only and only not in NAME:
+            continue
         if probe and not slot_is_live(node):
             continue
         found.append(Pad(
             path=node,
             # SDL's name for it, so a mapping captured here and one captured
             # against SDL agree about what the controller is called.
-            name="Steam Controller",
+            name=NAME,
             phys=uevent.get("HID_PHYS", ""),
             # The receiver's serial is the same on every slot, so on its own
             # it cannot tell slot 1 from slot 2 -- and `ambiguous_groups`
@@ -564,7 +578,14 @@ class Source(hidraw.Source):
 
         for bit, code in BUTTONS.items():
             value = 1 if buttons & bit else 0
-            if self._buttons.get(code) != value:
+            # Default 0, as hidraw.Source does. Without it the first report of
+            # a session finds an empty dict, `None != 0` for every button that
+            # is *not* pressed, and the frame carries a key-up for all twenty
+            # of them. Harmless downstream -- the input core drops a key event
+            # repeating the value it already holds -- but it is twenty events
+            # per connection that describe nothing, and it made the first
+            # frame indistinguishable from a controller releasing everything.
+            if self._buttons.get(code, 0) != value:
                 self._buttons[code] = value
                 events.append(_Event(ecodes.EV_KEY, code, value))
 

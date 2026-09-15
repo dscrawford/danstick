@@ -28,6 +28,18 @@ stays silent until something asks for it.
 
 ## What padmap does
 
+Drives it. Both halves: `src/padmap/triton.py` for the daemon, and
+`rust/crates/padmap-input/src/triton.rs` for `padmap-rs`. It arrives in
+`padmap list` as an ordinary controller, with no note, because there is
+nothing left to say about it.
+
+`padmap-rs` wraps the two kinds of source in one enum, so the clone, the
+calibration and the forwarding loop cannot tell a Steam Controller from a pad
+the kernel drives — which is the point. A controller needing a workaround
+should still be a controller.
+
+### The protocol
+
 `src/padmap/triton.py`, a port of SDL's `SDL_hidapi_steam_triton.c` (zlib,
 upstream 2025-11-12) and its two headers. Three things in it are worth knowing
 before changing anything:

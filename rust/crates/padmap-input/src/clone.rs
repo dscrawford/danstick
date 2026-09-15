@@ -12,13 +12,14 @@ use std::collections::BTreeMap;
 use std::ffi::CString;
 
 use evdev::{
-    uinput::VirtualDevice, AttributeSet, BusType, Device, EventType, FFEffect, InputEvent, InputId,
-    UInputEvent, UinputAbsSetup,
+    uinput::VirtualDevice, AbsInfo, AbsoluteAxisCode, AttributeSet, BusType, Device, EventType,
+    FFEffect, InputEvent, InputId, KeyCode, UInputEvent, UinputAbsSetup,
 };
 use log::{info, warn};
 use padmap_core::calibration::AxisCalibration;
 
 use crate::pad::{Pad, VIRTUAL_PHYS_PREFIX};
+use crate::triton;
 
 /// pid.codes, the vendor id set aside for open-source hardware projects. Using
 /// a real vendor's id here would make our pads impersonate their hardware to
@@ -159,6 +160,162 @@ pub fn forwarded(kind: EventType) -> bool {
     )
 }
 
+/// Where a clone's events come from.
+///
+/// Two kinds, because padmap has two. Most controllers the kernel drives and
+/// evdev reads; a 2026 Steam Controller has no evdev node at all on a kernel
+/// before 7.3, so padmap speaks its protocol and hands the same events out
+/// the other side. Everything downstream -- the clone, the calibration, the
+/// forwarding loop -- cannot tell them apart, which is the point: padmap is a
+/// virtual gamepad, and a controller that needs a workaround should still
+/// arrive as an ordinary pad.
+#[derive(Debug)]
+pub enum Source {
+    // Boxed for the same reason the other is: `Device` is 280 bytes and a
+    // `triton::Source` a few dozen, and every VirtualPad carries one of these
+    // whichever it turns out to be.
+    Evdev(Box<Device>),
+    Triton(Box<triton::Source>),
+}
+
+impl Source {
+    /// Append events since the last call to `out`, or `WouldBlock` if none.
+    ///
+    /// Into a caller's buffer rather than a fresh one, because the caller has
+    /// a buffer it reuses and `republish.rs` says so: "reused between calls so
+    /// the hot path allocates nothing". That was true of the `Republisher`'s
+    /// own vectors and not of this, which built and returned a new `Vec` on
+    /// every call that produced an event -- up to 250 times a second per pad,
+    /// for as long as a stick is moving. Small, but it is the one path this
+    /// project exists to keep quiet, and a comment claiming an allocation-free
+    /// hot path should not have one underneath it.
+    pub fn fetch_events(&mut self, out: &mut Vec<InputEvent>) -> std::io::Result<()> {
+        match self {
+            // `fetch_events` hands back an iterator over evdev's own reused
+            // buffer; extending from it keeps that reuse, where collecting
+            // into a Vec threw it away.
+            Source::Evdev(device) => {
+                out.extend(device.fetch_events()?);
+                Ok(())
+            }
+            Source::Triton(source) => source.fetch_events(out),
+        }
+    }
+
+    /// Let go, if we were ever holding it.
+    pub fn ungrab(&mut self) {
+        match self {
+            Source::Evdev(device) => {
+                let _ = device.ungrab();
+            }
+            // Nothing to release: a hidraw node is not grabbed. padmap holds
+            // it open, and the kernel is not publishing an evdev node for
+            // anything else to read in the first place.
+            Source::Triton(_) => {}
+        }
+    }
+
+    /// Keys currently down, for lifting them when a wizard pauses.
+    pub fn held_keys(&self) -> Vec<u16> {
+        match self {
+            Source::Evdev(device) => device
+                .get_key_state()
+                .map(|keys| keys.iter().map(|key| key.code()).collect())
+                .unwrap_or_default(),
+            Source::Triton(source) => source.held_keys(),
+        }
+    }
+
+    /// Hand an effect to the physical device, or refuse.
+    ///
+    /// A Steam Controller's rumble is an output report padmap does not send
+    /// yet, and a clone that accepted an upload it cannot play would report
+    /// itself as capable and then be silent. `assemble` already mirrors the
+    /// source's effect count for the same reason.
+    pub fn upload_ff_effect(&mut self, effect: evdev::FFEffectData) -> std::io::Result<FFEffect> {
+        match self {
+            Source::Evdev(device) => device.upload_ff_effect(effect),
+            Source::Triton(_) => Err(std::io::Error::from(std::io::ErrorKind::Unsupported)),
+        }
+    }
+
+    /// The controls this source reports, for the mapping wizard.
+    pub fn capabilities(&self) -> (Vec<u16>, Vec<u16>) {
+        match self {
+            Source::Evdev(device) => capabilities(device),
+            Source::Triton(source) => {
+                let (keys, axes) = source.capabilities();
+                (keys, axes.into_iter().map(|(code, _)| code).collect())
+            }
+        }
+    }
+
+    /// Each axis's travel and where it rests, for deciding when one has been
+    /// pushed rather than nudged.
+    pub fn axis_spans(&self) -> BTreeMap<u16, padmap_core::sdl::AxisSpan> {
+        match self {
+            Source::Evdev(device) => axis_spans(device),
+            Source::Triton(source) => source
+                .capabilities()
+                .1
+                .into_iter()
+                .map(|(code, info)| {
+                    (
+                        code,
+                        padmap_core::sdl::AxisSpan::new(
+                            info.minimum(),
+                            info.maximum(),
+                            info.value(),
+                        ),
+                    )
+                })
+                .collect(),
+        }
+    }
+
+    /// Read without waiting.
+    ///
+    /// The daemon leaves an evdev source blocking, because epoll has already
+    /// said the descriptor is readable before `fetch_events` is ever called.
+    /// Anything driving the pump directly -- a test, a probe -- has nothing
+    /// gating it, and a blocking source turns the first call into a wait for
+    /// an event that only arrives after the call returns.
+    ///
+    /// A Triton source is opened `O_NONBLOCK` and is always in this state, so
+    /// this is a no-op for one.
+    pub fn set_nonblocking(&mut self, nonblocking: bool) -> std::io::Result<()> {
+        match self {
+            Source::Evdev(device) => device.set_nonblocking(nonblocking),
+            Source::Triton(_) => Ok(()),
+        }
+    }
+
+    pub fn path(&self) -> String {
+        match self {
+            Source::Evdev(device) => device.physical_path().unwrap_or_default().to_owned(),
+            Source::Triton(source) => source.path().display().to_string(),
+        }
+    }
+}
+
+impl std::os::fd::AsFd for Source {
+    fn as_fd(&self) -> std::os::fd::BorrowedFd<'_> {
+        match self {
+            Source::Evdev(device) => device.as_fd(),
+            Source::Triton(source) => source.as_fd(),
+        }
+    }
+}
+
+impl std::os::fd::AsRawFd for Source {
+    fn as_raw_fd(&self) -> std::os::fd::RawFd {
+        match self {
+            Source::Evdev(device) => device.as_raw_fd(),
+            Source::Triton(source) => source.as_raw_fd(),
+        }
+    }
+}
+
 /// A physical pad, its clone, and what passes between them.
 #[derive(Debug)]
 pub struct VirtualPad {
@@ -167,7 +324,7 @@ pub struct VirtualPad {
     /// What this clone advertises. Kept, because the SDL GUID is computed from
     /// it and a mapping written under a different one is never matched.
     pub identity: Identity,
-    pub source: Device,
+    pub source: Source,
     pub clone: VirtualDevice,
     /// ABS code -> calibration, applied as events pass through. Correcting here
     /// rather than in a front-end means every consumer benefits, and a worn
@@ -206,22 +363,50 @@ pub fn create(
     profile_axes: &BTreeMap<u16, AxisCalibration>,
     grab: bool,
 ) -> Result<VirtualPad, CloneError> {
-    let mut source = Device::open(&pad.path)
-        .map_err(|error| CloneError::Open(pad.path.display().to_string(), error))?;
-    if grab {
-        if let Err(error) = source.grab() {
-            // Worth saying out loud rather than swallowing: a failed grab means
-            // every press ALSO reaches whatever else is listening.
-            warn!(
-                "could not grab {} ({error}): presses will leak through to other applications",
-                pad.event()
-            );
+    // Two ways to obtain the same three things. A Steam Controller slot is
+    // opened as hidraw and decoded by padmap, because the kernel publishes no
+    // joypad for it to read; everything after this block is identical for
+    // both, which is the point -- a controller needing a workaround should
+    // still arrive downstream as an ordinary pad.
+    let (source, identity, clone) = if triton::owns(pad) {
+        let source = triton::Source::open(&pad.path)
+            .map_err(|error| CloneError::Open(pad.path.display().to_string(), error))?;
+        // for_source reads the ids off an evdev::Device and there is none
+        // here. Mirroring means the ids the controller itself reports, which
+        // discovery already read out of sysfs -- on BUS_USB, because that is
+        // how it is attached and the bus is the field SDL's database is keyed
+        // on.
+        let identity = match mode {
+            IdentityMode::Padmap => Identity::PADMAP,
+            IdentityMode::Mirror => Identity {
+                vendor: pad.vid,
+                product: pad.pid,
+                bustype: BusType::BUS_USB.0,
+                version: 0,
+            },
+        };
+        let (keys, axes) = source.capabilities();
+        let clone = build_clone_from(&keys, &axes, player, identity)
+            .map_err(|error| CloneError::Build(player, error))?;
+        (Source::Triton(Box::new(source)), identity, clone)
+    } else {
+        let mut source = Device::open(&pad.path)
+            .map_err(|error| CloneError::Open(pad.path.display().to_string(), error))?;
+        if grab {
+            if let Err(error) = source.grab() {
+                // Worth saying out loud rather than swallowing: a failed grab
+                // means every press ALSO reaches whatever else is listening.
+                warn!(
+                    "could not grab {} ({error}): presses will leak through to other applications",
+                    pad.event()
+                );
+            }
         }
-    }
-
-    let identity = Identity::for_source(mode, &source);
-    let clone =
-        build_clone(&source, player, identity).map_err(|error| CloneError::Build(player, error))?;
+        let identity = Identity::for_source(mode, &source);
+        let clone = build_clone(&source, player, identity)
+            .map_err(|error| CloneError::Build(player, error))?;
+        (Source::Evdev(Box::new(source)), identity, clone)
+    };
 
     // A stored profile carries the measured resting position of each stick.
     // Without one the pad is forwarded verbatim, which is correct for a
@@ -287,14 +472,68 @@ pub fn create(
 /// recognise padmap's own output, which is why both sides also match on the
 /// name -- see [`crate::pad::is_padmap_clone`].
 fn build_clone(source: &Device, player: u32, identity: Identity) -> std::io::Result<VirtualDevice> {
-    match assemble(source, player, identity, true) {
+    with_phys_retry(player, |set_phys| {
+        assemble(source, player, identity, set_phys)
+    })
+}
+
+/// A clone built from a bare capability list rather than from a device.
+///
+/// For a source padmap decodes itself: there is no `evdev::Device` to copy
+/// keys and absinfo off, because the kernel never published one.
+fn build_clone_from(
+    keys: &[u16],
+    axes: &[(u16, AbsInfo)],
+    player: u32,
+    identity: Identity,
+) -> std::io::Result<VirtualDevice> {
+    // The name/ids/phys head is spelled out here as well as in `assemble`.
+    // Factoring it out is not possible: the builder borrows the name, so a
+    // helper returning one cannot outlive the local it borrowed.
+    with_phys_retry(player, |set_phys| {
+        let name = virtual_name(player);
+        let mut builder = VirtualDevice::builder()?.name(&name).input_id(InputId::new(
+            BusType(identity.bustype),
+            identity.vendor,
+            identity.product,
+            identity.version,
+        ));
+        if set_phys {
+            let phys = CString::new(virtual_phys(player)).unwrap_or_default();
+            builder = builder.with_phys(&phys)?;
+        }
+        let mut key_set = AttributeSet::<KeyCode>::new();
+        for &code in keys {
+            key_set.insert(KeyCode(code));
+        }
+        builder = builder.with_keys(&key_set)?;
+        for &(code, info) in axes {
+            builder =
+                builder.with_absolute_axis(&UinputAbsSetup::new(AbsoluteAxisCode(code), info))?;
+        }
+        builder.build()
+    })
+}
+
+/// Build, retrying without a phys tag if the first attempt is refused.
+///
+/// evdev 0.13 encodes `UI_SET_PHYS`'s payload size into the ioctl number and
+/// gets it wrong -- a `c_char` where the kernel wants a `char *` -- so the
+/// call can return EINVAL on an otherwise-working device. A clone with no
+/// phys still works: it is matched by name instead, which is why
+/// [`crate::pad::is_padmap_clone`] tests both.
+fn with_phys_retry(
+    player: u32,
+    build: impl Fn(bool) -> std::io::Result<VirtualDevice>,
+) -> std::io::Result<VirtualDevice> {
+    match build(true) {
         Ok(device) => Ok(device),
         Err(first) => {
             warn!(
                 "player {player}: could not publish a clone with a phys tag ({first}); \
                  retrying without one, so it is recognised by name instead"
             );
-            assemble(source, player, identity, false)
+            build(false)
         }
     }
 }
@@ -306,8 +545,6 @@ fn assemble(
     set_phys: bool,
 ) -> std::io::Result<VirtualDevice> {
     let name = virtual_name(player);
-    let phys = CString::new(virtual_phys(player)).unwrap_or_default();
-
     let mut builder = VirtualDevice::builder()?.name(&name).input_id(InputId::new(
         BusType(identity.bustype),
         identity.vendor,
@@ -315,6 +552,7 @@ fn assemble(
         identity.version,
     ));
     if set_phys {
+        let phys = CString::new(virtual_phys(player)).unwrap_or_default();
         builder = builder.with_phys(&phys)?;
     }
 
@@ -445,7 +683,7 @@ impl VirtualPad {
     }
 
     pub fn release(&mut self) {
-        let _ = self.source.ungrab();
+        self.source.ungrab();
     }
 
     /// A game uploaded an effect to the clone; re-upload it to the real pad.

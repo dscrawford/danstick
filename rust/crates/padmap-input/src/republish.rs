@@ -94,10 +94,10 @@ impl Republisher {
     /// launch another one.
     fn release_all(&mut self) {
         for vpad in &mut self.pads {
-            let held = crate::clone::held_keys(&vpad.source);
+            let held = vpad.source.held_keys();
             let mut frame: Vec<InputEvent> = held
                 .iter()
-                .map(|key| InputEvent::new(EventType::KEY.0, key.0, 0))
+                .map(|&code| InputEvent::new(EventType::KEY.0, code, 0))
                 .collect();
             if frame.is_empty() {
                 continue;
@@ -123,8 +123,8 @@ impl Republisher {
         }
 
         self.pending.clear();
-        match vpad.source.fetch_events() {
-            Ok(events) => self.pending.extend(events),
+        match vpad.source.fetch_events(&mut self.pending) {
+            Ok(()) => {}
             Err(error) if error.kind() == ErrorKind::WouldBlock => return out,
             Err(error) => {
                 // ENODEV, once, and then never again for this pad.

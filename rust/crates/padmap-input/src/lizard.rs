@@ -400,14 +400,21 @@ fn hidraw_index(path: &Path) -> usize {
         .unwrap_or(usize::MAX)
 }
 
-/// `HID_ID=0003:000028DE:00001304` -> (0x28DE, 0x1304).
 fn hid_ids(device: &udev::Device) -> Option<(u16, u16)> {
-    let raw = device
-        .property_value("HID_ID")?
-        .to_string_lossy()
-        .into_owned();
-    let mut parts = raw.split(':');
+    ids_from_hid_id(&device.property_value("HID_ID")?.to_string_lossy())
+}
+
+/// `HID_ID=0003:000028DE:00001304` -> (0x28DE, 0x1304).
+///
+/// Shared with `triton`, which reads the same property out of sysfs rather
+/// than out of udev. Two parsers for one format is how one of them ends up
+/// tolerating something the other rejects.
+pub fn ids_from_hid_id(raw: &str) -> Option<(u16, u16)> {
+    let mut parts = raw.trim().split(':');
     let _bus = parts.next()?;
+    // trim_start_matches('0') turns "00000000" into "", which parses as an
+    // error rather than as zero -- correct here, since a device with no ids
+    // is not a device this can identify.
     let vid = u16::from_str_radix(parts.next()?.trim_start_matches('0'), 16).ok()?;
     let pid = u16::from_str_radix(parts.next()?.trim_start_matches('0'), 16).ok()?;
     Some((vid, pid))

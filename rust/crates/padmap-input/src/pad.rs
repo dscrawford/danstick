@@ -84,8 +84,33 @@ impl Pad {
     }
 }
 
+/// Would `PADMAP_ONLY_DEVICE` let a pad with this name through?
+///
+/// The filter below answers the same question for a list that already exists.
+/// This one is for a caller that has to decide *before* doing something --
+/// `triton::slots` sends a feature report to each slot to find out whether a
+/// controller is paired into it, and that is a write to real hardware, which
+/// is exactly what the switch exists to prevent.
+pub fn wanted_by_name(name: &str) -> bool {
+    wanted_by(name, std::env::var(ENV_ONLY).ok().as_deref())
+}
+
+/// The same question, for a caller that already has the setting.
+///
+/// Separated so it can be tested without `std::env::set_var`, which is
+/// process-wide: a test that set it raced every other test calling
+/// `discover`, and the failure landed on whichever one lost rather than on
+/// the one at fault. That exact bug was removed from `runtime.rs` a few
+/// commits ago and walked straight back in here.
+pub fn wanted_by(name: &str, only: Option<&str>) -> bool {
+    match only {
+        Some(only) if !only.is_empty() => name.contains(only),
+        _ => true,
+    }
+}
+
 /// What a caller wants out of [`discover`].
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy)]
 pub struct Filter {
     /// Include padmap's own clones. Off by default, for the reason above.
     pub include_virtual: bool,
@@ -93,6 +118,25 @@ pub struct Filter {
     /// prediction needs. The two differ exactly when the hide rules are
     /// installed.
     pub retroarch_only: bool,
+    /// Include controllers padmap drives itself, which the kernel publishes
+    /// no joypad for. On by default: they are controllers, and the whole
+    /// point of driving them is that they behave like any other.
+    ///
+    /// Off for `retroarch_only`, truthfully -- RetroArch cannot see a device
+    /// with no evdev node, and counting one would shift every pad index.
+    pub include_undriven: bool,
+}
+
+impl Default for Filter {
+    /// Written out rather than derived, because one field's default is not
+    /// `false` and a derive would silently say it was.
+    fn default() -> Self {
+        Filter {
+            include_virtual: false,
+            retroarch_only: false,
+            include_undriven: true,
+        }
+    }
 }
 
 /// Joypads, in the order RetroArch's udev driver would enumerate them.
@@ -152,6 +196,14 @@ pub fn discover(filter: Filter) -> std::io::Result<Vec<Pad>> {
     }
 
     pads.sort_by(|left, right| left.syspath.cmp(&right.syspath));
+
+    // A 2026 Steam Controller has no joypad node the loop above could find --
+    // see `triton::slots`. Appended, not merged: the order above is
+    // RetroArch's enumeration order and these are not in it, so putting one in
+    // the middle would shift every pad below it.
+    if filter.include_undriven && !filter.retroarch_only {
+        pads.extend(crate::triton::slots(true));
+    }
 
     if let Ok(only) = std::env::var(ENV_ONLY) {
         if !only.is_empty() {

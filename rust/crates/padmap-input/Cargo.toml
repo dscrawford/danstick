@@ -21,7 +21,7 @@ evdev = "0.13"
 udev = "0.9"
 # epoll and timerfd without a runtime. OwnedFd/BorrowedFd native, so the
 # descriptors evdev already owns go straight in.
-rustix = { version = "1", features = ["event", "time", "process", "std"] }
+rustix = { version = "1", features = ["event", "time", "process", "std", "fs", "pty", "termios"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = "2"

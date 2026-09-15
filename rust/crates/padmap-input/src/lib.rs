@@ -14,6 +14,7 @@ pub mod profiles;
 pub mod reactor;
 pub mod republish;
 pub mod runtime;
+pub mod triton;
 
 pub use clone::{IdentityMode, VirtualPad};
 pub use pad::{discover, Filter, Pad};

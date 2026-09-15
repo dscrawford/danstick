@@ -304,7 +304,8 @@ def discover(
             # A scan that cannot read sysfs must not take the pads that were
             # found with it.
             log.warning("could not scan for Steam Controllers: %s", error)
-    return pads
+    # Again, because these arrived after `_collect` applied it. See `_restrict`.
+    return _restrict(pads)
 
 
 def _collect(
@@ -346,14 +347,28 @@ def _collect(
 
     pads.sort(key=lambda p: p.syspath)
 
-    # Test escape hatch: restrict discovery to one device by name. Without it
-    # an isolated test daemon still finds the machine's real controllers and
-    # fights the live daemon for an exclusive grab on them.
-    only = os.environ.get(ENV_ONLY)
-    if only:
-        pads = [p for p in pads if only in p.name]
+    return _restrict(pads)
 
-    return pads
+
+def _restrict(pads: list[Pad]) -> list[Pad]:
+    """Test escape hatch: restrict discovery to one device by name.
+
+    Without it an isolated test daemon still finds the machine's real
+    controllers and fights the live daemon for an exclusive grab on them.
+
+    A function rather than a few lines at the end of `_collect`, because there
+    is more than one way into the pad list now: controllers padmap drives
+    itself are appended by `discover` after `_collect` has returned, and the
+    first version of that appended them *past* this filter. A harness asking
+    to see one device got a real Steam Controller anyway, and
+    check_hostile_cli refused to run -- correctly, and loudly, which is the
+    only reason it was not found by a test grabbing a pad out from under the
+    live daemon.
+    """
+    only = os.environ.get(ENV_ONLY)
+    if not only:
+        return pads
+    return [pad for pad in pads if only in pad.name]
 
 
 def open_device(pad: Pad) -> evdev.InputDevice:
