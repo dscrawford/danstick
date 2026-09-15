@@ -133,6 +133,62 @@ pub fn write_autoconfig(
     Ok(written)
 }
 
+/// Where Cemu keeps its per-player controller profiles.
+pub fn cemu_profile_dir() -> PathBuf {
+    if let Ok(path) = std::env::var("PADMAP_CEMU_DIR") {
+        if !path.is_empty() {
+            return PathBuf::from(path);
+        }
+    }
+    config_home().join("Cemu").join("controllerProfiles")
+}
+
+fn config_home() -> PathBuf {
+    match std::env::var("XDG_CONFIG_HOME") {
+        Ok(path) if !path.is_empty() => PathBuf::from(path),
+        _ => match std::env::var("HOME") {
+            Ok(home) if !home.is_empty() => PathBuf::from(home).join(".config"),
+            _ => PathBuf::from(".config"),
+        },
+    }
+}
+
+/// Write a Cemu profile per player, and report the paths written.
+///
+/// Only up to Cemu's own eight slots. A ninth player gets no profile rather
+/// than one wrapped round to `controller0.xml`, which would take player one's
+/// pad away.
+///
+/// **Not sufficient on its own.** Cemu reads no mapping database, so a pad SDL
+/// does not already recognise as a gamepad never appears in its list at all --
+/// padmap's mapping has to reach it through `SDL_GAMECONTROLLERCONFIG` in the
+/// environment Cemu is launched with. See `padmap_core::cemu::CONFIG_ENV`.
+///
+/// Existing profiles for players padmap is not managing are left alone: they
+/// are the user's, and a session with two players has no business clearing the
+/// profile someone set up by hand for player three.
+pub fn write_cemu_profiles(
+    players: &[u32],
+    guid_for: impl Fn(u32) -> String,
+    name_for: impl Fn(u32) -> String,
+    dir: Option<&Path>,
+) -> Result<Vec<PathBuf>, WriteError> {
+    let target = dir.map(Path::to_path_buf).unwrap_or_else(cemu_profile_dir);
+    std::fs::create_dir_all(&target).map_err(|error| WriteError::Io(target.clone(), error))?;
+
+    let mut written = Vec::new();
+    for &player in players {
+        if player == 0 || player > padmap_core::cemu::MAX_PLAYERS {
+            continue;
+        }
+        let path = target.join(padmap_core::cemu::profile_filename(player));
+        let body = padmap_core::cemu::profile(&guid_for(player), &name_for(player));
+        std::fs::write(&path, body).map_err(|error| WriteError::Io(path.clone(), error))?;
+        written.push(path);
+    }
+    Ok(written)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

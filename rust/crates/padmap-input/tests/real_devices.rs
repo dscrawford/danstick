@@ -324,3 +324,45 @@ fn undriven_controllers_are_included_by_default_but_never_for_retroarch() {
         );
     }
 }
+
+#[test]
+fn cemu_profiles_are_written_per_player_and_stop_at_cemus_limit() {
+    use padmap_input::artefacts;
+
+    let dir = std::env::temp_dir().join(format!("padmap-cemu-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    // Nine players: Cemu has eight slots, and a ninth must get no profile
+    // rather than one wrapped round to controller0.xml -- which would take
+    // player one's pad away.
+    let players: Vec<u32> = (1..=9).collect();
+    let written = artefacts::write_cemu_profiles(
+        &players,
+        |player| format!("{player:032x}"),
+        |player| format!("padmap Player {player}"),
+        Some(&dir),
+    )
+    .expect("writes");
+
+    assert_eq!(written.len(), 8, "{written:?}");
+    assert!(written[0].ends_with("controller0.xml"));
+    assert!(written[7].ends_with("controller7.xml"));
+    assert!(!dir.join("controller8.xml").exists());
+
+    let first = std::fs::read_to_string(&written[0]).expect("read back");
+    assert!(
+        first.contains("<uuid>0_00000000000000000000000000000001</uuid>"),
+        "{first}"
+    );
+    assert!(first.contains("<display_name>padmap Player 1</display_name>"));
+
+    // A player padmap is not managing keeps whatever profile the user had.
+    std::fs::write(dir.join("controller5.xml"), "mine").expect("write");
+    artefacts::write_cemu_profiles(&[1], |_| "g".to_owned(), |_| "n".to_owned(), Some(&dir))
+        .expect("writes");
+    assert_eq!(
+        std::fs::read_to_string(dir.join("controller5.xml")).expect("read"),
+        "mine",
+        "an unmanaged player's profile is theirs, not padmap's to clear"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
