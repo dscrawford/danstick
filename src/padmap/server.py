@@ -75,6 +75,23 @@ ENV_NO_AUTOATTACH = "PADMAP_NO_AUTOATTACH"
 ATTACH_SCAN_SECONDS = 0.25
 ATTACH_ATTEMPTS = 20
 
+# How often to ask a Steam Controller receiver which of its slots have a pad
+# in them.
+#
+# Measured on this machine with a receiver attached: 12.0ms, because the probe
+# is four real USB control transfers and an empty slot deliberately stalls.
+# That ran on every 20ms tick -- 60% of the tick budget, permanently, on the
+# thread that forwards controller events. It is the same regression
+# FINDINGS.md records for devices.discover(), reintroduced for a new call, and
+# it got in because the probe sat *above* the throttle that was written to
+# bound it while its own docstring said otherwise.
+#
+# A second is the right period: the only thing it detects is a controller
+# being switched on, and nobody can tell a second from instant when they have
+# just pressed a power button. The cost is one 12ms tick per second while a
+# receiver is attached, and nothing at all when one is not.
+TRITON_SCAN_SECONDS = 1.0
+
 # How long a client must have been connected before the daemon will grab the
 # pads on its behalf. Comfortably longer than a status query, which is what
 # `padmap ensure-daemon` and padctl do, and far shorter than a front-end's
@@ -307,6 +324,15 @@ class Server:
         self._attached: dict[str, int] = {}
         self._last_attach_nodes: frozenset[str] | None = None
         self._last_attach_scan = 0.0
+        # The Steam Controller probe, and the answers it gave. See
+        # `_triton_live_slots` for why the presence check is separate from the
+        # liveness one.
+        self._last_triton_scan = 0.0
+        # Ticks that raised. See `run`.
+        self._tick_failures = 0
+        self._triton_live: frozenset[str] = frozenset()
+        self._triton_present = False
+        self._triton_checked_for: frozenset[str] | None = None
         # signature -> failed opens so far. Cleared on success and on the
         # controller going away, so unplugging and replugging always gets a
         # clean set of attempts.
@@ -377,7 +403,29 @@ class Server:
             for key, _mask in self._selector.select(timeout=TICK_SECONDS):
                 handler = key.data
                 handler(key.fileobj)
-            self._tick()
+            # The same invariant `_handle_command` states, from the other
+            # side: no *device* may end the process either.
+            #
+            # The tick does real I/O now -- it probes hidraw nodes, opens
+            # devices, parses stored profiles -- and a raise here costs every
+            # player's clone at once, mid-game, for a fault in one of them.
+            # A concrete one was found and fixed the same day this guard was
+            # added: a sysfs uevent whose HID_NAME was not UTF-8 raised
+            # UnicodeDecodeError, which is not an OSError and so went straight
+            # past the handler meant to catch it. That is the class of thing
+            # this exists for, not that particular bug.
+            try:
+                self._tick()
+            except Exception as error:              # noqa: BLE001
+                self._tick_failures += 1
+                # Rationed, because a tick that fails permanently fails 50
+                # times a second. An unrationed warning here is the 3.1GB log
+                # already recorded in virtual.py.
+                if self._tick_failures in (1, 100) \
+                        or self._tick_failures % 1000 == 0:
+                    log.warning("tick failed (%d so far): %s: %s",
+                                self._tick_failures, type(error).__name__,
+                                error)
 
     def stop(self) -> None:
         self._running = False
@@ -1550,17 +1598,15 @@ class Server:
         both directions.
         """
         scan = scan if scan is not None else _Scan()
-        # A directory listing plus the Steam Controller slots that have a pad
+        # A directory listing, plus the Steam Controller slots that have a pad
         # in them.
         #
         # The listing alone cannot see one of those arrive. A receiver's
         # hidraw nodes exist from the moment it is plugged in and never change
         # afterwards, so a controller being switched on alters nothing in
-        # /dev/input -- padmap would not notice it until something else
-        # happened to trigger a scan. Asking costs four ioctls here and is
-        # what makes a pad usable when it is turned on rather than when the
-        # daemon next restarts.
-        nodes = _event_nodes() | triton.live_signature()
+        # /dev/input.
+        event_nodes = _event_nodes()
+        nodes = event_nodes | self._triton_live_slots(event_nodes)
         if nodes == self._last_attach_nodes:
             return
         # Only throttles retries: on a real change the previous scan was
@@ -1592,6 +1638,38 @@ class Server:
             if signature in self._unbindable:
                 continue
             self._announce_arrival(pads[signature])
+
+    def _triton_live_slots(self, event_nodes: frozenset[str]) -> frozenset[str]:
+        """Which Steam Controller slots have a pad in them, cheaply.
+
+        Two questions, deliberately separated, because only one of them is
+        expensive and only one of them changes often.
+
+        *Is a receiver attached at all?* That **is** visible in /dev/input --
+        the receiver publishes a mouse and a keyboard per slot even with no
+        driver -- so the answer can only change when the listing does, and is
+        recomputed exactly then. On a machine that has never seen one, this
+        path costs nothing beyond the listing already taken.
+
+        *Which of its slots are live?* This is the expensive one: four USB
+        control transfers, 12.0ms measured here, because an empty slot stalls
+        by design. Throttled to `TRITON_SCAN_SECONDS`, and the previous answer
+        is returned in between -- so the caller still compares a full, current
+        set and cannot see a slot flicker away between probes.
+        """
+        if self._triton_checked_for != event_nodes:
+            self._triton_checked_for = event_nodes
+            self._triton_present = bool(triton.slots(probe=False))
+            if not self._triton_present:
+                self._triton_live = frozenset()
+        if not self._triton_present:
+            return frozenset()
+        now = time.monotonic()
+        if now - self._last_triton_scan < TRITON_SCAN_SECONDS:
+            return self._triton_live
+        self._last_triton_scan = now
+        self._triton_live = triton.live_signature()
+        return self._triton_live
 
     def _announce_departure(self, signature: str) -> None:
         player = self._attached.pop(signature)

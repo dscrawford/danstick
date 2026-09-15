@@ -35,6 +35,7 @@ from typing import Any
 import evdev
 from evdev import AbsInfo, ecodes
 
+from . import safeio
 from .devices import Pad
 
 log = logging.getLogger("padmap.hidraw")
@@ -187,13 +188,17 @@ def supported(pad: Pad, overrides: dict[str, bool] | None = None) -> bool:
 
 
 def _uevent(path: Path) -> dict[str, str]:
-    """A sysfs uevent file as a dict, empty if it cannot be read."""
-    try:
-        text = (path / "uevent").read_text()
-    except OSError:
-        return {}
-    out = {}
-    for line in text.splitlines():
+    """A sysfs uevent file as a dict, empty if it cannot be read.
+
+    safeio, not `Path.read_text`: HID_NAME is the device's own name string,
+    copied into uevent verbatim by the kernel, and for a Bluetooth pad that is
+    whatever the peer sent. One byte of it that is not UTF-8 raises
+    UnicodeDecodeError -- a ValueError, which `except OSError` does not catch
+    -- and this is reached from the daemon's tick for every HID device on the
+    machine. Reproduced with a name of `Pad\xff\xfe`.
+    """
+    out: dict[str, str] = {}
+    for line in (safeio.read_text(path / "uevent") or "").splitlines():
         key, _, value = line.partition("=")
         if value:
             out[key] = value

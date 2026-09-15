@@ -16,9 +16,8 @@ found.
 
 Three things about it that are not obvious:
 
-* **Leaving lizard mode is a *feature* report**, sent with `HIDIOCSFEATURE`.
-  The Switch Pro path in `hidraw.py` writes its mode command with `os.write`,
-  which is right for an output report and silently wrong here.
+* **Leaving lizard mode is a *feature* report**, not a write -- see
+  `_request_full_mode`.
 * **It has to be re-sent every three seconds**, forever. The controller
   reverts on its own. Sent once, a pad works and then stops, which looks like
   failing hardware.
@@ -36,13 +35,14 @@ import glob
 import logging
 import os
 import struct
+import time
 from pathlib import Path
 from typing import Any
 
 import evdev
 from evdev import AbsInfo, ecodes
 
-from . import hidraw
+from . import hidraw, safeio
 from .devices import Pad
 from .hidraw import _Event
 
@@ -190,7 +190,13 @@ def HIDIOCSFEATURE(length: int) -> int:
     `_IOC_READ|_IOC_WRITE` is 3 at bit 30, type 'H' is 0x48 at bit 8, number
     is 6, and the length sits at bit 16.
     """
-    return 0xC0004806 | (length << 16)
+    # Masked rather than or-ed in. The size field is 14 bits, so a length of
+    # 16384 or more would run into the direction bits and quietly request a
+    # different ioctl. Nothing derives a length today -- both callers pass the
+    # constant 64 -- and this is what keeps that true.
+    if not 0 < length <= 0x3FFF:
+        raise ValueError(f"feature report length {length} is out of range")
+    return 0xC0004806 | ((length & 0x3FFF) << 16)
 
 
 def lizard_off_packet() -> bytes:
@@ -410,12 +416,17 @@ def slots(probe: bool = True) -> list[Pad]:
 
 
 def _uevent(path: Path) -> dict[str, str]:
-    try:
-        text = (path / "uevent").read_text()
-    except OSError:
-        return {}
+    """A sysfs uevent file as a dict, empty if it cannot be read.
+
+    safeio, not `Path.read_text`: HID_NAME is the device's own name string,
+    copied into uevent verbatim by the kernel, and for a Bluetooth pad that is
+    whatever the peer sent. One byte of it that is not UTF-8 raises
+    UnicodeDecodeError -- a ValueError, which `except OSError` does not catch
+    -- and this is reached from the daemon's tick for every HID device on the
+    machine. Reproduced with a name of `Pad\xff\xfe`.
+    """
     out: dict[str, str] = {}
-    for line in text.splitlines():
+    for line in (safeio.read_text(path / "uevent") or "").splitlines():
         key, _, value = line.partition("=")
         if value:
             out[key] = value
@@ -481,7 +492,7 @@ class Source(hidraw.Source):
             # which is not a fault -- there is nothing there to configure.
             log.debug("%s: lizard-mode request refused: %s", self.path, error)
             return
-        self._last_lizard = _now()
+        self._last_lizard = time.monotonic()
 
     def _keepalive(self) -> None:
         """Ask again, every three seconds, forever.
@@ -492,7 +503,7 @@ class Source(hidraw.Source):
         mid-game, which reads as failing hardware rather than as a missing
         message.
         """
-        if _now() - self._last_lizard >= LIZARD_RESEND_SECONDS:
+        if time.monotonic() - self._last_lizard >= LIZARD_RESEND_SECONDS:
             self._request_full_mode()
 
     def read(self):
@@ -621,11 +632,6 @@ class Source(hidraw.Source):
         return {ecodes.EV_KEY: keys, ecodes.EV_ABS: axes}
 
 
-def _now() -> float:
-    import time
-    return time.monotonic()
-
-
 def open_source(pad: Pad) -> Source | None:
     """A Source for this pad, or None if it is not one of ours."""
     if not owns(pad):
@@ -646,10 +652,12 @@ def live_signature() -> frozenset[str]:
     whether or not a controller is paired, and never change afterwards. A pad
     waking up alters nothing a directory listing can see.
 
-    So the daemon asks this instead, on the same throttle. It costs one open
-    and one ioctl per slot -- four of each on this receiver -- which is the
-    price of a controller being usable the moment it is switched on rather
-    than the next time padmap restarts.
+    So the daemon asks this instead. It is not cheap -- one open, one ioctl
+    and one close per slot, 12.0ms measured on a four-slot receiver, because
+    an empty slot stalls the transfer by design -- so the caller is
+    responsible for rationing it. `Server._triton_live_slots` does, at
+    `TRITON_SCAN_SECONDS`; calling this on a 50Hz loop costs 60% of the tick
+    budget and was exactly the bug that made this docstring say otherwise.
     """
     try:
         return frozenset(pad.path for pad in slots())
