@@ -288,13 +288,30 @@ RECENT_GAMES = 5
 
 
 def _game_entry(raw: object) -> dict[str, str] | None:
-    if not isinstance(raw, dict) or not raw.get("key"):
+    """One entry, or None if it cannot be one.
+
+    Strings only. `str()` on whatever was in the file turned a JSON `null`
+    title into the literal word "None" and a `true` into "True", and this
+    decorates a picker -- so a hand-edited or truncated lastgame.json put the
+    word "None" on screen where a game's name belongs.
+
+    It is also a cross-language trap: Rust renders the same booleans as "true"
+    and "false", so the two implementations would disagree about a file they
+    both read. Dropping non-strings is the rule that needs no per-language
+    care, and a console that is not a string was never going to name a layout
+    anyway. Found by the differential corpus, not by anyone using it.
+    """
+    if not isinstance(raw, dict):
         return None
-    return {
-        "console": str(raw.get("console", "")),
-        "key": str(raw.get("key", "")),
-        "title": str(raw.get("title", "")),
-    }
+    key = raw.get("key")
+    if not isinstance(key, str) or not key:
+        return None
+
+    def text(name: str) -> str:
+        value = raw.get(name, "")
+        return value if isinstance(value, str) else ""
+
+    return {"console": text("console"), "key": key, "title": text("title")}
 
 
 def read_recent_games() -> list[dict[str, str]]:

@@ -3109,3 +3109,43 @@ A concrete rule out of it: when the conclusion is "this cannot be done", the
 next step is not more evidence for that conclusion. It is to find whoever is
 already doing it. The user said someone was. That was the cheapest available
 disproof and I treated it as a puzzle about Steam.
+
+---
+
+## "None" was a game title
+
+Found by the differential corpus on its first run against the new Rust port of
+`protocol.py`, which is what that corpus is for.
+
+`_game_entry` built a recent-games entry with `str(raw.get("title", ""))`.
+`lastgame.json` is a file padmap wrote, so the fields are strings — until it
+is truncated, hand-edited, or written by a version that did something else.
+Then `str(None)` is the four characters `None`, and `str(True)` is `True`, and
+those go straight onto the scope picker where a game's name belongs.
+
+Nobody reported it. It needs a malformed file to reach, and the file is small
+and rarely touched. What found it was recording the Python's answers over
+seventeen shapes of that file and replaying them in Rust: the Rust said `""`,
+the corpus said `"None"`, and the test asked which was right.
+
+The second half is why the rule is "strings only" rather than "handle null":
+
+    Python  str(True)  -> "True"
+    Rust    true       -> "true"
+
+Two implementations reading one file and disagreeing about its contents, in a
+way no test on either side alone would show. Stringifying whatever was in the
+JSON needs per-language care to stay consistent; dropping anything that is not
+a string needs none. A console that is not a string was never going to name a
+layout anyway.
+
+Both sides now drop non-strings, and a `key` that is not a non-empty string
+makes the whole entry `None` rather than an entry named `7`.
+
+**The general point.** This is the third time the corpus has paid for itself,
+and all three were the same shape: a place where the two languages are each
+individually reasonable and quietly disagree. Rounding (ties-to-even versus
+away-from-zero), integer division (floor versus truncate), and now rendering a
+non-string. None of them would have been caught by a unit test written from
+reading the other implementation, because reading is exactly where the
+assumption comes from.
