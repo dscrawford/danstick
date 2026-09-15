@@ -29,6 +29,7 @@ pub mod profile;
 pub mod retroarch;
 pub mod scope;
 pub mod sdl;
+pub mod state;
 pub mod titles;
 pub mod userconfig;
 pub mod wire;

@@ -1635,6 +1635,30 @@ def daemon_commands() -> None:
     write("daemon_command_names", [{"commands": list(COMMANDS)}])
 
 
+def state_events() -> None:
+    """The state event's exact JSON, which is all a front-end has to go on."""
+    import json as _json
+
+    cases = []
+    for state, slots, players in [
+        ("idle", 4, []),
+        ("assigning", 2, [{"player": 1, "name": "Pad", "node": "event9",
+                           "icon": "xbox", "configured": False,
+                           "mappings": []}]),
+        ("ready", 4, [{"player": 1, "name": "Pad One", "node": "event9",
+                       "icon": "xbox", "configured": True,
+                       "mappings": ["", "console:n64"]},
+                      {"player": 2, "name": "Pad Two", "node": "event10",
+                       "icon": "switch", "configured": True,
+                       "mappings": [""]}]),
+    ]:
+        event = {"event": "state", "state": state, "slots": slots,
+                 "players": players, "build": "mtime:/x:1",
+                 "pid": 1234, "identity": "mirror"}
+        cases.append({"event": event, "json": _json.dumps(event)})
+    write("state_events", cases)
+
+
 def main() -> int:
     print(f"recording the Python's answers into {OUT.relative_to(REPO)}:")
     bindings()
@@ -1663,6 +1687,7 @@ def main() -> int:
     launch_override()
     launch_flags()
     daemon_commands()
+    state_events()
     return 0
 
 

@@ -1,0 +1,69 @@
+[
+ {
+  "event": {
+   "build": "mtime:/x:1",
+   "event": "state",
+   "identity": "mirror",
+   "pid": 1234,
+   "players": [],
+   "slots": 4,
+   "state": "idle"
+  },
+  "json": "{\"event\": \"state\", \"state\": \"idle\", \"slots\": 4, \"players\": [], \"build\": \"mtime:/x:1\", \"pid\": 1234, \"identity\": \"mirror\"}"
+ },
+ {
+  "event": {
+   "build": "mtime:/x:1",
+   "event": "state",
+   "identity": "mirror",
+   "pid": 1234,
+   "players": [
+    {
+     "configured": false,
+     "icon": "xbox",
+     "mappings": [],
+     "name": "Pad",
+     "node": "event9",
+     "player": 1
+    }
+   ],
+   "slots": 2,
+   "state": "assigning"
+  },
+  "json": "{\"event\": \"state\", \"state\": \"assigning\", \"slots\": 2, \"players\": [{\"player\": 1, \"name\": \"Pad\", \"node\": \"event9\", \"icon\": \"xbox\", \"configured\": false, \"mappings\": []}], \"build\": \"mtime:/x:1\", \"pid\": 1234, \"identity\": \"mirror\"}"
+ },
+ {
+  "event": {
+   "build": "mtime:/x:1",
+   "event": "state",
+   "identity": "mirror",
+   "pid": 1234,
+   "players": [
+    {
+     "configured": true,
+     "icon": "xbox",
+     "mappings": [
+      "",
+      "console:n64"
+     ],
+     "name": "Pad One",
+     "node": "event9",
+     "player": 1
+    },
+    {
+     "configured": true,
+     "icon": "switch",
+     "mappings": [
+      ""
+     ],
+     "name": "Pad Two",
+     "node": "event10",
+     "player": 2
+    }
+   ],
+   "slots": 4,
+   "state": "ready"
+  },
+  "json": "{\"event\": \"state\", \"state\": \"ready\", \"slots\": 4, \"players\": [{\"player\": 1, \"name\": \"Pad One\", \"node\": \"event9\", \"icon\": \"xbox\", \"configured\": true, \"mappings\": [\"\", \"console:n64\"]}, {\"player\": 2, \"name\": \"Pad Two\", \"node\": \"event10\", \"icon\": \"switch\", \"configured\": true, \"mappings\": [\"\"]}], \"build\": \"mtime:/x:1\", \"pid\": 1234, \"identity\": \"mirror\"}"
+ }
+]
