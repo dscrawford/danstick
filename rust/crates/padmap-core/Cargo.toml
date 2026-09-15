@@ -10,5 +10,11 @@ license.workspace = true
 serde = { workspace = true }
 serde_json = { workspace = true }
 
+[dev-dependencies]
+# Property tests for the arithmetic: the invariants worth asserting here are
+# "monotonic across the whole range" and "never leaves the declared bounds",
+# which are statements about every input rather than about a chosen few.
+proptest = "1"
+
 [lints]
 workspace = true

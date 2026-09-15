@@ -1,0 +1,2162 @@
+[
+ {
+  "in": {
+   "bus": 3,
+   "name": "padmap Player 1",
+   "product": 6265,
+   "vendor": 121,
+   "version": 1
+  },
+  "out": "0300c9a7790000007918000001000000"
+ },
+ {
+  "in": {
+   "bus": 3,
+   "name": "padmap Player 2",
+   "product": 6265,
+   "vendor": 121,
+   "version": 1
+  },
+  "out": "030089a6790000007918000001000000"
+ },
+ {
+  "in": {
+   "bus": 3,
+   "name": "",
+   "product": 6265,
+   "vendor": 121,
+   "version": 1
+  },
+  "out": "03000000790000007918000001000000"
+ },
+ {
+  "in": {
+   "bus": 3,
+   "name": "Arcade Fightstick F300",
+   "product": 6265,
+   "vendor": 121,
+   "version": 1
+  },
+  "out": "03006cc5790000007918000001000000"
+ },
+ {
+  "in": {
+   "bus": 3,
+   "name": "Nintendo Co., Ltd. Pro Controller",
+   "product": 6265,
+   "vendor": 121,
+   "version": 1
+  },
+  "out": "0300bb97790000007918000001000000"
+ },
+ {
+  "in": {
+   "bus": 3,
+   "name": "\u0018 an adapter whose name starts with a control character",
+   "product": 6265,
+   "vendor": 121,
+   "version": 1
+  },
+  "out": "030075cf790000007918000001000000"
+ },
+ {
+  "in": {
+   "bus": 3,
+   "name": "Pok\u00e9mon pad",
+   "product": 6265,
+   "vendor": 121,
+   "version": 1
+  },
+  "out": "03008c59790000007918000001000000"
+ },
+ {
+  "in": {
+   "bus": 3,
+   "name": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "product": 6265,
+   "vendor": 121,
+   "version": 1
+  },
+  "out": "030086d6790000007918000001000000"
+ },
+ {
+  "in": {
+   "bus": 3,
+   "name": "padmap Player 1",
+   "product": 6265,
+   "vendor": 121,
+   "version": 32769
+  },
+  "out": "0300c9a7790000007918000001800000"
+ },
+ {
+  "in": {
+   "bus": 3,
+   "name": "padmap Player 2",
+   "product": 6265,
+   "vendor": 121,
+   "version": 32769
+  },
+  "out": "030089a6790000007918000001800000"
+ },
+ {
+  "in": {
+   "bus": 3,
+   "name": "",
+   "product": 6265,
+   "vendor": 121,
+   "version": 32769
+  },
+  "out": "03000000790000007918000001800000"
+ },
+ {
+  "in": {
+   "bus": 3,
+   "name": "Arcade Fightstick F300",
+   "product": 6265,
+   "vendor": 121,
+   "version": 32769
+  },
+  "out": "03006cc5790000007918000001800000"
+ },
+ {
+  "in": {
+   "bus": 3,
+   "name": "Nintendo Co., Ltd. Pro Controller",
+   "product": 6265,
+   "vendor": 121,
+   "version": 32769
+  },
+  "out": "0300bb97790000007918000001800000"
+ },
+ {
+  "in": {
+   "bus": 3,
+   "name": "\u0018 an adapter whose name starts with a control character",
+   "product": 6265,
+   "vendor": 121,
+   "version": 32769
+  },
+  "out": "030075cf790000007918000001800000"
+ },
+ {
+  "in": {
+   "bus": 3,
+   "name": "Pok\u00e9mon pad",
+   "product": 6265,
+   "vendor": 121,
+   "version": 32769
+  },
+  "out": "03008c59790000007918000001800000"
+ },
+ {
+  "in": {
+   "bus": 3,
+   "name": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "product": 6265,
+   "vendor": 121,
+   "version": 32769
+  },
+  "out": "030086d6790000007918000001800000"
+ },
+ {
+  "in": {
+   "bus": 3,
+   "name": "padmap Player 1",
+   "product": 6265,
+   "vendor": 121,
+   "version": 272
+  },
+  "out": "0300c9a7790000007918000010010000"
+ },
+ {
+  "in": {
+   "bus": 3,
+   "name": "padmap Player 2",
+   "product": 6265,
+   "vendor": 121,
+   "version": 272
+  },
+  "out": "030089a6790000007918000010010000"
+ },
+ {
+  "in": {
+   "bus": 3,
+   "name": "",
+   "product": 6265,
+   "vendor": 121,
+   "version": 272
+  },
+  "out": "03000000790000007918000010010000"
+ },
+ {
+  "in": {
+   "bus": 3,
+   "name": "Arcade Fightstick F300",
+   "product": 6265,
+   "vendor": 121,
+   "version": 272
+  },
+  "out": "03006cc5790000007918000010010000"
+ },
+ {
+  "in": {
+   "bus": 3,
+   "name": "Nintendo Co., Ltd. Pro Controller",
+   "product": 6265,
+   "vendor": 121,
+   "version": 272
+  },
+  "out": "0300bb97790000007918000010010000"
+ },
+ {
+  "in": {
+   "bus": 3,
+   "name": "\u0018 an adapter whose name starts with a control character",
+   "product": 6265,
+   "vendor": 121,
+   "version": 272
+  },
+  "out": "030075cf790000007918000010010000"
+ },
+ {
+  "in": {
+   "bus": 3,
+   "name": "Pok\u00e9mon pad",
+   "product": 6265,
+   "vendor": 121,
+   "version": 272
+  },
+  "out": "03008c59790000007918000010010000"
+ },
+ {
+  "in": {
+   "bus": 3,
+   "name": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "product": 6265,
+   "vendor": 121,
+   "version": 272
+  },
+  "out": "030086d6790000007918000010010000"
+ },
+ {
+  "in": {
+   "bus": 3,
+   "name": "padmap Player 1",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 1
+  },
+  "out": "0300c9a77e0500000920000001000000"
+ },
+ {
+  "in": {
+   "bus": 3,
+   "name": "padmap Player 2",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 1
+  },
+  "out": "030089a67e0500000920000001000000"
+ },
+ {
+  "in": {
+   "bus": 3,
+   "name": "",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 1
+  },
+  "out": "030000007e0500000920000001000000"
+ },
+ {
+  "in": {
+   "bus": 3,
+   "name": "Arcade Fightstick F300",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 1
+  },
+  "out": "03006cc57e0500000920000001000000"
+ },
+ {
+  "in": {
+   "bus": 3,
+   "name": "Nintendo Co., Ltd. Pro Controller",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 1
+  },
+  "out": "0300bb977e0500000920000001000000"
+ },
+ {
+  "in": {
+   "bus": 3,
+   "name": "\u0018 an adapter whose name starts with a control character",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 1
+  },
+  "out": "030075cf7e0500000920000001000000"
+ },
+ {
+  "in": {
+   "bus": 3,
+   "name": "Pok\u00e9mon pad",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 1
+  },
+  "out": "03008c597e0500000920000001000000"
+ },
+ {
+  "in": {
+   "bus": 3,
+   "name": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 1
+  },
+  "out": "030086d67e0500000920000001000000"
+ },
+ {
+  "in": {
+   "bus": 3,
+   "name": "padmap Player 1",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 32769
+  },
+  "out": "0300c9a77e0500000920000001800000"
+ },
+ {
+  "in": {
+   "bus": 3,
+   "name": "padmap Player 2",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 32769
+  },
+  "out": "030089a67e0500000920000001800000"
+ },
+ {
+  "in": {
+   "bus": 3,
+   "name": "",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 32769
+  },
+  "out": "030000007e0500000920000001800000"
+ },
+ {
+  "in": {
+   "bus": 3,
+   "name": "Arcade Fightstick F300",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 32769
+  },
+  "out": "03006cc57e0500000920000001800000"
+ },
+ {
+  "in": {
+   "bus": 3,
+   "name": "Nintendo Co., Ltd. Pro Controller",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 32769
+  },
+  "out": "0300bb977e0500000920000001800000"
+ },
+ {
+  "in": {
+   "bus": 3,
+   "name": "\u0018 an adapter whose name starts with a control character",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 32769
+  },
+  "out": "030075cf7e0500000920000001800000"
+ },
+ {
+  "in": {
+   "bus": 3,
+   "name": "Pok\u00e9mon pad",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 32769
+  },
+  "out": "03008c597e0500000920000001800000"
+ },
+ {
+  "in": {
+   "bus": 3,
+   "name": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 32769
+  },
+  "out": "030086d67e0500000920000001800000"
+ },
+ {
+  "in": {
+   "bus": 3,
+   "name": "padmap Player 1",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 272
+  },
+  "out": "0300c9a77e0500000920000010010000"
+ },
+ {
+  "in": {
+   "bus": 3,
+   "name": "padmap Player 2",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 272
+  },
+  "out": "030089a67e0500000920000010010000"
+ },
+ {
+  "in": {
+   "bus": 3,
+   "name": "",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 272
+  },
+  "out": "030000007e0500000920000010010000"
+ },
+ {
+  "in": {
+   "bus": 3,
+   "name": "Arcade Fightstick F300",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 272
+  },
+  "out": "03006cc57e0500000920000010010000"
+ },
+ {
+  "in": {
+   "bus": 3,
+   "name": "Nintendo Co., Ltd. Pro Controller",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 272
+  },
+  "out": "0300bb977e0500000920000010010000"
+ },
+ {
+  "in": {
+   "bus": 3,
+   "name": "\u0018 an adapter whose name starts with a control character",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 272
+  },
+  "out": "030075cf7e0500000920000010010000"
+ },
+ {
+  "in": {
+   "bus": 3,
+   "name": "Pok\u00e9mon pad",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 272
+  },
+  "out": "03008c597e0500000920000010010000"
+ },
+ {
+  "in": {
+   "bus": 3,
+   "name": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 272
+  },
+  "out": "030086d67e0500000920000010010000"
+ },
+ {
+  "in": {
+   "bus": 3,
+   "name": "padmap Player 1",
+   "product": 1,
+   "vendor": 4617,
+   "version": 1
+  },
+  "out": "0300c9a7091200000100000001000000"
+ },
+ {
+  "in": {
+   "bus": 3,
+   "name": "padmap Player 2",
+   "product": 1,
+   "vendor": 4617,
+   "version": 1
+  },
+  "out": "030089a6091200000100000001000000"
+ },
+ {
+  "in": {
+   "bus": 3,
+   "name": "",
+   "product": 1,
+   "vendor": 4617,
+   "version": 1
+  },
+  "out": "03000000091200000100000001000000"
+ },
+ {
+  "in": {
+   "bus": 3,
+   "name": "Arcade Fightstick F300",
+   "product": 1,
+   "vendor": 4617,
+   "version": 1
+  },
+  "out": "03006cc5091200000100000001000000"
+ },
+ {
+  "in": {
+   "bus": 3,
+   "name": "Nintendo Co., Ltd. Pro Controller",
+   "product": 1,
+   "vendor": 4617,
+   "version": 1
+  },
+  "out": "0300bb97091200000100000001000000"
+ },
+ {
+  "in": {
+   "bus": 3,
+   "name": "\u0018 an adapter whose name starts with a control character",
+   "product": 1,
+   "vendor": 4617,
+   "version": 1
+  },
+  "out": "030075cf091200000100000001000000"
+ },
+ {
+  "in": {
+   "bus": 3,
+   "name": "Pok\u00e9mon pad",
+   "product": 1,
+   "vendor": 4617,
+   "version": 1
+  },
+  "out": "03008c59091200000100000001000000"
+ },
+ {
+  "in": {
+   "bus": 3,
+   "name": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "product": 1,
+   "vendor": 4617,
+   "version": 1
+  },
+  "out": "030086d6091200000100000001000000"
+ },
+ {
+  "in": {
+   "bus": 3,
+   "name": "padmap Player 1",
+   "product": 1,
+   "vendor": 4617,
+   "version": 32769
+  },
+  "out": "0300c9a7091200000100000001800000"
+ },
+ {
+  "in": {
+   "bus": 3,
+   "name": "padmap Player 2",
+   "product": 1,
+   "vendor": 4617,
+   "version": 32769
+  },
+  "out": "030089a6091200000100000001800000"
+ },
+ {
+  "in": {
+   "bus": 3,
+   "name": "",
+   "product": 1,
+   "vendor": 4617,
+   "version": 32769
+  },
+  "out": "03000000091200000100000001800000"
+ },
+ {
+  "in": {
+   "bus": 3,
+   "name": "Arcade Fightstick F300",
+   "product": 1,
+   "vendor": 4617,
+   "version": 32769
+  },
+  "out": "03006cc5091200000100000001800000"
+ },
+ {
+  "in": {
+   "bus": 3,
+   "name": "Nintendo Co., Ltd. Pro Controller",
+   "product": 1,
+   "vendor": 4617,
+   "version": 32769
+  },
+  "out": "0300bb97091200000100000001800000"
+ },
+ {
+  "in": {
+   "bus": 3,
+   "name": "\u0018 an adapter whose name starts with a control character",
+   "product": 1,
+   "vendor": 4617,
+   "version": 32769
+  },
+  "out": "030075cf091200000100000001800000"
+ },
+ {
+  "in": {
+   "bus": 3,
+   "name": "Pok\u00e9mon pad",
+   "product": 1,
+   "vendor": 4617,
+   "version": 32769
+  },
+  "out": "03008c59091200000100000001800000"
+ },
+ {
+  "in": {
+   "bus": 3,
+   "name": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "product": 1,
+   "vendor": 4617,
+   "version": 32769
+  },
+  "out": "030086d6091200000100000001800000"
+ },
+ {
+  "in": {
+   "bus": 3,
+   "name": "padmap Player 1",
+   "product": 1,
+   "vendor": 4617,
+   "version": 272
+  },
+  "out": "0300c9a7091200000100000010010000"
+ },
+ {
+  "in": {
+   "bus": 3,
+   "name": "padmap Player 2",
+   "product": 1,
+   "vendor": 4617,
+   "version": 272
+  },
+  "out": "030089a6091200000100000010010000"
+ },
+ {
+  "in": {
+   "bus": 3,
+   "name": "",
+   "product": 1,
+   "vendor": 4617,
+   "version": 272
+  },
+  "out": "03000000091200000100000010010000"
+ },
+ {
+  "in": {
+   "bus": 3,
+   "name": "Arcade Fightstick F300",
+   "product": 1,
+   "vendor": 4617,
+   "version": 272
+  },
+  "out": "03006cc5091200000100000010010000"
+ },
+ {
+  "in": {
+   "bus": 3,
+   "name": "Nintendo Co., Ltd. Pro Controller",
+   "product": 1,
+   "vendor": 4617,
+   "version": 272
+  },
+  "out": "0300bb97091200000100000010010000"
+ },
+ {
+  "in": {
+   "bus": 3,
+   "name": "\u0018 an adapter whose name starts with a control character",
+   "product": 1,
+   "vendor": 4617,
+   "version": 272
+  },
+  "out": "030075cf091200000100000010010000"
+ },
+ {
+  "in": {
+   "bus": 3,
+   "name": "Pok\u00e9mon pad",
+   "product": 1,
+   "vendor": 4617,
+   "version": 272
+  },
+  "out": "03008c59091200000100000010010000"
+ },
+ {
+  "in": {
+   "bus": 3,
+   "name": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "product": 1,
+   "vendor": 4617,
+   "version": 272
+  },
+  "out": "030086d6091200000100000010010000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "padmap Player 1",
+   "product": 6265,
+   "vendor": 121,
+   "version": 1
+  },
+  "out": "0500c9a7790000007918000001000000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "padmap Player 2",
+   "product": 6265,
+   "vendor": 121,
+   "version": 1
+  },
+  "out": "050089a6790000007918000001000000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "",
+   "product": 6265,
+   "vendor": 121,
+   "version": 1
+  },
+  "out": "05000000790000007918000001000000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "Arcade Fightstick F300",
+   "product": 6265,
+   "vendor": 121,
+   "version": 1
+  },
+  "out": "05006cc5790000007918000001000000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "Nintendo Co., Ltd. Pro Controller",
+   "product": 6265,
+   "vendor": 121,
+   "version": 1
+  },
+  "out": "0500bb97790000007918000001000000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "\u0018 an adapter whose name starts with a control character",
+   "product": 6265,
+   "vendor": 121,
+   "version": 1
+  },
+  "out": "050075cf790000007918000001000000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "Pok\u00e9mon pad",
+   "product": 6265,
+   "vendor": 121,
+   "version": 1
+  },
+  "out": "05008c59790000007918000001000000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "product": 6265,
+   "vendor": 121,
+   "version": 1
+  },
+  "out": "050086d6790000007918000001000000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "padmap Player 1",
+   "product": 6265,
+   "vendor": 121,
+   "version": 32769
+  },
+  "out": "0500c9a7790000007918000001800000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "padmap Player 2",
+   "product": 6265,
+   "vendor": 121,
+   "version": 32769
+  },
+  "out": "050089a6790000007918000001800000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "",
+   "product": 6265,
+   "vendor": 121,
+   "version": 32769
+  },
+  "out": "05000000790000007918000001800000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "Arcade Fightstick F300",
+   "product": 6265,
+   "vendor": 121,
+   "version": 32769
+  },
+  "out": "05006cc5790000007918000001800000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "Nintendo Co., Ltd. Pro Controller",
+   "product": 6265,
+   "vendor": 121,
+   "version": 32769
+  },
+  "out": "0500bb97790000007918000001800000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "\u0018 an adapter whose name starts with a control character",
+   "product": 6265,
+   "vendor": 121,
+   "version": 32769
+  },
+  "out": "050075cf790000007918000001800000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "Pok\u00e9mon pad",
+   "product": 6265,
+   "vendor": 121,
+   "version": 32769
+  },
+  "out": "05008c59790000007918000001800000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "product": 6265,
+   "vendor": 121,
+   "version": 32769
+  },
+  "out": "050086d6790000007918000001800000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "padmap Player 1",
+   "product": 6265,
+   "vendor": 121,
+   "version": 272
+  },
+  "out": "0500c9a7790000007918000010010000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "padmap Player 2",
+   "product": 6265,
+   "vendor": 121,
+   "version": 272
+  },
+  "out": "050089a6790000007918000010010000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "",
+   "product": 6265,
+   "vendor": 121,
+   "version": 272
+  },
+  "out": "05000000790000007918000010010000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "Arcade Fightstick F300",
+   "product": 6265,
+   "vendor": 121,
+   "version": 272
+  },
+  "out": "05006cc5790000007918000010010000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "Nintendo Co., Ltd. Pro Controller",
+   "product": 6265,
+   "vendor": 121,
+   "version": 272
+  },
+  "out": "0500bb97790000007918000010010000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "\u0018 an adapter whose name starts with a control character",
+   "product": 6265,
+   "vendor": 121,
+   "version": 272
+  },
+  "out": "050075cf790000007918000010010000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "Pok\u00e9mon pad",
+   "product": 6265,
+   "vendor": 121,
+   "version": 272
+  },
+  "out": "05008c59790000007918000010010000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "product": 6265,
+   "vendor": 121,
+   "version": 272
+  },
+  "out": "050086d6790000007918000010010000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "padmap Player 1",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 1
+  },
+  "out": "0500c9a77e0500000920000001000000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "padmap Player 2",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 1
+  },
+  "out": "050089a67e0500000920000001000000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 1
+  },
+  "out": "050000007e0500000920000001000000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "Arcade Fightstick F300",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 1
+  },
+  "out": "05006cc57e0500000920000001000000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "Nintendo Co., Ltd. Pro Controller",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 1
+  },
+  "out": "0500bb977e0500000920000001000000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "\u0018 an adapter whose name starts with a control character",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 1
+  },
+  "out": "050075cf7e0500000920000001000000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "Pok\u00e9mon pad",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 1
+  },
+  "out": "05008c597e0500000920000001000000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 1
+  },
+  "out": "050086d67e0500000920000001000000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "padmap Player 1",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 32769
+  },
+  "out": "0500c9a77e0500000920000001800000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "padmap Player 2",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 32769
+  },
+  "out": "050089a67e0500000920000001800000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 32769
+  },
+  "out": "050000007e0500000920000001800000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "Arcade Fightstick F300",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 32769
+  },
+  "out": "05006cc57e0500000920000001800000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "Nintendo Co., Ltd. Pro Controller",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 32769
+  },
+  "out": "0500bb977e0500000920000001800000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "\u0018 an adapter whose name starts with a control character",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 32769
+  },
+  "out": "050075cf7e0500000920000001800000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "Pok\u00e9mon pad",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 32769
+  },
+  "out": "05008c597e0500000920000001800000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 32769
+  },
+  "out": "050086d67e0500000920000001800000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "padmap Player 1",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 272
+  },
+  "out": "0500c9a77e0500000920000010010000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "padmap Player 2",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 272
+  },
+  "out": "050089a67e0500000920000010010000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 272
+  },
+  "out": "050000007e0500000920000010010000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "Arcade Fightstick F300",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 272
+  },
+  "out": "05006cc57e0500000920000010010000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "Nintendo Co., Ltd. Pro Controller",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 272
+  },
+  "out": "0500bb977e0500000920000010010000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "\u0018 an adapter whose name starts with a control character",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 272
+  },
+  "out": "050075cf7e0500000920000010010000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "Pok\u00e9mon pad",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 272
+  },
+  "out": "05008c597e0500000920000010010000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 272
+  },
+  "out": "050086d67e0500000920000010010000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "padmap Player 1",
+   "product": 1,
+   "vendor": 4617,
+   "version": 1
+  },
+  "out": "0500c9a7091200000100000001000000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "padmap Player 2",
+   "product": 1,
+   "vendor": 4617,
+   "version": 1
+  },
+  "out": "050089a6091200000100000001000000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "",
+   "product": 1,
+   "vendor": 4617,
+   "version": 1
+  },
+  "out": "05000000091200000100000001000000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "Arcade Fightstick F300",
+   "product": 1,
+   "vendor": 4617,
+   "version": 1
+  },
+  "out": "05006cc5091200000100000001000000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "Nintendo Co., Ltd. Pro Controller",
+   "product": 1,
+   "vendor": 4617,
+   "version": 1
+  },
+  "out": "0500bb97091200000100000001000000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "\u0018 an adapter whose name starts with a control character",
+   "product": 1,
+   "vendor": 4617,
+   "version": 1
+  },
+  "out": "050075cf091200000100000001000000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "Pok\u00e9mon pad",
+   "product": 1,
+   "vendor": 4617,
+   "version": 1
+  },
+  "out": "05008c59091200000100000001000000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "product": 1,
+   "vendor": 4617,
+   "version": 1
+  },
+  "out": "050086d6091200000100000001000000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "padmap Player 1",
+   "product": 1,
+   "vendor": 4617,
+   "version": 32769
+  },
+  "out": "0500c9a7091200000100000001800000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "padmap Player 2",
+   "product": 1,
+   "vendor": 4617,
+   "version": 32769
+  },
+  "out": "050089a6091200000100000001800000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "",
+   "product": 1,
+   "vendor": 4617,
+   "version": 32769
+  },
+  "out": "05000000091200000100000001800000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "Arcade Fightstick F300",
+   "product": 1,
+   "vendor": 4617,
+   "version": 32769
+  },
+  "out": "05006cc5091200000100000001800000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "Nintendo Co., Ltd. Pro Controller",
+   "product": 1,
+   "vendor": 4617,
+   "version": 32769
+  },
+  "out": "0500bb97091200000100000001800000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "\u0018 an adapter whose name starts with a control character",
+   "product": 1,
+   "vendor": 4617,
+   "version": 32769
+  },
+  "out": "050075cf091200000100000001800000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "Pok\u00e9mon pad",
+   "product": 1,
+   "vendor": 4617,
+   "version": 32769
+  },
+  "out": "05008c59091200000100000001800000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "product": 1,
+   "vendor": 4617,
+   "version": 32769
+  },
+  "out": "050086d6091200000100000001800000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "padmap Player 1",
+   "product": 1,
+   "vendor": 4617,
+   "version": 272
+  },
+  "out": "0500c9a7091200000100000010010000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "padmap Player 2",
+   "product": 1,
+   "vendor": 4617,
+   "version": 272
+  },
+  "out": "050089a6091200000100000010010000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "",
+   "product": 1,
+   "vendor": 4617,
+   "version": 272
+  },
+  "out": "05000000091200000100000010010000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "Arcade Fightstick F300",
+   "product": 1,
+   "vendor": 4617,
+   "version": 272
+  },
+  "out": "05006cc5091200000100000010010000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "Nintendo Co., Ltd. Pro Controller",
+   "product": 1,
+   "vendor": 4617,
+   "version": 272
+  },
+  "out": "0500bb97091200000100000010010000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "\u0018 an adapter whose name starts with a control character",
+   "product": 1,
+   "vendor": 4617,
+   "version": 272
+  },
+  "out": "050075cf091200000100000010010000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "Pok\u00e9mon pad",
+   "product": 1,
+   "vendor": 4617,
+   "version": 272
+  },
+  "out": "05008c59091200000100000010010000"
+ },
+ {
+  "in": {
+   "bus": 5,
+   "name": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "product": 1,
+   "vendor": 4617,
+   "version": 272
+  },
+  "out": "050086d6091200000100000010010000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "padmap Player 1",
+   "product": 6265,
+   "vendor": 121,
+   "version": 1
+  },
+  "out": "0600c9a7790000007918000001000000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "padmap Player 2",
+   "product": 6265,
+   "vendor": 121,
+   "version": 1
+  },
+  "out": "060089a6790000007918000001000000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "",
+   "product": 6265,
+   "vendor": 121,
+   "version": 1
+  },
+  "out": "06000000790000007918000001000000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "Arcade Fightstick F300",
+   "product": 6265,
+   "vendor": 121,
+   "version": 1
+  },
+  "out": "06006cc5790000007918000001000000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "Nintendo Co., Ltd. Pro Controller",
+   "product": 6265,
+   "vendor": 121,
+   "version": 1
+  },
+  "out": "0600bb97790000007918000001000000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "\u0018 an adapter whose name starts with a control character",
+   "product": 6265,
+   "vendor": 121,
+   "version": 1
+  },
+  "out": "060075cf790000007918000001000000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "Pok\u00e9mon pad",
+   "product": 6265,
+   "vendor": 121,
+   "version": 1
+  },
+  "out": "06008c59790000007918000001000000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "product": 6265,
+   "vendor": 121,
+   "version": 1
+  },
+  "out": "060086d6790000007918000001000000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "padmap Player 1",
+   "product": 6265,
+   "vendor": 121,
+   "version": 32769
+  },
+  "out": "0600c9a7790000007918000001800000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "padmap Player 2",
+   "product": 6265,
+   "vendor": 121,
+   "version": 32769
+  },
+  "out": "060089a6790000007918000001800000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "",
+   "product": 6265,
+   "vendor": 121,
+   "version": 32769
+  },
+  "out": "06000000790000007918000001800000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "Arcade Fightstick F300",
+   "product": 6265,
+   "vendor": 121,
+   "version": 32769
+  },
+  "out": "06006cc5790000007918000001800000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "Nintendo Co., Ltd. Pro Controller",
+   "product": 6265,
+   "vendor": 121,
+   "version": 32769
+  },
+  "out": "0600bb97790000007918000001800000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "\u0018 an adapter whose name starts with a control character",
+   "product": 6265,
+   "vendor": 121,
+   "version": 32769
+  },
+  "out": "060075cf790000007918000001800000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "Pok\u00e9mon pad",
+   "product": 6265,
+   "vendor": 121,
+   "version": 32769
+  },
+  "out": "06008c59790000007918000001800000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "product": 6265,
+   "vendor": 121,
+   "version": 32769
+  },
+  "out": "060086d6790000007918000001800000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "padmap Player 1",
+   "product": 6265,
+   "vendor": 121,
+   "version": 272
+  },
+  "out": "0600c9a7790000007918000010010000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "padmap Player 2",
+   "product": 6265,
+   "vendor": 121,
+   "version": 272
+  },
+  "out": "060089a6790000007918000010010000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "",
+   "product": 6265,
+   "vendor": 121,
+   "version": 272
+  },
+  "out": "06000000790000007918000010010000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "Arcade Fightstick F300",
+   "product": 6265,
+   "vendor": 121,
+   "version": 272
+  },
+  "out": "06006cc5790000007918000010010000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "Nintendo Co., Ltd. Pro Controller",
+   "product": 6265,
+   "vendor": 121,
+   "version": 272
+  },
+  "out": "0600bb97790000007918000010010000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "\u0018 an adapter whose name starts with a control character",
+   "product": 6265,
+   "vendor": 121,
+   "version": 272
+  },
+  "out": "060075cf790000007918000010010000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "Pok\u00e9mon pad",
+   "product": 6265,
+   "vendor": 121,
+   "version": 272
+  },
+  "out": "06008c59790000007918000010010000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "product": 6265,
+   "vendor": 121,
+   "version": 272
+  },
+  "out": "060086d6790000007918000010010000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "padmap Player 1",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 1
+  },
+  "out": "0600c9a77e0500000920000001000000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "padmap Player 2",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 1
+  },
+  "out": "060089a67e0500000920000001000000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 1
+  },
+  "out": "060000007e0500000920000001000000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "Arcade Fightstick F300",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 1
+  },
+  "out": "06006cc57e0500000920000001000000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "Nintendo Co., Ltd. Pro Controller",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 1
+  },
+  "out": "0600bb977e0500000920000001000000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "\u0018 an adapter whose name starts with a control character",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 1
+  },
+  "out": "060075cf7e0500000920000001000000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "Pok\u00e9mon pad",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 1
+  },
+  "out": "06008c597e0500000920000001000000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 1
+  },
+  "out": "060086d67e0500000920000001000000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "padmap Player 1",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 32769
+  },
+  "out": "0600c9a77e0500000920000001800000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "padmap Player 2",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 32769
+  },
+  "out": "060089a67e0500000920000001800000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 32769
+  },
+  "out": "060000007e0500000920000001800000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "Arcade Fightstick F300",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 32769
+  },
+  "out": "06006cc57e0500000920000001800000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "Nintendo Co., Ltd. Pro Controller",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 32769
+  },
+  "out": "0600bb977e0500000920000001800000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "\u0018 an adapter whose name starts with a control character",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 32769
+  },
+  "out": "060075cf7e0500000920000001800000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "Pok\u00e9mon pad",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 32769
+  },
+  "out": "06008c597e0500000920000001800000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 32769
+  },
+  "out": "060086d67e0500000920000001800000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "padmap Player 1",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 272
+  },
+  "out": "0600c9a77e0500000920000010010000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "padmap Player 2",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 272
+  },
+  "out": "060089a67e0500000920000010010000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 272
+  },
+  "out": "060000007e0500000920000010010000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "Arcade Fightstick F300",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 272
+  },
+  "out": "06006cc57e0500000920000010010000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "Nintendo Co., Ltd. Pro Controller",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 272
+  },
+  "out": "0600bb977e0500000920000010010000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "\u0018 an adapter whose name starts with a control character",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 272
+  },
+  "out": "060075cf7e0500000920000010010000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "Pok\u00e9mon pad",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 272
+  },
+  "out": "06008c597e0500000920000010010000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "product": 8201,
+   "vendor": 1406,
+   "version": 272
+  },
+  "out": "060086d67e0500000920000010010000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "padmap Player 1",
+   "product": 1,
+   "vendor": 4617,
+   "version": 1
+  },
+  "out": "0600c9a7091200000100000001000000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "padmap Player 2",
+   "product": 1,
+   "vendor": 4617,
+   "version": 1
+  },
+  "out": "060089a6091200000100000001000000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "",
+   "product": 1,
+   "vendor": 4617,
+   "version": 1
+  },
+  "out": "06000000091200000100000001000000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "Arcade Fightstick F300",
+   "product": 1,
+   "vendor": 4617,
+   "version": 1
+  },
+  "out": "06006cc5091200000100000001000000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "Nintendo Co., Ltd. Pro Controller",
+   "product": 1,
+   "vendor": 4617,
+   "version": 1
+  },
+  "out": "0600bb97091200000100000001000000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "\u0018 an adapter whose name starts with a control character",
+   "product": 1,
+   "vendor": 4617,
+   "version": 1
+  },
+  "out": "060075cf091200000100000001000000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "Pok\u00e9mon pad",
+   "product": 1,
+   "vendor": 4617,
+   "version": 1
+  },
+  "out": "06008c59091200000100000001000000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "product": 1,
+   "vendor": 4617,
+   "version": 1
+  },
+  "out": "060086d6091200000100000001000000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "padmap Player 1",
+   "product": 1,
+   "vendor": 4617,
+   "version": 32769
+  },
+  "out": "0600c9a7091200000100000001800000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "padmap Player 2",
+   "product": 1,
+   "vendor": 4617,
+   "version": 32769
+  },
+  "out": "060089a6091200000100000001800000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "",
+   "product": 1,
+   "vendor": 4617,
+   "version": 32769
+  },
+  "out": "06000000091200000100000001800000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "Arcade Fightstick F300",
+   "product": 1,
+   "vendor": 4617,
+   "version": 32769
+  },
+  "out": "06006cc5091200000100000001800000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "Nintendo Co., Ltd. Pro Controller",
+   "product": 1,
+   "vendor": 4617,
+   "version": 32769
+  },
+  "out": "0600bb97091200000100000001800000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "\u0018 an adapter whose name starts with a control character",
+   "product": 1,
+   "vendor": 4617,
+   "version": 32769
+  },
+  "out": "060075cf091200000100000001800000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "Pok\u00e9mon pad",
+   "product": 1,
+   "vendor": 4617,
+   "version": 32769
+  },
+  "out": "06008c59091200000100000001800000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "product": 1,
+   "vendor": 4617,
+   "version": 32769
+  },
+  "out": "060086d6091200000100000001800000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "padmap Player 1",
+   "product": 1,
+   "vendor": 4617,
+   "version": 272
+  },
+  "out": "0600c9a7091200000100000010010000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "padmap Player 2",
+   "product": 1,
+   "vendor": 4617,
+   "version": 272
+  },
+  "out": "060089a6091200000100000010010000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "",
+   "product": 1,
+   "vendor": 4617,
+   "version": 272
+  },
+  "out": "06000000091200000100000010010000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "Arcade Fightstick F300",
+   "product": 1,
+   "vendor": 4617,
+   "version": 272
+  },
+  "out": "06006cc5091200000100000010010000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "Nintendo Co., Ltd. Pro Controller",
+   "product": 1,
+   "vendor": 4617,
+   "version": 272
+  },
+  "out": "0600bb97091200000100000010010000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "\u0018 an adapter whose name starts with a control character",
+   "product": 1,
+   "vendor": 4617,
+   "version": 272
+  },
+  "out": "060075cf091200000100000010010000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "Pok\u00e9mon pad",
+   "product": 1,
+   "vendor": 4617,
+   "version": 272
+  },
+  "out": "06008c59091200000100000010010000"
+ },
+ {
+  "in": {
+   "bus": 6,
+   "name": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "product": 1,
+   "vendor": 4617,
+   "version": 272
+  },
+  "out": "060086d6091200000100000010010000"
+ }
+]

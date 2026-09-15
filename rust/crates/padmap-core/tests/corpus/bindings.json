@@ -1,0 +1,1362 @@
+[
+ {
+  "in": {
+   "index": 0,
+   "kind": "button",
+   "ra_index": null,
+   "value": 0
+  },
+  "out": {
+   "retroarch": {
+    "ok": true,
+    "value": "0"
+   },
+   "retroarch_visible": true,
+   "sdl": {
+    "ok": true,
+    "value": "b0"
+   },
+   "sdl_visible": true
+  }
+ },
+ {
+  "in": {
+   "index": 0,
+   "kind": "button",
+   "ra_index": null,
+   "value": 0
+  },
+  "out": {
+   "retroarch": {
+    "ok": true,
+    "value": "0"
+   },
+   "retroarch_visible": true,
+   "sdl": {
+    "ok": true,
+    "value": "b0"
+   },
+   "sdl_visible": true
+  }
+ },
+ {
+  "in": {
+   "index": 0,
+   "kind": "button",
+   "ra_index": 0,
+   "value": 0
+  },
+  "out": {
+   "retroarch": {
+    "ok": true,
+    "value": "0"
+   },
+   "retroarch_visible": true,
+   "sdl": {
+    "ok": true,
+    "value": "b0"
+   },
+   "sdl_visible": true
+  }
+ },
+ {
+  "in": {
+   "index": 0,
+   "kind": "button",
+   "ra_index": 11,
+   "value": 0
+  },
+  "out": {
+   "retroarch": {
+    "ok": true,
+    "value": "11"
+   },
+   "retroarch_visible": true,
+   "sdl": {
+    "ok": true,
+    "value": "b0"
+   },
+   "sdl_visible": true
+  }
+ },
+ {
+  "in": {
+   "index": 0,
+   "kind": "button",
+   "ra_index": -1,
+   "value": 0
+  },
+  "out": {
+   "retroarch": {
+    "error": "RetroArch's udev driver has no number for this button (its evdev code is below BTN_MISC)",
+    "ok": false
+   },
+   "retroarch_visible": false,
+   "sdl": {
+    "ok": true,
+    "value": "b0"
+   },
+   "sdl_visible": true
+  }
+ },
+ {
+  "in": {
+   "index": 0,
+   "kind": "button",
+   "ra_index": -2,
+   "value": 0
+  },
+  "out": {
+   "retroarch": {
+    "error": "RetroArch's udev driver has no number for this button (its evdev code is below BTN_MISC)",
+    "ok": false
+   },
+   "retroarch_visible": false,
+   "sdl": {
+    "ok": true,
+    "value": "b0"
+   },
+   "sdl_visible": true
+  }
+ },
+ {
+  "in": {
+   "index": 1,
+   "kind": "button",
+   "ra_index": null,
+   "value": 0
+  },
+  "out": {
+   "retroarch": {
+    "ok": true,
+    "value": "1"
+   },
+   "retroarch_visible": true,
+   "sdl": {
+    "ok": true,
+    "value": "b1"
+   },
+   "sdl_visible": true
+  }
+ },
+ {
+  "in": {
+   "index": 1,
+   "kind": "button",
+   "ra_index": null,
+   "value": 0
+  },
+  "out": {
+   "retroarch": {
+    "ok": true,
+    "value": "1"
+   },
+   "retroarch_visible": true,
+   "sdl": {
+    "ok": true,
+    "value": "b1"
+   },
+   "sdl_visible": true
+  }
+ },
+ {
+  "in": {
+   "index": 1,
+   "kind": "button",
+   "ra_index": 0,
+   "value": 0
+  },
+  "out": {
+   "retroarch": {
+    "ok": true,
+    "value": "0"
+   },
+   "retroarch_visible": true,
+   "sdl": {
+    "ok": true,
+    "value": "b1"
+   },
+   "sdl_visible": true
+  }
+ },
+ {
+  "in": {
+   "index": 1,
+   "kind": "button",
+   "ra_index": 11,
+   "value": 0
+  },
+  "out": {
+   "retroarch": {
+    "ok": true,
+    "value": "11"
+   },
+   "retroarch_visible": true,
+   "sdl": {
+    "ok": true,
+    "value": "b1"
+   },
+   "sdl_visible": true
+  }
+ },
+ {
+  "in": {
+   "index": 1,
+   "kind": "button",
+   "ra_index": -1,
+   "value": 0
+  },
+  "out": {
+   "retroarch": {
+    "error": "RetroArch's udev driver has no number for this button (its evdev code is below BTN_MISC)",
+    "ok": false
+   },
+   "retroarch_visible": false,
+   "sdl": {
+    "ok": true,
+    "value": "b1"
+   },
+   "sdl_visible": true
+  }
+ },
+ {
+  "in": {
+   "index": 1,
+   "kind": "button",
+   "ra_index": -2,
+   "value": 0
+  },
+  "out": {
+   "retroarch": {
+    "error": "RetroArch's udev driver has no number for this button (its evdev code is below BTN_MISC)",
+    "ok": false
+   },
+   "retroarch_visible": false,
+   "sdl": {
+    "ok": true,
+    "value": "b1"
+   },
+   "sdl_visible": true
+  }
+ },
+ {
+  "in": {
+   "index": 13,
+   "kind": "button",
+   "ra_index": null,
+   "value": 0
+  },
+  "out": {
+   "retroarch": {
+    "ok": true,
+    "value": "13"
+   },
+   "retroarch_visible": true,
+   "sdl": {
+    "ok": true,
+    "value": "b13"
+   },
+   "sdl_visible": true
+  }
+ },
+ {
+  "in": {
+   "index": 13,
+   "kind": "button",
+   "ra_index": null,
+   "value": 0
+  },
+  "out": {
+   "retroarch": {
+    "ok": true,
+    "value": "13"
+   },
+   "retroarch_visible": true,
+   "sdl": {
+    "ok": true,
+    "value": "b13"
+   },
+   "sdl_visible": true
+  }
+ },
+ {
+  "in": {
+   "index": 13,
+   "kind": "button",
+   "ra_index": 0,
+   "value": 0
+  },
+  "out": {
+   "retroarch": {
+    "ok": true,
+    "value": "0"
+   },
+   "retroarch_visible": true,
+   "sdl": {
+    "ok": true,
+    "value": "b13"
+   },
+   "sdl_visible": true
+  }
+ },
+ {
+  "in": {
+   "index": 13,
+   "kind": "button",
+   "ra_index": 11,
+   "value": 0
+  },
+  "out": {
+   "retroarch": {
+    "ok": true,
+    "value": "11"
+   },
+   "retroarch_visible": true,
+   "sdl": {
+    "ok": true,
+    "value": "b13"
+   },
+   "sdl_visible": true
+  }
+ },
+ {
+  "in": {
+   "index": 13,
+   "kind": "button",
+   "ra_index": -1,
+   "value": 0
+  },
+  "out": {
+   "retroarch": {
+    "error": "RetroArch's udev driver has no number for this button (its evdev code is below BTN_MISC)",
+    "ok": false
+   },
+   "retroarch_visible": false,
+   "sdl": {
+    "ok": true,
+    "value": "b13"
+   },
+   "sdl_visible": true
+  }
+ },
+ {
+  "in": {
+   "index": 13,
+   "kind": "button",
+   "ra_index": -2,
+   "value": 0
+  },
+  "out": {
+   "retroarch": {
+    "error": "RetroArch's udev driver has no number for this button (its evdev code is below BTN_MISC)",
+    "ok": false
+   },
+   "retroarch_visible": false,
+   "sdl": {
+    "ok": true,
+    "value": "b13"
+   },
+   "sdl_visible": true
+  }
+ },
+ {
+  "in": {
+   "index": 127,
+   "kind": "button",
+   "ra_index": null,
+   "value": 0
+  },
+  "out": {
+   "retroarch": {
+    "ok": true,
+    "value": "127"
+   },
+   "retroarch_visible": true,
+   "sdl": {
+    "ok": true,
+    "value": "b127"
+   },
+   "sdl_visible": true
+  }
+ },
+ {
+  "in": {
+   "index": 127,
+   "kind": "button",
+   "ra_index": null,
+   "value": 0
+  },
+  "out": {
+   "retroarch": {
+    "ok": true,
+    "value": "127"
+   },
+   "retroarch_visible": true,
+   "sdl": {
+    "ok": true,
+    "value": "b127"
+   },
+   "sdl_visible": true
+  }
+ },
+ {
+  "in": {
+   "index": 127,
+   "kind": "button",
+   "ra_index": 0,
+   "value": 0
+  },
+  "out": {
+   "retroarch": {
+    "ok": true,
+    "value": "0"
+   },
+   "retroarch_visible": true,
+   "sdl": {
+    "ok": true,
+    "value": "b127"
+   },
+   "sdl_visible": true
+  }
+ },
+ {
+  "in": {
+   "index": 127,
+   "kind": "button",
+   "ra_index": 11,
+   "value": 0
+  },
+  "out": {
+   "retroarch": {
+    "ok": true,
+    "value": "11"
+   },
+   "retroarch_visible": true,
+   "sdl": {
+    "ok": true,
+    "value": "b127"
+   },
+   "sdl_visible": true
+  }
+ },
+ {
+  "in": {
+   "index": 127,
+   "kind": "button",
+   "ra_index": -1,
+   "value": 0
+  },
+  "out": {
+   "retroarch": {
+    "error": "RetroArch's udev driver has no number for this button (its evdev code is below BTN_MISC)",
+    "ok": false
+   },
+   "retroarch_visible": false,
+   "sdl": {
+    "ok": true,
+    "value": "b127"
+   },
+   "sdl_visible": true
+  }
+ },
+ {
+  "in": {
+   "index": 127,
+   "kind": "button",
+   "ra_index": -2,
+   "value": 0
+  },
+  "out": {
+   "retroarch": {
+    "error": "RetroArch's udev driver has no number for this button (its evdev code is below BTN_MISC)",
+    "ok": false
+   },
+   "retroarch_visible": false,
+   "sdl": {
+    "ok": true,
+    "value": "b127"
+   },
+   "sdl_visible": true
+  }
+ },
+ {
+  "in": {
+   "index": 0,
+   "kind": "hat",
+   "ra_index": null,
+   "value": 0
+  },
+  "out": {
+   "retroarch": {
+    "error": "hat value 0 is not one direction bit",
+    "ok": false
+   },
+   "retroarch_visible": false,
+   "sdl": {
+    "error": "hat value 0 is not one direction bit",
+    "ok": false
+   },
+   "sdl_visible": false
+  }
+ },
+ {
+  "in": {
+   "index": 1,
+   "kind": "hat",
+   "ra_index": 0,
+   "value": 0
+  },
+  "out": {
+   "retroarch": {
+    "error": "hat value 0 is not one direction bit",
+    "ok": false
+   },
+   "retroarch_visible": false,
+   "sdl": {
+    "error": "hat value 0 is not one direction bit",
+    "ok": false
+   },
+   "sdl_visible": false
+  }
+ },
+ {
+  "in": {
+   "index": 0,
+   "kind": "hat",
+   "ra_index": null,
+   "value": 1
+  },
+  "out": {
+   "retroarch": {
+    "ok": true,
+    "value": "h0up"
+   },
+   "retroarch_visible": true,
+   "sdl": {
+    "ok": true,
+    "value": "h0.1"
+   },
+   "sdl_visible": true
+  }
+ },
+ {
+  "in": {
+   "index": 1,
+   "kind": "hat",
+   "ra_index": 0,
+   "value": 1
+  },
+  "out": {
+   "retroarch": {
+    "ok": true,
+    "value": "h0up"
+   },
+   "retroarch_visible": true,
+   "sdl": {
+    "ok": true,
+    "value": "h1.1"
+   },
+   "sdl_visible": true
+  }
+ },
+ {
+  "in": {
+   "index": 0,
+   "kind": "hat",
+   "ra_index": null,
+   "value": 2
+  },
+  "out": {
+   "retroarch": {
+    "ok": true,
+    "value": "h0right"
+   },
+   "retroarch_visible": true,
+   "sdl": {
+    "ok": true,
+    "value": "h0.2"
+   },
+   "sdl_visible": true
+  }
+ },
+ {
+  "in": {
+   "index": 1,
+   "kind": "hat",
+   "ra_index": 0,
+   "value": 2
+  },
+  "out": {
+   "retroarch": {
+    "ok": true,
+    "value": "h0right"
+   },
+   "retroarch_visible": true,
+   "sdl": {
+    "ok": true,
+    "value": "h1.2"
+   },
+   "sdl_visible": true
+  }
+ },
+ {
+  "in": {
+   "index": 0,
+   "kind": "hat",
+   "ra_index": null,
+   "value": 3
+  },
+  "out": {
+   "retroarch": {
+    "error": "hat value 3 is not one direction bit",
+    "ok": false
+   },
+   "retroarch_visible": false,
+   "sdl": {
+    "error": "hat value 3 is not one direction bit",
+    "ok": false
+   },
+   "sdl_visible": false
+  }
+ },
+ {
+  "in": {
+   "index": 1,
+   "kind": "hat",
+   "ra_index": 0,
+   "value": 3
+  },
+  "out": {
+   "retroarch": {
+    "error": "hat value 3 is not one direction bit",
+    "ok": false
+   },
+   "retroarch_visible": false,
+   "sdl": {
+    "error": "hat value 3 is not one direction bit",
+    "ok": false
+   },
+   "sdl_visible": false
+  }
+ },
+ {
+  "in": {
+   "index": 0,
+   "kind": "hat",
+   "ra_index": null,
+   "value": 4
+  },
+  "out": {
+   "retroarch": {
+    "ok": true,
+    "value": "h0down"
+   },
+   "retroarch_visible": true,
+   "sdl": {
+    "ok": true,
+    "value": "h0.4"
+   },
+   "sdl_visible": true
+  }
+ },
+ {
+  "in": {
+   "index": 1,
+   "kind": "hat",
+   "ra_index": 0,
+   "value": 4
+  },
+  "out": {
+   "retroarch": {
+    "ok": true,
+    "value": "h0down"
+   },
+   "retroarch_visible": true,
+   "sdl": {
+    "ok": true,
+    "value": "h1.4"
+   },
+   "sdl_visible": true
+  }
+ },
+ {
+  "in": {
+   "index": 0,
+   "kind": "hat",
+   "ra_index": null,
+   "value": 5
+  },
+  "out": {
+   "retroarch": {
+    "error": "hat value 5 is not one direction bit",
+    "ok": false
+   },
+   "retroarch_visible": false,
+   "sdl": {
+    "error": "hat value 5 is not one direction bit",
+    "ok": false
+   },
+   "sdl_visible": false
+  }
+ },
+ {
+  "in": {
+   "index": 1,
+   "kind": "hat",
+   "ra_index": 0,
+   "value": 5
+  },
+  "out": {
+   "retroarch": {
+    "error": "hat value 5 is not one direction bit",
+    "ok": false
+   },
+   "retroarch_visible": false,
+   "sdl": {
+    "error": "hat value 5 is not one direction bit",
+    "ok": false
+   },
+   "sdl_visible": false
+  }
+ },
+ {
+  "in": {
+   "index": 0,
+   "kind": "hat",
+   "ra_index": null,
+   "value": 6
+  },
+  "out": {
+   "retroarch": {
+    "error": "hat value 6 is not one direction bit",
+    "ok": false
+   },
+   "retroarch_visible": false,
+   "sdl": {
+    "error": "hat value 6 is not one direction bit",
+    "ok": false
+   },
+   "sdl_visible": false
+  }
+ },
+ {
+  "in": {
+   "index": 1,
+   "kind": "hat",
+   "ra_index": 0,
+   "value": 6
+  },
+  "out": {
+   "retroarch": {
+    "error": "hat value 6 is not one direction bit",
+    "ok": false
+   },
+   "retroarch_visible": false,
+   "sdl": {
+    "error": "hat value 6 is not one direction bit",
+    "ok": false
+   },
+   "sdl_visible": false
+  }
+ },
+ {
+  "in": {
+   "index": 0,
+   "kind": "hat",
+   "ra_index": null,
+   "value": 8
+  },
+  "out": {
+   "retroarch": {
+    "ok": true,
+    "value": "h0left"
+   },
+   "retroarch_visible": true,
+   "sdl": {
+    "ok": true,
+    "value": "h0.8"
+   },
+   "sdl_visible": true
+  }
+ },
+ {
+  "in": {
+   "index": 1,
+   "kind": "hat",
+   "ra_index": 0,
+   "value": 8
+  },
+  "out": {
+   "retroarch": {
+    "ok": true,
+    "value": "h0left"
+   },
+   "retroarch_visible": true,
+   "sdl": {
+    "ok": true,
+    "value": "h1.8"
+   },
+   "sdl_visible": true
+  }
+ },
+ {
+  "in": {
+   "index": 0,
+   "kind": "hat",
+   "ra_index": null,
+   "value": 9
+  },
+  "out": {
+   "retroarch": {
+    "error": "hat value 9 is not one direction bit",
+    "ok": false
+   },
+   "retroarch_visible": false,
+   "sdl": {
+    "error": "hat value 9 is not one direction bit",
+    "ok": false
+   },
+   "sdl_visible": false
+  }
+ },
+ {
+  "in": {
+   "index": 1,
+   "kind": "hat",
+   "ra_index": 0,
+   "value": 9
+  },
+  "out": {
+   "retroarch": {
+    "error": "hat value 9 is not one direction bit",
+    "ok": false
+   },
+   "retroarch_visible": false,
+   "sdl": {
+    "error": "hat value 9 is not one direction bit",
+    "ok": false
+   },
+   "sdl_visible": false
+  }
+ },
+ {
+  "in": {
+   "index": 0,
+   "kind": "hat",
+   "ra_index": null,
+   "value": 12
+  },
+  "out": {
+   "retroarch": {
+    "error": "hat value 12 is not one direction bit",
+    "ok": false
+   },
+   "retroarch_visible": false,
+   "sdl": {
+    "error": "hat value 12 is not one direction bit",
+    "ok": false
+   },
+   "sdl_visible": false
+  }
+ },
+ {
+  "in": {
+   "index": 1,
+   "kind": "hat",
+   "ra_index": 0,
+   "value": 12
+  },
+  "out": {
+   "retroarch": {
+    "error": "hat value 12 is not one direction bit",
+    "ok": false
+   },
+   "retroarch_visible": false,
+   "sdl": {
+    "error": "hat value 12 is not one direction bit",
+    "ok": false
+   },
+   "sdl_visible": false
+  }
+ },
+ {
+  "in": {
+   "index": 0,
+   "kind": "hat",
+   "ra_index": null,
+   "value": 15
+  },
+  "out": {
+   "retroarch": {
+    "error": "hat value 15 is not one direction bit",
+    "ok": false
+   },
+   "retroarch_visible": false,
+   "sdl": {
+    "error": "hat value 15 is not one direction bit",
+    "ok": false
+   },
+   "sdl_visible": false
+  }
+ },
+ {
+  "in": {
+   "index": 1,
+   "kind": "hat",
+   "ra_index": 0,
+   "value": 15
+  },
+  "out": {
+   "retroarch": {
+    "error": "hat value 15 is not one direction bit",
+    "ok": false
+   },
+   "retroarch_visible": false,
+   "sdl": {
+    "error": "hat value 15 is not one direction bit",
+    "ok": false
+   },
+   "sdl_visible": false
+  }
+ },
+ {
+  "in": {
+   "index": 0,
+   "kind": "hat",
+   "ra_index": null,
+   "value": -1
+  },
+  "out": {
+   "retroarch": {
+    "error": "hat value -1 is not one direction bit",
+    "ok": false
+   },
+   "retroarch_visible": false,
+   "sdl": {
+    "error": "hat value -1 is not one direction bit",
+    "ok": false
+   },
+   "sdl_visible": false
+  }
+ },
+ {
+  "in": {
+   "index": 1,
+   "kind": "hat",
+   "ra_index": 0,
+   "value": -1
+  },
+  "out": {
+   "retroarch": {
+    "error": "hat value -1 is not one direction bit",
+    "ok": false
+   },
+   "retroarch_visible": false,
+   "sdl": {
+    "error": "hat value -1 is not one direction bit",
+    "ok": false
+   },
+   "sdl_visible": false
+  }
+ },
+ {
+  "in": {
+   "index": 0,
+   "kind": "hat",
+   "ra_index": null,
+   "value": 16
+  },
+  "out": {
+   "retroarch": {
+    "error": "hat value 16 is not one direction bit",
+    "ok": false
+   },
+   "retroarch_visible": false,
+   "sdl": {
+    "error": "hat value 16 is not one direction bit",
+    "ok": false
+   },
+   "sdl_visible": false
+  }
+ },
+ {
+  "in": {
+   "index": 1,
+   "kind": "hat",
+   "ra_index": 0,
+   "value": 16
+  },
+  "out": {
+   "retroarch": {
+    "error": "hat value 16 is not one direction bit",
+    "ok": false
+   },
+   "retroarch_visible": false,
+   "sdl": {
+    "error": "hat value 16 is not one direction bit",
+    "ok": false
+   },
+   "sdl_visible": false
+  }
+ },
+ {
+  "in": {
+   "index": 0,
+   "kind": "axis",
+   "ra_index": null,
+   "value": -1
+  },
+  "out": {
+   "retroarch": {
+    "ok": true,
+    "value": "-0"
+   },
+   "retroarch_visible": true,
+   "sdl": {
+    "ok": true,
+    "value": "-a0"
+   },
+   "sdl_visible": true
+  }
+ },
+ {
+  "in": {
+   "index": 0,
+   "kind": "axis",
+   "ra_index": 3,
+   "value": -1
+  },
+  "out": {
+   "retroarch": {
+    "ok": true,
+    "value": "-3"
+   },
+   "retroarch_visible": true,
+   "sdl": {
+    "ok": true,
+    "value": "-a0"
+   },
+   "sdl_visible": true
+  }
+ },
+ {
+  "in": {
+   "index": 0,
+   "kind": "axis",
+   "ra_index": null,
+   "value": 0
+  },
+  "out": {
+   "retroarch": {
+    "ok": true,
+    "value": "+0"
+   },
+   "retroarch_visible": true,
+   "sdl": {
+    "ok": true,
+    "value": "+a0"
+   },
+   "sdl_visible": true
+  }
+ },
+ {
+  "in": {
+   "index": 0,
+   "kind": "axis",
+   "ra_index": 3,
+   "value": 0
+  },
+  "out": {
+   "retroarch": {
+    "ok": true,
+    "value": "+3"
+   },
+   "retroarch_visible": true,
+   "sdl": {
+    "ok": true,
+    "value": "+a0"
+   },
+   "sdl_visible": true
+  }
+ },
+ {
+  "in": {
+   "index": 0,
+   "kind": "axis",
+   "ra_index": null,
+   "value": 1
+  },
+  "out": {
+   "retroarch": {
+    "ok": true,
+    "value": "+0"
+   },
+   "retroarch_visible": true,
+   "sdl": {
+    "ok": true,
+    "value": "+a0"
+   },
+   "sdl_visible": true
+  }
+ },
+ {
+  "in": {
+   "index": 0,
+   "kind": "axis",
+   "ra_index": 3,
+   "value": 1
+  },
+  "out": {
+   "retroarch": {
+    "ok": true,
+    "value": "+3"
+   },
+   "retroarch_visible": true,
+   "sdl": {
+    "ok": true,
+    "value": "+a0"
+   },
+   "sdl_visible": true
+  }
+ },
+ {
+  "in": {
+   "index": 2,
+   "kind": "axis",
+   "ra_index": null,
+   "value": -1
+  },
+  "out": {
+   "retroarch": {
+    "ok": true,
+    "value": "-2"
+   },
+   "retroarch_visible": true,
+   "sdl": {
+    "ok": true,
+    "value": "-a2"
+   },
+   "sdl_visible": true
+  }
+ },
+ {
+  "in": {
+   "index": 2,
+   "kind": "axis",
+   "ra_index": 3,
+   "value": -1
+  },
+  "out": {
+   "retroarch": {
+    "ok": true,
+    "value": "-3"
+   },
+   "retroarch_visible": true,
+   "sdl": {
+    "ok": true,
+    "value": "-a2"
+   },
+   "sdl_visible": true
+  }
+ },
+ {
+  "in": {
+   "index": 2,
+   "kind": "axis",
+   "ra_index": null,
+   "value": 0
+  },
+  "out": {
+   "retroarch": {
+    "ok": true,
+    "value": "+2"
+   },
+   "retroarch_visible": true,
+   "sdl": {
+    "ok": true,
+    "value": "+a2"
+   },
+   "sdl_visible": true
+  }
+ },
+ {
+  "in": {
+   "index": 2,
+   "kind": "axis",
+   "ra_index": 3,
+   "value": 0
+  },
+  "out": {
+   "retroarch": {
+    "ok": true,
+    "value": "+3"
+   },
+   "retroarch_visible": true,
+   "sdl": {
+    "ok": true,
+    "value": "+a2"
+   },
+   "sdl_visible": true
+  }
+ },
+ {
+  "in": {
+   "index": 2,
+   "kind": "axis",
+   "ra_index": null,
+   "value": 1
+  },
+  "out": {
+   "retroarch": {
+    "ok": true,
+    "value": "+2"
+   },
+   "retroarch_visible": true,
+   "sdl": {
+    "ok": true,
+    "value": "+a2"
+   },
+   "sdl_visible": true
+  }
+ },
+ {
+  "in": {
+   "index": 2,
+   "kind": "axis",
+   "ra_index": 3,
+   "value": 1
+  },
+  "out": {
+   "retroarch": {
+    "ok": true,
+    "value": "+3"
+   },
+   "retroarch_visible": true,
+   "sdl": {
+    "ok": true,
+    "value": "+a2"
+   },
+   "sdl_visible": true
+  }
+ },
+ {
+  "in": {
+   "index": 5,
+   "kind": "axis",
+   "ra_index": null,
+   "value": -1
+  },
+  "out": {
+   "retroarch": {
+    "ok": true,
+    "value": "-5"
+   },
+   "retroarch_visible": true,
+   "sdl": {
+    "ok": true,
+    "value": "-a5"
+   },
+   "sdl_visible": true
+  }
+ },
+ {
+  "in": {
+   "index": 5,
+   "kind": "axis",
+   "ra_index": 3,
+   "value": -1
+  },
+  "out": {
+   "retroarch": {
+    "ok": true,
+    "value": "-3"
+   },
+   "retroarch_visible": true,
+   "sdl": {
+    "ok": true,
+    "value": "-a5"
+   },
+   "sdl_visible": true
+  }
+ },
+ {
+  "in": {
+   "index": 5,
+   "kind": "axis",
+   "ra_index": null,
+   "value": 0
+  },
+  "out": {
+   "retroarch": {
+    "ok": true,
+    "value": "+5"
+   },
+   "retroarch_visible": true,
+   "sdl": {
+    "ok": true,
+    "value": "+a5"
+   },
+   "sdl_visible": true
+  }
+ },
+ {
+  "in": {
+   "index": 5,
+   "kind": "axis",
+   "ra_index": 3,
+   "value": 0
+  },
+  "out": {
+   "retroarch": {
+    "ok": true,
+    "value": "+3"
+   },
+   "retroarch_visible": true,
+   "sdl": {
+    "ok": true,
+    "value": "+a5"
+   },
+   "sdl_visible": true
+  }
+ },
+ {
+  "in": {
+   "index": 5,
+   "kind": "axis",
+   "ra_index": null,
+   "value": 1
+  },
+  "out": {
+   "retroarch": {
+    "ok": true,
+    "value": "+5"
+   },
+   "retroarch_visible": true,
+   "sdl": {
+    "ok": true,
+    "value": "+a5"
+   },
+   "sdl_visible": true
+  }
+ },
+ {
+  "in": {
+   "index": 5,
+   "kind": "axis",
+   "ra_index": 3,
+   "value": 1
+  },
+  "out": {
+   "retroarch": {
+    "ok": true,
+    "value": "+3"
+   },
+   "retroarch_visible": true,
+   "sdl": {
+    "ok": true,
+    "value": "+a5"
+   },
+   "sdl_visible": true
+  }
+ }
+]

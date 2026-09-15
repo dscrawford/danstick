@@ -1,0 +1,350 @@
+[
+ {
+  "in": "",
+  "out": ""
+ },
+ {
+  "in": "/nix/store/abc/mupen64plus_next_libretro.so",
+  "out": "n64"
+ },
+ {
+  "in": "MUPEN64PLUS_NEXT_LIBRETRO.SO",
+  "out": ""
+ },
+ {
+  "in": "Mupen64plus_Next_libretro.so",
+  "out": "n64"
+ },
+ {
+  "in": "_libretro.so",
+  "out": ""
+ },
+ {
+  "in": "blastem",
+  "out": "genesis"
+ },
+ {
+  "in": "blastem-libretro.dll",
+  "out": "genesis"
+ },
+ {
+  "in": "blastem_libretro.so",
+  "out": "genesis"
+ },
+ {
+  "in": "bsnes",
+  "out": "snes"
+ },
+ {
+  "in": "bsnes-libretro.dll",
+  "out": "snes"
+ },
+ {
+  "in": "bsnes_libretro.so",
+  "out": "snes"
+ },
+ {
+  "in": "bsnes_mercury_accuracy",
+  "out": "snes"
+ },
+ {
+  "in": "bsnes_mercury_accuracy-libretro.dll",
+  "out": "snes"
+ },
+ {
+  "in": "bsnes_mercury_accuracy_libretro.so",
+  "out": "snes"
+ },
+ {
+  "in": "bsnes_mercury_balanced",
+  "out": "snes"
+ },
+ {
+  "in": "bsnes_mercury_balanced-libretro.dll",
+  "out": "snes"
+ },
+ {
+  "in": "bsnes_mercury_balanced_libretro.so",
+  "out": "snes"
+ },
+ {
+  "in": "bsnes_mercury_performance",
+  "out": "snes"
+ },
+ {
+  "in": "bsnes_mercury_performance-libretro.dll",
+  "out": "snes"
+ },
+ {
+  "in": "bsnes_mercury_performance_libretro.so",
+  "out": "snes"
+ },
+ {
+  "in": "dolphin",
+  "out": "gamecube"
+ },
+ {
+  "in": "dolphin-libretro.dll",
+  "out": "gamecube"
+ },
+ {
+  "in": "dolphin_libretro.so",
+  "out": "gamecube"
+ },
+ {
+  "in": "fbalpha",
+  "out": "arcade"
+ },
+ {
+  "in": "fbalpha-libretro.dll",
+  "out": "arcade"
+ },
+ {
+  "in": "fbalpha2012",
+  "out": "arcade"
+ },
+ {
+  "in": "fbalpha2012-libretro.dll",
+  "out": "arcade"
+ },
+ {
+  "in": "fbalpha2012_libretro.so",
+  "out": "arcade"
+ },
+ {
+  "in": "fbalpha_libretro.so",
+  "out": "arcade"
+ },
+ {
+  "in": "fbneo",
+  "out": "arcade"
+ },
+ {
+  "in": "fbneo-libretro.dll",
+  "out": "arcade"
+ },
+ {
+  "in": "fbneo_libretro.so",
+  "out": "arcade"
+ },
+ {
+  "in": "genesis_plus_gx",
+  "out": "genesis"
+ },
+ {
+  "in": "genesis_plus_gx-libretro.dll",
+  "out": "genesis"
+ },
+ {
+  "in": "genesis_plus_gx_libretro.so",
+  "out": "genesis"
+ },
+ {
+  "in": "libretro",
+  "out": ""
+ },
+ {
+  "in": "mame",
+  "out": "arcade"
+ },
+ {
+  "in": "mame-libretro.dll",
+  "out": "arcade"
+ },
+ {
+  "in": "mame2000",
+  "out": "arcade"
+ },
+ {
+  "in": "mame2000-libretro.dll",
+  "out": "arcade"
+ },
+ {
+  "in": "mame2000_libretro.so",
+  "out": "arcade"
+ },
+ {
+  "in": "mame2003",
+  "out": "arcade"
+ },
+ {
+  "in": "mame2003-libretro.dll",
+  "out": "arcade"
+ },
+ {
+  "in": "mame2003_libretro.so",
+  "out": "arcade"
+ },
+ {
+  "in": "mame2003_plus",
+  "out": "arcade"
+ },
+ {
+  "in": "mame2003_plus-libretro.dll",
+  "out": "arcade"
+ },
+ {
+  "in": "mame2003_plus_libretro.so",
+  "out": "arcade"
+ },
+ {
+  "in": "mame2010",
+  "out": "arcade"
+ },
+ {
+  "in": "mame2010-libretro.dll",
+  "out": "arcade"
+ },
+ {
+  "in": "mame2010_libretro.so",
+  "out": "arcade"
+ },
+ {
+  "in": "mame_libretro.so",
+  "out": "arcade"
+ },
+ {
+  "in": "mesen_s",
+  "out": "snes"
+ },
+ {
+  "in": "mesen_s-libretro.dll",
+  "out": "snes"
+ },
+ {
+  "in": "mesen_s_libretro.so",
+  "out": "snes"
+ },
+ {
+  "in": "mupen64plus",
+  "out": "n64"
+ },
+ {
+  "in": "mupen64plus-libretro.dll",
+  "out": "n64"
+ },
+ {
+  "in": "mupen64plus_libretro.so",
+  "out": "n64"
+ },
+ {
+  "in": "mupen64plus_next",
+  "out": "n64"
+ },
+ {
+  "in": "mupen64plus_next-libretro.dll",
+  "out": "n64"
+ },
+ {
+  "in": "mupen64plus_next_libretro.SO",
+  "out": ""
+ },
+ {
+  "in": "mupen64plus_next_libretro.so",
+  "out": "n64"
+ },
+ {
+  "in": "parallel_n64",
+  "out": "n64"
+ },
+ {
+  "in": "parallel_n64-libretro.dll",
+  "out": "n64"
+ },
+ {
+  "in": "parallel_n64_libretro.so",
+  "out": "n64"
+ },
+ {
+  "in": "pcsx2",
+  "out": "ps2"
+ },
+ {
+  "in": "pcsx2-libretro.dll",
+  "out": "ps2"
+ },
+ {
+  "in": "pcsx2_libretro.so",
+  "out": "ps2"
+ },
+ {
+  "in": "picodrive",
+  "out": "genesis"
+ },
+ {
+  "in": "picodrive-libretro.dll",
+  "out": "genesis"
+ },
+ {
+  "in": "picodrive_libretro.so",
+  "out": "genesis"
+ },
+ {
+  "in": "play",
+  "out": "ps2"
+ },
+ {
+  "in": "play-libretro.dll",
+  "out": "ps2"
+ },
+ {
+  "in": "play_libretro.so",
+  "out": "ps2"
+ },
+ {
+  "in": "snes9x",
+  "out": "snes"
+ },
+ {
+  "in": "snes9x-libretro.dll",
+  "out": "snes"
+ },
+ {
+  "in": "snes9x2002",
+  "out": "snes"
+ },
+ {
+  "in": "snes9x2002-libretro.dll",
+  "out": "snes"
+ },
+ {
+  "in": "snes9x2002_libretro.so",
+  "out": "snes"
+ },
+ {
+  "in": "snes9x2005",
+  "out": "snes"
+ },
+ {
+  "in": "snes9x2005-libretro.dll",
+  "out": "snes"
+ },
+ {
+  "in": "snes9x2005_libretro.so",
+  "out": "snes"
+ },
+ {
+  "in": "snes9x2010",
+  "out": "snes"
+ },
+ {
+  "in": "snes9x2010-libretro.dll",
+  "out": "snes"
+ },
+ {
+  "in": "snes9x2010_libretro.so",
+  "out": "snes"
+ },
+ {
+  "in": "snes9x_libretro.dylib",
+  "out": "snes"
+ },
+ {
+  "in": "snes9x_libretro.so",
+  "out": "snes"
+ },
+ {
+  "in": "unknown_core_libretro.so",
+  "out": ""
+ }
+]

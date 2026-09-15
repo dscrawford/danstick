@@ -1,0 +1,1046 @@
+[
+ {
+  "in": {
+   "bindings": {},
+   "overrides": {}
+  },
+  "out": []
+ },
+ {
+  "in": {
+   "bindings": {},
+   "overrides": {
+    "b": "input_y_btn"
+   }
+  },
+  "out": []
+ },
+ {
+  "in": {
+   "bindings": {},
+   "overrides": {
+    "b": ""
+   }
+  },
+  "out": []
+ },
+ {
+  "in": {
+   "bindings": {},
+   "overrides": {
+    "a": "input_a_btn",
+    "b": "input_b_btn"
+   }
+  },
+  "out": []
+ },
+ {
+  "in": {
+   "bindings": {
+    "a": {
+     "index": 1,
+     "kind": "button",
+     "ra_index": null,
+     "value": 0
+    }
+   },
+   "overrides": {}
+  },
+  "out": [
+   "input_b_btn = \"1\""
+  ]
+ },
+ {
+  "in": {
+   "bindings": {
+    "a": {
+     "index": 1,
+     "kind": "button",
+     "ra_index": null,
+     "value": 0
+    }
+   },
+   "overrides": {
+    "b": "input_y_btn"
+   }
+  },
+  "out": [
+   "input_b_btn = \"1\""
+  ]
+ },
+ {
+  "in": {
+   "bindings": {
+    "a": {
+     "index": 1,
+     "kind": "button",
+     "ra_index": null,
+     "value": 0
+    }
+   },
+   "overrides": {
+    "b": ""
+   }
+  },
+  "out": [
+   "input_b_btn = \"1\""
+  ]
+ },
+ {
+  "in": {
+   "bindings": {
+    "a": {
+     "index": 1,
+     "kind": "button",
+     "ra_index": null,
+     "value": 0
+    }
+   },
+   "overrides": {
+    "a": "input_a_btn",
+    "b": "input_b_btn"
+   }
+  },
+  "out": [
+   "input_a_btn = \"1\""
+  ]
+ },
+ {
+  "in": {
+   "bindings": {
+    "a": {
+     "index": 1,
+     "kind": "button",
+     "ra_index": null,
+     "value": 0
+    },
+    "b": {
+     "index": 2,
+     "kind": "button",
+     "ra_index": null,
+     "value": 0
+    },
+    "x": {
+     "index": 3,
+     "kind": "button",
+     "ra_index": null,
+     "value": 0
+    },
+    "y": {
+     "index": 4,
+     "kind": "button",
+     "ra_index": null,
+     "value": 0
+    }
+   },
+   "overrides": {}
+  },
+  "out": [
+   "input_b_btn = \"1\"",
+   "input_a_btn = \"2\"",
+   "input_y_btn = \"3\"",
+   "input_x_btn = \"4\""
+  ]
+ },
+ {
+  "in": {
+   "bindings": {
+    "a": {
+     "index": 1,
+     "kind": "button",
+     "ra_index": null,
+     "value": 0
+    },
+    "b": {
+     "index": 2,
+     "kind": "button",
+     "ra_index": null,
+     "value": 0
+    },
+    "x": {
+     "index": 3,
+     "kind": "button",
+     "ra_index": null,
+     "value": 0
+    },
+    "y": {
+     "index": 4,
+     "kind": "button",
+     "ra_index": null,
+     "value": 0
+    }
+   },
+   "overrides": {
+    "b": "input_y_btn"
+   }
+  },
+  "out": [
+   "input_b_btn = \"1\"",
+   "input_y_btn = \"2\"",
+   "input_y_btn = \"3\"",
+   "input_x_btn = \"4\""
+  ]
+ },
+ {
+  "in": {
+   "bindings": {
+    "a": {
+     "index": 1,
+     "kind": "button",
+     "ra_index": null,
+     "value": 0
+    },
+    "b": {
+     "index": 2,
+     "kind": "button",
+     "ra_index": null,
+     "value": 0
+    },
+    "x": {
+     "index": 3,
+     "kind": "button",
+     "ra_index": null,
+     "value": 0
+    },
+    "y": {
+     "index": 4,
+     "kind": "button",
+     "ra_index": null,
+     "value": 0
+    }
+   },
+   "overrides": {
+    "b": ""
+   }
+  },
+  "out": [
+   "input_b_btn = \"1\"",
+   "input_a_btn = \"2\"",
+   "input_y_btn = \"3\"",
+   "input_x_btn = \"4\""
+  ]
+ },
+ {
+  "in": {
+   "bindings": {
+    "a": {
+     "index": 1,
+     "kind": "button",
+     "ra_index": null,
+     "value": 0
+    },
+    "b": {
+     "index": 2,
+     "kind": "button",
+     "ra_index": null,
+     "value": 0
+    },
+    "x": {
+     "index": 3,
+     "kind": "button",
+     "ra_index": null,
+     "value": 0
+    },
+    "y": {
+     "index": 4,
+     "kind": "button",
+     "ra_index": null,
+     "value": 0
+    }
+   },
+   "overrides": {
+    "a": "input_a_btn",
+    "b": "input_b_btn"
+   }
+  },
+  "out": [
+   "input_a_btn = \"1\"",
+   "input_b_btn = \"2\"",
+   "input_y_btn = \"3\"",
+   "input_x_btn = \"4\""
+  ]
+ },
+ {
+  "in": {
+   "bindings": {
+    "dpdown": {
+     "index": 0,
+     "kind": "hat",
+     "ra_index": null,
+     "value": 4
+    },
+    "dpleft": {
+     "index": 0,
+     "kind": "hat",
+     "ra_index": null,
+     "value": 8
+    },
+    "dpright": {
+     "index": 0,
+     "kind": "hat",
+     "ra_index": null,
+     "value": 2
+    },
+    "dpup": {
+     "index": 0,
+     "kind": "hat",
+     "ra_index": null,
+     "value": 1
+    }
+   },
+   "overrides": {}
+  },
+  "out": [
+   "input_up_btn = \"h0up\"",
+   "input_down_btn = \"h0down\"",
+   "input_left_btn = \"h0left\"",
+   "input_right_btn = \"h0right\""
+  ]
+ },
+ {
+  "in": {
+   "bindings": {
+    "dpdown": {
+     "index": 0,
+     "kind": "hat",
+     "ra_index": null,
+     "value": 4
+    },
+    "dpleft": {
+     "index": 0,
+     "kind": "hat",
+     "ra_index": null,
+     "value": 8
+    },
+    "dpright": {
+     "index": 0,
+     "kind": "hat",
+     "ra_index": null,
+     "value": 2
+    },
+    "dpup": {
+     "index": 0,
+     "kind": "hat",
+     "ra_index": null,
+     "value": 1
+    }
+   },
+   "overrides": {
+    "b": "input_y_btn"
+   }
+  },
+  "out": [
+   "input_up_btn = \"h0up\"",
+   "input_down_btn = \"h0down\"",
+   "input_left_btn = \"h0left\"",
+   "input_right_btn = \"h0right\""
+  ]
+ },
+ {
+  "in": {
+   "bindings": {
+    "dpdown": {
+     "index": 0,
+     "kind": "hat",
+     "ra_index": null,
+     "value": 4
+    },
+    "dpleft": {
+     "index": 0,
+     "kind": "hat",
+     "ra_index": null,
+     "value": 8
+    },
+    "dpright": {
+     "index": 0,
+     "kind": "hat",
+     "ra_index": null,
+     "value": 2
+    },
+    "dpup": {
+     "index": 0,
+     "kind": "hat",
+     "ra_index": null,
+     "value": 1
+    }
+   },
+   "overrides": {
+    "b": ""
+   }
+  },
+  "out": [
+   "input_up_btn = \"h0up\"",
+   "input_down_btn = \"h0down\"",
+   "input_left_btn = \"h0left\"",
+   "input_right_btn = \"h0right\""
+  ]
+ },
+ {
+  "in": {
+   "bindings": {
+    "dpdown": {
+     "index": 0,
+     "kind": "hat",
+     "ra_index": null,
+     "value": 4
+    },
+    "dpleft": {
+     "index": 0,
+     "kind": "hat",
+     "ra_index": null,
+     "value": 8
+    },
+    "dpright": {
+     "index": 0,
+     "kind": "hat",
+     "ra_index": null,
+     "value": 2
+    },
+    "dpup": {
+     "index": 0,
+     "kind": "hat",
+     "ra_index": null,
+     "value": 1
+    }
+   },
+   "overrides": {
+    "a": "input_a_btn",
+    "b": "input_b_btn"
+   }
+  },
+  "out": [
+   "input_up_btn = \"h0up\"",
+   "input_down_btn = \"h0down\"",
+   "input_left_btn = \"h0left\"",
+   "input_right_btn = \"h0right\""
+  ]
+ },
+ {
+  "in": {
+   "bindings": {
+    "dpup": {
+     "index": 0,
+     "kind": "hat",
+     "ra_index": null,
+     "value": 3
+    }
+   },
+   "overrides": {}
+  },
+  "out": []
+ },
+ {
+  "in": {
+   "bindings": {
+    "dpup": {
+     "index": 0,
+     "kind": "hat",
+     "ra_index": null,
+     "value": 3
+    }
+   },
+   "overrides": {
+    "b": "input_y_btn"
+   }
+  },
+  "out": []
+ },
+ {
+  "in": {
+   "bindings": {
+    "dpup": {
+     "index": 0,
+     "kind": "hat",
+     "ra_index": null,
+     "value": 3
+    }
+   },
+   "overrides": {
+    "b": ""
+   }
+  },
+  "out": []
+ },
+ {
+  "in": {
+   "bindings": {
+    "dpup": {
+     "index": 0,
+     "kind": "hat",
+     "ra_index": null,
+     "value": 3
+    }
+   },
+   "overrides": {
+    "a": "input_a_btn",
+    "b": "input_b_btn"
+   }
+  },
+  "out": []
+ },
+ {
+  "in": {
+   "bindings": {
+    "a": {
+     "index": 13,
+     "kind": "button",
+     "ra_index": -1,
+     "value": 0
+    }
+   },
+   "overrides": {}
+  },
+  "out": []
+ },
+ {
+  "in": {
+   "bindings": {
+    "a": {
+     "index": 13,
+     "kind": "button",
+     "ra_index": -1,
+     "value": 0
+    }
+   },
+   "overrides": {
+    "b": "input_y_btn"
+   }
+  },
+  "out": []
+ },
+ {
+  "in": {
+   "bindings": {
+    "a": {
+     "index": 13,
+     "kind": "button",
+     "ra_index": -1,
+     "value": 0
+    }
+   },
+   "overrides": {
+    "b": ""
+   }
+  },
+  "out": []
+ },
+ {
+  "in": {
+   "bindings": {
+    "a": {
+     "index": 13,
+     "kind": "button",
+     "ra_index": -1,
+     "value": 0
+    }
+   },
+   "overrides": {
+    "a": "input_a_btn",
+    "b": "input_b_btn"
+   }
+  },
+  "out": []
+ },
+ {
+  "in": {
+   "bindings": {
+    "a": {
+     "index": 13,
+     "kind": "button",
+     "ra_index": 11,
+     "value": 0
+    }
+   },
+   "overrides": {}
+  },
+  "out": [
+   "input_b_btn = \"11\""
+  ]
+ },
+ {
+  "in": {
+   "bindings": {
+    "a": {
+     "index": 13,
+     "kind": "button",
+     "ra_index": 11,
+     "value": 0
+    }
+   },
+   "overrides": {
+    "b": "input_y_btn"
+   }
+  },
+  "out": [
+   "input_b_btn = \"11\""
+  ]
+ },
+ {
+  "in": {
+   "bindings": {
+    "a": {
+     "index": 13,
+     "kind": "button",
+     "ra_index": 11,
+     "value": 0
+    }
+   },
+   "overrides": {
+    "b": ""
+   }
+  },
+  "out": [
+   "input_b_btn = \"11\""
+  ]
+ },
+ {
+  "in": {
+   "bindings": {
+    "a": {
+     "index": 13,
+     "kind": "button",
+     "ra_index": 11,
+     "value": 0
+    }
+   },
+   "overrides": {
+    "a": "input_a_btn",
+    "b": "input_b_btn"
+   }
+  },
+  "out": [
+   "input_a_btn = \"11\""
+  ]
+ },
+ {
+  "in": {
+   "bindings": {
+    "lefttrigger": {
+     "index": 2,
+     "kind": "axis",
+     "ra_index": null,
+     "value": -1
+    }
+   },
+   "overrides": {}
+  },
+  "out": [
+   "input_l2_axis = \"-2\""
+  ]
+ },
+ {
+  "in": {
+   "bindings": {
+    "lefttrigger": {
+     "index": 2,
+     "kind": "axis",
+     "ra_index": null,
+     "value": -1
+    }
+   },
+   "overrides": {
+    "b": "input_y_btn"
+   }
+  },
+  "out": [
+   "input_l2_axis = \"-2\""
+  ]
+ },
+ {
+  "in": {
+   "bindings": {
+    "lefttrigger": {
+     "index": 2,
+     "kind": "axis",
+     "ra_index": null,
+     "value": -1
+    }
+   },
+   "overrides": {
+    "b": ""
+   }
+  },
+  "out": [
+   "input_l2_axis = \"-2\""
+  ]
+ },
+ {
+  "in": {
+   "bindings": {
+    "lefttrigger": {
+     "index": 2,
+     "kind": "axis",
+     "ra_index": null,
+     "value": -1
+    }
+   },
+   "overrides": {
+    "a": "input_a_btn",
+    "b": "input_b_btn"
+   }
+  },
+  "out": [
+   "input_l2_axis = \"-2\""
+  ]
+ },
+ {
+  "in": {
+   "bindings": {
+    "rightstick_down": {
+     "index": 3,
+     "kind": "axis",
+     "ra_index": null,
+     "value": 1
+    },
+    "rightstick_up": {
+     "index": 11,
+     "kind": "button",
+     "ra_index": null,
+     "value": 0
+    }
+   },
+   "overrides": {}
+  },
+  "out": [
+   "input_r_y_minus_btn = \"11\""
+  ]
+ },
+ {
+  "in": {
+   "bindings": {
+    "rightstick_down": {
+     "index": 3,
+     "kind": "axis",
+     "ra_index": null,
+     "value": 1
+    },
+    "rightstick_up": {
+     "index": 11,
+     "kind": "button",
+     "ra_index": null,
+     "value": 0
+    }
+   },
+   "overrides": {
+    "b": "input_y_btn"
+   }
+  },
+  "out": [
+   "input_r_y_minus_btn = \"11\""
+  ]
+ },
+ {
+  "in": {
+   "bindings": {
+    "rightstick_down": {
+     "index": 3,
+     "kind": "axis",
+     "ra_index": null,
+     "value": 1
+    },
+    "rightstick_up": {
+     "index": 11,
+     "kind": "button",
+     "ra_index": null,
+     "value": 0
+    }
+   },
+   "overrides": {
+    "b": ""
+   }
+  },
+  "out": [
+   "input_r_y_minus_btn = \"11\""
+  ]
+ },
+ {
+  "in": {
+   "bindings": {
+    "rightstick_down": {
+     "index": 3,
+     "kind": "axis",
+     "ra_index": null,
+     "value": 1
+    },
+    "rightstick_up": {
+     "index": 11,
+     "kind": "button",
+     "ra_index": null,
+     "value": 0
+    }
+   },
+   "overrides": {
+    "a": "input_a_btn",
+    "b": "input_b_btn"
+   }
+  },
+  "out": [
+   "input_r_y_minus_btn = \"11\""
+  ]
+ },
+ {
+  "in": {
+   "bindings": {
+    "rightstick_left": {
+     "index": 2,
+     "kind": "axis",
+     "ra_index": null,
+     "value": -1
+    },
+    "rightstick_right": {
+     "index": 14,
+     "kind": "button",
+     "ra_index": null,
+     "value": 0
+    }
+   },
+   "overrides": {}
+  },
+  "out": [
+   "input_r_x_plus_btn = \"14\""
+  ]
+ },
+ {
+  "in": {
+   "bindings": {
+    "rightstick_left": {
+     "index": 2,
+     "kind": "axis",
+     "ra_index": null,
+     "value": -1
+    },
+    "rightstick_right": {
+     "index": 14,
+     "kind": "button",
+     "ra_index": null,
+     "value": 0
+    }
+   },
+   "overrides": {
+    "b": "input_y_btn"
+   }
+  },
+  "out": [
+   "input_r_x_plus_btn = \"14\""
+  ]
+ },
+ {
+  "in": {
+   "bindings": {
+    "rightstick_left": {
+     "index": 2,
+     "kind": "axis",
+     "ra_index": null,
+     "value": -1
+    },
+    "rightstick_right": {
+     "index": 14,
+     "kind": "button",
+     "ra_index": null,
+     "value": 0
+    }
+   },
+   "overrides": {
+    "b": ""
+   }
+  },
+  "out": [
+   "input_r_x_plus_btn = \"14\""
+  ]
+ },
+ {
+  "in": {
+   "bindings": {
+    "rightstick_left": {
+     "index": 2,
+     "kind": "axis",
+     "ra_index": null,
+     "value": -1
+    },
+    "rightstick_right": {
+     "index": 14,
+     "kind": "button",
+     "ra_index": null,
+     "value": 0
+    }
+   },
+   "overrides": {
+    "a": "input_a_btn",
+    "b": "input_b_btn"
+   }
+  },
+  "out": [
+   "input_r_x_plus_btn = \"14\""
+  ]
+ },
+ {
+  "in": {
+   "bindings": {
+    "rightstick_down": {
+     "index": 12,
+     "kind": "button",
+     "ra_index": null,
+     "value": 0
+    },
+    "rightstick_up": {
+     "index": 11,
+     "kind": "button",
+     "ra_index": null,
+     "value": 0
+    }
+   },
+   "overrides": {}
+  },
+  "out": [
+   "input_r_y_minus_btn = \"11\"",
+   "input_r_y_plus_btn = \"12\""
+  ]
+ },
+ {
+  "in": {
+   "bindings": {
+    "rightstick_down": {
+     "index": 12,
+     "kind": "button",
+     "ra_index": null,
+     "value": 0
+    },
+    "rightstick_up": {
+     "index": 11,
+     "kind": "button",
+     "ra_index": null,
+     "value": 0
+    }
+   },
+   "overrides": {
+    "b": "input_y_btn"
+   }
+  },
+  "out": [
+   "input_r_y_minus_btn = \"11\"",
+   "input_r_y_plus_btn = \"12\""
+  ]
+ },
+ {
+  "in": {
+   "bindings": {
+    "rightstick_down": {
+     "index": 12,
+     "kind": "button",
+     "ra_index": null,
+     "value": 0
+    },
+    "rightstick_up": {
+     "index": 11,
+     "kind": "button",
+     "ra_index": null,
+     "value": 0
+    }
+   },
+   "overrides": {
+    "b": ""
+   }
+  },
+  "out": [
+   "input_r_y_minus_btn = \"11\"",
+   "input_r_y_plus_btn = \"12\""
+  ]
+ },
+ {
+  "in": {
+   "bindings": {
+    "rightstick_down": {
+     "index": 12,
+     "kind": "button",
+     "ra_index": null,
+     "value": 0
+    },
+    "rightstick_up": {
+     "index": 11,
+     "kind": "button",
+     "ra_index": null,
+     "value": 0
+    }
+   },
+   "overrides": {
+    "a": "input_a_btn",
+    "b": "input_b_btn"
+   }
+  },
+  "out": [
+   "input_r_y_minus_btn = \"11\"",
+   "input_r_y_plus_btn = \"12\""
+  ]
+ },
+ {
+  "in": {
+   "bindings": {
+    "a": {
+     "index": 0,
+     "kind": "axis",
+     "ra_index": null,
+     "value": -1
+    }
+   },
+   "overrides": {}
+  },
+  "out": [
+   "input_b_axis = \"-0\""
+  ]
+ },
+ {
+  "in": {
+   "bindings": {
+    "a": {
+     "index": 0,
+     "kind": "axis",
+     "ra_index": null,
+     "value": -1
+    }
+   },
+   "overrides": {
+    "b": "input_y_btn"
+   }
+  },
+  "out": [
+   "input_b_axis = \"-0\""
+  ]
+ },
+ {
+  "in": {
+   "bindings": {
+    "a": {
+     "index": 0,
+     "kind": "axis",
+     "ra_index": null,
+     "value": -1
+    }
+   },
+   "overrides": {
+    "b": ""
+   }
+  },
+  "out": [
+   "input_b_axis = \"-0\""
+  ]
+ },
+ {
+  "in": {
+   "bindings": {
+    "a": {
+     "index": 0,
+     "kind": "axis",
+     "ra_index": null,
+     "value": -1
+    }
+   },
+   "overrides": {
+    "a": "input_a_btn",
+    "b": "input_b_btn"
+   }
+  },
+  "out": [
+   "input_a_axis = \"-0\""
+  ]
+ }
+]

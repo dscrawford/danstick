@@ -1,0 +1,158 @@
+[
+ {
+  "in": {
+   "fields": {
+    "a": "b1",
+    "b": "b2",
+    "leftx": "a0"
+   },
+   "guid": "00000000000000000000000000000000",
+   "name": "Ordinary Pad",
+   "platform": "Linux"
+  },
+  "out": "00000000000000000000000000000000,Ordinary Pad,a:b1,b:b2,leftx:a0,platform:Linux,"
+ },
+ {
+  "in": {
+   "fields": {
+    "a": "b1",
+    "b": "b2",
+    "leftx": "a0"
+   },
+   "guid": "00000000000000000000000000000000",
+   "name": "Evil, Pad",
+   "platform": "Linux"
+  },
+  "out": "00000000000000000000000000000000,Evil Pad,a:b1,b:b2,leftx:a0,platform:Linux,"
+ },
+ {
+  "in": {
+   "fields": {
+    "a": "b1",
+    "b": "b2",
+    "leftx": "a0"
+   },
+   "guid": "00000000000000000000000000000000",
+   "name": "Pad\nTwo",
+   "platform": "Linux"
+  },
+  "out": "00000000000000000000000000000000,PadTwo,a:b1,b:b2,leftx:a0,platform:Linux,"
+ },
+ {
+  "in": {
+   "fields": {
+    "a": "b1",
+    "b": "b2",
+    "leftx": "a0"
+   },
+   "guid": "00000000000000000000000000000000",
+   "name": "Pad\rTwo",
+   "platform": "Linux"
+  },
+  "out": "00000000000000000000000000000000,PadTwo,a:b1,b:b2,leftx:a0,platform:Linux,"
+ },
+ {
+  "in": {
+   "fields": {
+    "a": "b1",
+    "b": "b2",
+    "leftx": "a0"
+   },
+   "guid": "00000000000000000000000000000000",
+   "name": "Pad\u000bTwo",
+   "platform": "Linux"
+  },
+  "out": "00000000000000000000000000000000,PadTwo,a:b1,b:b2,leftx:a0,platform:Linux,"
+ },
+ {
+  "in": {
+   "fields": {
+    "a": "b1",
+    "b": "b2",
+    "leftx": "a0"
+   },
+   "guid": "00000000000000000000000000000000",
+   "name": "Pad\fTwo",
+   "platform": "Linux"
+  },
+  "out": "00000000000000000000000000000000,PadTwo,a:b1,b:b2,leftx:a0,platform:Linux,"
+ },
+ {
+  "in": {
+   "fields": {
+    "a": "b1",
+    "b": "b2",
+    "leftx": "a0"
+   },
+   "guid": "00000000000000000000000000000000",
+   "name": "Pad\u001cTwo",
+   "platform": "Linux"
+  },
+  "out": "00000000000000000000000000000000,PadTwo,a:b1,b:b2,leftx:a0,platform:Linux,"
+ },
+ {
+  "in": {
+   "fields": {
+    "a": "b1",
+    "b": "b2",
+    "leftx": "a0"
+   },
+   "guid": "00000000000000000000000000000000",
+   "name": "Pad\u0085Two",
+   "platform": "Linux"
+  },
+  "out": "00000000000000000000000000000000,PadTwo,a:b1,b:b2,leftx:a0,platform:Linux,"
+ },
+ {
+  "in": {
+   "fields": {
+    "a": "b1",
+    "b": "b2",
+    "leftx": "a0"
+   },
+   "guid": "00000000000000000000000000000000",
+   "name": "Pad\u2028Two",
+   "platform": "Linux"
+  },
+  "out": "00000000000000000000000000000000,PadTwo,a:b1,b:b2,leftx:a0,platform:Linux,"
+ },
+ {
+  "in": {
+   "fields": {
+    "a": "b1",
+    "b": "b2",
+    "leftx": "a0"
+   },
+   "guid": "00000000000000000000000000000000",
+   "name": "Pad\u2029Two",
+   "platform": "Linux"
+  },
+  "out": "00000000000000000000000000000000,PadTwo,a:b1,b:b2,leftx:a0,platform:Linux,"
+ },
+ {
+  "in": {
+   "fields": {
+    "a": "b1",
+    "b": "b2",
+    "leftx": "a0"
+   },
+   "guid": "00000000000000000000000000000000",
+   "name": ",,,",
+   "platform": "Linux"
+  },
+  "out": "00000000000000000000000000000000,,a:b1,b:b2,leftx:a0,platform:Linux,"
+ },
+ {
+  "in": {
+   "fields": {
+    "a": "b1",
+    "b": "b2",
+    "leftx": "a0"
+   },
+   "guid": "00000000000000000000000000000000",
+   "name": "",
+   "platform": "Linux"
+  },
+  "out": "00000000000000000000000000000000,,a:b1,b:b2,leftx:a0,platform:Linux,"
+ }
+]

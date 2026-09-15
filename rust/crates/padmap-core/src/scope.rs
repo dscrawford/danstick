@@ -55,7 +55,12 @@ pub fn game_of(scope: &str) -> &str {
 /// So: the filename stem, normalised, under the console. Returns `""` when the
 /// stem normalises to nothing.
 pub fn game_key(console_id: &str, rom: &str) -> String {
-    let name = rom.rsplit('/').next().unwrap_or(rom);
+    // Trailing separators first, as `pathlib.Path(...).name` does. A
+    // directory-shaped "ROM" is normal -- a PlayStation disc folder, a MAME
+    // set -- and a front-end that hands one over with a trailing slash would
+    // otherwise get an empty basename, no key, and a per-game mapping that
+    // silently never applies.
+    let name = rom.trim_end_matches('/').rsplit('/').next().unwrap_or("");
     // Only the *last* suffix: "Legend of Zelda, The (v1.2).z64" must not lose
     // everything after the first dot, and a name with no dot at all is normal
     // for a directory-shaped "ROM".
@@ -194,6 +199,16 @@ mod tests {
             game_key("n64", "Legend of Zelda, The (v1.2).z64"),
             "n64/legend-of-zelda-the-v1-2"
         );
+    }
+
+    #[test]
+    fn a_directory_shaped_rom_keys_off_its_directory_name() {
+        // Caught by the differential corpus: `Path(...).name` strips trailing
+        // separators and a bare `rsplit('/')` does not.
+        assert_eq!(game_key("ps2", "/roms/ps2/Final Fantasy X/"), "ps2/final-fantasy-x");
+        assert_eq!(game_key("ps2", "/roms/ps2/Final Fantasy X"), "ps2/final-fantasy-x");
+        assert_eq!(game_key("n64", "/"), "");
+        assert_eq!(game_key("n64", "///"), "");
     }
 
     #[test]

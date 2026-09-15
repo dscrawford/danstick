@@ -1,0 +1,317 @@
+[
+ {
+  "in": {
+   "console": "n64",
+   "rom": "/roms/n64/Super Smash Bros. (U) [!].z64"
+  },
+  "out": "n64/super-smash-bros-u"
+ },
+ {
+  "in": {
+   "console": "n64",
+   "rom": "Legend of Zelda, The (v1.2).z64"
+  },
+  "out": "n64/legend-of-zelda-the-v1-2"
+ },
+ {
+  "in": {
+   "console": "n64",
+   "rom": "/roms/mame/10yard"
+  },
+  "out": "n64/10yard"
+ },
+ {
+  "in": {
+   "console": "n64",
+   "rom": "/mnt/old/roms/Mario 64.z64"
+  },
+  "out": "n64/mario-64"
+ },
+ {
+  "in": {
+   "console": "n64",
+   "rom": "  ...Hello___World!!!  .rom"
+  },
+  "out": "n64/hello-world"
+ },
+ {
+  "in": {
+   "console": "n64",
+   "rom": "--x--.rom"
+  },
+  "out": "n64/x"
+ },
+ {
+  "in": {
+   "console": "n64",
+   "rom": "...z64"
+  },
+  "out": ""
+ },
+ {
+  "in": {
+   "console": "n64",
+   "rom": "!!!.rom"
+  },
+  "out": ""
+ },
+ {
+  "in": {
+   "console": "n64",
+   "rom": ""
+  },
+  "out": ""
+ },
+ {
+  "in": {
+   "console": "n64",
+   "rom": "\u65e5\u672c\u8a9e.rom"
+  },
+  "out": ""
+ },
+ {
+  "in": {
+   "console": "n64",
+   "rom": "MARIO.z64"
+  },
+  "out": "n64/mario"
+ },
+ {
+  "in": {
+   "console": "n64",
+   "rom": "mario.z64"
+  },
+  "out": "n64/mario"
+ },
+ {
+  "in": {
+   "console": "n64",
+   "rom": "a.b.c.d.rom"
+  },
+  "out": "n64/a-b-c-d"
+ },
+ {
+  "in": {
+   "console": "n64",
+   "rom": "/trailing/slash/"
+  },
+  "out": "n64/slash"
+ },
+ {
+  "in": {
+   "console": "n64",
+   "rom": ".hidden"
+  },
+  "out": ""
+ },
+ {
+  "in": {
+   "console": "arcade",
+   "rom": "/roms/n64/Super Smash Bros. (U) [!].z64"
+  },
+  "out": "arcade/super-smash-bros-u"
+ },
+ {
+  "in": {
+   "console": "arcade",
+   "rom": "Legend of Zelda, The (v1.2).z64"
+  },
+  "out": "arcade/legend-of-zelda-the-v1-2"
+ },
+ {
+  "in": {
+   "console": "arcade",
+   "rom": "/roms/mame/10yard"
+  },
+  "out": "arcade/10yard"
+ },
+ {
+  "in": {
+   "console": "arcade",
+   "rom": "/mnt/old/roms/Mario 64.z64"
+  },
+  "out": "arcade/mario-64"
+ },
+ {
+  "in": {
+   "console": "arcade",
+   "rom": "  ...Hello___World!!!  .rom"
+  },
+  "out": "arcade/hello-world"
+ },
+ {
+  "in": {
+   "console": "arcade",
+   "rom": "--x--.rom"
+  },
+  "out": "arcade/x"
+ },
+ {
+  "in": {
+   "console": "arcade",
+   "rom": "...z64"
+  },
+  "out": ""
+ },
+ {
+  "in": {
+   "console": "arcade",
+   "rom": "!!!.rom"
+  },
+  "out": ""
+ },
+ {
+  "in": {
+   "console": "arcade",
+   "rom": ""
+  },
+  "out": ""
+ },
+ {
+  "in": {
+   "console": "arcade",
+   "rom": "\u65e5\u672c\u8a9e.rom"
+  },
+  "out": ""
+ },
+ {
+  "in": {
+   "console": "arcade",
+   "rom": "MARIO.z64"
+  },
+  "out": "arcade/mario"
+ },
+ {
+  "in": {
+   "console": "arcade",
+   "rom": "mario.z64"
+  },
+  "out": "arcade/mario"
+ },
+ {
+  "in": {
+   "console": "arcade",
+   "rom": "a.b.c.d.rom"
+  },
+  "out": "arcade/a-b-c-d"
+ },
+ {
+  "in": {
+   "console": "arcade",
+   "rom": "/trailing/slash/"
+  },
+  "out": "arcade/slash"
+ },
+ {
+  "in": {
+   "console": "arcade",
+   "rom": ".hidden"
+  },
+  "out": ""
+ },
+ {
+  "in": {
+   "console": "",
+   "rom": "/roms/n64/Super Smash Bros. (U) [!].z64"
+  },
+  "out": "unknown/super-smash-bros-u"
+ },
+ {
+  "in": {
+   "console": "",
+   "rom": "Legend of Zelda, The (v1.2).z64"
+  },
+  "out": "unknown/legend-of-zelda-the-v1-2"
+ },
+ {
+  "in": {
+   "console": "",
+   "rom": "/roms/mame/10yard"
+  },
+  "out": "unknown/10yard"
+ },
+ {
+  "in": {
+   "console": "",
+   "rom": "/mnt/old/roms/Mario 64.z64"
+  },
+  "out": "unknown/mario-64"
+ },
+ {
+  "in": {
+   "console": "",
+   "rom": "  ...Hello___World!!!  .rom"
+  },
+  "out": "unknown/hello-world"
+ },
+ {
+  "in": {
+   "console": "",
+   "rom": "--x--.rom"
+  },
+  "out": "unknown/x"
+ },
+ {
+  "in": {
+   "console": "",
+   "rom": "...z64"
+  },
+  "out": ""
+ },
+ {
+  "in": {
+   "console": "",
+   "rom": "!!!.rom"
+  },
+  "out": ""
+ },
+ {
+  "in": {
+   "console": "",
+   "rom": ""
+  },
+  "out": ""
+ },
+ {
+  "in": {
+   "console": "",
+   "rom": "\u65e5\u672c\u8a9e.rom"
+  },
+  "out": ""
+ },
+ {
+  "in": {
+   "console": "",
+   "rom": "MARIO.z64"
+  },
+  "out": "unknown/mario"
+ },
+ {
+  "in": {
+   "console": "",
+   "rom": "mario.z64"
+  },
+  "out": "unknown/mario"
+ },
+ {
+  "in": {
+   "console": "",
+   "rom": "a.b.c.d.rom"
+  },
+  "out": "unknown/a-b-c-d"
+ },
+ {
+  "in": {
+   "console": "",
+   "rom": "/trailing/slash/"
+  },
+  "out": "unknown/slash"
+ },
+ {
+  "in": {
+   "console": "",
+   "rom": ".hidden"
+  },
+  "out": ""
+ }
+]

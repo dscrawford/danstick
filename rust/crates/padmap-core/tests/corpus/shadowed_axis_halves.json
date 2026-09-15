@@ -1,0 +1,83 @@
+[
+ {
+  "in": [],
+  "out": []
+ },
+ {
+  "in": [
+   "# a comment"
+  ],
+  "out": [
+   "# a comment"
+  ]
+ },
+ {
+  "in": [
+   "input_r_y_minus_btn = \"11\"",
+   "input_r_y_plus_axis = \"+3\""
+  ],
+  "out": [
+   "input_r_y_minus_btn = \"11\""
+  ]
+ },
+ {
+  "in": [
+   "input_r_y_plus_axis = \"+3\"",
+   "input_r_y_minus_btn = \"11\""
+  ],
+  "out": [
+   "input_r_y_minus_btn = \"11\""
+  ]
+ },
+ {
+  "in": [
+   "input_r_x_plus_btn = \"12\"",
+   "input_r_x_minus_axis = \"-2\""
+  ],
+  "out": [
+   "input_r_x_plus_btn = \"12\""
+  ]
+ },
+ {
+  "in": [
+   "input_r_y_minus_axis = \"-3\"",
+   "input_r_y_plus_axis = \"+3\""
+  ],
+  "out": [
+   "input_r_y_minus_axis = \"-3\"",
+   "input_r_y_plus_axis = \"+3\""
+  ]
+ },
+ {
+  "in": [
+   "input_r_y_minus_btn = \"11\"",
+   "input_r_y_plus_btn = \"12\""
+  ],
+  "out": [
+   "input_r_y_minus_btn = \"11\"",
+   "input_r_y_plus_btn = \"12\""
+  ]
+ },
+ {
+  "in": [
+   "input_l_x_minus_btn = \"1\"",
+   "input_l_x_plus_axis = \"+0\"",
+   "input_l_y_plus_btn = \"2\"",
+   "input_l_y_minus_axis = \"-1\""
+  ],
+  "out": [
+   "input_l_x_minus_btn = \"1\"",
+   "input_l_y_plus_btn = \"2\""
+  ]
+ },
+ {
+  "in": [
+   "input_b_btn = \"1\"",
+   "no separator here"
+  ],
+  "out": [
+   "input_b_btn = \"1\"",
+   "no separator here"
+  ]
+ }
+]

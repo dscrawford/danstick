@@ -1,0 +1,343 @@
+[
+ {
+  "in": {
+   "bindings": {},
+   "guid": "0600c9a7790000007918000001000000",
+   "name": "padmap Player 1",
+   "platform": "Linux",
+   "sticks": null
+  },
+  "out": "0600c9a7790000007918000001000000,padmap Player 1,platform:Linux,"
+ },
+ {
+  "in": {
+   "bindings": {},
+   "guid": "0600c9a7790000007918000001000000",
+   "name": "padmap Player 1",
+   "platform": "Linux",
+   "sticks": {
+    "leftx": "a0",
+    "lefty": "a1"
+   }
+  },
+  "out": "0600c9a7790000007918000001000000,padmap Player 1,leftx:a0,lefty:a1,platform:Linux,"
+ },
+ {
+  "in": {
+   "bindings": {
+    "a": {
+     "index": 1,
+     "kind": "button",
+     "ra_index": null,
+     "value": 0
+    }
+   },
+   "guid": "0600c9a7790000007918000001000000",
+   "name": "padmap Player 1",
+   "platform": "Linux",
+   "sticks": null
+  },
+  "out": "0600c9a7790000007918000001000000,padmap Player 1,a:b1,platform:Linux,"
+ },
+ {
+  "in": {
+   "bindings": {
+    "a": {
+     "index": 1,
+     "kind": "button",
+     "ra_index": null,
+     "value": 0
+    }
+   },
+   "guid": "0600c9a7790000007918000001000000",
+   "name": "padmap Player 1",
+   "platform": "Linux",
+   "sticks": {
+    "leftx": "a0",
+    "lefty": "a1"
+   }
+  },
+  "out": "0600c9a7790000007918000001000000,padmap Player 1,a:b1,leftx:a0,lefty:a1,platform:Linux,"
+ },
+ {
+  "in": {
+   "bindings": {
+    "a": {
+     "index": 1,
+     "kind": "button",
+     "ra_index": null,
+     "value": 0
+    },
+    "b": {
+     "index": 2,
+     "kind": "button",
+     "ra_index": null,
+     "value": 0
+    },
+    "dpup": {
+     "index": 0,
+     "kind": "hat",
+     "ra_index": null,
+     "value": 1
+    },
+    "start": {
+     "index": 9,
+     "kind": "button",
+     "ra_index": null,
+     "value": 0
+    }
+   },
+   "guid": "0600c9a7790000007918000001000000",
+   "name": "padmap Player 1",
+   "platform": "Linux",
+   "sticks": null
+  },
+  "out": "0600c9a7790000007918000001000000,padmap Player 1,a:b1,b:b2,start:b9,dpup:h0.1,platform:Linux,"
+ },
+ {
+  "in": {
+   "bindings": {
+    "a": {
+     "index": 1,
+     "kind": "button",
+     "ra_index": null,
+     "value": 0
+    },
+    "b": {
+     "index": 2,
+     "kind": "button",
+     "ra_index": null,
+     "value": 0
+    },
+    "dpup": {
+     "index": 0,
+     "kind": "hat",
+     "ra_index": null,
+     "value": 1
+    },
+    "start": {
+     "index": 9,
+     "kind": "button",
+     "ra_index": null,
+     "value": 0
+    }
+   },
+   "guid": "0600c9a7790000007918000001000000",
+   "name": "padmap Player 1",
+   "platform": "Linux",
+   "sticks": {
+    "leftx": "a0",
+    "lefty": "a1"
+   }
+  },
+  "out": "0600c9a7790000007918000001000000,padmap Player 1,a:b1,b:b2,start:b9,dpup:h0.1,leftx:a0,lefty:a1,platform:Linux,"
+ },
+ {
+  "in": {
+   "bindings": {
+    "a": {
+     "index": 1,
+     "kind": "button",
+     "ra_index": null,
+     "value": 0
+    },
+    "dpup": {
+     "index": 0,
+     "kind": "hat",
+     "ra_index": null,
+     "value": 3
+    }
+   },
+   "guid": "0600c9a7790000007918000001000000",
+   "name": "padmap Player 1",
+   "platform": "Linux",
+   "sticks": null
+  },
+  "out": "0600c9a7790000007918000001000000,padmap Player 1,a:b1,platform:Linux,"
+ },
+ {
+  "in": {
+   "bindings": {
+    "a": {
+     "index": 1,
+     "kind": "button",
+     "ra_index": null,
+     "value": 0
+    },
+    "dpup": {
+     "index": 0,
+     "kind": "hat",
+     "ra_index": null,
+     "value": 3
+    }
+   },
+   "guid": "0600c9a7790000007918000001000000",
+   "name": "padmap Player 1",
+   "platform": "Linux",
+   "sticks": {
+    "leftx": "a0",
+    "lefty": "a1"
+   }
+  },
+  "out": "0600c9a7790000007918000001000000,padmap Player 1,a:b1,leftx:a0,lefty:a1,platform:Linux,"
+ },
+ {
+  "in": {
+   "bindings": {
+    "rightstick_down": {
+     "index": 12,
+     "kind": "button",
+     "ra_index": null,
+     "value": 0
+    },
+    "rightstick_left": {
+     "index": 13,
+     "kind": "button",
+     "ra_index": null,
+     "value": 0
+    },
+    "rightstick_right": {
+     "index": 14,
+     "kind": "button",
+     "ra_index": null,
+     "value": 0
+    },
+    "rightstick_up": {
+     "index": 11,
+     "kind": "button",
+     "ra_index": null,
+     "value": 0
+    }
+   },
+   "guid": "0600c9a7790000007918000001000000",
+   "name": "padmap Player 1",
+   "platform": "Linux",
+   "sticks": null
+  },
+  "out": "0600c9a7790000007918000001000000,padmap Player 1,-righty:b11,+righty:b12,-rightx:b13,+rightx:b14,platform:Linux,"
+ },
+ {
+  "in": {
+   "bindings": {
+    "rightstick_down": {
+     "index": 12,
+     "kind": "button",
+     "ra_index": null,
+     "value": 0
+    },
+    "rightstick_left": {
+     "index": 13,
+     "kind": "button",
+     "ra_index": null,
+     "value": 0
+    },
+    "rightstick_right": {
+     "index": 14,
+     "kind": "button",
+     "ra_index": null,
+     "value": 0
+    },
+    "rightstick_up": {
+     "index": 11,
+     "kind": "button",
+     "ra_index": null,
+     "value": 0
+    }
+   },
+   "guid": "0600c9a7790000007918000001000000",
+   "name": "padmap Player 1",
+   "platform": "Linux",
+   "sticks": {
+    "leftx": "a0",
+    "lefty": "a1"
+   }
+  },
+  "out": "0600c9a7790000007918000001000000,padmap Player 1,-righty:b11,+righty:b12,-rightx:b13,+rightx:b14,leftx:a0,lefty:a1,platform:Linux,"
+ },
+ {
+  "in": {
+   "bindings": {
+    "lefttrigger": {
+     "index": 2,
+     "kind": "axis",
+     "ra_index": null,
+     "value": -1
+    },
+    "righttrigger": {
+     "index": 5,
+     "kind": "axis",
+     "ra_index": null,
+     "value": 1
+    }
+   },
+   "guid": "0600c9a7790000007918000001000000",
+   "name": "padmap Player 1",
+   "platform": "Linux",
+   "sticks": null
+  },
+  "out": "0600c9a7790000007918000001000000,padmap Player 1,lefttrigger:-a2,righttrigger:+a5,platform:Linux,"
+ },
+ {
+  "in": {
+   "bindings": {
+    "lefttrigger": {
+     "index": 2,
+     "kind": "axis",
+     "ra_index": null,
+     "value": -1
+    },
+    "righttrigger": {
+     "index": 5,
+     "kind": "axis",
+     "ra_index": null,
+     "value": 1
+    }
+   },
+   "guid": "0600c9a7790000007918000001000000",
+   "name": "padmap Player 1",
+   "platform": "Linux",
+   "sticks": {
+    "leftx": "a0",
+    "lefty": "a1"
+   }
+  },
+  "out": "0600c9a7790000007918000001000000,padmap Player 1,lefttrigger:-a2,righttrigger:+a5,leftx:a0,lefty:a1,platform:Linux,"
+ },
+ {
+  "in": {
+   "bindings": {
+    "a": {
+     "index": 13,
+     "kind": "button",
+     "ra_index": -1,
+     "value": 0
+    }
+   },
+   "guid": "0600c9a7790000007918000001000000",
+   "name": "padmap Player 1",
+   "platform": "Linux",
+   "sticks": null
+  },
+  "out": "0600c9a7790000007918000001000000,padmap Player 1,a:b13,platform:Linux,"
+ },
+ {
+  "in": {
+   "bindings": {
+    "a": {
+     "index": 13,
+     "kind": "button",
+     "ra_index": -1,
+     "value": 0
+    }
+   },
+   "guid": "0600c9a7790000007918000001000000",
+   "name": "padmap Player 1",
+   "platform": "Linux",
+   "sticks": {
+    "leftx": "a0",
+    "lefty": "a1"
+   }
+  },
+  "out": "0600c9a7790000007918000001000000,padmap Player 1,a:b13,leftx:a0,lefty:a1,platform:Linux,"
+ }
+]

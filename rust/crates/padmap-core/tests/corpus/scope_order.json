@@ -1,0 +1,42 @@
+[
+ {
+  "in": {
+   "console": "",
+   "game": ""
+  },
+  "out": [
+   ""
+  ]
+ },
+ {
+  "in": {
+   "console": "",
+   "game": "n64/mario-64"
+  },
+  "out": [
+   "game:n64/mario-64",
+   ""
+  ]
+ },
+ {
+  "in": {
+   "console": "n64",
+   "game": ""
+  },
+  "out": [
+   "console:n64",
+   ""
+  ]
+ },
+ {
+  "in": {
+   "console": "n64",
+   "game": "n64/mario-64"
+  },
+  "out": [
+   "game:n64/mario-64",
+   "console:n64",
+   ""
+  ]
+ }
+]

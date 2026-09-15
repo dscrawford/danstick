@@ -1,0 +1,1260 @@
+[
+ {
+  "in": "generic",
+  "out": {
+   "controls": [
+    {
+     "canonical": "a",
+     "kind": "button",
+     "label": "A (bottom face)",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.72,
+     "y": 0.52
+    },
+    {
+     "canonical": "b",
+     "kind": "button",
+     "label": "B (right face)",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.78,
+     "y": 0.42
+    },
+    {
+     "canonical": "x",
+     "kind": "button",
+     "label": "X (left face)",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.66,
+     "y": 0.42
+    },
+    {
+     "canonical": "y",
+     "kind": "button",
+     "label": "Y (top face)",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.72,
+     "y": 0.32
+    },
+    {
+     "canonical": "dpup",
+     "kind": "dpad",
+     "label": "D-pad up",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.28,
+     "y": 0.36
+    },
+    {
+     "canonical": "dpdown",
+     "kind": "dpad",
+     "label": "D-pad down",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.28,
+     "y": 0.52
+    },
+    {
+     "canonical": "dpleft",
+     "kind": "dpad",
+     "label": "D-pad left",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.23,
+     "y": 0.44
+    },
+    {
+     "canonical": "dpright",
+     "kind": "dpad",
+     "label": "D-pad right",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.33,
+     "y": 0.44
+    },
+    {
+     "canonical": "back",
+     "kind": "button",
+     "label": "Select",
+     "radius": 0.035,
+     "retroarch": "",
+     "x": 0.45,
+     "y": 0.44
+    },
+    {
+     "canonical": "start",
+     "kind": "button",
+     "label": "Start",
+     "radius": 0.035,
+     "retroarch": "",
+     "x": 0.55,
+     "y": 0.44
+    },
+    {
+     "canonical": "leftshoulder",
+     "kind": "shoulder",
+     "label": "Left shoulder",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.26,
+     "y": 0.2
+    },
+    {
+     "canonical": "rightshoulder",
+     "kind": "shoulder",
+     "label": "Right shoulder",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.74,
+     "y": 0.2
+    },
+    {
+     "canonical": "lefttrigger",
+     "kind": "shoulder",
+     "label": "Left trigger",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.34,
+     "y": 0.12
+    },
+    {
+     "canonical": "righttrigger",
+     "kind": "shoulder",
+     "label": "Right trigger",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.66,
+     "y": 0.12
+    }
+   ],
+   "id": "generic",
+   "image": "",
+   "label": "Gamepad",
+   "shapes": [
+    {
+     "kind": "rect",
+     "points": [
+      0.18,
+      0.3,
+      0.64,
+      0.34
+     ],
+     "radius": 0.16
+    },
+    {
+     "kind": "circle",
+     "points": [
+      0.28,
+      0.7
+     ],
+     "radius": 0.13
+    },
+    {
+     "kind": "circle",
+     "points": [
+      0.72,
+      0.7
+     ],
+     "radius": 0.13
+    }
+   ]
+  }
+ },
+ {
+  "in": "snes",
+  "out": {
+   "controls": [
+    {
+     "canonical": "a",
+     "kind": "button",
+     "label": "B (bottom)",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.72,
+     "y": 0.56
+    },
+    {
+     "canonical": "b",
+     "kind": "button",
+     "label": "A (right)",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.78,
+     "y": 0.46
+    },
+    {
+     "canonical": "x",
+     "kind": "button",
+     "label": "Y (left)",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.66,
+     "y": 0.46
+    },
+    {
+     "canonical": "y",
+     "kind": "button",
+     "label": "X (top)",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.72,
+     "y": 0.36
+    },
+    {
+     "canonical": "dpup",
+     "kind": "dpad",
+     "label": "D-pad up",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.28,
+     "y": 0.38
+    },
+    {
+     "canonical": "dpdown",
+     "kind": "dpad",
+     "label": "D-pad down",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.28,
+     "y": 0.54
+    },
+    {
+     "canonical": "dpleft",
+     "kind": "dpad",
+     "label": "D-pad left",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.23,
+     "y": 0.46
+    },
+    {
+     "canonical": "dpright",
+     "kind": "dpad",
+     "label": "D-pad right",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.33,
+     "y": 0.46
+    },
+    {
+     "canonical": "back",
+     "kind": "button",
+     "label": "Select",
+     "radius": 0.035,
+     "retroarch": "",
+     "x": 0.45,
+     "y": 0.52
+    },
+    {
+     "canonical": "start",
+     "kind": "button",
+     "label": "Start",
+     "radius": 0.035,
+     "retroarch": "",
+     "x": 0.55,
+     "y": 0.52
+    },
+    {
+     "canonical": "leftshoulder",
+     "kind": "shoulder",
+     "label": "L",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.24,
+     "y": 0.22
+    },
+    {
+     "canonical": "rightshoulder",
+     "kind": "shoulder",
+     "label": "R",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.76,
+     "y": 0.22
+    }
+   ],
+   "id": "snes",
+   "image": "",
+   "label": "SNES",
+   "shapes": [
+    {
+     "kind": "rect",
+     "points": [
+      0.16,
+      0.32,
+      0.68,
+      0.32
+     ],
+     "radius": 0.15
+    }
+   ]
+  }
+ },
+ {
+  "in": "n64",
+  "out": {
+   "controls": [
+    {
+     "canonical": "a",
+     "kind": "button",
+     "label": "A",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.735,
+     "y": 0.6
+    },
+    {
+     "canonical": "b",
+     "kind": "button",
+     "label": "B",
+     "radius": 0.045,
+     "retroarch": "input_y_btn",
+     "x": 0.685,
+     "y": 0.5
+    },
+    {
+     "canonical": "start",
+     "kind": "button",
+     "label": "Start",
+     "radius": 0.035,
+     "retroarch": "",
+     "x": 0.5,
+     "y": 0.36
+    },
+    {
+     "canonical": "dpup",
+     "kind": "dpad",
+     "label": "D-pad up",
+     "radius": 0.038,
+     "retroarch": "",
+     "x": 0.28,
+     "y": 0.52
+    },
+    {
+     "canonical": "dpdown",
+     "kind": "dpad",
+     "label": "D-pad down",
+     "radius": 0.038,
+     "retroarch": "",
+     "x": 0.28,
+     "y": 0.66
+    },
+    {
+     "canonical": "dpleft",
+     "kind": "dpad",
+     "label": "D-pad left",
+     "radius": 0.038,
+     "retroarch": "",
+     "x": 0.245,
+     "y": 0.59
+    },
+    {
+     "canonical": "dpright",
+     "kind": "dpad",
+     "label": "D-pad right",
+     "radius": 0.038,
+     "retroarch": "",
+     "x": 0.315,
+     "y": 0.59
+    },
+    {
+     "canonical": "leftshoulder",
+     "kind": "shoulder",
+     "label": "L (top left)",
+     "radius": 0.038,
+     "retroarch": "",
+     "x": 0.235,
+     "y": 0.22
+    },
+    {
+     "canonical": "rightshoulder",
+     "kind": "shoulder",
+     "label": "R (top right)",
+     "radius": 0.038,
+     "retroarch": "",
+     "x": 0.765,
+     "y": 0.22
+    },
+    {
+     "canonical": "lefttrigger",
+     "kind": "shoulder",
+     "label": "Z (underneath)",
+     "radius": 0.04,
+     "retroarch": "",
+     "x": 0.5,
+     "y": 0.9
+    },
+    {
+     "canonical": "rightstick_up",
+     "kind": "stick",
+     "label": "C-up",
+     "radius": 0.032,
+     "retroarch": "",
+     "x": 0.745,
+     "y": 0.29
+    },
+    {
+     "canonical": "rightstick_down",
+     "kind": "stick",
+     "label": "C-down",
+     "radius": 0.032,
+     "retroarch": "",
+     "x": 0.745,
+     "y": 0.41
+    },
+    {
+     "canonical": "rightstick_left",
+     "kind": "stick",
+     "label": "C-left",
+     "radius": 0.032,
+     "retroarch": "",
+     "x": 0.706,
+     "y": 0.35
+    },
+    {
+     "canonical": "rightstick_right",
+     "kind": "stick",
+     "label": "C-right",
+     "radius": 0.032,
+     "retroarch": "",
+     "x": 0.784,
+     "y": 0.35
+    }
+   ],
+   "id": "n64",
+   "image": "",
+   "label": "Nintendo 64",
+   "shapes": [
+    {
+     "kind": "rect",
+     "points": [
+      0.18,
+      0.26,
+      0.64,
+      0.2
+     ],
+     "radius": 0.05
+    },
+    {
+     "kind": "rect",
+     "points": [
+      0.22,
+      0.42,
+      0.12,
+      0.34
+     ],
+     "radius": 0.05
+    },
+    {
+     "kind": "rect",
+     "points": [
+      0.44,
+      0.42,
+      0.12,
+      0.42
+     ],
+     "radius": 0.05
+    },
+    {
+     "kind": "rect",
+     "points": [
+      0.66,
+      0.42,
+      0.12,
+      0.34
+     ],
+     "radius": 0.05
+    }
+   ]
+  }
+ },
+ {
+  "in": "arcade",
+  "out": {
+   "controls": [
+    {
+     "canonical": "x",
+     "kind": "button",
+     "label": "Top-left button",
+     "radius": 0.045,
+     "retroarch": "input_a_btn",
+     "x": 0.5,
+     "y": 0.4
+    },
+    {
+     "canonical": "y",
+     "kind": "button",
+     "label": "Top-middle button",
+     "radius": 0.045,
+     "retroarch": "input_b_btn",
+     "x": 0.61,
+     "y": 0.38
+    },
+    {
+     "canonical": "leftshoulder",
+     "kind": "button",
+     "label": "Top-right button",
+     "radius": 0.045,
+     "retroarch": "input_x_btn",
+     "x": 0.72,
+     "y": 0.4
+    },
+    {
+     "canonical": "a",
+     "kind": "button",
+     "label": "Bottom-left button",
+     "radius": 0.045,
+     "retroarch": "input_y_btn",
+     "x": 0.5,
+     "y": 0.58
+    },
+    {
+     "canonical": "b",
+     "kind": "button",
+     "label": "Bottom-middle button",
+     "radius": 0.045,
+     "retroarch": "input_l_btn",
+     "x": 0.61,
+     "y": 0.56
+    },
+    {
+     "canonical": "rightshoulder",
+     "kind": "button",
+     "label": "Bottom-right button",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.72,
+     "y": 0.58
+    },
+    {
+     "canonical": "dpup",
+     "kind": "dpad",
+     "label": "Stick up",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.27,
+     "y": 0.38
+    },
+    {
+     "canonical": "dpdown",
+     "kind": "dpad",
+     "label": "Stick down",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.27,
+     "y": 0.6
+    },
+    {
+     "canonical": "dpleft",
+     "kind": "dpad",
+     "label": "Stick left",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.215,
+     "y": 0.49
+    },
+    {
+     "canonical": "dpright",
+     "kind": "dpad",
+     "label": "Stick right",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.325,
+     "y": 0.49
+    },
+    {
+     "canonical": "back",
+     "kind": "button",
+     "label": "Coin / Select",
+     "radius": 0.035,
+     "retroarch": "",
+     "x": 0.44,
+     "y": 0.2
+    },
+    {
+     "canonical": "start",
+     "kind": "button",
+     "label": "Start",
+     "radius": 0.035,
+     "retroarch": "",
+     "x": 0.56,
+     "y": 0.2
+    }
+   ],
+   "id": "arcade",
+   "image": "",
+   "label": "Arcade stick",
+   "shapes": [
+    {
+     "kind": "rect",
+     "points": [
+      0.08,
+      0.24,
+      0.84,
+      0.5
+     ],
+     "radius": 0.05
+    }
+   ]
+  }
+ },
+ {
+  "in": "gamecube",
+  "out": {
+   "controls": [
+    {
+     "canonical": "a",
+     "kind": "button",
+     "label": "A (large centre)",
+     "radius": 0.07,
+     "retroarch": "input_a_btn",
+     "x": 0.72,
+     "y": 0.46
+    },
+    {
+     "canonical": "b",
+     "kind": "button",
+     "label": "B (small, lower left)",
+     "radius": 0.045,
+     "retroarch": "input_b_btn",
+     "x": 0.645,
+     "y": 0.57
+    },
+    {
+     "canonical": "x",
+     "kind": "button",
+     "label": "X (right)",
+     "radius": 0.045,
+     "retroarch": "input_x_btn",
+     "x": 0.8,
+     "y": 0.42
+    },
+    {
+     "canonical": "y",
+     "kind": "button",
+     "label": "Y (top)",
+     "radius": 0.045,
+     "retroarch": "input_y_btn",
+     "x": 0.71,
+     "y": 0.31
+    },
+    {
+     "canonical": "start",
+     "kind": "button",
+     "label": "Start",
+     "radius": 0.035,
+     "retroarch": "",
+     "x": 0.5,
+     "y": 0.44
+    },
+    {
+     "canonical": "dpup",
+     "kind": "dpad",
+     "label": "D-pad up",
+     "radius": 0.04,
+     "retroarch": "",
+     "x": 0.3,
+     "y": 0.6
+    },
+    {
+     "canonical": "dpdown",
+     "kind": "dpad",
+     "label": "D-pad down",
+     "radius": 0.04,
+     "retroarch": "",
+     "x": 0.3,
+     "y": 0.74
+    },
+    {
+     "canonical": "dpleft",
+     "kind": "dpad",
+     "label": "D-pad left",
+     "radius": 0.04,
+     "retroarch": "",
+     "x": 0.255,
+     "y": 0.67
+    },
+    {
+     "canonical": "dpright",
+     "kind": "dpad",
+     "label": "D-pad right",
+     "radius": 0.04,
+     "retroarch": "",
+     "x": 0.345,
+     "y": 0.67
+    },
+    {
+     "canonical": "leftshoulder",
+     "kind": "shoulder",
+     "label": "L",
+     "radius": 0.045,
+     "retroarch": "input_l2_btn",
+     "x": 0.26,
+     "y": 0.2
+    },
+    {
+     "canonical": "rightshoulder",
+     "kind": "shoulder",
+     "label": "R",
+     "radius": 0.045,
+     "retroarch": "input_r2_btn",
+     "x": 0.74,
+     "y": 0.2
+    },
+    {
+     "canonical": "righttrigger",
+     "kind": "shoulder",
+     "label": "Z",
+     "radius": 0.04,
+     "retroarch": "input_r_btn",
+     "x": 0.8,
+     "y": 0.24
+    },
+    {
+     "canonical": "rightstick_up",
+     "kind": "stick",
+     "label": "C-stick up",
+     "radius": 0.032,
+     "retroarch": "",
+     "x": 0.5,
+     "y": 0.6
+    },
+    {
+     "canonical": "rightstick_down",
+     "kind": "stick",
+     "label": "C-stick down",
+     "radius": 0.032,
+     "retroarch": "",
+     "x": 0.5,
+     "y": 0.72
+    },
+    {
+     "canonical": "rightstick_left",
+     "kind": "stick",
+     "label": "C-stick left",
+     "radius": 0.032,
+     "retroarch": "",
+     "x": 0.46,
+     "y": 0.66
+    },
+    {
+     "canonical": "rightstick_right",
+     "kind": "stick",
+     "label": "C-stick right",
+     "radius": 0.032,
+     "retroarch": "",
+     "x": 0.54,
+     "y": 0.66
+    }
+   ],
+   "id": "gamecube",
+   "image": "",
+   "label": "GameCube",
+   "shapes": [
+    {
+     "kind": "rect",
+     "points": [
+      0.18,
+      0.3,
+      0.64,
+      0.34
+     ],
+     "radius": 0.16
+    },
+    {
+     "kind": "circle",
+     "points": [
+      0.28,
+      0.7
+     ],
+     "radius": 0.13
+    },
+    {
+     "kind": "circle",
+     "points": [
+      0.72,
+      0.7
+     ],
+     "radius": 0.13
+    }
+   ]
+  }
+ },
+ {
+  "in": "ps2",
+  "out": {
+   "controls": [
+    {
+     "canonical": "a",
+     "kind": "button",
+     "label": "Cross (bottom)",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.72,
+     "y": 0.52
+    },
+    {
+     "canonical": "b",
+     "kind": "button",
+     "label": "Circle (right)",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.78,
+     "y": 0.42
+    },
+    {
+     "canonical": "x",
+     "kind": "button",
+     "label": "Square (left)",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.66,
+     "y": 0.42
+    },
+    {
+     "canonical": "y",
+     "kind": "button",
+     "label": "Triangle (top)",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.72,
+     "y": 0.32
+    },
+    {
+     "canonical": "dpup",
+     "kind": "dpad",
+     "label": "D-pad up",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.28,
+     "y": 0.36
+    },
+    {
+     "canonical": "dpdown",
+     "kind": "dpad",
+     "label": "D-pad down",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.28,
+     "y": 0.52
+    },
+    {
+     "canonical": "dpleft",
+     "kind": "dpad",
+     "label": "D-pad left",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.23,
+     "y": 0.44
+    },
+    {
+     "canonical": "dpright",
+     "kind": "dpad",
+     "label": "D-pad right",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.33,
+     "y": 0.44
+    },
+    {
+     "canonical": "back",
+     "kind": "button",
+     "label": "Select",
+     "radius": 0.035,
+     "retroarch": "",
+     "x": 0.45,
+     "y": 0.44
+    },
+    {
+     "canonical": "start",
+     "kind": "button",
+     "label": "Start",
+     "radius": 0.035,
+     "retroarch": "",
+     "x": 0.55,
+     "y": 0.44
+    },
+    {
+     "canonical": "leftshoulder",
+     "kind": "shoulder",
+     "label": "L1",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.26,
+     "y": 0.2
+    },
+    {
+     "canonical": "rightshoulder",
+     "kind": "shoulder",
+     "label": "R1",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.74,
+     "y": 0.2
+    },
+    {
+     "canonical": "lefttrigger",
+     "kind": "shoulder",
+     "label": "L2",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.34,
+     "y": 0.12
+    },
+    {
+     "canonical": "righttrigger",
+     "kind": "shoulder",
+     "label": "R2",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.66,
+     "y": 0.12
+    }
+   ],
+   "id": "ps2",
+   "image": "",
+   "label": "PlayStation 2",
+   "shapes": [
+    {
+     "kind": "rect",
+     "points": [
+      0.18,
+      0.3,
+      0.64,
+      0.34
+     ],
+     "radius": 0.16
+    },
+    {
+     "kind": "circle",
+     "points": [
+      0.28,
+      0.7
+     ],
+     "radius": 0.13
+    },
+    {
+     "kind": "circle",
+     "points": [
+      0.72,
+      0.7
+     ],
+     "radius": 0.13
+    }
+   ]
+  }
+ },
+ {
+  "in": "switch",
+  "out": {
+   "controls": [
+    {
+     "canonical": "a",
+     "kind": "button",
+     "label": "B (bottom)",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.72,
+     "y": 0.52
+    },
+    {
+     "canonical": "b",
+     "kind": "button",
+     "label": "A (right)",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.78,
+     "y": 0.42
+    },
+    {
+     "canonical": "x",
+     "kind": "button",
+     "label": "Y (left)",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.66,
+     "y": 0.42
+    },
+    {
+     "canonical": "y",
+     "kind": "button",
+     "label": "X (top)",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.72,
+     "y": 0.32
+    },
+    {
+     "canonical": "dpup",
+     "kind": "dpad",
+     "label": "D-pad up",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.28,
+     "y": 0.36
+    },
+    {
+     "canonical": "dpdown",
+     "kind": "dpad",
+     "label": "D-pad down",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.28,
+     "y": 0.52
+    },
+    {
+     "canonical": "dpleft",
+     "kind": "dpad",
+     "label": "D-pad left",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.23,
+     "y": 0.44
+    },
+    {
+     "canonical": "dpright",
+     "kind": "dpad",
+     "label": "D-pad right",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.33,
+     "y": 0.44
+    },
+    {
+     "canonical": "back",
+     "kind": "button",
+     "label": "Minus",
+     "radius": 0.035,
+     "retroarch": "",
+     "x": 0.45,
+     "y": 0.44
+    },
+    {
+     "canonical": "start",
+     "kind": "button",
+     "label": "Plus",
+     "radius": 0.035,
+     "retroarch": "",
+     "x": 0.55,
+     "y": 0.44
+    },
+    {
+     "canonical": "leftshoulder",
+     "kind": "shoulder",
+     "label": "L",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.26,
+     "y": 0.2
+    },
+    {
+     "canonical": "rightshoulder",
+     "kind": "shoulder",
+     "label": "R",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.74,
+     "y": 0.2
+    },
+    {
+     "canonical": "lefttrigger",
+     "kind": "shoulder",
+     "label": "ZL",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.34,
+     "y": 0.12
+    },
+    {
+     "canonical": "righttrigger",
+     "kind": "shoulder",
+     "label": "ZR",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.66,
+     "y": 0.12
+    }
+   ],
+   "id": "switch",
+   "image": "",
+   "label": "Switch Pro",
+   "shapes": [
+    {
+     "kind": "rect",
+     "points": [
+      0.18,
+      0.3,
+      0.64,
+      0.34
+     ],
+     "radius": 0.16
+    },
+    {
+     "kind": "circle",
+     "points": [
+      0.28,
+      0.7
+     ],
+     "radius": 0.13
+    },
+    {
+     "kind": "circle",
+     "points": [
+      0.72,
+      0.7
+     ],
+     "radius": 0.13
+    }
+   ]
+  }
+ },
+ {
+  "in": "genesis",
+  "out": {
+   "controls": [
+    {
+     "canonical": "x",
+     "kind": "button",
+     "label": "A (bottom left)",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.62,
+     "y": 0.52
+    },
+    {
+     "canonical": "a",
+     "kind": "button",
+     "label": "B (bottom middle)",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.72,
+     "y": 0.52
+    },
+    {
+     "canonical": "b",
+     "kind": "button",
+     "label": "C (bottom right)",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.82,
+     "y": 0.52
+    },
+    {
+     "canonical": "leftshoulder",
+     "kind": "button",
+     "label": "X (top left)",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.62,
+     "y": 0.38
+    },
+    {
+     "canonical": "y",
+     "kind": "button",
+     "label": "Y (top middle)",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.72,
+     "y": 0.38
+    },
+    {
+     "canonical": "rightshoulder",
+     "kind": "button",
+     "label": "Z (top right)",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.82,
+     "y": 0.38
+    },
+    {
+     "canonical": "dpup",
+     "kind": "dpad",
+     "label": "D-pad up",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.28,
+     "y": 0.36
+    },
+    {
+     "canonical": "dpdown",
+     "kind": "dpad",
+     "label": "D-pad down",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.28,
+     "y": 0.52
+    },
+    {
+     "canonical": "dpleft",
+     "kind": "dpad",
+     "label": "D-pad left",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.23,
+     "y": 0.44
+    },
+    {
+     "canonical": "dpright",
+     "kind": "dpad",
+     "label": "D-pad right",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.33,
+     "y": 0.44
+    },
+    {
+     "canonical": "start",
+     "kind": "button",
+     "label": "Start",
+     "radius": 0.035,
+     "retroarch": "",
+     "x": 0.47,
+     "y": 0.46
+    },
+    {
+     "canonical": "back",
+     "kind": "button",
+     "label": "Mode",
+     "radius": 0.035,
+     "retroarch": "",
+     "x": 0.47,
+     "y": 0.56
+    }
+   ],
+   "id": "genesis",
+   "image": "",
+   "label": "Genesis",
+   "shapes": [
+    {
+     "kind": "rect",
+     "points": [
+      0.18,
+      0.3,
+      0.64,
+      0.34
+     ],
+     "radius": 0.16
+    },
+    {
+     "kind": "circle",
+     "points": [
+      0.28,
+      0.7
+     ],
+     "radius": 0.13
+    },
+    {
+     "kind": "circle",
+     "points": [
+      0.72,
+      0.7
+     ],
+     "radius": 0.13
+    }
+   ]
+  }
+ }
+]
