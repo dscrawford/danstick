@@ -1,0 +1,93 @@
+{
+  "id": "snes",
+  "label": "SNES",
+  "shapes": [
+    {
+      "kind": "rect",
+      "points": [0.16, 0.32, 0.68, 0.32],
+      "radius": 0.15
+    }
+  ],
+  "controls": [
+    {
+      "canonical": "a",
+      "label": "B (bottom)",
+      "x": 0.72,
+      "y": 0.56
+    },
+    {
+      "canonical": "b",
+      "label": "A (right)",
+      "x": 0.78,
+      "y": 0.46
+    },
+    {
+      "canonical": "x",
+      "label": "Y (left)",
+      "x": 0.66,
+      "y": 0.46
+    },
+    {
+      "canonical": "y",
+      "label": "X (top)",
+      "x": 0.72,
+      "y": 0.36
+    },
+    {
+      "canonical": "dpup",
+      "label": "D-pad up",
+      "x": 0.28,
+      "y": 0.38,
+      "kind": "dpad"
+    },
+    {
+      "canonical": "dpdown",
+      "label": "D-pad down",
+      "x": 0.28,
+      "y": 0.54,
+      "kind": "dpad"
+    },
+    {
+      "canonical": "dpleft",
+      "label": "D-pad left",
+      "x": 0.23,
+      "y": 0.46,
+      "kind": "dpad"
+    },
+    {
+      "canonical": "dpright",
+      "label": "D-pad right",
+      "x": 0.33,
+      "y": 0.46,
+      "kind": "dpad"
+    },
+    {
+      "canonical": "back",
+      "label": "Select",
+      "x": 0.45,
+      "y": 0.52,
+      "radius": 0.035
+    },
+    {
+      "canonical": "start",
+      "label": "Start",
+      "x": 0.55,
+      "y": 0.52,
+      "radius": 0.035
+    },
+    {
+      "canonical": "leftshoulder",
+      "label": "L",
+      "x": 0.24,
+      "y": 0.22,
+      "kind": "shoulder"
+    },
+    {
+      "canonical": "rightshoulder",
+      "label": "R",
+      "x": 0.76,
+      "y": 0.22,
+      "kind": "shoulder"
+    }
+  ]
+}

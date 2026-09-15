@@ -1,0 +1,117 @@
+{
+  "id": "ps2",
+  "label": "PlayStation 2",
+  "shapes": [
+    {
+      "kind": "rect",
+      "points": [0.18, 0.3, 0.64, 0.34],
+      "radius": 0.16
+    },
+    {
+      "kind": "circle",
+      "points": [0.28, 0.7],
+      "radius": 0.13
+    },
+    {
+      "kind": "circle",
+      "points": [0.72, 0.7],
+      "radius": 0.13
+    }
+  ],
+  "controls": [
+    {
+      "canonical": "a",
+      "label": "Cross (bottom)",
+      "x": 0.72,
+      "y": 0.52
+    },
+    {
+      "canonical": "b",
+      "label": "Circle (right)",
+      "x": 0.78,
+      "y": 0.42
+    },
+    {
+      "canonical": "x",
+      "label": "Square (left)",
+      "x": 0.66,
+      "y": 0.42
+    },
+    {
+      "canonical": "y",
+      "label": "Triangle (top)",
+      "x": 0.72,
+      "y": 0.32
+    },
+    {
+      "canonical": "dpup",
+      "label": "D-pad up",
+      "x": 0.28,
+      "y": 0.36,
+      "kind": "dpad"
+    },
+    {
+      "canonical": "dpdown",
+      "label": "D-pad down",
+      "x": 0.28,
+      "y": 0.52,
+      "kind": "dpad"
+    },
+    {
+      "canonical": "dpleft",
+      "label": "D-pad left",
+      "x": 0.23,
+      "y": 0.44,
+      "kind": "dpad"
+    },
+    {
+      "canonical": "dpright",
+      "label": "D-pad right",
+      "x": 0.33,
+      "y": 0.44,
+      "kind": "dpad"
+    },
+    {
+      "canonical": "back",
+      "label": "Select",
+      "x": 0.45,
+      "y": 0.44,
+      "radius": 0.035
+    },
+    {
+      "canonical": "start",
+      "label": "Start",
+      "x": 0.55,
+      "y": 0.44,
+      "radius": 0.035
+    },
+    {
+      "canonical": "leftshoulder",
+      "label": "L1",
+      "x": 0.26,
+      "y": 0.2,
+      "kind": "shoulder"
+    },
+    {
+      "canonical": "rightshoulder",
+      "label": "R1",
+      "x": 0.74,
+      "y": 0.2,
+      "kind": "shoulder"
+    },
+    {
+      "canonical": "lefttrigger",
+      "label": "L2",
+      "x": 0.34,
+      "y": 0.12,
+      "kind": "shoulder"
+    },
+    {
+      "canonical": "righttrigger",
+      "label": "R2",
+      "x": 0.66,
+      "y": 0.12,
+      "kind": "shoulder"
+    }
+  ]
+}

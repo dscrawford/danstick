@@ -11,3 +11,11 @@ __pycache__/
 # Renders and probe cores written by the preview/check tools.
 *.png
 *.so
+
+# Rust build output and the cargo cache direnv points at.
+rust/target/
+.cargo-home/
+
+# direnv's cached devShell profile.
+.direnv/
+.claude-flow/

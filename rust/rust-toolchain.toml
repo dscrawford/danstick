@@ -1,0 +1,5 @@
+# Pinned so `nix develop` and a plain `rustup` agree with each other and with
+# the `rust-version` in Cargo.toml.
+[toolchain]
+channel = "1.97"
+components = ["rustfmt", "clippy"]

@@ -1,0 +1,102 @@
+{
+  "id": "genesis",
+  "label": "Genesis",
+  "console_label": "Genesis",
+  "shapes": [
+    {
+      "kind": "rect",
+      "points": [0.18, 0.3, 0.64, 0.34],
+      "radius": 0.16
+    },
+    {
+      "kind": "circle",
+      "points": [0.28, 0.7],
+      "radius": 0.13
+    },
+    {
+      "kind": "circle",
+      "points": [0.72, 0.7],
+      "radius": 0.13
+    }
+  ],
+  "controls": [
+    {
+      "canonical": "x",
+      "label": "A (bottom left)",
+      "x": 0.62,
+      "y": 0.52
+    },
+    {
+      "canonical": "a",
+      "label": "B (bottom middle)",
+      "x": 0.72,
+      "y": 0.52
+    },
+    {
+      "canonical": "b",
+      "label": "C (bottom right)",
+      "x": 0.82,
+      "y": 0.52
+    },
+    {
+      "canonical": "leftshoulder",
+      "label": "X (top left)",
+      "x": 0.62,
+      "y": 0.38
+    },
+    {
+      "canonical": "y",
+      "label": "Y (top middle)",
+      "x": 0.72,
+      "y": 0.38
+    },
+    {
+      "canonical": "rightshoulder",
+      "label": "Z (top right)",
+      "x": 0.82,
+      "y": 0.38
+    },
+    {
+      "canonical": "dpup",
+      "label": "D-pad up",
+      "x": 0.28,
+      "y": 0.36,
+      "kind": "dpad"
+    },
+    {
+      "canonical": "dpdown",
+      "label": "D-pad down",
+      "x": 0.28,
+      "y": 0.52,
+      "kind": "dpad"
+    },
+    {
+      "canonical": "dpleft",
+      "label": "D-pad left",
+      "x": 0.23,
+      "y": 0.44,
+      "kind": "dpad"
+    },
+    {
+      "canonical": "dpright",
+      "label": "D-pad right",
+      "x": 0.33,
+      "y": 0.44,
+      "kind": "dpad"
+    },
+    {
+      "canonical": "start",
+      "label": "Start",
+      "x": 0.47,
+      "y": 0.46,
+      "radius": 0.035
+    },
+    {
+      "canonical": "back",
+      "label": "Mode",
+      "x": 0.47,
+      "y": 0.56,
+      "radius": 0.035
+    }
+  ]
+}

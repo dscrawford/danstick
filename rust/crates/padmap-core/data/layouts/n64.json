@@ -1,0 +1,136 @@
+{
+  "id": "n64",
+  "label": "Nintendo 64",
+  "shapes": [
+    {
+      "kind": "rect",
+      "points": [0.18, 0.26, 0.64, 0.2],
+      "radius": 0.05
+    },
+    {
+      "kind": "rect",
+      "points": [0.22, 0.42, 0.12, 0.34],
+      "radius": 0.05
+    },
+    {
+      "kind": "rect",
+      "points": [0.44, 0.42, 0.12, 0.42],
+      "radius": 0.05
+    },
+    {
+      "kind": "rect",
+      "points": [0.66, 0.42, 0.12, 0.34],
+      "radius": 0.05
+    }
+  ],
+  "controls": [
+    {
+      "canonical": "a",
+      "label": "A",
+      "x": 0.735,
+      "y": 0.6
+    },
+    {
+      "canonical": "b",
+      "label": "B",
+      "x": 0.685,
+      "y": 0.5,
+      "retroarch": "input_y_btn"
+    },
+    {
+      "canonical": "start",
+      "label": "Start",
+      "x": 0.5,
+      "y": 0.36,
+      "radius": 0.035
+    },
+    {
+      "canonical": "dpup",
+      "label": "D-pad up",
+      "x": 0.28,
+      "y": 0.52,
+      "kind": "dpad",
+      "radius": 0.038
+    },
+    {
+      "canonical": "dpdown",
+      "label": "D-pad down",
+      "x": 0.28,
+      "y": 0.66,
+      "kind": "dpad",
+      "radius": 0.038
+    },
+    {
+      "canonical": "dpleft",
+      "label": "D-pad left",
+      "x": 0.245,
+      "y": 0.59,
+      "kind": "dpad",
+      "radius": 0.038
+    },
+    {
+      "canonical": "dpright",
+      "label": "D-pad right",
+      "x": 0.315,
+      "y": 0.59,
+      "kind": "dpad",
+      "radius": 0.038
+    },
+    {
+      "canonical": "leftshoulder",
+      "label": "L (top left)",
+      "x": 0.235,
+      "y": 0.22,
+      "kind": "shoulder",
+      "radius": 0.038
+    },
+    {
+      "canonical": "rightshoulder",
+      "label": "R (top right)",
+      "x": 0.765,
+      "y": 0.22,
+      "kind": "shoulder",
+      "radius": 0.038
+    },
+    {
+      "canonical": "lefttrigger",
+      "label": "Z (underneath)",
+      "x": 0.5,
+      "y": 0.9,
+      "kind": "shoulder",
+      "radius": 0.04
+    },
+    {
+      "canonical": "rightstick_up",
+      "label": "C-up",
+      "x": 0.745,
+      "y": 0.29,
+      "kind": "stick",
+      "radius": 0.032
+    },
+    {
+      "canonical": "rightstick_down",
+      "label": "C-down",
+      "x": 0.745,
+      "y": 0.41,
+      "kind": "stick",
+      "radius": 0.032
+    },
+    {
+      "canonical": "rightstick_left",
+      "label": "C-left",
+      "x": 0.706,
+      "y": 0.35,
+      "kind": "stick",
+      "radius": 0.032
+    },
+    {
+      "canonical": "rightstick_right",
+      "label": "C-right",
+      "x": 0.784,
+      "y": 0.35,
+      "kind": "stick",
+      "radius": 0.032
+    }
+  ]
+}

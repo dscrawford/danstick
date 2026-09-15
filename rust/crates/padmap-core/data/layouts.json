@@ -1,0 +1,41 @@
+{
+  "order": [
+    "generic",
+    "snes",
+    "n64",
+    "arcade",
+    "gamecube",
+    "ps2",
+    "switch",
+    "genesis"
+  ],
+  "default": "generic",
+  "cores": {
+    "mupen64plus_next": "n64",
+    "mupen64plus": "n64",
+    "parallel_n64": "n64",
+    "snes9x": "snes",
+    "snes9x2010": "snes",
+    "snes9x2005": "snes",
+    "snes9x2002": "snes",
+    "bsnes": "snes",
+    "bsnes_mercury_accuracy": "snes",
+    "bsnes_mercury_balanced": "snes",
+    "bsnes_mercury_performance": "snes",
+    "mesen_s": "snes",
+    "mame2010": "arcade",
+    "mame2003": "arcade",
+    "mame2003_plus": "arcade",
+    "mame2000": "arcade",
+    "mame": "arcade",
+    "fbalpha": "arcade",
+    "fbalpha2012": "arcade",
+    "fbneo": "arcade",
+    "dolphin": "gamecube",
+    "pcsx2": "ps2",
+    "play": "ps2",
+    "genesis_plus_gx": "genesis",
+    "picodrive": "genesis",
+    "blastem": "genesis"
+  }
+}

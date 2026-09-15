@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# cargo, for a machine that has nix but no rustup.
+#
+# The flake's devShell carries the toolchain, but entering it evaluates the
+# whole flake -- which builds Pegasus. This pulls just the compiler.
+set -euo pipefail
+cd "$(dirname "$0")/../rust"
+exec nix shell \
+  nixpkgs#cargo nixpkgs#rustc nixpkgs#clippy nixpkgs#rustfmt nixpkgs#pkg-config \
+  --command cargo "$@"

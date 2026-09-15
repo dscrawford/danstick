@@ -29,6 +29,40 @@
         # Without them the QML engine reports even "QtQuick" as not installed.
         qtPluginPath = "${pkgs.qt6.qtbase}/${pkgs.qt6.qtbase.qtPluginPrefix}";
         qtQmlPath = "${pkgs.qt6.qtdeclarative}/${pkgs.qt6.qtbase.qtQmlPrefix}";
+
+        # The Rust port, under rust/. Taken from nixpkgs rather than through
+        # fenix or rust-overlay: the workspace pins an edition and a
+        # rust-version that nixpkgs' stable toolchain already satisfies, and a
+        # second flake input to track is a cost with nothing bought by it.
+        rustToolchain = [
+          pkgs.cargo
+          pkgs.rustc
+          pkgs.clippy
+          pkgs.rustfmt
+          pkgs.rust-analyzer
+          # Coverage. cargo-llvm-cov needs the llvm-tools that ship with
+          # rustc, which nixpkgs puts in a separate output.
+          pkgs.cargo-llvm-cov
+          pkgs.cargo-nextest
+        ];
+
+        # Everything a crate that opens a device node needs to link.
+        rustBuildInputs = [ pkgs.udev ];
+        rustNativeBuildInputs = [ pkgs.pkg-config ];
+
+        # The whole workspace, built and tested in the sandbox.
+        #
+        # cargoLock.lockFile rather than a cargoHash: the lock file is in the
+        # repo, so there is nothing to keep in step by hand and no hash to go
+        # stale silently the next time a dependency is added.
+        padmap-rs = pkgs.rustPlatform.buildRustPackage {
+          pname = "padmap-rs";
+          version = "0.1.0";
+          src = ./rust;
+          cargoLock.lockFile = ./rust/Cargo.lock;
+          nativeBuildInputs = rustNativeBuildInputs;
+          buildInputs = rustBuildInputs;
+        };
       in
       {
         devShells.default = pkgs.mkShell {
@@ -38,7 +72,9 @@
             autoconfig
             pkgs.evsieve # reference implementation of evdev republishing
             pkgs.udev # udevadm, for inspecting ID_INPUT_JOYSTICK
-          ];
+            pkgs.evemu # replay a recorded device, for latency measurement
+            pkgs.linuxPackages.perf # where the forwarding path actually goes
+          ] ++ rustToolchain ++ rustNativeBuildInputs;
 
           # Without this the module falls back to globbing /nix/store, which
           # can pick an older autoconfig package at random.
@@ -56,11 +92,16 @@
             # anything and shows 8302 raw set names.
             export PADMAP_MAME_TITLES="${self.packages.${system}.mame-titles}/share/padmap/mame-titles.json"
             export PADMAP_PLAY="${self.packages.${system}.padmap-play}/bin/padmap-play"
+            # cargo writes here; keeping it out of the source tree means a
+            # `nix build` of the flake never sees a 2GB target/ in its source.
+            export CARGO_HOME="''${CARGO_HOME:-$PWD/.cargo-home}"
             echo "padmap dev shell"
             echo "  python3 -m padmap.cli list    - what is plugged in"
             echo "  python3 -m padmap.cli setup   - assign player order"
             echo "  python3 -m padmap.cli run     - republish assigned pads"
             echo "  nix run .#padmap-start        - start everything (daemon + Pegasus)"
+            echo "  (cd rust && cargo test)       - the Rust port's tests"
+            echo "  (cd rust && cargo clippy --all-targets -- -D warnings)"
             echo
             if [ ! -w /dev/uinput ]; then
               echo "WARNING: /dev/uinput is not writable by $(id -un)."
@@ -405,6 +446,8 @@
 
         packages.default = self.packages.${system}.padmap;
 
+        packages.padmap-rs = padmap-rs;
+
         checks.mypy = pkgs.runCommand "padmap-mypy"
           { nativeBuildInputs = [ pythonEnv ]; }
           ''
@@ -413,6 +456,28 @@
             mypy --config-file ${./mypy.ini} src/padmap
             touch $out
           '';
+
+        # buildRustPackage runs `cargo test` in its checkPhase, so building
+        # this is running the suite. Separate from checks.rust-lint so a
+        # clippy opinion cannot be mistaken for a failing test.
+        checks.rust = padmap-rs;
+
+        checks.rust-lint = pkgs.rustPlatform.buildRustPackage {
+          pname = "padmap-rs-lint";
+          version = "0.1.0";
+          src = ./rust;
+          cargoLock.lockFile = ./rust/Cargo.lock;
+          nativeBuildInputs = rustNativeBuildInputs ++ [ pkgs.clippy pkgs.rustfmt ];
+          buildInputs = rustBuildInputs;
+          buildPhase = ''
+            cargo fmt --all --check
+            cargo clippy --all-targets --all-features -- -D warnings
+          '';
+          # buildRustPackage's default check and install phases both want a
+          # binary this derivation does not produce.
+          doCheck = false;
+          installPhase = "touch $out";
+        };
       })) // {
 
       # System-level bits: the udev rules that hide physical pads cannot be

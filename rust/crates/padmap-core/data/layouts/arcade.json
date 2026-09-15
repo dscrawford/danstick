@@ -1,0 +1,97 @@
+{
+  "id": "arcade",
+  "label": "Arcade stick",
+  "console_label": "Arcade",
+  "shapes": [
+    {
+      "kind": "rect",
+      "points": [0.08, 0.24, 0.84, 0.5],
+      "radius": 0.05
+    }
+  ],
+  "controls": [
+    {
+      "canonical": "x",
+      "label": "Top-left button",
+      "x": 0.5,
+      "y": 0.4,
+      "retroarch": "input_a_btn"
+    },
+    {
+      "canonical": "y",
+      "label": "Top-middle button",
+      "x": 0.61,
+      "y": 0.38,
+      "retroarch": "input_b_btn"
+    },
+    {
+      "canonical": "leftshoulder",
+      "label": "Top-right button",
+      "x": 0.72,
+      "y": 0.4,
+      "retroarch": "input_x_btn"
+    },
+    {
+      "canonical": "a",
+      "label": "Bottom-left button",
+      "x": 0.5,
+      "y": 0.58,
+      "retroarch": "input_y_btn"
+    },
+    {
+      "canonical": "b",
+      "label": "Bottom-middle button",
+      "x": 0.61,
+      "y": 0.56,
+      "retroarch": "input_l_btn"
+    },
+    {
+      "canonical": "rightshoulder",
+      "label": "Bottom-right button",
+      "x": 0.72,
+      "y": 0.58
+    },
+    {
+      "canonical": "dpup",
+      "label": "Stick up",
+      "x": 0.27,
+      "y": 0.38,
+      "kind": "dpad"
+    },
+    {
+      "canonical": "dpdown",
+      "label": "Stick down",
+      "x": 0.27,
+      "y": 0.6,
+      "kind": "dpad"
+    },
+    {
+      "canonical": "dpleft",
+      "label": "Stick left",
+      "x": 0.215,
+      "y": 0.49,
+      "kind": "dpad"
+    },
+    {
+      "canonical": "dpright",
+      "label": "Stick right",
+      "x": 0.325,
+      "y": 0.49,
+      "kind": "dpad"
+    },
+    {
+      "canonical": "back",
+      "label": "Coin / Select",
+      "x": 0.44,
+      "y": 0.2,
+      "radius": 0.035
+    },
+    {
+      "canonical": "start",
+      "label": "Start",
+      "x": 0.56,
+      "y": 0.2,
+      "radius": 0.035
+    }
+  ]
+}

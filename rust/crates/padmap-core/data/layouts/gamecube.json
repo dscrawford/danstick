@@ -1,0 +1,148 @@
+{
+  "id": "gamecube",
+  "label": "GameCube",
+  "shapes": [
+    {
+      "kind": "rect",
+      "points": [0.18, 0.3, 0.64, 0.34],
+      "radius": 0.16
+    },
+    {
+      "kind": "circle",
+      "points": [0.28, 0.7],
+      "radius": 0.13
+    },
+    {
+      "kind": "circle",
+      "points": [0.72, 0.7],
+      "radius": 0.13
+    }
+  ],
+  "controls": [
+    {
+      "canonical": "a",
+      "label": "A (large centre)",
+      "x": 0.72,
+      "y": 0.46,
+      "radius": 0.07,
+      "retroarch": "input_a_btn"
+    },
+    {
+      "canonical": "b",
+      "label": "B (small, lower left)",
+      "x": 0.645,
+      "y": 0.57,
+      "retroarch": "input_b_btn"
+    },
+    {
+      "canonical": "x",
+      "label": "X (right)",
+      "x": 0.8,
+      "y": 0.42,
+      "retroarch": "input_x_btn"
+    },
+    {
+      "canonical": "y",
+      "label": "Y (top)",
+      "x": 0.71,
+      "y": 0.31,
+      "retroarch": "input_y_btn"
+    },
+    {
+      "canonical": "start",
+      "label": "Start",
+      "x": 0.5,
+      "y": 0.44,
+      "radius": 0.035
+    },
+    {
+      "canonical": "dpup",
+      "label": "D-pad up",
+      "x": 0.3,
+      "y": 0.6,
+      "kind": "dpad",
+      "radius": 0.04
+    },
+    {
+      "canonical": "dpdown",
+      "label": "D-pad down",
+      "x": 0.3,
+      "y": 0.74,
+      "kind": "dpad",
+      "radius": 0.04
+    },
+    {
+      "canonical": "dpleft",
+      "label": "D-pad left",
+      "x": 0.255,
+      "y": 0.67,
+      "kind": "dpad",
+      "radius": 0.04
+    },
+    {
+      "canonical": "dpright",
+      "label": "D-pad right",
+      "x": 0.345,
+      "y": 0.67,
+      "kind": "dpad",
+      "radius": 0.04
+    },
+    {
+      "canonical": "leftshoulder",
+      "label": "L",
+      "x": 0.26,
+      "y": 0.2,
+      "kind": "shoulder",
+      "retroarch": "input_l2_btn"
+    },
+    {
+      "canonical": "rightshoulder",
+      "label": "R",
+      "x": 0.74,
+      "y": 0.2,
+      "kind": "shoulder",
+      "retroarch": "input_r2_btn"
+    },
+    {
+      "canonical": "righttrigger",
+      "label": "Z",
+      "x": 0.8,
+      "y": 0.24,
+      "kind": "shoulder",
+      "radius": 0.04,
+      "retroarch": "input_r_btn"
+    },
+    {
+      "canonical": "rightstick_up",
+      "label": "C-stick up",
+      "x": 0.5,
+      "y": 0.6,
+      "kind": "stick",
+      "radius": 0.032
+    },
+    {
+      "canonical": "rightstick_down",
+      "label": "C-stick down",
+      "x": 0.5,
+      "y": 0.72,
+      "kind": "stick",
+      "radius": 0.032
+    },
+    {
+      "canonical": "rightstick_left",
+      "label": "C-stick left",
+      "x": 0.46,
+      "y": 0.66,
+      "kind": "stick",
+      "radius": 0.032
+    },
+    {
+      "canonical": "rightstick_right",
+      "label": "C-stick right",
+      "x": 0.54,
+      "y": 0.66,
+      "kind": "stick",
+      "radius": 0.032
+    }
+  ]
+}
