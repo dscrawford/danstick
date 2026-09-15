@@ -2,7 +2,6 @@
 
     padmap list      what is plugged in, and what RetroArch would make of it
     padmap setup     assign player order by pressing and holding a button
-    padmap ui        the same, as a graphical screen
     padmap map       record which button is which
     padmap calibrate measure where each controller's sticks rest
     padmap run       republish assigned pads and keep them alive
@@ -482,24 +481,6 @@ def cmd_serve(_args: argparse.Namespace) -> int:
     from .server import serve
 
     return serve()
-
-
-def cmd_ui(args: argparse.Namespace) -> int:
-    # Imported lazily: PySide6 is a heavy dependency and every other
-    # subcommand works without it.
-    from .ui.app import run_setup
-
-    assignments = run_setup(players=args.players)
-    if not assignments:
-        print("Cancelled; assignments unchanged.")
-        return 1
-
-    _save_assignments(assignments)
-    for assignment in assignments:
-        print(f"  Player {assignment.player}: {assignment.pad.name} "
-              f"[{assignment.pad.event}]")
-    print(f"\nSaved {len(assignments)} assignment(s) to {STATE_PATH}")
-    return 0
 
 
 def _load_assignments() -> list[Assignment]:
@@ -1112,11 +1093,6 @@ def main(argv: list[str] | None = None) -> int:
         help="what the mapping is for: '' for every game, console:<id>, or "
              "game:<console>/<stem>")
     mapper.set_defaults(func=cmd_map)
-
-    ui = sub.add_parser("ui", help="assign player order in a graphical screen")
-    ui.add_argument("-n", "--players", type=int, default=4,
-                    help="number of player slots to show (default 4)")
-    ui.set_defaults(func=cmd_ui)
 
     sub.add_parser("run", help="republish assigned pads").set_defaults(func=cmd_run)
 

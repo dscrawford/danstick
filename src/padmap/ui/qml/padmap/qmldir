@@ -1,4 +1,0 @@
-module padmap
-singleton Theme 1.0 Theme.qml
-PlayerSlot 1.0 PlayerSlot.qml
-SetupScreen 1.0 SetupScreen.qml

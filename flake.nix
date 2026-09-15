@@ -13,22 +13,16 @@
 
         pythonEnv = pkgs.python3.withPackages (ps: with ps; [
           evdev # raw /dev/input access + uinput device creation
-          pysdl2 # cross-check SDL enumeration order against udev's
-          pyside6 # QML front-end
-          # In the same env as the libraries above, so it can see their stubs
-          # -- PySide6 ships .pyi files that mypy only finds from inside.
+          # Only for the last-resort lookup in controllercfg: asking SDL what
+          # mapping it already has for a GUID, in a subprocess so SDL is never
+          # loaded into the daemon. Goes when that moves to Rust.
+          pysdl2
           mypy
         ]);
         # Pinned explicitly: RetroArch's bundled joypad profiles are the source
         # we copy button mappings from when renaming a pad for a virtual one.
         autoconfig = pkgs.retroarch-joypad-autoconfig;
         autoconfigDir = "${autoconfig}/share/libretro/autoconfig";
-
-        # nixpkgs' pyside6 links against Qt from the store rather than
-        # bundling it, and nothing sets these for a bare python3 invocation.
-        # Without them the QML engine reports even "QtQuick" as not installed.
-        qtPluginPath = "${pkgs.qt6.qtbase}/${pkgs.qt6.qtbase.qtPluginPrefix}";
-        qtQmlPath = "${pkgs.qt6.qtdeclarative}/${pkgs.qt6.qtbase.qtQmlPrefix}";
 
         # The Rust port, under rust/. Taken from nixpkgs rather than through
         # fenix or rust-overlay: the workspace pins an edition and a
@@ -80,9 +74,6 @@
           # can pick an older autoconfig package at random.
           PADMAP_AUTOCONFIG_DIRS = autoconfigDir;
 
-          QT_PLUGIN_PATH = qtPluginPath;
-          QML2_IMPORT_PATH = qtQmlPath;
-
           shellHook = ''
             export PYTHONPATH="$PWD/src''${PYTHONPATH:+:$PYTHONPATH}"
             # The same two the `padmap` wrapper sets. Without them a launch
@@ -113,9 +104,6 @@
         packages.padmap = pkgs.writeShellApplication {
           name = "padmap";
           runtimeInputs = [ pythonEnv pkgs.udev pkgs.retroarch ];
-          # wrapQtAppsHook does not apply to a shell wrapper around a Python
-          # entry point, so the Qt plugin path is set explicitly. Without it
-          # the QML engine starts but finds no platform plugin.
           text = ''
             export PYTHONPATH="${./src}''${PYTHONPATH:+:$PYTHONPATH}"
             # Identity of the code being run. The store path changes with
@@ -128,8 +116,6 @@
             # Absolute, so generated launch commands work from a front-end
             # that has neither padmap nor RetroArch on its PATH.
             export PADMAP_PLAY="${self.packages.${system}.padmap-play}/bin/padmap-play"
-            export QT_PLUGIN_PATH="${qtPluginPath}''${QT_PLUGIN_PATH:+:$QT_PLUGIN_PATH}"
-            export QML2_IMPORT_PATH="${qtQmlPath}''${QML2_IMPORT_PATH:+:$QML2_IMPORT_PATH}"
             exec python3 -m padmap.cli "$@"
           '';
         };
