@@ -150,17 +150,13 @@ fn report_dormant() {
         if let Some(node) = &device.hidraw {
             println!("Its gamepad channel is {}.", node.display());
         }
-        match device.remedy() {
-            Some(remedy) => {
-                println!("\nThe kernel has a driver for this family that does not claim");
-                println!("this model's id yet. To hand it over:");
-                println!("  {remedy}");
-                println!("\nThat lasts until reboot. If it works, make it stick with a udev");
-                println!("rule; if it does not, the protocol has to be read directly --");
-                println!("see tools/hidprobe.py.");
-            }
-            // `lizard::dormant` only reports devices that have one.
-            None => {}
+        if let Some(remedy) = device.remedy() {
+            println!("\nThe kernel has a driver for this family that does not claim");
+            println!("this model's id yet. To hand it over:");
+            println!("  {remedy}");
+            println!("\nThat lasts until reboot. If it works, make it stick with a udev");
+            println!("rule; if it does not, the protocol has to be read directly --");
+            println!("see tools/hidprobe.py.");
         }
     }
 }
