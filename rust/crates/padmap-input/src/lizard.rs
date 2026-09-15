@@ -68,16 +68,47 @@ impl Dormant {
             .map(|(_, driver)| *driver)
     }
 
-    /// What to run. Two lines, because the first is not persistent.
+    /// What to run, or how to find out.
     pub fn remedy(&self) -> Option<String> {
-        let driver = self.kernel_driver()?;
-        let short = driver.trim_start_matches("hid-");
-        Some(format!(
-            "sudo modprobe {driver}\n  \
-             echo \"0003 {:04X} {:04X}\" | sudo tee /sys/bus/hid/drivers/{short}/new_id",
-            self.vid, self.pid
-        ))
+        self.remedy_under(Path::new(HID_DRIVERS))
     }
+
+    fn remedy_under(&self, drivers: &Path) -> Option<String> {
+        let module = self.kernel_driver()?;
+        let id = format!("0003 {:04X} {:04X}", self.vid, self.pid);
+
+        // Only once the directory has been seen. The name is not derivable
+        // from the module name and guessing it wrongly is worse than not
+        // answering, so when the module is not loaded this asks for the
+        // modprobe and then for a second look, rather than inventing a path.
+        match driver_dir(module, drivers) {
+            Some(dir) => Some(format!("echo \"{id}\" | sudo tee {}/new_id", dir.display())),
+            None => Some(format!(
+                "sudo modprobe {module}\n  \
+                 padmap-rs list   # for the new_id path, which this kernel names"
+            )),
+        }
+    }
+}
+
+/// Where the HID bus publishes its bound drivers.
+const HID_DRIVERS: &str = "/sys/bus/hid/drivers";
+
+/// The directory `new_id` lives in, for a module name, if the module is loaded.
+///
+/// Not derivable from the module name, and this got it wrong: a `hid_driver`
+/// registers whatever `.name` it likes, and hid-steam calls itself `steam` on
+/// some kernels and `hid-steam` on others. The guess here was to strip `hid-`,
+/// which produced /sys/bus/hid/drivers/steam on a 6.18 machine that has
+/// /sys/bus/hid/drivers/hid-steam -- and because the write goes through sudo,
+/// the failure reads as a permission problem rather than a missing directory.
+///
+/// So it is read, not computed. Both spellings are tried because both are real.
+fn driver_dir(module: &str, drivers: &Path) -> Option<PathBuf> {
+    [module, module.trim_start_matches("hid-")]
+        .iter()
+        .map(|name| drivers.join(name))
+        .find(|dir| dir.is_dir())
 }
 
 /// A report descriptor whose first item selects a vendor-defined usage page.
@@ -250,6 +281,35 @@ fn first_hidraw(syspath: &Path) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    /// A `/sys/bus/hid/drivers` holding exactly these driver directories.
+    ///
+    /// Uniquely named: the suite runs its tests on threads of one process, so
+    /// a fixed path would have two cases writing over each other.
+    fn fake_drivers(names: &[&str]) -> PathBuf {
+        static NEXT: AtomicU32 = AtomicU32::new(0);
+        let root = std::env::temp_dir().join(format!(
+            "padmap-lizard-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        for name in names {
+            std::fs::create_dir_all(root.join(name)).expect("fake driver dir");
+        }
+        std::fs::create_dir_all(&root).expect("fake drivers root");
+        root
+    }
+
+    fn puck() -> Dormant {
+        Dormant {
+            name: "Valve Software Steam Controller Puck".to_owned(),
+            vid: 0x28DE,
+            pid: 0x1304,
+            driver: "hid-generic".to_owned(),
+            hidraw: None,
+        }
+    }
 
     #[test]
     fn a_vendor_defined_page_is_recognised() {
@@ -283,18 +343,44 @@ mod tests {
 
     #[test]
     fn the_remedy_names_the_driver_and_the_exact_id() {
-        let puck = Dormant {
-            name: "Valve Software Steam Controller Puck".to_owned(),
-            vid: 0x28DE,
-            pid: 0x1304,
-            driver: "hid-generic".to_owned(),
-            hidraw: None,
-        };
-        let remedy = puck.remedy().expect("Valve has a kernel driver");
-        assert!(remedy.contains("modprobe hid-steam"));
-        // Uppercase hex and the bus, because that is the format new_id parses.
-        assert!(remedy.contains("0003 28DE 1304"), "{remedy}");
-        assert!(remedy.contains("/sys/bus/hid/drivers/steam/new_id"));
+        // Both spellings are real -- hid-steam registers itself as `steam` on
+        // some kernels and `hid-steam` on others -- and the remedy has to name
+        // whichever one this machine actually has.
+        for spelling in ["hid-steam", "steam"] {
+            let drivers = fake_drivers(&[spelling]);
+            let remedy = puck().remedy_under(&drivers).expect("a remedy");
+            // Uppercase hex and the bus, because that is what new_id parses.
+            assert!(remedy.contains("0003 28DE 1304"), "{remedy}");
+            assert!(
+                remedy.contains(&format!("{}/new_id", drivers.join(spelling).display())),
+                "{remedy}"
+            );
+            // Already loaded: telling them to modprobe it is noise.
+            assert!(!remedy.contains("modprobe"), "{remedy}");
+        }
+    }
+
+    #[test]
+    fn an_unloaded_module_is_asked_for_before_a_path_is_invented() {
+        // This is the bug that shipped: the path was computed by stripping
+        // `hid-`, which named a directory that did not exist. Through sudo
+        // that fails as a permission error, so it reads like the kernel
+        // refused the write rather than like a typo in the path.
+        let remedy = puck().remedy_under(&fake_drivers(&[])).expect("a remedy");
+        assert!(remedy.contains("modprobe hid-steam"), "{remedy}");
+        // The claim is that no *path* is invented. Saying the words "new_id"
+        // while explaining what the second look is for is the point.
+        assert!(!remedy.contains("tee "), "{remedy}");
+        assert!(!remedy.contains("/sys/bus/hid/drivers/"), "{remedy}");
+    }
+
+    #[test]
+    fn a_driver_for_some_other_vendor_is_not_mistaken_for_ours() {
+        // `xpadneo` being loaded says nothing about hid-steam.
+        let drivers = fake_drivers(&["hid-generic", "xpadneo"]);
+        let remedy = puck().remedy_under(&drivers).expect("a remedy");
+        assert!(remedy.contains("modprobe hid-steam"), "{remedy}");
+        assert!(!remedy.contains("tee "), "{remedy}");
     }
 
     #[test]
@@ -337,7 +423,13 @@ mod tests {
                 driver: "hid-generic".to_owned(),
                 hidraw: None,
             };
-            let remedy = device.remedy().expect("a known family has a remedy");
+            // Against a root where the module is loaded, so the assertion is
+            // about the remedy and not about what this machine happens to
+            // have modprobed.
+            let drivers = fake_drivers(&[driver]);
+            let remedy = device
+                .remedy_under(&drivers)
+                .expect("a known family has a remedy");
             assert!(remedy.contains(driver), "{remedy}");
         }
     }
