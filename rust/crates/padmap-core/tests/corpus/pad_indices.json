@@ -1,0 +1,108 @@
+[
+ {
+  "indices": {
+   "1": 0,
+   "2": 1,
+   "3": 2
+  },
+  "managed": {
+   "1": 0,
+   "2": 1,
+   "3": 2
+  },
+  "order": {
+   "0": "/dev/input/event90",
+   "1": "/dev/input/event91",
+   "2": "/dev/input/event92"
+  },
+  "paths": {
+   "1": "/dev/input/event90",
+   "2": "/dev/input/event91",
+   "3": "/dev/input/event92"
+  },
+  "what": "all three visible"
+ },
+ {
+  "indices": {
+   "1": 0
+  },
+  "managed": {
+   "1": 0
+  },
+  "order": {
+   "0": "/dev/input/event90",
+   "1": "/dev/input/event91",
+   "2": "/dev/input/event92"
+  },
+  "paths": {
+   "1": "/dev/input/event90",
+   "2": "/dev/input/event99"
+  },
+  "what": "one clone missing from the enumeration"
+ },
+ {
+  "indices": {},
+  "managed": {},
+  "order": {
+   "0": "/dev/input/event90",
+   "1": "/dev/input/event91",
+   "2": "/dev/input/event92"
+  },
+  "paths": {},
+  "what": "no clones at all"
+ },
+ {
+  "indices": {
+   "1": 2,
+   "2": 0
+  },
+  "managed": {
+   "1": 2,
+   "2": 0
+  },
+  "order": {
+   "0": "/dev/input/event90",
+   "1": "/dev/input/event91",
+   "2": "/dev/input/event92"
+  },
+  "paths": {
+   "1": "/dev/input/event92",
+   "2": "/dev/input/event90"
+  },
+  "what": "out of order"
+ },
+ {
+  "indices": {
+   "99": 0
+  },
+  "managed": {
+   "99": 0
+  },
+  "order": {
+   "0": "/dev/input/event90",
+   "1": "/dev/input/event91",
+   "2": "/dev/input/event92"
+  },
+  "paths": {
+   "99": "/dev/input/event90"
+  },
+  "what": "a player number beyond the slots"
+ },
+ {
+  "indices": {
+   "0": 0
+  },
+  "managed": {
+   "0": 0
+  },
+  "order": {
+   "0": "/dev/input/event90",
+   "1": "/dev/input/event91",
+   "2": "/dev/input/event92"
+  },
+  "paths": {
+   "0": "/dev/input/event90"
+  },
+  "what": "player zero"
+ }
+]

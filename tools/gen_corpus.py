@@ -1468,6 +1468,80 @@ def clean_config() -> None:
     ])
 
 
+# -- the launch override -----------------------------------------------------
+def launch_override() -> None:
+    """The file handed to RetroArch with --appendconfig, exactly.
+
+    Every one of the sixteen player slots is written, assigned or not: an
+    unmanaged slot gets a vacant pad index, a cleared reservation and
+    RETRO_DEVICE_NONE, which together are the difference between "padmap said
+    nothing about player 3" and "player 3 has no controller".
+
+    The index arithmetic is the part that decides which physical controller a
+    game sees as player 1, and it has been wrong in ways that end the daemon:
+    a player number outside 1..MAX_PLAYERS was counted as managed without
+    consuming a spare index, so the iterator ran dry and launch_config raised
+    StopIteration during startup, after the pads were grabbed.
+    """
+    from padmap import retroarch, virtual
+    from padmap.assign import Assignment
+    from padmap.devices import Pad
+
+    def pad(n):
+        return Pad(path=f"/dev/input/event{n}", name=f"Pad {n}", phys=f"usb-{n}",
+                   uniq="", vid=0x045E, pid=0x028E, syspath=f"/sys/{n}")
+
+    # _empty_indices: distinct vacant indices for the unmanaged slots.
+    write("empty_indices", [
+        {"pads": pads, "wanted": wanted,
+         "indices": retroarch._empty_indices(pads, wanted)}
+        for pads, wanted in [
+            (0, 0), (0, 1), (0, 16), (2, 3), (2, 16), (15, 4),
+            (16, 4), (20, 4), (100, 2),
+        ]
+    ])
+
+    # compute_pad_indices / managed_players, against a fixed enumeration.
+    order = {0: "/dev/input/event90", 1: "/dev/input/event91",
+             2: "/dev/input/event92"}
+    scenarios = [
+        ("all three visible", [1, 2, 3],
+         {1: "/dev/input/event90", 2: "/dev/input/event91",
+          3: "/dev/input/event92"}),
+        ("one clone missing from the enumeration", [1, 2],
+         {1: "/dev/input/event90", 2: "/dev/input/event99"}),
+        ("no clones at all", [1], {}),
+        ("out of order", [1, 2],
+         {1: "/dev/input/event92", 2: "/dev/input/event90"}),
+        ("a player number beyond the slots", [99],
+         {99: "/dev/input/event90"}),
+        ("player zero", [0], {0: "/dev/input/event90"}),
+    ]
+    rows = []
+    for what, players, paths in scenarios:
+        assignments = [Assignment(player=p, pad=pad(p), button=0)
+                       for p in players]
+        rows.append({
+            "what": what, "order": order, "paths": paths,
+            "indices": retroarch.compute_pad_indices(paths, order),
+            "managed": retroarch.managed_players(assignments, paths, order),
+        })
+    write("pad_indices", rows)
+
+    # _reservation_lines and reservation_config, which are pure text.
+    write("reservation_lines", [
+        {"managed": managed, "text": retroarch._reservation_lines(managed)}
+        for managed in ([], [1], [1, 2], [3], [1, 16], list(range(1, 17)))
+    ])
+    write("reservation_config", [
+        {"players": players,
+         "text": retroarch.reservation_config(
+             [Assignment(player=p, pad=pad(p), button=0) for p in players])}
+        for players in ([], [1], [2, 1], [1, 2, 3, 4])
+    ])
+    _ = virtual
+
+
 def main() -> int:
     print(f"recording the Python's answers into {OUT.relative_to(REPO)}:")
     bindings()
@@ -1493,6 +1567,7 @@ def main() -> int:
     calibration_machine()
     switch_reports()
     clean_config()
+    launch_override()
     return 0
 
 
