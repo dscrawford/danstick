@@ -35,6 +35,7 @@ from pathlib import Path
 
 from . import profiles, protocol, virtual
 from .assign import Assignment
+from .devices import Pad
 from .virtual import PADMAP_PID, PADMAP_VID, VIRTUAL_PREFIX, virtual_name
 
 log = logging.getLogger("padmap.retroarch")
@@ -148,11 +149,21 @@ def autoconfig_dirs() -> list[Path]:
 
 
 def parse_profile(path: Path) -> dict[str, str]:
-    values: dict[str, str] = {}
     try:
         text = path.read_text(errors="replace")
     except OSError:
-        return values
+        return {}
+    return parse_profile_text(text)
+
+
+def parse_profile_text(text: str) -> dict[str, str]:
+    """The same parse, for a profile that is not on disk yet.
+
+    `profile_text` renders one and the `controller` event carries its settings
+    as a dict; going through this means the dict is the file, read back, and
+    cannot drift from it.
+    """
+    values: dict[str, str] = {}
     for line in text.splitlines():
         match = re.match(r'\s*([A-Za-z0-9_]+)\s*=\s*"?([^"]*)"?\s*$', line)
         if match:
@@ -297,8 +308,6 @@ def install_profiles(
         if stale.name.startswith(VIRTUAL_PREFIX):
             stale.unlink()
 
-    from . import controllercfg
-
     written: list[Path] = []
     for assignment in assignments:
         source = find_profile(
@@ -306,37 +315,58 @@ def install_profiles(
         )
         path = target / f"{virtual_name(assignment.player)}.cfg"
 
-        scope, resolved = controllercfg.resolved_mapping(
-            assignment.pad, console, game)
-        bindings = dict(resolved.buttons)
-        _log_unmapped(assignment.pad, scope, resolved.layout, bindings)
-        if bindings:
-            # The user pressed these buttons themselves. Copying libretro's
-            # entry instead would give two sets of bindings for one
-            # controller, differing in ways nobody is told about.
-            path.write_text(controllercfg.retroarch_profile(
-                assignment.player, assignment.pad, bindings,
-                source=source.name if source else "",
-                # The layout comes from the capture that won, not from the
-                # console asked about, and is re-resolved here rather than
-                # baked in at capture time so that a correction to a
-                # console's key table reaches controllers already mapped
-                # under it.
-                layout=resolved.layout,
-                scope=scope, context=context,
-            ))
-        else:
-            # The ids the pad will actually advertise, not the physical
-            # ones. They coincide in mirror mode and do not in padmap mode,
-            # and a profile claiming a vid/pid the device does not report
-            # scores against itself in RetroArch's autoconfig matching.
-            identity = virtual.identity_for(assignment.pad)
-            path.write_text(derive_profile(
-                source, assignment.player,
-                vid=identity.vendor, pid=identity.product,
-            ))
+        path.write_text(profile_text(
+            assignment.pad, assignment.player,
+            console=console, game=game, context=context, log=True))
         written.append(path)
     return written
+
+
+def profile_text(
+    pad: Pad, player: int, *,
+    console: str = "", game: str = "", context: str = "",
+    log: bool = False,
+) -> str:
+    """The autoconfig profile for one virtual pad, as text.
+
+    Split out of `install_profiles` so that anything describing a pad -- the
+    `controller` event, in particular -- reports the same bytes that get
+    written, rather than a second rendering of the same idea. Two renderings
+    is how a consumer ends up applying binds that disagree with the file
+    RetroArch reads, with nothing to say which is live.
+
+    `log` only for the writing caller: the unmapped-control warning is about
+    what was installed, and repeating it every time an event is built would
+    put it in the log once per hotplug for a state that did not change.
+    """
+    from . import controllercfg
+
+    source = find_profile(pad.name, pad.vid, pad.pid)
+    scope, resolved = controllercfg.resolved_mapping(pad, console, game)
+    bindings = dict(resolved.buttons)
+    if log:
+        _log_unmapped(pad, scope, resolved.layout, bindings)
+    if bindings:
+        # The user pressed these buttons themselves. Copying libretro's
+        # entry instead would give two sets of bindings for one controller,
+        # differing in ways nobody is told about.
+        return controllercfg.retroarch_profile(
+            player, pad, bindings,
+            source=source.name if source else "",
+            # The layout comes from the capture that won, not from the
+            # console asked about, and is re-resolved here rather than baked
+            # in at capture time so that a correction to a console's key
+            # table reaches controllers already mapped under it.
+            layout=resolved.layout,
+            scope=scope, context=context,
+        )
+    # The ids the pad will actually advertise, not the physical ones. They
+    # coincide in mirror mode and do not in padmap mode, and a profile
+    # claiming a vid/pid the device does not report scores against itself in
+    # RetroArch's autoconfig matching.
+    identity = virtual.identity_for(pad)
+    return derive_profile(
+        source, player, vid=identity.vendor, pid=identity.product)
 
 
 def visible_order() -> dict[int, str]:

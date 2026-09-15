@@ -34,8 +34,8 @@ from typing import Any
 
 from evdev import ecodes
 
-from . import (calibrate, capture, controllercfg, devices, icons, layouts,
-               profiles, protocol, retroarch, virtual)
+from . import (announce, calibrate, capture, controllercfg, devices, icons,
+               layouts, profiles, protocol, retroarch, virtual)
 from .assign import Assigner, Assignment
 from .devices import Pad
 from .protocol import STATE_ASSIGNING, STATE_IDLE, STATE_READY, LineReader
@@ -52,6 +52,28 @@ PAD_SCAN_SECONDS = 1.0
 
 # Set to "1" to keep the setup screen from opening by itself.
 ENV_NO_AUTOSETUP = "PADMAP_NO_AUTOSETUP"
+# Announce arrivals but never claim a player slot for them. For a caller that
+# wants to decide the roster itself and treat padmap purely as a source of
+# events -- which is the arrangement the `controller` event exists to support.
+ENV_NO_AUTOATTACH = "PADMAP_NO_AUTOATTACH"
+
+# How often an arrival scan may run while a controller is being retried, and
+# how many attempts it gets.
+#
+# A device node exists before it is readable. udev applies the uaccess ACL
+# that grants this user access *after* the node appears, and padmap looks the
+# moment /dev/input changes -- so the first open of a freshly plugged
+# controller can fail with EACCES and succeed a fraction of a second later.
+# Observed on a uinput pad created beside a running daemon: "could not
+# republish ... [Errno 13] Permission denied".
+#
+# Without a retry the controller is lost until it is unplugged and plugged
+# again, having been recorded as attached; the user sees a pad that padmap
+# says nothing about. Without a *bounded* retry, a node that genuinely cannot
+# be opened rescans at tick rate, and a scan is the expensive call this loop
+# exists to ration.
+ATTACH_SCAN_SECONDS = 0.25
+ATTACH_ATTEMPTS = 20
 
 # How long a client must have been connected before the daemon will grab the
 # pads on its behalf. Comfortably longer than a status query, which is what
@@ -165,6 +187,32 @@ class CalibrationRun:
         self._reset_samples()
 
 
+class _Scan:
+    """`devices.discover()`, run at most once, and never reused across ticks.
+
+    Both pollers need the full pad list on the tick a controller arrives, and
+    discover() is the call this loop has spent the most effort avoiding: it
+    reads several files per pad on the same thread that forwards controller
+    events. Running it twice for one plug is a stall nobody could attribute.
+
+    Passed down from `_tick` rather than cached on the Server, because a cache
+    needs invalidating and the two pollers do not share a trigger -- the setup
+    poller also runs when `padmap forget` rewrites the prompted file, which
+    changes nothing about what is plugged in. A cache keyed on the node set
+    answers that scan from a previous tick, and forgetting a controller
+    silently stops re-offering it. A value created fresh per tick has no
+    lifetime to get wrong, and a caller that has none makes its own.
+    """
+
+    def __init__(self) -> None:
+        self._pads: list[Pad] | None = None
+
+    def pads(self) -> list[Pad]:
+        if self._pads is None:
+            self._pads = devices.discover()
+        return self._pads
+
+
 def _event_nodes() -> frozenset[str]:
     """Names of the evdev nodes that exist right now.
 
@@ -252,6 +300,20 @@ class Server:
         # (event nodes, prompted mtime) at the last full scan; see
         # _poll_new_controllers. None until the first one has run.
         self._last_scan_signature: tuple[frozenset[str], int] | None = None
+        # signature -> player, for every controller announced as live. Not
+        # derived from _assignments: a pad stays assigned while it is
+        # unplugged, so that a reconnecting controller gets its slot back, and
+        # this is the narrower question of what is attached *now*.
+        self._attached: dict[str, int] = {}
+        self._last_attach_nodes: frozenset[str] | None = None
+        self._last_attach_scan = 0.0
+        # signature -> failed opens so far. Cleared on success and on the
+        # controller going away, so unplugging and replugging always gets a
+        # clean set of attempts.
+        self._attach_attempts: dict[str, int] = {}
+        # Controllers that ran out of attempts. Kept so the scan a third
+        # device triggers does not start the whole cycle again.
+        self._unbindable: set[str] = set()
         self._prompted_stamp = self._read_prompted_stamp()
         self._last_pad_scan = 0.0
 
@@ -1472,6 +1534,191 @@ class Server:
         except OSError:
             return 0
 
+    def _poll_controller_changes(self, scan: _Scan | None = None) -> None:
+        """Announce controllers arriving and leaving, game running or not.
+
+        The gap this closes: padmap published its configuration when a game
+        was launched and never again, so a controller plugged in during play
+        was invisible to whatever was playing. The only way to pick it up was
+        to quit. A program attached to padmap can now bind the new pad live.
+
+        Deliberately separate from `_poll_new_controllers`, which opens the
+        setup screen and is blocked during a game *on purpose* -- a modal
+        screen mid-game is the thing that must not happen. Announcing is not
+        modal and is safe at any time, so the two have opposite rules and are
+        kept apart rather than sharing a guard that would have to be right in
+        both directions.
+        """
+        scan = scan if scan is not None else _Scan()
+        nodes = _event_nodes()
+        if nodes == self._last_attach_nodes:
+            return
+        # Only throttles retries: on a real change the previous scan was
+        # however long ago the last device appeared. A failed attach clears
+        # `_last_attach_nodes` to come back here, and this is what stops that
+        # coming back every 20ms.
+        now = time.monotonic()
+        if now - self._last_attach_scan < ATTACH_SCAN_SECONDS:
+            return
+        self._last_attach_scan = now
+        self._last_attach_nodes = nodes
+
+        # A session owns every pad while it is open -- it holds EVIOCGRAB on
+        # them and is about to rewrite the whole roster. Attaching underneath
+        # it would claim a slot the user is in the middle of assigning.
+        if self._state == STATE_ASSIGNING:
+            return
+
+        pads = {profiles.signature(pad): pad for pad in scan.pads()}
+
+        for signature in sorted(set(self._attached) - set(pads)):
+            self._announce_departure(signature)
+        # A controller that has gone gets its attempts back, so replugging a
+        # pad that could not be opened is always worth doing.
+        for signature in set(self._attach_attempts) - set(pads):
+            self._attach_attempts.pop(signature, None)
+        self._unbindable &= set(pads)
+        for signature in sorted(set(pads) - set(self._attached)):
+            if signature in self._unbindable:
+                continue
+            self._announce_arrival(pads[signature])
+
+    def _announce_departure(self, signature: str) -> None:
+        player = self._attached.pop(signature)
+        gone = next(
+            (a.pad for a in self._assignments if a.player == player), None)
+        if gone is None:
+            return
+        log.info("player %d: %s unplugged", player, _clean(gone.name))
+        # The slot is not freed. It stays this controller's until something
+        # else claims it, because a Bluetooth pad that drops for four seconds
+        # and comes back must come back as the same player -- renumbering
+        # mid-game is the failure padmap exists to prevent.
+        self._broadcast(self._controller_event(
+            announce.ACTION_REMOVED,
+            announce.Attached(player=player, pad=gone)))
+
+    def _announce_arrival(self, pad: Pad) -> None:
+        """Attach a controller that has a mapping, and say so either way."""
+        signature = profiles.signature(pad)
+        existing = next(
+            (a for a in self._assignments if profiles.signature(a.pad) == signature),
+            None)
+        if existing is not None:
+            # A slot this controller already holds: a reconnect, not a new
+            # player. _republish_if_stale reopens the source; all this owes
+            # the consumer is that the pad is live again under the old number.
+            self._attached[signature] = existing.player
+            self._rebuild_for_attach(existing.player, pad)
+            return
+
+        if not controllercfg.has_mapping(pad):
+            # Nothing to apply. Said out loud rather than passed over: a
+            # controller that lights up and does nothing is the situation a
+            # user most needs explained, and `_poll_new_controllers` will only
+            # offer setup for it once a game is not running.
+            log.info("%s attached with no stored mapping; not binding it",
+                     _clean(pad.name))
+            self._broadcast(self._controller_event(
+                announce.ACTION_UNCONFIGURED,
+                announce.Attached(player=0, pad=pad),
+                reason=announce.REASON_UNMAPPED))
+            return
+
+        if os.environ.get(ENV_NO_AUTOATTACH) == "1":
+            log.info("%s attached; not binding it (%s)",
+                     _clean(pad.name), ENV_NO_AUTOATTACH)
+            return
+
+        player = announce.next_player([a.player for a in self._assignments])
+        if player > retroarch.MAX_PLAYERS:
+            log.warning("%s attached but every player slot is taken",
+                        _clean(pad.name))
+            return
+        self._assignments.append(Assignment(player=player, pad=pad, button=0))
+        self._attached[signature] = player
+        log.info("player %d: %s attached mid-session", player, _clean(pad.name))
+        if self._rebuild_for_attach(player, pad):
+            self._attach_attempts.pop(signature, None)
+            return
+        # Undo it. Leaving the slot claimed for a controller with no clone
+        # would have the next arrival take player 3 while player 2 does not
+        # exist, and would stop this one ever being retried.
+        self._assignments = [
+            a for a in self._assignments if a.player != player]
+        self._attached.pop(signature, None)
+        attempts = self._attach_attempts.get(signature, 0) + 1
+        self._attach_attempts[signature] = attempts
+        if attempts < ATTACH_ATTEMPTS:
+            # Come straight back: the usual cause is a udev ACL that has not
+            # landed yet, and it lands in milliseconds.
+            self._last_attach_nodes = None
+            return
+        log.warning("%s could not be opened after %d attempts; giving up",
+                    _clean(pad.name), attempts)
+        self._unbindable.add(signature)
+        self._broadcast(self._controller_event(
+            announce.ACTION_UNCONFIGURED,
+            announce.Attached(player=0, pad=pad),
+            reason=announce.REASON_UNREADABLE))
+
+    def _rebuild_for_attach(self, player: int, pad: Pad) -> bool:
+        """Republish, then announce the pad that is now live.
+
+        In this order because the event names the clone's device node, and
+        that node does not exist until the republisher has made it. Announcing
+        first would hand a consumer a path to open that is not there yet.
+        """
+        try:
+            self._start_republisher()
+        except OSError as error:
+            # Never fatal. The daemon holds every other player's virtual pad,
+            # and losing them all because a fifth controller could not be
+            # opened would take a working game down with it.
+            log.warning("could not republish after %s attached: %s",
+                        _clean(pad.name), error)
+            return False
+        self._state = STATE_READY if self._republisher else self._state
+        self._save_assignments()
+        self._broadcast(self._controller_event(
+            announce.ACTION_ADDED,
+            announce.Attached(player=player, pad=pad)))
+        return True
+
+    def _controller_event(
+        self, action: str, subject: announce.Attached, reason: str = ""
+    ) -> dict[str, Any]:
+        """Build the message, filling in whatever the republisher knows."""
+        live = {vp.player: vp for vp in
+                (self._republisher.pads if self._republisher else [])}
+
+        def attach(player: int, pad: Pad) -> announce.Attached:
+            vpad = live.get(player)
+            return announce.Attached(
+                player=player, pad=pad,
+                virtual_node=vpad.ui.device.path if vpad else "",
+                identity=vpad.identity if vpad else None)
+
+        if subject.player in live:
+            subject = attach(subject.player, subject.pad)
+        roster = [attach(a.player, a.pad) for a in self._assignments
+                  if profiles.signature(a.pad) in self._attached]
+        # Whatever the last launch resolved, for the same reason
+        # _start_republisher uses it: a consumer applying these binds during a
+        # game must be given that game's mapping, not the context-free one.
+        last = protocol.read_last_game()
+        # Indices come from the *clones*, because that is what RetroArch
+        # enumerates -- the physical pads are hidden. A player with no live
+        # clone contributes no path and so gets no index, which is the honest
+        # answer rather than a number that would point at someone else's pad.
+        return announce.controller_event(
+            action, subject, roster,
+            console=last.get("console", ""), game=last.get("key", ""),
+            indices=retroarch.compute_pad_indices(
+                {player: vpad.ui.device.path for player, vpad in live.items()}),
+            reason=reason,
+        )
+
     def _reload_prompted_if_changed(self) -> None:
         """Pick up edits made while the daemon is running.
 
@@ -1536,7 +1783,7 @@ class Server:
             return "a game is running"
         return None
 
-    def _poll_new_controllers(self) -> None:
+    def _poll_new_controllers(self, scan: _Scan | None = None) -> None:
         """Open setup when a controller model is seen for the first time.
 
         The point is that plugging in a new controller should be enough --
@@ -1551,6 +1798,7 @@ class Server:
         is what surfaces the screen, and the theme already follows the daemon
         rather than assuming it is the only thing that can start a session.
         """
+        scan = scan if scan is not None else _Scan()
         now = time.monotonic()
         if now - self._last_pad_scan < PAD_SCAN_SECONDS:
             return
@@ -1605,7 +1853,7 @@ class Server:
         self._reload_prompted_if_changed()
 
         fresh = {}
-        for pad in devices.discover():
+        for pad in scan.pads():
             signature = profiles.signature(pad)
             if signature in self._prompted or controllercfg.has_mapping(pad):
                 continue
@@ -1627,7 +1875,13 @@ class Server:
         self._begin(self._slots)
 
     def _tick(self) -> None:
-        self._poll_new_controllers()
+        # One scan, shared. See _Scan for why it is passed rather than cached.
+        scan = _Scan()
+        # Before the setup poller: announcing is never modal and is allowed
+        # during a game, and a consumer should hear about a controller at the
+        # moment it arrives rather than after a screen has or has not opened.
+        self._poll_controller_changes(scan)
+        self._poll_new_controllers(scan)
         # Before any early return: the modal flows below each end in one, and
         # a pause that only got applied on the paths that fall through would
         # be applied exactly never.

@@ -177,6 +177,13 @@ class VirtualPad:
     pad: Pad
     source: evdev.InputDevice
     ui: evdev.UInput
+    # What this clone actually advertises, recorded at creation rather than
+    # recomputed later. identity_for opens the source to read its ids, so
+    # asking again costs a device open, and -- worse -- a pad that was
+    # replaced under us would answer for the *new* device while this clone
+    # still carries the old ids. Anything describing the clone must describe
+    # the clone.
+    identity: Identity | None = None
     # effect id on our virtual device -> effect id on the physical device
     effects: dict[int, int] = field(default_factory=dict)
     # ABS code -> calibration, applied as events pass through. Correcting
@@ -316,7 +323,8 @@ def create(pad: Pad, player: int, grab: bool = True) -> VirtualPad:
              player, pad.event, ui.device.path, virtual_name(player),
              identity.vendor, identity.product, identity.bustype,
              identity_mode())
-    return VirtualPad(player=player, pad=pad, source=source, ui=ui, axes=axes)
+    return VirtualPad(player=player, pad=pad, source=source, ui=ui,
+                      axes=axes, identity=identity)
 
 
 class Republisher:
