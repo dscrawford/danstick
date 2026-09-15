@@ -170,11 +170,14 @@ impl LateModel {
             "{} learned {:04X}:{:04X} in Linux {}.{}; this kernel is {}.{}.\n",
             self.module, self.vid, self.pid, self.since.0, self.since.1, running.0, running.1
         ));
-        out.push_str("Upgrade the kernel, or build the upstream module out of tree.\n\n");
+        out.push_str("padmap drives it itself over hidraw -- see triton.py and\n");
+        out.push_str("docs/STEAM-CONTROLLER.md -- so this is a note, not a fault.\n");
+        out.push_str("A newer kernel would hand it to hid-steam instead.\n\n");
         // Spelled out because padmap gave the opposite advice once, and an
         // instruction that was wrong is not retracted by quietly dropping it.
         out.push_str("Force-binding the running driver does not work, and this\n");
-        out.push_str("used to say it did. Writing the id to\n");
+        out.push_str("used to say that and an upgrade were the only options.\n");
+        out.push_str("Writing the id to\n");
         out.push_str(&format!("  /sys/bus/hid/drivers/{}/new_id\n", self.module));
         out.push_str("does bind it, but before that release steam_raw_event opens\n");
         out.push_str("with\n");

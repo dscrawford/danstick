@@ -35,7 +35,7 @@ from typing import Any
 from evdev import ecodes
 
 from . import (announce, calibrate, capture, controllercfg, devices, icons,
-               layouts, profiles, protocol, retroarch, virtual)
+               layouts, profiles, protocol, retroarch, triton, virtual)
 from .assign import Assigner, Assignment
 from .devices import Pad
 from .protocol import STATE_ASSIGNING, STATE_IDLE, STATE_READY, LineReader
@@ -1550,7 +1550,17 @@ class Server:
         both directions.
         """
         scan = scan if scan is not None else _Scan()
-        nodes = _event_nodes()
+        # A directory listing plus the Steam Controller slots that have a pad
+        # in them.
+        #
+        # The listing alone cannot see one of those arrive. A receiver's
+        # hidraw nodes exist from the moment it is plugged in and never change
+        # afterwards, so a controller being switched on alters nothing in
+        # /dev/input -- padmap would not notice it until something else
+        # happened to trigger a scan. Asking costs four ioctls here and is
+        # what makes a pad usable when it is turned on rather than when the
+        # daemon next restarts.
+        nodes = _event_nodes() | triton.live_signature()
         if nodes == self._last_attach_nodes:
             return
         # Only throttles retries: on a real change the previous scan was

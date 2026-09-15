@@ -169,7 +169,16 @@ def driver_for(pad: Pad) -> str:
 
 
 def supported(pad: Pad, overrides: dict[str, bool] | None = None) -> bool:
-    """Whether padmap should read this pad over hidraw rather than evdev."""
+    """Whether padmap should read this pad over hidraw rather than evdev.
+
+    A Triton slot is not up for discussion: it has no evdev node to fall back
+    to, so "read it over hidraw" is not a preference but the only way it is a
+    controller at all. Checked before the overrides for that reason -- turning
+    it off would not select a different path, it would delete the pad.
+    """
+    from . import triton
+    if triton.owns(pad):
+        return True
     overrides = overrides if overrides is not None else load_overrides()
     key = f"{pad.vid:04x}:{pad.pid:04x}"
     if key in overrides:
@@ -580,6 +589,13 @@ def open_source(pad: Pad) -> Source | None:
     """A hidraw source for this pad, or None to use its evdev node."""
     if not supported(pad):
         return None
+    from . import triton
+    if triton.owns(pad):
+        # Its own protocol, and its own node: a Triton pad's `path` already
+        # *is* the hidraw node, because it was synthesised from one. Going
+        # through node_for would walk up from a /sys/class/input entry that
+        # does not exist.
+        return triton.open_source(pad)
     node = node_for(pad)
     if node is None:
         log.warning("%s looks like a hidraw pad but has no hidraw node",

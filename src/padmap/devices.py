@@ -14,12 +14,15 @@ Identity comes from the user pressing a button (see assign.py).
 from __future__ import annotations
 
 import glob
+import logging
 import os
 import subprocess
 from dataclasses import dataclass
 
 import evdev
 from evdev import ecodes
+
+log = logging.getLogger("padmap.devices")
 
 # Virtual pads we publish are tagged with this phys prefix so that discovery
 # never picks up our own output. Without it, restarting the daemon would grab
@@ -270,12 +273,38 @@ def discover(
     global _PROPERTY_CACHE
     _PROPERTY_CACHE = _ask_udev_about([node for _, _, node in candidates])
     try:
-        return _collect(candidates, include_virtual, retroarch_only)
+        pads = _collect(candidates, include_virtual, retroarch_only)
     finally:
         # Only ever primed for the length of one scan. Held across calls it
         # would be a cache of which controllers are plugged in, which is the
         # one thing about a controller that changes without warning.
         _PROPERTY_CACHE = None
+
+    # Controllers with no joypad node of their own.
+    #
+    # Everything above starts from /sys/class/input, which is the right place
+    # to look for a pad the kernel is driving. A 2026 Steam Controller is not
+    # one: with no hid-steam that knows it, the receiver publishes a mouse and
+    # a keyboard per slot and no joypad at all, so it is not merely unmapped
+    # -- there is nothing for any of this to find. padmap speaks its protocol
+    # directly, so it is a pad here even though the kernel says otherwise.
+    #
+    # After, not before: these are appended to a list whose order is
+    # RetroArch's enumeration order, and they are not in that enumeration at
+    # all. Putting one in the middle would shift every pad below it.
+    #
+    # `retroarch_only` excludes them for the same reason -- RetroArch cannot
+    # see a device with no evdev node, and the whole point of that flag is to
+    # predict its pad indices.
+    if not retroarch_only:
+        from . import triton
+        try:
+            pads.extend(triton.slots())
+        except OSError as error:                     # noqa: BLE001
+            # A scan that cannot read sysfs must not take the pads that were
+            # found with it.
+            log.warning("could not scan for Steam Controllers: %s", error)
+    return pads
 
 
 def _collect(

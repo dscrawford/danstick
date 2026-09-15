@@ -3043,3 +3043,69 @@ And one that does not generalise but is worth stating: **a diagnosis that names
 a remedy is a claim, and a wrong one is more expensive than silence.** "No
 joypads found" would have left the user to investigate. "Run this as root" sent
 them to do it, twice, for a command that could never have worked.
+
+---
+
+## The Steam Controller, resolved: I researched my way to the wrong answer
+
+The previous entry ends "the actual remedy is a kernel version". It is not.
+The controller works on 6.18.44, with no kernel driver, and had been working
+in another program on this machine while that entry was being written.
+
+What I got wrong, and how:
+
+**"Decoding it by hand has a chicken-and-egg problem -- the command to leave
+lizard mode is the part of the protocol you do not have."** It is
+`SDL_hidapi_steam_triton.c:126`, zlib licensed, upstream since 2025-11-12, and
+it is six bytes. I had already read `hid-steam.c` from three kernel tags and
+the mainline `hid-ids.h`; I did not think to look in SDL, because I had
+decided the answer was a driver and drivers live in the kernel.
+
+**"It works in the other program because Valve wrote both ends."** Valve wrote
+both ends of *Steam*. The implementation worth copying is SDL's, which is
+public. I inferred an asymmetry from one data point -- Steam works, nothing
+else does -- and then reasoned from the inference rather than checking it. The
+user's own report said "another program", and I answered "that program is
+Steam" without asking which.
+
+**The recommendation followed from the framing, not from the evidence.** Every
+individual fact in that entry is correct and independently verified: v6.18's
+`hid-steam` really does have three ids, its `raw_event` really does drop every
+report this model sends, `PROTEUS` really did arrive in v7.3-rc1. All true,
+all beside the point, because the question was never "will the kernel driver
+bind" -- it was "can this controller be used", and I had substituted one for
+the other early enough that no amount of further verification could catch it.
+
+The correction came from someone else's document with a working controller
+behind it. Worth being plain that the verification I did was not useless but
+was not sufficient either: it made the wrong answer *well-evidenced*.
+
+### What was actually needed
+
+    01 87 03 09 00 00   then 58 zeros, via HIDIOCSFEATURE, every 3 seconds
+
+and a decode of a packed struct. `src/padmap/triton.py`.
+
+Three details that would each have cost a session:
+
+* **A feature report, not a write.** `hidraw.py:_request_full_mode` uses
+  `os.write`, which is correct for the Switch Pro's output report. The same
+  call here succeeds and does nothing.
+* **Re-sent every three seconds, forever.** The controller reverts by itself.
+  Sent once, a pad works and then stops, which reads as failing hardware.
+* **An empty slot stalls with EPIPE**, and that is the only cheap way to tell
+  an empty slot from a full one. The receiver publishes four either way, so
+  without probing, padmap offers four players for one controller and three of
+  them never send an event.
+
+### The generalisable part
+
+The previous entry's own lesson was "deriving a fact that was available to be
+read". This is the same failure one level up: the *existence* of an
+implementation was available to be read, and I derived its non-existence from
+the fact that the kernel did not have one yet.
+
+A concrete rule out of it: when the conclusion is "this cannot be done", the
+next step is not more evidence for that conclusion. It is to find whoever is
+already doing it. The user said someone was. That was the cheapest available
+disproof and I treated it as a puzzle about Steam.
