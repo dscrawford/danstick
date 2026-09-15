@@ -16,7 +16,7 @@ import logging
 import select
 import time
 from dataclasses import dataclass
-from typing import Callable, Iterable
+from typing import Any, Callable, Iterable
 
 import evdev
 from evdev import ecodes
@@ -62,7 +62,16 @@ class Assigner:
         self.pads = list(pads)
         self.hold_seconds = hold_seconds
         self._grab = grab
-        self._devices: dict[int, evdev.InputDevice] = {}
+        # `Any`, not `evdev.InputDevice`, because a hidraw pad is not one --
+        # `hidraw.Source` wears the shape of an InputDevice and implements only
+        # the twelve members this class and the republisher actually use. Saying
+        # InputDevice here was a lie mypy caught and nothing else would have:
+        # the two types diverge exactly where force feedback is, and calling a
+        # member Source does not have raises AttributeError, which is not an
+        # OSError and so passes through every guard between here and the
+        # selector loop. Same annotation virtual.create already uses, for the
+        # same reason.
+        self._devices: dict[int, Any] = {}
         self._pad_by_fd: dict[int, Pad] = {}
         # fd -> (button code, monotonic time it went down)
         self._holding: dict[int, tuple[int, float]] = {}
