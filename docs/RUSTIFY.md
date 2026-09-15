@@ -4,21 +4,21 @@ What is done, what is not, and why the order is what it is.
 
 ## Why
 
-Input lag, and one measurement. `tools/latency.py` times a frame from the write
-that injects it to the read that sees it come back off the clone:
+Not latency. That was the starting assumption and the measurement refuted it:
+in steady state the Python republisher adds 0.046 ms at the median and 0.265 ms
+at the worst, against an 8 ms frame, with zero late frames. The Rust is about
+twice as good on both, which is 0.013 ms against 0.03 ms and is not something
+anybody can feel. See [LATENCY.md](LATENCY.md), including the correction --
+an earlier version of this document claimed a 250 ms tail that turned out to be
+the harness timing `padmap run`'s startup.
 
-| | Python | Rust |
-| --- | --- | --- |
-| p50 | 0.067 ms | 0.028 ms |
-| max | 256.7 ms | 0.137 ms |
-| frames later than one 8ms frame | 12-32 of 1200 | 0 |
+The one real stall found is at startup, in Python, and is unfixed:
+`devices.discover()` costs 596 ms because it runs `udevadm info` as a subprocess
+per input device, and `cmd_run` calls it twice after creating the clone and
+before entering its loop. Presses in that window queue and arrive in a burst.
+That is worth fixing in the Python, with or without this port.
 
-The median is not the reason. 39 microseconds against an 8000 microsecond frame
-is nothing anybody can feel, and a port argued on that number would be
-indefensible. The reason is the maximum: a quarter of a second, on an idle
-machine, with one pad attached. See [LATENCY.md](LATENCY.md).
-
-The second reason is testability, and it is not a smaller one. The Python's
+The reason that survives is testability, and it is not a small one. The Python's
 logic is exercised by 62 scripts under `tools/`, every one of which needs a
 machine with controllers plugged into it. The same decisions are now reachable
 from `cargo test`, and moving them there found four real bugs in a week-old

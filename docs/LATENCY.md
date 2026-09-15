@@ -1,145 +1,107 @@
 # What padmap adds to a controller, measured
 
-Run it yourself:
-
-    nix develop --command python3 tools/latency.py -n 1500 --hz 125 --quiet
+    nix develop --command python3 tools/latency.py -n 1200 --hz 125 --quiet
+    nix develop --command python3 tools/latency.py --no-bridge          # control
+    nix develop --command python3 tools/latency.py --command '.../padmap-rs run'
 
 A uinput device stands in for the controller, padmap grabs and republishes it,
-and the harness times each frame from the write that injected it to the read
-that saw it come back off the clone. That delta is the whole of what padmap
-adds: one kernel delivery, the republisher's read, its decision, its write, and
-one more kernel delivery. It does not include the USB or Bluetooth polling
-interval, which no userspace program can change and which is far larger than
-anything below.
+and each frame is timed from the write that injected it to the read that saw it
+come back off the clone. Frames carry a sequence number in `MSC_SCAN`, which is
+the one event type the input core neither deduplicates nor rewrites.
 
-## Baseline: the Python republisher
+## The steady-state answer
 
-`python3 -m padmap.cli run`, 1500 frames at 125Hz, idle desktop,
-Linux 6.18.44, CPython 3.14.7, python-evdev.
+1200 frames at 125Hz, idle desktop, Linux 6.18.44, one pad.
 
-    1500 of 1500 events arrived
+| | p50 | p99.9 | max | frames later than one 8ms frame |
+| --- | --- | --- | --- | --- |
+| no bridge (control) | 0.017 ms | 0.101 ms | 0.104 ms | 0 |
+| `padmap run` (Python) | 0.046 ms | 0.240 ms | 0.265 ms | **0** |
+| `padmap serve` (Python daemon) | 0.047 ms | 0.293 ms | 0.395 ms | **0** |
+| `padmap-rs run` (Rust) | 0.030 ms | 0.113 ms | 0.135 ms | **0** |
 
-         p50     0.067 ms
-         p90     0.114 ms
-         p99     0.407 ms
-       p99.9    94.697 ms
-         max   102.759 ms
-        mean     0.550 ms
+**There is no steady-state latency defect in the Python, and the Rust port does
+not fix one.** Every figure here is a fraction of a percent of an 8ms frame.
+Rust is roughly 1.5x better at the median and 2x at the maximum, on numbers
+nobody can perceive, and the honest summary of the port's latency benefit is
+that it is real, small, and not why you would do it.
 
-        <0.05ms     235  ###########
-         <0.1ms    1025  ################################################
-         <0.2ms     205  #########
-         <0.5ms      21
-           <1ms       0
-           <2ms       1
-           <5ms       0
-          <10ms       1
-          <20ms       1
-          <50ms       4
-         <100ms       6
-        >=100ms       1
+The control matters as much as the two arms: a bridge cannot be faster than
+0.017 ms here, so the Python is adding about 0.03 ms and the Rust about 0.013.
 
-    later than one 8ms frame: 12  (0.80%)
-    over 50ms:  7
-    over 100ms: 1
+## The defect that is real, and where it actually is
 
-## Reading it
+`devices.discover()`, measured directly on this machine:
 
-**The median is not the problem and never was.** 67 microseconds against an
-8000 microsecond frame is 0.8% of the budget. A port that halved it would move
-nothing anybody could feel, and reporting a median is the one way to make this
-measurement say nothing at all.
+    devices.discover():          596.5 ms   (33 input devices)
+    retroarch.visible_order():   567.0 ms   (calls discover)
+    retroarch.autoconfig_dirs(): 161.0 ms
 
-**The tail is the problem.** p99.9 is 94ms and the maximum is 103ms -- three
-orders of magnitude above the median, on an otherwise idle machine, with one
-pad attached. Twelve frames in fifteen hundred arrived later than the frame
-that should have replaced them. That is the shape of the original report:
+596ms, because it runs `udevadm info` **as a subprocess per input device**.
 
-> there's a lag on the controllers... doesn't seem to work great when entering
-> two inputs... it feels more like it's just arriving at a very slow rate
+`cli.cmd_run` calls `install_profiles`, `write_launch_config` and
+`write_launch_args` *after* `_start()` has created the uinput clone and *before*
+`republisher.run()` enters its loop. Two of those call `visible_order()`. So for
+well over a second after the controller's clone appears, nothing is reading the
+controller -- and every press in that window queues in the kernel and arrives in
+a burst when the loop finally starts.
 
-and it matches what FINDINGS.md measured from the other end -- gaps of 104,
-128, 128, 160 and 176ms in a stream whose median gap was 7.94ms.
+Measured: with a one-second warm-up, the first **27 frames of 1200** arrive late,
+the worst by 220ms, and **not one frame after number 27 is late at all**. That is
+the whole of the "tail" this document previously reported.
 
-**The cause is known.** `devices.discover()` runs `udevadm info` as a
-subprocess per input device -- 32 of them on this machine, 257-294ms -- from
-the same thread that forwards events. It is rate limited to once a second and
-short-circuited on an unchanged `/dev/input` listing, which is why the stalls
-here are occasional rather than constant, but the scan still runs whenever
-anything about the device set changes, mid-game, on the input path.
+    late frames by injection order: first=0 last=26 of 1200
 
-## The Rust republisher, measured the same way
+It is a real bug -- a player holding a direction while padmap starts gets a
+quarter-second of nothing followed by a burst -- but it is a *startup* bug, and
+it is not what "there's a lag on the controllers" during play describes.
 
-`rust/target/release/padmap-rs run`, same harness, same machine, same session,
-three rounds of each interleaved so drift cannot favour one side.
+## Correction
 
-    1500 of 1500 events arrived
+An earlier version of this file, and the commit message of the change that added
+the Rust republisher, reported:
 
-         p50     0.028 ms
-         p90     0.041 ms
-         p99     0.094 ms
-       p99.9     0.126 ms
-         max     0.128 ms
-        mean     0.031 ms
+    p99.9  94.7 ms -> 0.126 ms
+    max   256.7 ms -> 0.137 ms
 
-        <0.05ms    1432  ################################################
-         <0.1ms      59  #
-         <0.2ms       9
-           ...         0   (every bucket above 0.2ms is empty)
+and attributed the Python's tail to `devices.discover()` running on the
+forwarding thread. **Both the comparison and the attribution were wrong.**
 
-    later than one 8ms frame: 0  (0.00%)
-    over 50ms:  0
-    over 100ms: 0
+* The harness warmed up for one second, which landed inside `cmd_run`'s startup
+  work. Every late frame was a queued startup frame. The Rust arm showed none
+  because `padmap-rs` does not write launch configs -- a missing feature, not a
+  faster loop.
+* `padmap run` has no tick and never calls `devices.discover()` in its loop. The
+  once-a-second scan is in `server.py`, and it is gated on a settled front-end
+  *and* short-circuits on an unchanged `/dev/input` listing, so it does not run
+  in steady state either. The tail FINDINGS.md measured was already fixed.
 
-Side by side, worst round of each:
+What caught it: reporting *which* frames were late by injection order, and a
+`--no-bridge` control. Four instrumented runs of the republisher had already
+shown that time inside `_forward` never exceeded 0.41ms, that no `select` ever
+blocked more than 20ms with data waiting, and that the garbage collector ran 19
+gen0 collections and no gen2 -- three negative results that should have been
+enough to doubt the conclusion earlier than they were.
 
-| | Python | Rust |
-| --- | --- | --- |
-| p50 | 0.067 ms | 0.028 ms |
-| p99 | 160.6 ms | 0.094 ms |
-| p99.9 | 248.6 ms | 0.126 ms |
-| max | **256.7 ms** | **0.137 ms** |
-| frames later than one 8ms frame | 12-32 of 1200-1500 | **0** |
-| frames over 100ms | 1-20 | **0** |
+## How not to repeat it
 
-The median moved by 39 microseconds, which nobody can feel and which is not the
-point. **The maximum moved by three orders of magnitude, and the count of
-frames that arrived after the frame that should have replaced them went to
-zero.** That is the defect the original report described, and it is gone.
+The harness now defaults to a five-second warm-up, prints the injection-order
+position of every late frame, and reports each frame twice: once to when this
+process read it, and once to when the *kernel* queued it on the clone, using
+`EVIOCSCLOCKID` to put those stamps on `CLOCK_MONOTONIC`. If those two disagree,
+the harness is the slow one and nothing may be charged to padmap.
 
-## Why, specifically
+`--no-bridge` is the control. Whatever it reports is the floor that the
+harness, the kernel and the scheduler impose. Run it first.
 
-Not "Rust is faster". Three structural changes, each of which removes a way for
-something expensive to land on the forwarding path:
+## What this measurement still does not cover
 
-* **udev is read through libudev, not through 32 subprocesses.** The Python's
-  `devices.discover()` runs `udevadm info` once per input device -- 257-294ms
-  on this machine -- and that is the measured cause of the tail. Rust asks the
-  same database in-process.
-* **The 20ms tick is a `timerfd` in the same epoll set.** The Python called
-  `_tick()` after every return from the selector, so at seven pads it ran about
-  1200 times a second rather than 50. Everything in it was cheap or time-gated,
-  so it was survivable -- but it is how a quarter-second scan ended up on the
-  input thread in the first place, and a tick that is a descriptor cannot do
-  that.
-* **A frame is one `write(2)`.** python-evdev performs an `fcntl` before every
-  single event write, so the Python issued two syscalls per event; this issues
-  one per frame, whole, up to and including its `SYN_REPORT`.
-
-The first of those is the one that matters. It is also, honestly, an
-*algorithmic* fix rather than a language one -- the same change could be made
-in Python by reading `/run/udev/data` directly. What the port buys on top is
-that the expensive thing is no longer reachable from the loop by accident.
-
-## What this measurement does not cover
-
-* **The USB or Bluetooth polling interval.** A 125Hz pad samples every 8ms and
-  averages 4ms of delay before padmap sees anything; Linux's default BLE
-  connection interval is 30-50ms. Both are far larger than anything above and
-  neither is padmap's to fix. If a pad feels laggy over Bluetooth, that is why.
-* **Calibration.** The Rust republisher forwards axes verbatim, because the
-  profile store is still Python's. A pad that does not centre itself will read
-  deflected under `padmap-rs run` and correctly under `padmap run`.
-* **hidraw pads.** Switch-family controllers are read over `/dev/hidraw*` by
-  the Python and not yet by the Rust, which will fall back to an evdev node
-  that carries nothing.
+* **The USB or Bluetooth polling interval.** A 125Hz pad averages 4ms of delay
+  before padmap sees anything; Linux's default BLE connection interval is
+  30-50ms. Both dwarf everything above and neither is padmap's to fix.
+* **A loaded machine.** Every figure here is from an idle desktop. The
+  interesting question for Python is what the tail does under contention, and
+  this has not been asked.
+* **More than one pad**, which is what the original report described.
+* **Calibration**, which the Rust republisher does not yet apply, and **hidraw**,
+  which it does not yet speak.
