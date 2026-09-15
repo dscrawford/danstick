@@ -12,11 +12,13 @@ anybody can feel. See [LATENCY.md](LATENCY.md), including the correction --
 an earlier version of this document claimed a 250 ms tail that turned out to be
 the harness timing `padmap run`'s startup.
 
-The one real stall found is at startup, in Python, and is unfixed:
-`devices.discover()` costs 596 ms because it runs `udevadm info` as a subprocess
-per input device, and `cmd_run` calls it twice after creating the clone and
-before entering its loop. Presses in that window queue and arrive in a burst.
-That is worth fixing in the Python, with or without this port.
+The one real stall found was at startup, in Python, and is now fixed there:
+`devices.discover()` cost 596 ms -- 33 `udevadm` spawns, and an open/close of
+every input node whose release costs 11 ms apiece -- and `cmd_run` called it
+twice after creating the clone and before entering its loop, so presses in that
+window queued and arrived in a burst. One batched `udevadm` call plus the sysfs
+capability bitmaps brings it to 15.9 ms and the burst is gone. The Rust
+discovery path reads libudev in-process and never had it.
 
 The reason that survives is testability, and it is not a small one. The Python's
 logic is exercised by 62 scripts under `tools/`, every one of which needs a

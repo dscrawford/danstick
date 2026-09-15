@@ -29,32 +29,52 @@ that it is real, small, and not why you would do it.
 The control matters as much as the two arms: a bridge cannot be faster than
 0.017 ms here, so the Python is adding about 0.03 ms and the Rust about 0.013.
 
-## The defect that is real, and where it actually is
+## The defect that was real, and is now fixed
 
-`devices.discover()`, measured directly on this machine:
+`devices.discover()`, measured before any change:
 
     devices.discover():          596.5 ms   (33 input devices)
     retroarch.visible_order():   567.0 ms   (calls discover)
-    retroarch.autoconfig_dirs(): 161.0 ms
-
-596ms, because it runs `udevadm info` **as a subprocess per input device**.
 
 `cli.cmd_run` calls `install_profiles`, `write_launch_config` and
 `write_launch_args` *after* `_start()` has created the uinput clone and *before*
-`republisher.run()` enters its loop. Two of those call `visible_order()`. So for
-well over a second after the controller's clone appears, nothing is reading the
-controller -- and every press in that window queues in the kernel and arrives in
-a burst when the loop finally starts.
+`republisher.run()` enters its loop; two of those call `visible_order()`. So for
+well over a second after the clone appeared, nothing read the controller, and
+every press in that window queued in the kernel and arrived in a burst.
 
-Measured: with a one-second warm-up, the first **27 frames of 1200** arrive late,
-the worst by 220ms, and **not one frame after number 27 is late at all**. That is
-the whole of the "tail" this document previously reported.
+Measured with a one-second warm-up: the first **27 frames of 1200** arrived
+late, the worst by 220 ms, and not one frame after number 27 was late at all.
 
     late frames by injection order: first=0 last=26 of 1200
 
-It is a real bug -- a player holding a direction while padmap starts gets a
-quarter-second of nothing followed by a burst -- but it is a *startup* bug, and
-it is not what "there's a lag on the controllers" during play describes.
+Two things cost that 596 ms, and neither was the query:
+
+* **33 process spawns.** `udevadm info -q property` takes any number of devices
+  and was being called once per device. Asking once costs **9.4 ms** against
+  596. Still udevadm, still the same question -- the authority on "does
+  RetroArch's udev driver consider this a joypad" is udev's own database as
+  udev presents it, so reading `/run/udev/data` by hand was not taken.
+* **Opening and closing every input node.** `_looks_like_joypad` opened each
+  device to ask two questions, and releasing a USB HID descriptor takes about
+  11 ms while the driver tears down its URB: 390 ms of a 400 ms scan, in 36
+  calls to `posix.close`. The same two bits are in sysfs, in the capability
+  bitmaps udev's own `input_id` builtin reads, and two small file reads cost
+  microseconds.
+
+    devices.discover():  596.5 ms  ->  15.9 ms
+
+Verified equivalent, not assumed: the sysfs and device-open answers were
+compared on all 33 input devices on this machine, with zero disagreements, and
+the fallback that opens the device is still there for a node whose capability
+files cannot be read.
+
+One trap on the way, worth recording because the first version had it: a device
+with no absolute axes has an `abs` file containing `"0"`, and treating an
+all-zero mask as "could not read" sent twelve of this machine's devices down the
+expensive fallback anyway. `None` and `0` are different answers.
+
+With that fixed, the same one-second warm-up that produced 27 late frames and a
+220 ms worst case now produces **zero late frames** and a 0.349 ms worst case.
 
 ## Correction
 

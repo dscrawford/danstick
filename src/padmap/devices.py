@@ -70,7 +70,80 @@ class Pad:
         return f"{self.event:<9} {self.name}"
 
 
+def _parse_properties(text: str) -> dict[str, str]:
+    props: dict[str, str] = {}
+    for line in text.splitlines():
+        key, sep, value = line.partition("=")
+        if sep:
+            props[key] = value
+    return props
+
+
+# Properties for the devices `discover` is about to ask about, or None when
+# nothing has primed it. See `_ask_udev_about`.
+_PROPERTY_CACHE: dict[str, dict[str, str]] | None = None
+
+
+def _ask_udev_about(devnodes: list[str]) -> dict[str, dict[str, str]] | None:
+    """Every device's properties, in one subprocess instead of one each.
+
+    `udevadm info -q property` takes any number of devices, and asking it once
+    is the difference between 9ms and 596ms on this machine -- 33 input devices,
+    33 process spawns, each paying fork, exec and a dynamic link to answer one
+    question. Measured, because the cost is entirely in the spawning and not in
+    the query.
+
+    Deliberately still udevadm, and still the same query. The obvious deeper
+    fix is to read /run/udev/data directly, and it is not taken here: the thing
+    being asked is "does RetroArch's udev driver consider this a joypad", the
+    only authority on that is udev's own database as udev presents it, and
+    reimplementing the presentation is how the two answers start to differ. One
+    process asking the same question is a speed change; parsing the database by
+    hand would be a semantic one.
+
+    Blocks are not blank-line separated -- each simply begins with DEVPATH and
+    carries a DEVNAME, so DEVNAME is what ties a block back to the device that
+    was asked about, rather than argument order.
+
+    Returns None if the call could not be made at all, which puts each device
+    back on its own lookup and, failing that, on the joydev fallback below.
+    """
+    if not devnodes:
+        return {}
+    try:
+        result = subprocess.run(
+            ["udevadm", "info", "-q", "property", *devnodes],
+            capture_output=True, text=True, timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+    out: dict[str, dict[str, str]] = {}
+    current: list[str] = []
+
+    def flush() -> None:
+        if not current:
+            return
+        props = _parse_properties("\n".join(current))
+        name = props.get("DEVNAME")
+        if name:
+            out[name] = props
+
+    for line in result.stdout.splitlines():
+        if line.startswith("DEVPATH="):
+            flush()
+            current = []
+        current.append(line)
+    flush()
+    return out or None
+
+
 def _udev_properties(devnode: str) -> dict[str, str]:
+    if _PROPERTY_CACHE is not None:
+        # Primed by discover(). A device missing from it was one udevadm had
+        # nothing to say about, which is the same empty answer a single lookup
+        # would have given.
+        return _PROPERTY_CACHE.get(devnode, {})
     try:
         out = subprocess.run(
             ["udevadm", "info", "-q", "property", "-n", devnode],
@@ -78,12 +151,7 @@ def _udev_properties(devnode: str) -> dict[str, str]:
         ).stdout
     except (OSError, subprocess.SubprocessError):
         return {}
-    props: dict[str, str] = {}
-    for line in out.splitlines():
-        key, sep, value = line.partition("=")
-        if sep:
-            props[key] = value
-    return props
+    return _parse_properties(out)
 
 
 def _retroarch_sees(devnode: str, input_dir: str) -> bool:
@@ -95,6 +163,31 @@ def _retroarch_sees(devnode: str, input_dir: str) -> bool:
     return bool(glob.glob(os.path.join(input_dir, "js*")))
 
 
+def _capability_mask(path: str) -> int | None:
+    """A sysfs capability bitmap as one integer, or None if it is not there.
+
+    The file is space-separated 64-bit hex words, most significant first, so
+    shifting each word in as it is read reconstructs the mask in the order the
+    kernel wrote it.
+
+    None and 0 are different answers and the distinction is load-bearing: a
+    device with no absolute axes at all has an `abs` file containing "0", and
+    reading that as "the file could not be read" sends it down the fallback
+    that opens the device -- which is the expensive path this exists to avoid.
+    Twelve of this machine's 33 input devices are exactly that shape.
+    """
+    raw = _read(path)
+    if not raw:
+        return None
+    value = 0
+    for word in raw.split():
+        try:
+            value = (value << 64) | int(word, 16)
+        except ValueError:
+            return None
+    return value
+
+
 def _looks_like_joypad(devnode: str) -> bool:
     """Is this a joypad by capability, regardless of how udev tagged it?
 
@@ -103,7 +196,29 @@ def _looks_like_joypad(devnode: str) -> bool:
     mean installing the hide rules made every controller invisible to padmap
     too, so `padmap setup` could never be run again -- unrecoverable without
     hand-removing the rules.
+
+    Read from sysfs rather than by opening the device, and that is the whole
+    cost of a scan. Opening every input node to ask two questions about it
+    means closing every input node afterwards, and releasing a USB HID
+    descriptor takes about 11ms because the driver tears down its URB:
+    measured at 390ms of a 400ms `discover()`, in 36 calls to `posix.close`.
+    The bitmaps here are the same ones udev's own `input_id` builtin reads to
+    decide ID_INPUT_JOYSTICK, and reading two small files costs microseconds.
     """
+    caps = os.path.join(
+        "/sys/class/input", os.path.basename(devnode), "device", "capabilities")
+    absolute = _capability_mask(os.path.join(caps, "abs"))
+    keys = _capability_mask(os.path.join(caps, "key"))
+    if absolute is None or keys is None:
+        # Not there to read. Fall back to asking the device itself, which is
+        # what this used to do always.
+        return _looks_like_joypad_by_opening(devnode)
+    if not absolute:
+        return False
+    return any((keys >> code) & 1 for code in _BTN_JOYSTICK_RANGE)
+
+
+def _looks_like_joypad_by_opening(devnode: str) -> bool:
     try:
         device = evdev.InputDevice(devnode)
     except (OSError, PermissionError):
@@ -137,7 +252,10 @@ def discover(
     which is what pad-index prediction needs -- the two differ exactly when
     the `padmap hide` udev rules are installed.
     """
-    pads: list[Pad] = []
+    # Everything with an event node, before asking udev anything. Collecting
+    # first is what lets the whole set be asked about in one subprocess rather
+    # than one each -- see `_ask_udev_about`.
+    candidates: list[tuple[str, list[str], str]] = []
     for input_dir in glob.glob("/sys/class/input/input*"):
         events = [
             os.path.basename(p) for p in glob.glob(os.path.join(input_dir, "event*"))
@@ -147,7 +265,26 @@ def discover(
         devnode = f"/dev/input/{events[0]}"
         if not os.path.exists(devnode):
             continue
+        candidates.append((input_dir, events, devnode))
 
+    global _PROPERTY_CACHE
+    _PROPERTY_CACHE = _ask_udev_about([node for _, _, node in candidates])
+    try:
+        return _collect(candidates, include_virtual, retroarch_only)
+    finally:
+        # Only ever primed for the length of one scan. Held across calls it
+        # would be a cache of which controllers are plugged in, which is the
+        # one thing about a controller that changes without warning.
+        _PROPERTY_CACHE = None
+
+
+def _collect(
+    candidates: list[tuple[str, list[str], str]],
+    include_virtual: bool,
+    retroarch_only: bool,
+) -> list[Pad]:
+    pads: list[Pad] = []
+    for input_dir, events, devnode in candidates:
         visible = _retroarch_sees(devnode, input_dir)
         if not visible and not _looks_like_joypad(devnode):
             continue
