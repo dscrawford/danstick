@@ -17,6 +17,8 @@
 resolver = "2"
 members = [
     "crates/padmap-core",
+    "crates/padmap-input",
+    "crates/padmap-rs",
 ]
 
 [workspace.package]

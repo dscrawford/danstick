@@ -2,9 +2,20 @@
 # cargo, for a machine that has nix but no rustup.
 #
 # The flake's devShell carries the toolchain, but entering it evaluates the
-# whole flake -- which builds Pegasus. This pulls just the compiler.
+# whole flake -- which builds Pegasus and RetroArch. This pulls just what the
+# Rust build needs.
+#
+# PKG_CONFIG_PATH is set by hand because `nix shell` puts a package's *bin*
+# output on PATH and nothing else, while libudev-sys needs the `.pc` file from
+# the dev output. `nix develop` does this for you; `nix shell` does not, and
+# the failure is a build script panicking about a missing libudev.pc.
 set -euo pipefail
 cd "$(dirname "$0")/../rust"
+
+udev_dev="$(nix build --no-link --print-out-paths 'nixpkgs#udev.dev' 2>/dev/null)"
+export PKG_CONFIG_PATH="${udev_dev}/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+
 exec nix shell \
-  nixpkgs#cargo nixpkgs#rustc nixpkgs#clippy nixpkgs#rustfmt nixpkgs#pkg-config \
+  nixpkgs#cargo nixpkgs#rustc nixpkgs#clippy nixpkgs#rustfmt \
+  nixpkgs#pkg-config nixpkgs#udev \
   --command cargo "$@"

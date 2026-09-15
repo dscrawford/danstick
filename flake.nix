@@ -448,6 +448,15 @@
 
         packages.padmap-rs = padmap-rs;
 
+        # The republisher, in Rust, reading the same assignments.json the
+        # Python writes. Not a replacement for `padmap` -- it is `run` and
+        # `list` and nothing else -- but it is the forwarding path, which is
+        # where the input lag was. See docs/LATENCY.md.
+        apps.padmap-rs = {
+          type = "app";
+          program = "${padmap-rs}/bin/padmap-rs";
+        };
+
         checks.mypy = pkgs.runCommand "padmap-mypy"
           { nativeBuildInputs = [ pythonEnv ]; }
           ''

@@ -68,26 +68,78 @@ short-circuited on an unchanged `/dev/input` listing, which is why the stalls
 here are occasional rather than constant, but the scan still runs whenever
 anything about the device set changes, mid-game, on the input path.
 
-## What the port has to beat
+## The Rust republisher, measured the same way
 
-Not the median. These three:
+`rust/target/release/padmap-rs run`, same harness, same machine, same session,
+three rounds of each interleaved so drift cannot favour one side.
 
-| number | Python | target |
+    1500 of 1500 events arrived
+
+         p50     0.028 ms
+         p90     0.041 ms
+         p99     0.094 ms
+       p99.9     0.126 ms
+         max     0.128 ms
+        mean     0.031 ms
+
+        <0.05ms    1432  ################################################
+         <0.1ms      59  #
+         <0.2ms       9
+           ...         0   (every bucket above 0.2ms is empty)
+
+    later than one 8ms frame: 0  (0.00%)
+    over 50ms:  0
+    over 100ms: 0
+
+Side by side, worst round of each:
+
+| | Python | Rust |
 | --- | --- | --- |
-| p99.9 | 94.7 ms | under one frame |
-| max | 102.8 ms | under one frame |
-| frames later than 8ms | 12 of 1500 | 0 |
+| p50 | 0.067 ms | 0.028 ms |
+| p99 | 160.6 ms | 0.094 ms |
+| p99.9 | 248.6 ms | 0.126 ms |
+| max | **256.7 ms** | **0.137 ms** |
+| frames later than one 8ms frame | 12-32 of 1200-1500 | **0** |
+| frames over 100ms | 1-20 | **0** |
 
-The mechanism is not "Rust is faster". It is that the Rust daemon reads udev's
-database directly instead of spawning a subprocess per device, and that the
-20ms tick lives on a timerfd in the same epoll set rather than running once per
-event -- so there is no quarter-second of work that *can* land on the
-forwarding path.
+The median moved by 39 microseconds, which nobody can feel and which is not the
+point. **The maximum moved by three orders of magnitude, and the count of
+frames that arrived after the frame that should have replaced them went to
+zero.** That is the defect the original report described, and it is gone.
 
-## Honest accounting of what Rust does not buy
+## Why, specifically
 
-Per-event cost is a fraction of a microsecond of interpreter time. Measured
-against a 125Hz pad the language is worth roughly 12 microseconds of the 8000
-in a frame. If the tail were already flat, this port would be indefensible on
-latency grounds and would have to be argued on the other things it buys --
-which are real, but are not lag.
+Not "Rust is faster". Three structural changes, each of which removes a way for
+something expensive to land on the forwarding path:
+
+* **udev is read through libudev, not through 32 subprocesses.** The Python's
+  `devices.discover()` runs `udevadm info` once per input device -- 257-294ms
+  on this machine -- and that is the measured cause of the tail. Rust asks the
+  same database in-process.
+* **The 20ms tick is a `timerfd` in the same epoll set.** The Python called
+  `_tick()` after every return from the selector, so at seven pads it ran about
+  1200 times a second rather than 50. Everything in it was cheap or time-gated,
+  so it was survivable -- but it is how a quarter-second scan ended up on the
+  input thread in the first place, and a tick that is a descriptor cannot do
+  that.
+* **A frame is one `write(2)`.** python-evdev performs an `fcntl` before every
+  single event write, so the Python issued two syscalls per event; this issues
+  one per frame, whole, up to and including its `SYN_REPORT`.
+
+The first of those is the one that matters. It is also, honestly, an
+*algorithmic* fix rather than a language one -- the same change could be made
+in Python by reading `/run/udev/data` directly. What the port buys on top is
+that the expensive thing is no longer reachable from the loop by accident.
+
+## What this measurement does not cover
+
+* **The USB or Bluetooth polling interval.** A 125Hz pad samples every 8ms and
+  averages 4ms of delay before padmap sees anything; Linux's default BLE
+  connection interval is 30-50ms. Both are far larger than anything above and
+  neither is padmap's to fix. If a pad feels laggy over Bluetooth, that is why.
+* **Calibration.** The Rust republisher forwards axes verbatim, because the
+  profile store is still Python's. A pad that does not centre itself will read
+  deflected under `padmap-rs run` and correctly under `padmap run`.
+* **hidraw pads.** Switch-family controllers are read over `/dev/hidraw*` by
+  the Python and not yet by the Rust, which will fall back to an evdev node
+  that carries nothing.

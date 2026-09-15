@@ -26,6 +26,12 @@ from evdev import ecodes
 # its own pads and republish them, one layer deeper each time.
 VIRTUAL_PHYS_PREFIX = "padmap/"
 
+# ...and by name, for a clone whose phys did not take. Duplicated from
+# virtual.VIRTUAL_PREFIX rather than imported: importing virtual here would
+# pull in profiles and the whole mapping stack for the sake of one string, and
+# `padmap list` is meant to start quickly.
+VIRTUAL_NAME_PREFIX = "padmap Player "
+
 # BTN_JOYSTICK (0x120) through BTN_THUMBR (0x13f): the range udev's input_id
 # builtin uses, together with absolute axes, to decide ID_INPUT_JOYSTICK.
 _BTN_JOYSTICK_RANGE = range(0x120, 0x140)
@@ -149,12 +155,21 @@ def discover(
             continue
 
         phys = _read(os.path.join(input_dir, "phys"))
-        if not include_virtual and phys.startswith(VIRTUAL_PHYS_PREFIX):
+        name = _read(os.path.join(input_dir, "name"))
+        # Either tag is enough, because either can be absent. The phys prefix
+        # is the intended one; the name is the fallback for a clone whose phys
+        # could not be set, which is every clone the Rust republisher makes --
+        # evdev 0.13.2 encodes UI_SET_PHYS with the wrong payload size and the
+        # kernel refuses it. Missing one of the two means discovery grabs
+        # padmap's own output and republishes it, one layer deeper on every
+        # restart.
+        if not include_virtual and (phys.startswith(VIRTUAL_PHYS_PREFIX)
+                                    or name.startswith(VIRTUAL_NAME_PREFIX)):
             continue
 
         pads.append(Pad(
             path=devnode,
-            name=_read(os.path.join(input_dir, "name")),
+            name=name,
             phys=phys,
             uniq=_read(os.path.join(input_dir, "uniq")),
             vid=_read_hex(os.path.join(input_dir, "id/vendor")),
