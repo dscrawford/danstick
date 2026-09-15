@@ -9,8 +9,21 @@ use std::path::PathBuf;
 
 /// `$XDG_RUNTIME_DIR/padmap`, falling back to `/tmp/padmap`.
 pub fn dir() -> PathBuf {
-    let base = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_owned());
-    PathBuf::from(base).join("padmap")
+    dir_under(std::env::var("XDG_RUNTIME_DIR").ok().as_deref())
+}
+
+/// The same, for a base a caller already has.
+///
+/// Exists so tests never touch the environment. `std::env::set_var` is
+/// process-wide and the test harness runs tests on threads, so a test that
+/// set XDG_RUNTIME_DIR and restored it was changing the answer underneath
+/// whichever other test happened to call `dir()` in that window. It failed
+/// about one run in three, on whichever test lost the race rather than on the
+/// one at fault -- and it failed here by letting a commit through on a red
+/// suite. The old comment said "single-threaded test", which was simply not
+/// true.
+pub fn dir_under(base: Option<&str>) -> PathBuf {
+    PathBuf::from(base.unwrap_or("/tmp")).join("padmap")
 }
 
 pub fn assignments_path() -> PathBuf {
@@ -40,7 +53,12 @@ pub fn playing_marker() -> PathBuf {
 /// pad, so doing it during a game leaves the player holding a controller that
 /// has silently stopped working.
 pub fn game_is_running() -> bool {
-    let marker = playing_marker();
+    game_is_running_at(&playing_marker())
+}
+
+/// The same, for a marker path a caller already has.
+pub fn game_is_running_at(marker: &std::path::Path) -> bool {
+    let marker = marker.to_path_buf();
     let Ok(text) = std::fs::read_to_string(&marker) else {
         return false;
     };
@@ -90,13 +108,16 @@ mod tests {
     fn a_missing_marker_is_not_a_running_game() {
         // Never raises: this gates whether the daemon may take the controllers
         // away, and an unreadable file has to mean "no" rather than an error.
-        let previous = std::env::var("XDG_RUNTIME_DIR").ok();
-        // SAFETY-adjacent: single-threaded test, restored below.
-        std::env::set_var("XDG_RUNTIME_DIR", "/nonexistent-padmap-test");
-        assert!(!game_is_running());
-        match previous {
-            Some(value) => std::env::set_var("XDG_RUNTIME_DIR", value),
-            None => std::env::remove_var("XDG_RUNTIME_DIR"),
-        }
+        let missing = dir_under(Some("/nonexistent-padmap-test")).join("playing");
+        assert!(!game_is_running_at(&missing));
+    }
+
+    #[test]
+    fn the_base_comes_from_the_environment_but_defaults_to_tmp() {
+        assert_eq!(
+            dir_under(Some("/run/user/1000")),
+            PathBuf::from("/run/user/1000/padmap")
+        );
+        assert_eq!(dir_under(None), PathBuf::from("/tmp/padmap"));
     }
 }
