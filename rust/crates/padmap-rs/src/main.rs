@@ -3,6 +3,9 @@
 //!     padmap-rs list     what is plugged in
 //!     padmap-rs hide     udev rules that hide the physical pads
 //!     padmap-rs run      republish the assigned pads and keep them alive
+//!     padmap-rs emit     write the emulator config files, from JSON on stdin
+//!     padmap-rs exec     run a program with padmap's mappings in its
+//!                        environment
 //!
 //! Deliberately not the whole of `padmap`. The daemon's socket protocol, the
 //! assignment session, the mapping wizard and every offline command stay in
@@ -24,7 +27,8 @@ use padmap_core::hide;
 use std::path::PathBuf;
 
 use padmap_input::{
-    artefacts, assignments, clone, lizard, pad, profiles, reactor, republish, runtime, triton,
+    artefacts, assignments, clone, emulators, lizard, pad, profiles, reactor, republish, runtime,
+    triton,
 };
 
 /// How often the tick runs. Matches the Python's `TICK_SECONDS`.
@@ -40,6 +44,8 @@ fn main() -> Result<()> {
         Some("list") => cmd_list(),
         Some("hide") => cmd_hide(),
         Some("run") => cmd_run(),
+        Some("emit") => cmd_emit(),
+        Some("exec") => cmd_exec(args.collect()),
         Some(other) => {
             eprintln!("padmap-rs: unknown command {other:?}");
             usage();
@@ -53,7 +59,74 @@ fn main() -> Result<()> {
 }
 
 fn usage() {
-    eprintln!("usage: padmap-rs list | hide | run");
+    eprintln!("usage: padmap-rs list | hide | run | emit | exec -- <program> [args...]");
+}
+
+/// Write the emulator config files for the pads described on stdin.
+///
+/// The Python daemon is still the one that runs, and it calls this after every
+/// republish. Stdin rather than a state file so the caller's view is the one
+/// that is written -- reading `assignments.json` back would answer for whatever
+/// is on disk now, which during a hotplug is not what the caller just
+/// published.
+///
+/// Always exits 0 on a well-formed request. An emulator that is not installed
+/// is a skip, and a daemon must not learn to treat that as a failure.
+fn cmd_emit() -> Result<()> {
+    let mut body = String::new();
+    std::io::Read::read_to_string(&mut std::io::stdin(), &mut body)
+        .context("reading the pad list from stdin")?;
+    let pads: Vec<emulators::Published> =
+        serde_json::from_str(&body).context("parsing the pad list")?;
+
+    let written = emulators::publish(&pads, &emulators::Destinations::default());
+    for path in &written.paths {
+        println!("{}", path.display());
+    }
+    for (target, why) in &written.skipped {
+        info!("{target}: not written ({why})");
+    }
+    Ok(())
+}
+
+/// Run a program with padmap's mappings already in its environment.
+///
+/// For Cemu and anything else that reads no controller database: the pads are
+/// simply absent from its device list until SDL is told about them, and SDL
+/// reads its database once at startup. `padmap-rs exec -- Cemu` is the whole
+/// of the fix, and needs nothing from the program being run.
+fn cmd_exec(args: Vec<String>) -> Result<()> {
+    let args: Vec<String> = args.into_iter().skip_while(|arg| arg == "--").collect();
+    let Some((program, rest)) = args.split_first() else {
+        eprintln!("usage: padmap-rs exec -- <program> [args...]");
+        std::process::exit(2);
+    };
+
+    // The file the daemon wrote at its last republish, which is the same value
+    // it put in every emulator's config. Read rather than recomputed: this
+    // process has no pads open and opening them would grab them away from the
+    // daemon that does.
+    let value = match std::fs::read_to_string(emulators::env_path()) {
+        Ok(text) => emulators::value_from_script(&text).unwrap_or_default(),
+        Err(error) => {
+            warn!(
+                "no mappings at {} ({error}); {program} will see whatever SDL \
+                 already knows",
+                emulators::env_path().display()
+            );
+            String::new()
+        }
+    };
+
+    let mut command = std::process::Command::new(program);
+    command.args(rest);
+    if !value.is_empty() {
+        command.env(emulators::CONFIG_ENV, value);
+    }
+    let status = command
+        .status()
+        .with_context(|| format!("running {program}"))?;
+    std::process::exit(status.code().unwrap_or(1));
 }
 
 fn cmd_list() -> Result<()> {
@@ -318,6 +391,7 @@ fn publish_artefacts(vpads: &[padmap_input::VirtualPad]) -> Result<()> {
     let mut sdl_lines = BTreeMap::new();
     let mut profiles_out = BTreeMap::new();
     let mut identities = BTreeMap::new();
+    let mut published: Vec<emulators::Published> = Vec::new();
 
     for vpad in vpads {
         let identity = Identity {
@@ -351,6 +425,19 @@ fn publish_artefacts(vpads: &[padmap_input::VirtualPad]) -> Result<()> {
         } else {
             emit::sdl_line_for(vpad.player, identity, &bindings, None)
         };
+        // Cemu, ares and Ryujinx each need something the SDL database cannot
+        // give them: see `emulators`. They take the *clone's* capabilities,
+        // not the controller's, because SDL opens the clone.
+        let (keys, axes) = vpad.source.capabilities();
+        published.push(emulators::Published {
+            player: vpad.player,
+            guid: emit::virtual_guid(vpad.player, identity),
+            name: emit::virtual_name(vpad.player),
+            keys,
+            axes,
+            sdl_line: line.clone(),
+        });
+
         sdl_lines.insert(vpad.player, line);
         profiles_out.insert(
             vpad.player,
@@ -387,6 +474,17 @@ fn publish_artefacts(vpads: &[padmap_input::VirtualPad]) -> Result<()> {
         if let Some(dir) = first.parent() {
             info!("RetroArch autoconfig: {}", dir.display());
         }
+    }
+
+    // Best-effort by design. Most machines have none of these three
+    // installed, and "ares has never run" must read as an ordinary skip
+    // rather than as the mapping files having failed.
+    let emulators = emulators::publish(&published, &emulators::Destinations::default());
+    for path in &emulators.paths {
+        info!("emulator config: {}", path.display());
+    }
+    for (target, why) in &emulators.skipped {
+        info!("{target}: not written ({why})");
     }
     Ok(())
 }

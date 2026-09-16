@@ -6,7 +6,7 @@
 //! by RetroArch. So both are rewritten rather than appended, and both clear
 //! what padmap wrote last time.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use log::warn;
@@ -226,6 +226,7 @@ fn data_home() -> PathBuf {
 pub fn rewrite_ares_settings(existing: &str, blocks: &BTreeMap<u32, String>) -> String {
     let mut out = String::with_capacity(existing.len());
     let mut skipping: Option<u32> = None;
+    let mut replaced: BTreeSet<u32> = BTreeSet::new();
     for line in existing.split_inclusive('\n') {
         let bare = line.trim_end_matches(['\n', '\r']);
         if let Some(rest) = bare.strip_prefix("VirtualPad") {
@@ -234,6 +235,7 @@ pub fn rewrite_ares_settings(existing: &str, blocks: &BTreeMap<u32, String>) -> 
             skipping = player.filter(|player| blocks.contains_key(player));
             if let Some(player) = skipping {
                 out.push_str(&blocks[&player]);
+                replaced.insert(player);
                 continue;
             }
         } else if skipping.is_some() && !bare.starts_with("  ") {
@@ -243,6 +245,20 @@ pub fn rewrite_ares_settings(existing: &str, blocks: &BTreeMap<u32, String>) -> 
         if skipping.is_none() {
             out.push_str(line);
         }
+    }
+
+    // A port ares has never written has no block to replace, and a binding
+    // that is simply absent is indistinguishable from one that failed: ares
+    // starts, the pad is listed, and nothing is bound. Append the ones that
+    // were not found rather than dropping them.
+    let missing = blocks
+        .iter()
+        .filter(|(player, _)| !replaced.contains(player));
+    for (_, block) in missing {
+        if !out.is_empty() && !out.ends_with('\n') {
+            out.push('\n');
+        }
+        out.push_str(block);
     }
     out
 }

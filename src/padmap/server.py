@@ -34,8 +34,9 @@ from typing import Any
 
 from evdev import ecodes
 
-from . import (announce, calibrate, capture, controllercfg, devices, icons,
-               layouts, profiles, protocol, retroarch, triton, virtual)
+from . import (announce, calibrate, capture, controllercfg, devices,
+               emulators, icons, layouts, profiles, protocol, retroarch,
+               triton, virtual)
 from .assign import Assigner, Assignment
 from .devices import Pad
 from .protocol import STATE_ASSIGNING, STATE_IDLE, STATE_READY, LineReader
@@ -1101,6 +1102,33 @@ class Server:
         # replaces a mapping for an already-open controller in place.
         self._sdl_lines = [lines[player] for player in sorted(lines)]
         self._broadcast(self._sdl_mapping_event())
+        self._write_emulator_configs(lines)
+
+    def _write_emulator_configs(self, lines: dict[int, str]) -> None:
+        """Cemu, ares and Ryujinx, which the SDL database does not reach.
+
+        Cemu reads no mapping database at all, ares binds raw joystick indices
+        and Ryujinx addresses pads by a GUID it has blanked fields out of. Each
+        needs a file of its own, and padmap is the abstraction layer: a
+        consumer that cannot see a controller is padmap's problem to solve, not
+        the user's to work around.
+
+        Same moment as the SDL database, because the input is the same -- the
+        lines just written, and the assignments they were built from.
+        """
+        published = []
+        for assignment in self._assignments:
+            player = assignment.player
+            keys, axis_codes = controllercfg.pad_capabilities(assignment.pad)
+            published.append(emulators.Published(
+                player=player,
+                guid=controllercfg.virtual_guid(player, assignment.pad),
+                name=virtual.virtual_name(player),
+                keys=sorted(keys),
+                axes=sorted(axis_codes),
+                sdl_line=lines.get(player, ""),
+            ))
+        emulators.publish(published)
 
     def _sdl_mapping_event(self) -> dict[str, Any]:
         return {"event": "sdl_mapping", "lines": list(self._sdl_lines)}

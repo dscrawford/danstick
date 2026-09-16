@@ -141,6 +141,11 @@
             # `retroarch`, which looks like it worked.
             export PADMAP_MAME_TITLES="${self.packages.${system}.mame-titles}/share/padmap/mame-titles.json"
             export PADMAP_PLAY="${self.packages.${system}.padmap-play}/bin/padmap-play"
+            # The Python daemon shells out to this to write Cemu's, ares' and
+            # Ryujinx's config files -- see src/padmap/emulators.py. The dev
+            # wrapper, so the emulator formats a running daemon writes are the
+            # ones in the working tree rather than a store copy.
+            export PADMAP_RS="${devPadmapRs}/bin/padmap-rs"
             # cargo writes here; keeping it out of the source tree means a
             # `nix build` of the flake never sees a 2GB target/ in its source.
             export CARGO_HOME="''${CARGO_HOME:-$PWD/.cargo-home}"
@@ -153,6 +158,7 @@
             echo "  padmap hide          - udev rules hiding the physical pads (root)"
             echo "  padmap --help        - the rest"
             echo "  padmap-rs list|run|hide  - the Rust port (rebuilds on first use)"
+            echo "  padmap-rs exec -- CMD    - run CMD with padmap's mappings (Cemu, ...)"
             echo "  (cd rust && cargo test)  - the Rust port's tests"
             echo "  (cd rust && cargo clippy --all-targets -- -D warnings)"
             echo
@@ -179,6 +185,10 @@
             # Absolute, so generated launch commands work from a front-end
             # that has neither padmap nor RetroArch on its PATH.
             export PADMAP_PLAY="${self.packages.${system}.padmap-play}/bin/padmap-play"
+            # Cemu, ares and Ryujinx: the daemon hands their formats to the
+            # Rust side rather than carrying a second copy. Absolute, because
+            # a daemon started from a .desktop file has no useful PATH.
+            export PADMAP_RS="${padmap-rs}/bin/padmap-rs"
             exec python3 -m padmap.cli "$@"
           '';
         };

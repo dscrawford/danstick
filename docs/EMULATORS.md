@@ -82,12 +82,45 @@ development machine — all twenty-four mapping pairs must match it. For ares, a
 names come from there because ares keeps its own unbound entry beside any name
 it does not recognise, so a misspelling leaves the control dead and silent.
 
-## Not wired up yet
+## When they are written
 
-The emitters, the writers and the identity change are done and tested. What
-does not exist yet is the daemon calling them when assignments change, the way
-it already calls `write_sdl_database` and `install_profiles`, and putting
-`SDL_GAMECONTROLLERCONFIG` into the environment a game is launched with.
+On every republish, beside the SDL database and the RetroArch autoconfig — the
+same moment, from the same input. `padmap_input::emulators::publish` does the
+writing; the Rust daemon calls it directly from `publish_artefacts`, and the
+Python daemon, which is still the one that runs, calls it through
+`padmap-rs emit` from `src/padmap/emulators.py`.
 
-Until that lands, `emit::sdl_config_value` and the three writers are libraries
-with no caller.
+The subprocess exists so there is one implementation of three file formats
+rather than two. Ryujinx's device id and ares' raw joystick indices are exactly
+the kind of thing that drifts when written twice, and only one of the two
+copies would be the one a user's emulator reads. The cost is a process per
+republish — a few an hour, off the forwarding path. When the daemon finishes
+moving to Rust the subprocess goes with it.
+
+Every write is best-effort and reported rather than propagated. ares and
+Ryujinx each keep all of their settings in one file, so padmap refuses to
+invent one for an emulator that has never run; on most machines at least one of
+the three is absent, and that has to read as an ordinary skip rather than as
+the mapping files having failed.
+
+## Reaching Cemu at all
+
+Cemu reads no mapping database, so a pad SDL does not already recognise as a
+gamepad never appears in its device list — the profile alone reaches nothing.
+The mapping has to arrive in the environment, so padmap writes
+`$XDG_RUNTIME_DIR/padmap/env.sh` on every republish:
+
+```sh
+padmap-rs exec -- Cemu       # or: . "$XDG_RUNTIME_DIR/padmap/env.sh"; Cemu
+```
+
+`exec` reads the file rather than recomputing the value — it has no pads open,
+and opening them would take them from the daemon that does.
+
+## Appending a port ares has never written
+
+`rewrite_ares_settings` replaces the `VirtualPadN` blocks padmap manages and
+appends the ones that are not in the file. Only replacing them looked right —
+ares writes all five ports itself — but a settings.bml that has never had a pad
+bound has none, and a binding that is simply absent is indistinguishable from
+one that failed: ares starts, the pad is listed, nothing is bound.

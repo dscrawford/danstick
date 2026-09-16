@@ -8,6 +8,7 @@
 pub mod artefacts;
 pub mod assignments;
 pub mod clone;
+pub mod emulators;
 pub mod lizard;
 pub mod nintendo;
 pub mod pad;
