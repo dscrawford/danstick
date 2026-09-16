@@ -521,3 +521,60 @@ fn capabilities_never_offer_a_zero_width_axis() {
         assert!(info.maximum() > info.minimum(), "axis {code}: {info:?}");
     }
 }
+
+/// A press on a Puck claims a player slot.
+///
+/// The regression test for a bug that cost a day: on the Python daemon the
+/// controller paired, the session opened, and the descriptor was never read --
+/// so holding a button produced no progress, no claim, and nothing in the log
+/// to say why. The person holding it was told to hold a button, did, and
+/// nothing happened.
+///
+/// This drives the whole chain a seat depends on: a real `triton::Source` over
+/// a pty, its decoded events, and `Assigner` -- the same one the daemon's
+/// session feeds. It needs no Steam Controller, so it protects the path on
+/// every machine rather than only on one with a Puck plugged in.
+#[test]
+fn a_press_on_a_puck_claims_a_seat() {
+    use padmap_core::assign::{Assigner, HOLD_SECONDS};
+
+    let mut fake = needs_pty!();
+    let mut source = triton::Source::open(&fake.slave).expect("open the pty as a source");
+
+    // Nothing held: the resting report must claim nothing, or a pad sitting on
+    // a table would take a seat.
+    fake.push(REPORT_STATE, &state(0, 0, 0, 0, 0, 0, 0));
+    let mut assigner = Assigner::default();
+    let mut now = 0.0;
+    for event in fetch(&mut source).expect("read") {
+        assigner.feed(0, event.event_type().0, event.code(), event.value(), now);
+    }
+    now += HOLD_SECONDS * 2.0;
+    assert!(
+        assigner.tick(now).claimed.is_empty(),
+        "an untouched pad claimed a seat"
+    );
+
+    // A is held down, and stays down -- a real pad sends no further reports
+    // while a button is simply held, which is exactly why the hold is timed
+    // rather than counted.
+    fake.push(REPORT_STATE, &state(BIT_A, 0, 0, 0, 0, 0, 0));
+    let pressed = fetch(&mut source).expect("read");
+    assert!(
+        pressed
+            .iter()
+            .any(|event| event.code() == KeyCode::BTN_SOUTH.0 && event.value() == 1),
+        "A did not decode to a press: {:?}",
+        keys(&pressed)
+    );
+    for event in pressed {
+        assigner.feed(0, event.event_type().0, event.code(), event.value(), now);
+    }
+    // Not yet: a tap must not claim.
+    assert!(assigner.tick(now + HOLD_SECONDS / 2.0).claimed.is_empty());
+
+    let claimed = assigner.tick(now + HOLD_SECONDS * 1.5).claimed;
+    assert_eq!(claimed.len(), 1, "holding A claimed no seat");
+    assert_eq!(claimed[0].player, 1);
+    assert_eq!(claimed[0].button, KeyCode::BTN_SOUTH.0);
+}

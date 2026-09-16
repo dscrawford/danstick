@@ -1,5 +1,10 @@
 # A Triton pad pairs in a session and is never read
 
+> **Resolved at `983bfc3`** (the Rust daemon), verified on the Puck itself.
+> The Python revision GOTG pins, `8553d54`, has the bug; moving the pin fixes
+> it. See "What was checked" at the end.
+
+
 **Bug, not a feature request.** Holding a button on a 2026 Steam Controller
 ("Puck", `28de:1304`) during an assignment session claims no seat. It pairs and
 then says nothing.
@@ -90,3 +95,37 @@ anywhere says why. Every other pad tested claims a seat in under a second.
 GOTG cannot work around it. Reading the pad ourselves to notice the hold would
 be a second implementation of padmap's one job, racing the daemon for the same
 device.
+
+## What was checked
+
+Against the real controller (`28de:1304` on `/dev/hidraw2`), a session opened
+with only the Puck attached now logs:
+
+```
+/dev/hidraw2: controller paired
+session open: 1 pad(s), 4 slot(s), 0 already assigned
+session pad 0 (hidraw2) first read          <- the line that was missing
+```
+
+The read happens 3ms after the session opens. The guess in the section above
+was right about the cause: `triton::Source::open` sends the lizard-off feature
+report *at open*, before the descriptor is ever handed to the reactor, so the
+pad is already streaming by the time anything waits on it. The Python sent it
+from inside the read that was waiting for the pad to speak.
+
+Two things were added rather than only re-tested:
+
+* **The missing log line is now permanent.** `Session::read` logs the first
+  read from each pad. A pad that is never readable is never read, and that
+  failure is otherwise entirely silent -- which is what made this cost a day.
+* **A test that needs no Steam Controller.**
+  `tests/triton_protocol.rs::a_press_on_a_puck_claims_a_seat` drives the whole
+  chain a seat depends on -- a real `triton::Source` over a pty, its decoded
+  events, and the same `Assigner` the daemon's session feeds -- and asserts
+  that holding A claims player 1 while an untouched pad claims nothing. It
+  protects the path on every machine rather than only on one with a Puck
+  plugged in.
+
+Every button the Triton decoder emits is `BTN_SOUTH` or above, so all of them
+clear the `BTN_FIRST` floor that makes the assigner ignore keyboard codes --
+which was the next link worth doubting and is now covered by that test.

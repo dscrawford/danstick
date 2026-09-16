@@ -49,6 +49,8 @@ pub struct Session {
     pub grab_failures: Vec<String>,
     /// Reused between reads so the hot path allocates nothing.
     buffer: Vec<InputEvent>,
+    /// Whether each pad has ever produced a read. See [`Session::read`].
+    read_seen: Vec<bool>,
 }
 
 impl Session {
@@ -86,6 +88,7 @@ impl Session {
             match gone {
                 None => {
                     let mut session = Session {
+                        read_seen: vec![false; remaining.len()],
                         pads: remaining,
                         sources,
                         assigner: Assigner::default(),
@@ -156,10 +159,22 @@ impl Session {
     }
 
     /// Everything queued on one pad, reduced.
+    ///
+    /// The first read from each pad is logged. A pad that is never readable is
+    /// never read, and that failure is otherwise entirely silent -- the screen
+    /// says "hold a button", the person holds it, and no log anywhere says the
+    /// descriptor never woke. It cost a day on a Steam Controller once.
     pub fn read(&mut self, index: usize) -> Vec<Raw> {
         let Some(source) = self.sources.get_mut(index) else {
             return Vec::new();
         };
+        if !self.read_seen[index] {
+            self.read_seen[index] = true;
+            log::info!(
+                "session pad {index} ({}) first read",
+                self.pads.get(index).map(|pad| pad.event()).unwrap_or("?")
+            );
+        }
         self.buffer.clear();
         if let Err(error) = source.fetch_events(&mut self.buffer) {
             if error.kind() != std::io::ErrorKind::WouldBlock {
