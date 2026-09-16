@@ -69,13 +69,47 @@ pub fn resolve<'a>(
 ) -> (Vec<(u32, &'a Pad)>, Vec<&'a Assignment>) {
     let mut found = Vec::new();
     let mut missing = Vec::new();
+    let mut taken: Vec<&Path> = Vec::new();
+
+    // By node first: nothing has moved in the ordinary case, and the path is
+    // the only thing that can tell four identical adapter ports apart.
     for assignment in assignments {
-        match pads.iter().find(|pad| pad.path == assignment.path) {
-            Some(pad) => found.push((assignment.player, pad)),
-            None => missing.push(assignment),
+        if let Some(pad) = pads.iter().find(|pad| pad.path == assignment.path) {
+            taken.push(pad.path.as_path());
+            found.push((assignment.player, pad));
+        } else {
+            missing.push(assignment);
         }
     }
-    (found, missing)
+
+    // Then by identity, for a pad that came back on a different node -- which
+    // a wireless controller does every time it wakes up. An event number is
+    // not stable across a reconnect, and a person turning their pad back on
+    // expects their seat, not a re-seat.
+    //
+    // Only where exactly one unclaimed pad matches. Four ports of one adapter
+    // agree on name, ids and phys -- that indistinguishability is the reason
+    // padmap exists -- so a second candidate means this cannot be decided, and
+    // guessing would hand somebody else's controller a seat.
+    let mut still_missing = Vec::new();
+    for assignment in missing {
+        let mut candidates = pads.iter().filter(|pad| {
+            !taken.contains(&pad.path.as_path())
+                && pad.vid == assignment.vid
+                && pad.pid == assignment.pid
+                && pad.name == assignment.name
+                && pad.phys == assignment.phys
+        });
+        match (candidates.next(), candidates.next()) {
+            (Some(pad), None) => {
+                taken.push(pad.path.as_path());
+                found.push((assignment.player, pad));
+            }
+            _ => still_missing.push(assignment),
+        }
+    }
+    found.sort_by_key(|(player, _)| *player);
+    (found, still_missing)
 }
 
 #[cfg(test)]
@@ -193,5 +227,110 @@ mod tests {
         save(&path, &assignments).expect("save");
         assert_eq!(load(&path).expect("load"), assignments);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A wireless pad that slept and woke comes back on a different event
+    /// number. Its owner turned it back on; they did not ask to be re-seated.
+    #[test]
+    fn a_pad_that_came_back_on_a_different_node_keeps_its_seat() {
+        let mut moved = pad("event42");
+        moved.name = "Xbox Wireless Controller".to_owned();
+        moved.phys = "50:2e:91:08:d7:d1".to_owned();
+        moved.vid = 0x045E;
+        moved.pid = 0x028E;
+
+        let assignment = Assignment {
+            player: 1,
+            // Where it was last time, and where it is not now.
+            path: PathBuf::from("/dev/input/event256"),
+            name: moved.name.clone(),
+            phys: moved.phys.clone(),
+            vid: moved.vid,
+            pid: moved.pid,
+        };
+        let seats = [assignment];
+        let present = [moved.clone()];
+        let (found, missing) = resolve(&seats, &present);
+        assert_eq!(found.len(), 1, "the pad was not recognised on its new node");
+        assert_eq!(found[0].0, 1);
+        assert_eq!(found[0].1.path, moved.path);
+        assert!(missing.is_empty());
+    }
+
+    /// Four ports of one adapter agree on name, ids and phys -- that
+    /// indistinguishability is the reason padmap exists. A second candidate
+    /// means this cannot be decided, and guessing would hand somebody else's
+    /// controller a seat.
+    #[test]
+    fn an_ambiguous_match_is_refused_rather_than_guessed() {
+        let mut one = pad("event10");
+        let mut two = pad("event11");
+        for port in [&mut one, &mut two] {
+            port.name = "Mayflash GameCube Adapter".to_owned();
+            port.phys = "usb-0000:00:14.0-1/input0".to_owned();
+            port.vid = 0x0079;
+            port.pid = 0x1843;
+        }
+        let assignment = Assignment {
+            player: 1,
+            path: PathBuf::from("/dev/input/event99"),
+            name: one.name.clone(),
+            phys: one.phys.clone(),
+            vid: one.vid,
+            pid: one.pid,
+        };
+        let seats = [assignment];
+        let present = [one, two];
+        let (found, missing) = resolve(&seats, &present);
+        assert!(found.is_empty(), "an ambiguous pad was seated by guessing");
+        assert_eq!(missing.len(), 1);
+    }
+
+    /// The node still wins where it matches: it is the only thing that can
+    /// tell two otherwise identical ports apart.
+    #[test]
+    fn the_node_decides_when_it_is_there() {
+        let mut one = pad("event10");
+        let mut two = pad("event11");
+        for port in [&mut one, &mut two] {
+            port.name = "Adapter".to_owned();
+            port.phys = "shared".to_owned();
+        }
+        let seat = |player: u32, event: &str| Assignment {
+            player,
+            path: PathBuf::from(format!("/dev/input/{event}")),
+            name: "Adapter".to_owned(),
+            phys: "shared".to_owned(),
+            vid: 1,
+            pid: 2,
+        };
+        let seats = [seat(1, "event11"), seat(2, "event10")];
+        let present = [one, two];
+        let (found, missing) = resolve(&seats, &present);
+        assert!(missing.is_empty());
+        assert_eq!(found[0].0, 1);
+        assert_eq!(found[0].1.path, PathBuf::from("/dev/input/event11"));
+        assert_eq!(found[1].0, 2);
+        assert_eq!(found[1].1.path, PathBuf::from("/dev/input/event10"));
+    }
+
+    /// A pad that is genuinely absent stays absent -- it must not be matched
+    /// to some other controller that happens to be unclaimed.
+    #[test]
+    fn a_pad_that_is_not_there_is_still_missing() {
+        let other = pad("event10");
+        let assignment = Assignment {
+            player: 1,
+            path: PathBuf::from("/dev/input/event99"),
+            name: "Something Else".to_owned(),
+            phys: "elsewhere".to_owned(),
+            vid: 0xDEAD,
+            pid: 0xBEEF,
+        };
+        let seats = [assignment];
+        let present = [other];
+        let (found, missing) = resolve(&seats, &present);
+        assert!(found.is_empty());
+        assert_eq!(missing.len(), 1);
     }
 }

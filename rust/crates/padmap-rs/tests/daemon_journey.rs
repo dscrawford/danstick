@@ -52,6 +52,11 @@ const HOSTILE: PadId = PadId {
     pid: 0x0004,
     only: "RSTESTHOSTILE",
 };
+const SLEEPER: PadId = PadId {
+    name: "PADMAP RSTESTSLEEPER",
+    pid: 0x0005,
+    only: "RSTESTSLEEPER",
+};
 
 fn signature(id: PadId) -> String {
     format!("{PAD_VID:04x}:{:04x}:{}", id.pid, id.name)
@@ -583,5 +588,85 @@ fn a_malformed_command_is_answered_not_fatal() {
     );
 
     drop(daemon);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// One controller that is switched off must not cost the others theirs.
+///
+/// The reported failure: player 1 was a Steam Controller that was present the
+/// whole time, player 2 a Bluetooth pad that had gone to sleep. Opening
+/// player 2 failed, the error aborted the whole restore, and *nothing* was
+/// republished -- a four-player machine left with no virtual pads at all
+/// because one pad idled. The only way back was editing the state file by
+/// hand.
+#[test]
+fn a_sleeping_pad_does_not_unpublish_the_others() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let _guard = LiveGuard::new(SLEEPER);
+    let root = std::env::temp_dir().join(format!("padmap-sleeper-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("run/padmap")).expect("mkdir");
+    let pad = TestPad::new(SLEEPER);
+    let present = std::fs::read_dir("/sys/class/input")
+        .expect("sysfs")
+        .flatten()
+        .find(|entry| {
+            std::fs::read_to_string(entry.path().join("device/name"))
+                .map(|name| name.trim() == SLEEPER.name)
+                .unwrap_or(false)
+        })
+        .map(|entry| format!("/dev/input/{}", entry.file_name().to_string_lossy()))
+        .expect("the test pad has a node");
+
+    // Two seats: one live, one whose controller is asleep and has no node.
+    let assignments = serde_json::json!([
+        {"player": 1, "path": present, "name": SLEEPER.name,
+         "phys": "", "vid": PAD_VID, "pid": SLEEPER.pid},
+        {"player": 2, "path": "/dev/input/event9999", "name": "Xbox Wireless Controller",
+         "phys": "50:2e:91:08:d7:d1", "vid": 1118, "pid": 654}
+    ]);
+    std::fs::write(
+        root.join("run/padmap/assignments.json"),
+        serde_json::to_string_pretty(&assignments).expect("json"),
+    )
+    .expect("seed the assignments");
+
+    let mut daemon = Daemon::start(&root, SLEEPER);
+    let state = daemon
+        .wait_for("state", |e| e["state"] == "ready", 10.0)
+        .unwrap_or_else(|| {
+            panic!(
+                "the daemon never went ready; one sleeping pad took the roster down: {:?}",
+                daemon.last("state")
+            )
+        });
+
+    // Both seats are kept -- the sleeping pad's owner did not ask to be
+    // re-seated because their controller idled.
+    let players = state["players"].as_array().expect("players");
+    let seats: Vec<u64> = players
+        .iter()
+        .map(|p| p["player"].as_u64().expect("player"))
+        .collect();
+    assert_eq!(seats, vec![1], "only live seats are drawn from claims");
+
+    // Player 1's clone is on the air, which is the whole point.
+    assert_eq!(players[0]["published"], true, "{state}");
+    let clones: BTreeSet<String> = std::fs::read_dir("/sys/class/input")
+        .expect("sysfs")
+        .flatten()
+        .filter_map(|entry| std::fs::read_to_string(entry.path().join("name")).ok())
+        .map(|name| name.trim().to_owned())
+        .collect();
+    assert!(
+        clones.contains("padmap Player 1"),
+        "player 1 was not republished because player 2 was asleep: {clones:?}"
+    );
+
+    drop(daemon);
+    drop(pad);
     let _ = std::fs::remove_dir_all(&root);
 }

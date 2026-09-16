@@ -293,20 +293,24 @@ impl Server {
             return;
         }
         let pads = discover();
-        let mut restored = Vec::new();
-        for entry in &saved {
-            match pads.iter().find(|pad| pad.path == entry.path) {
-                Some(pad) => restored.push(Slot {
-                    player: entry.player,
-                    pad: pad.clone(),
-                }),
-                None => warn!(
-                    "player {}: {} ({}) is gone, not restored",
-                    entry.player,
-                    clean(&entry.name),
-                    entry.path.display()
-                ),
-            }
+        // By node, then by identity: a wireless pad that slept and woke comes
+        // back on a different event number, and its owner should not have to
+        // re-seat it for that.
+        let (found, missing) = assignments::resolve(&saved, &pads);
+        let restored: Vec<Slot> = found
+            .into_iter()
+            .map(|(player, pad)| Slot {
+                player,
+                pad: pad.clone(),
+            })
+            .collect();
+        for entry in missing {
+            warn!(
+                "player {}: {} ({}) is not here; keeping the seat",
+                entry.player,
+                clean(&entry.name),
+                entry.path.display()
+            );
         }
         if restored.is_empty() {
             return;
@@ -1511,12 +1515,34 @@ impl Server {
     fn start_republisher(&mut self) -> Result<(), clone::CloneError> {
         self.stop_republisher();
         let mut vpads = Vec::with_capacity(self.slots_assigned.len());
+        let mut first_failure = None;
         for slot in &self.slots_assigned {
             let axes = profiles::load(&slot.pad, None)
                 .map(|profile| profile.axes)
                 .unwrap_or_default();
-            let vpad = clone::create(&slot.pad, slot.player, self.mode, &axes, true)?;
-            vpads.push(vpad);
+            // One pad that cannot be opened must not cost the others theirs.
+            // A wireless controller that has gone to sleep has no device node,
+            // and taking the whole roster down with it left a four-player
+            // machine with no virtual pads at all -- for a pad that was merely
+            // switched off. The seat is kept; see `players_payload`.
+            match clone::create(&slot.pad, slot.player, self.mode, &axes, true) {
+                Ok(vpad) => vpads.push(vpad),
+                Err(error) => {
+                    warn!(
+                        "player {}: not republished ({error}); its seat is kept",
+                        slot.player
+                    );
+                    first_failure.get_or_insert(error);
+                }
+            }
+        }
+        // Only when nothing at all could be published is this a failure worth
+        // telling a caller about: there is then no clone on the air and
+        // `accept` has something to report.
+        if vpads.is_empty() {
+            if let Some(error) = first_failure {
+                return Err(error);
+            }
         }
         let mut virtual_paths: BTreeMap<u32, String> = BTreeMap::new();
         for vpad in &mut vpads {
@@ -2040,6 +2066,14 @@ impl Server {
 
     // -- state ------------------------------------------------------------
 
+    /// Seats with a clone on the air right now.
+    fn published_players(&self) -> Vec<u32> {
+        self.republisher
+            .as_ref()
+            .map(|republisher| republisher.pads.iter().map(|vpad| vpad.player).collect())
+            .unwrap_or_default()
+    }
+
     fn players_payload(&self) -> Vec<PlayerState> {
         let source: Vec<(u32, Pad)> = match &self.session {
             Some(session) => session
@@ -2053,6 +2087,7 @@ impl Server {
                 .map(|slot| (slot.player, slot.pad.clone()))
                 .collect(),
         };
+        let live = self.published_players();
         source
             .into_iter()
             .map(|(player, pad)| PlayerState {
@@ -2062,6 +2097,7 @@ impl Server {
                 icon: publish::icon_for(&pad, &self.icon_overrides).to_owned(),
                 configured: publish::has_mapping(&pad),
                 mappings: publish::mapping_scopes(&pad),
+                published: live.contains(&player),
             })
             .collect()
     }

@@ -18,6 +18,39 @@ fn corpus(name: &str) -> Vec<Value> {
     serde_json::from_str(&text).expect("the corpus is JSON")
 }
 
+/// Every key on the left is present on the right, with the same value.
+///
+/// Not equality, deliberately. What a client depends on is that nothing the
+/// event used to carry has been renamed, retyped or dropped -- an *added* key
+/// breaks no reader, since a client takes the fields it knows and ignores the
+/// rest, and refusing one would mean the protocol could never grow without
+/// rewriting the evidence that it has not regressed.
+fn carries_everything_in(ours: &Value, want: &Value, path: &str) {
+    match want {
+        Value::Object(fields) => {
+            let ours = ours
+                .as_object()
+                .unwrap_or_else(|| panic!("{path}: an object became {ours}"));
+            for (key, value) in fields {
+                let mine = ours
+                    .get(key)
+                    .unwrap_or_else(|| panic!("{path}.{key} is gone"));
+                carries_everything_in(mine, value, &format!("{path}.{key}"));
+            }
+        }
+        Value::Array(items) => {
+            let ours = ours
+                .as_array()
+                .unwrap_or_else(|| panic!("{path}: an array became {ours}"));
+            assert_eq!(ours.len(), items.len(), "{path}: length changed");
+            for (at, value) in items.iter().enumerate() {
+                carries_everything_in(&ours[at], value, &format!("{path}[{at}]"));
+            }
+        }
+        _ => assert_eq!(ours, want, "{path}"),
+    }
+}
+
 #[test]
 fn every_recorded_state_event_round_trips() {
     for case in corpus("state_events") {
@@ -28,8 +61,22 @@ fn every_recorded_state_event_round_trips() {
         let parsed: StateEvent =
             serde_json::from_value(want.clone()).expect("the Python's event parses");
         let ours = serde_json::to_value(&parsed).expect("serialises");
-        assert_eq!(&ours, want);
+        carries_everything_in(&ours, want, "state");
     }
+}
+
+#[test]
+fn a_field_that_went_missing_is_still_caught() {
+    // The test above allows the event to grow. It must not allow it to shrink,
+    // which is the thing that breaks a front-end.
+    let want = serde_json::json!({"state": "idle", "slots": 4});
+    let ours = serde_json::json!({"state": "idle"});
+    let result = std::panic::catch_unwind(|| carries_everything_in(&ours, &want, "state"));
+    assert!(result.is_err(), "a dropped field was not noticed");
+
+    let changed = serde_json::json!({"state": "ready", "slots": 4});
+    let result = std::panic::catch_unwind(|| carries_everything_in(&changed, &want, "state"));
+    assert!(result.is_err(), "a changed value was not noticed");
 }
 
 #[test]
@@ -55,6 +102,7 @@ fn a_player_with_no_mappings_says_so_rather_than_omitting_them() {
         icon: "xbox".to_owned(),
         configured: false,
         mappings: Vec::new(),
+        published: true,
     };
     let value = serde_json::to_value(&player).expect("serialises");
     assert_eq!(value["mappings"], serde_json::json!([]));

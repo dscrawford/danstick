@@ -1,5 +1,9 @@
 # Resuming republishing is all-or-nothing
 
+> **Fixed.** All three parts, including "paths are not identity". See "What
+> was changed" at the end.
+
+
 **Severity: a controller that is switched off costs you every other one.**
 
 `_resume_republishing` calls `_start_republisher`, which opens each assigned
@@ -46,3 +50,52 @@ number is not stable across a reconnect. `assignments.json` already records
 `phys`, `vid` and `pid` — matching on those and treating the path as a hint
 would make a pad that comes back on a different node just work, which is what
 a person turning their controller back on expects.
+
+## What was changed
+
+The Rust daemon had the same bug -- `start_republisher` used `?` on
+`clone::create`, so the first pad that could not be opened aborted the whole
+roster. `padmap run` had always got this right, which made the inconsistency
+easy to miss.
+
+**Open what can be opened.** A pad that fails is logged and skipped, and the
+rest are published. Only when *nothing* could be opened is it an error worth
+telling a caller about, which is the case `accept` still has to report.
+
+**Keep the seat.** An absent pad stays assigned and is warned about by name:
+
+```
+player 2: Xbox Wireless Controller (/dev/input/event9999) is not here; keeping the seat
+```
+
+**Say which seats are live.** `PlayerState` gained `published`. A front-end
+draws a seat with `"published": false` as *away* rather than either lying or
+making the player vanish.
+
+**Paths are not identity.** `assignments::resolve` now matches by node first
+and falls back to `(name, vid, pid, phys)` for anything left over, so a
+wireless pad that comes back on a different event number keeps its seat.
+
+The fallback is deliberately narrow: it only matches when **exactly one**
+unclaimed pad fits. Four ports of one adapter agree on all four fields -- that
+indistinguishability is the reason padmap exists at all -- so a second
+candidate means the question cannot be decided, and guessing would hand
+somebody else's controller a seat. That case is a test of its own, as is the
+one where the node is present and must win.
+
+`a_sleeping_pad_does_not_unpublish_the_others` is the reported scenario: a
+real uinput pad on seat 1, a dead node on seat 2, and an assertion that seat
+1's clone is on the air.
+
+### One test had to change
+
+`state_differential` compared padmap's `state` event to the recorded Python
+one for exact equality, so adding `published` broke it. It now asserts that
+everything the Python said is still said, with the same value -- a *subset*
+rather than equality.
+
+That is the guarantee worth keeping. A renamed, retyped or dropped field
+breaks a front-end; an added one breaks nobody, since a client takes the
+fields it knows. Forbidding additions would mean the protocol could never grow
+without rewriting the evidence that it has not regressed. A test asserts the
+check still catches a field that goes missing or changes value.

@@ -45,6 +45,14 @@ pub struct PlayerState {
     /// Scope strings, not labels: the labels are built where the picker is,
     /// and a second set here would be a second thing to keep in step.
     pub mappings: Vec<String>,
+    /// Whether this seat has a clone on the air right now.
+    ///
+    /// A wireless pad that goes to sleep loses its device node and cannot be
+    /// republished, but it keeps its seat -- its owner should not have to
+    /// re-take it because the controller idled. False is how a front-end draws
+    /// player 2 as *away* rather than either lying or making them vanish.
+    #[serde(default)]
+    pub published: bool,
 }
 
 /// The whole event.
