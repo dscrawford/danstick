@@ -35,6 +35,9 @@ pub enum Watched {
     Client(i32),
     /// A pad held open by an assignment session, by index into it.
     Session(usize),
+    /// An unseated pad being watched for someone holding a button on it, by
+    /// index into the seating list. Read but never grabbed.
+    Seating(usize),
 }
 
 /// Low three bits of a token say which kind; the rest is the index.
@@ -43,6 +46,7 @@ const TAG_CLONE: u64 = 1;
 const TAG_LISTENER: u64 = 2;
 const TAG_CLIENT: u64 = 3;
 const TAG_SESSION: u64 = 4;
+const TAG_SEATING: u64 = 5;
 
 impl Watched {
     fn token(self) -> u64 {
@@ -54,6 +58,7 @@ impl Watched {
             // A descriptor is non-negative; the cast is lossless.
             Watched::Client(fd) => ((fd as u64) << 3) | TAG_CLIENT,
             Watched::Session(index) => ((index as u64) << 3) | TAG_SESSION,
+            Watched::Seating(index) => ((index as u64) << 3) | TAG_SEATING,
         }
     }
 
@@ -67,6 +72,7 @@ impl Watched {
             TAG_LISTENER => Watched::Listener,
             TAG_CLIENT => Watched::Client(index as i32),
             TAG_SESSION => Watched::Session(index),
+            TAG_SEATING => Watched::Seating(index),
             _ => Watched::Source(index),
         }
     }
@@ -241,6 +247,10 @@ mod tests {
                 Watched::from_token(Watched::Session(index).token()),
                 Watched::Session(index)
             );
+            assert_eq!(
+                Watched::from_token(Watched::Seating(index).token()),
+                Watched::Seating(index)
+            );
         }
     }
 
@@ -249,6 +259,7 @@ mod tests {
         // Index 0 in a session and index 0 in the republisher are different
         // descriptors, serviced by different code.
         assert_ne!(Watched::Session(0).token(), Watched::Source(0).token());
+        assert_ne!(Watched::Seating(0).token(), Watched::Session(0).token());
         assert_ne!(Watched::Client(0).token(), Watched::Listener.token());
     }
 

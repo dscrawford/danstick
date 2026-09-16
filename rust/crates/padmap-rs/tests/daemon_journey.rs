@@ -57,6 +57,11 @@ const SLEEPER: PadId = PadId {
     pid: 0x0005,
     only: "RSTESTSLEEPER",
 };
+const JOINER: PadId = PadId {
+    name: "PADMAP RSTESTJOINER",
+    pid: 0x0006,
+    only: "RSTESTJOINER",
+};
 
 fn signature(id: PadId) -> String {
     format!("{PAD_VID:04x}:{:04x}:{}", id.pid, id.name)
@@ -644,8 +649,23 @@ fn a_sleeping_pad_does_not_unpublish_the_others() {
             )
         });
 
-    // Both seats are kept -- the sleeping pad's owner did not ask to be
-    // re-seated because their controller idled.
+    // The sleeping pad's seat survives a save. Writing only the pads that are
+    // here would erase a seat because its controller happened to be asleep --
+    // the same loss as never keeping it.
+    daemon.send(serde_json::json!({"cmd": "status"}));
+    daemon.pump(0.5);
+    let saved: Value = serde_json::from_str(
+        &std::fs::read_to_string(root.join("run/padmap/assignments.json")).expect("assignments"),
+    )
+    .expect("json");
+    let seats: Vec<u64> = saved
+        .as_array()
+        .expect("array")
+        .iter()
+        .map(|entry| entry["player"].as_u64().expect("player"))
+        .collect();
+    assert_eq!(seats, vec![1, 2], "the sleeping pad lost its seat: {saved}");
+
     let players = state["players"].as_array().expect("players");
     let seats: Vec<u64> = players
         .iter()
@@ -664,6 +684,141 @@ fn a_sleeping_pad_does_not_unpublish_the_others() {
     assert!(
         clones.contains("padmap Player 1"),
         "player 1 was not republished because player 2 was asleep: {clones:?}"
+    );
+
+    drop(daemon);
+    drop(pad);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// A controller takes a seat with no session open and nothing grabbed.
+///
+/// The moments a pad needs to join are the moments a modal screen is most
+/// expensive -- somebody arrives mid-game, a pad is swapped for a charged one,
+/// a controller is switched on after the picker started. Opening a session for
+/// any of those grabs every pad, so one person joining costs everybody else
+/// the thing they were doing.
+#[test]
+fn a_pad_can_take_a_free_seat_without_a_session() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let _guard = LiveGuard::new(JOINER);
+    let root = std::env::temp_dir().join(format!("padmap-seating-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let mut pad = TestPad::new(JOINER);
+    let mut daemon = Daemon::start(&root, JOINER);
+
+    // Nothing seated, and no session anywhere.
+    let state = daemon.last("state").expect("a greeting").clone();
+    assert_eq!(state["state"], "idle");
+    assert_eq!(state["players"].as_array().map(Vec::len), Some(0));
+
+    // Holding before seating is open does nothing at all: this is a mode, and
+    // a pad on a table must not wander into a seat.
+    pad.hold(FIRST_KEY, 0.6);
+    daemon.pump(0.8);
+    assert!(
+        daemon.last("claim").is_none(),
+        "a seat was taken while seating was closed"
+    );
+
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "seating", "open": true, "players": 4}));
+    pad.hold(FIRST_KEY, 0.6);
+    let claim = daemon
+        .wait_for("claim", |_| true, 5.0)
+        .expect("holding a button took the free seat");
+    assert_eq!(claim["player"], 1);
+    assert_eq!(claim["name"], JOINER.name);
+
+    // The state never passed through `assigning`: no session was opened, so
+    // nothing was grabbed and nobody else's controller stopped working.
+    assert!(
+        !daemon
+            .events
+            .iter()
+            .any(|event| event["event"] == "state" && event["state"] == "assigning"),
+        "a session was opened behind the scenes"
+    );
+
+    // And the pad works now, rather than merely being written down: a clone is
+    // on the air and the files a launch reads are there.
+    let ready = daemon
+        .wait_for("state", |e| e["state"] == "ready", 5.0)
+        .expect("ready after the seat was taken");
+    assert_eq!(ready["players"][0]["player"], 1);
+    assert_eq!(ready["players"][0]["published"], true);
+    let clones: BTreeSet<String> = std::fs::read_dir("/sys/class/input")
+        .expect("sysfs")
+        .flatten()
+        .filter_map(|entry| std::fs::read_to_string(entry.path().join("name")).ok())
+        .map(|name| name.trim().to_owned())
+        .collect();
+    assert!(clones.contains("padmap Player 1"), "{clones:?}");
+    let state_dir = daemon.runtime.join("padmap");
+    assert!(state_dir.join("assignments.json").is_file());
+    assert!(state_dir
+        .join("autoconfig/udev/padmap Player 1.cfg")
+        .is_file());
+
+    // A seated pad is being *played with*. Holding a button on it again must
+    // not reseat anybody -- blocking in a fighting game is a held button.
+    daemon.events.clear();
+    pad.hold(FIRST_KEY + 1, 0.8);
+    daemon.pump(1.0);
+    assert!(
+        daemon.last("claim").is_none(),
+        "a pad that already held a seat claimed another"
+    );
+
+    // Closing stops it.
+    daemon.send(serde_json::json!({"cmd": "seating", "open": false}));
+    daemon.events.clear();
+    pad.hold(FIRST_KEY, 0.6);
+    daemon.pump(0.8);
+    assert!(daemon.last("claim").is_none());
+
+    drop(daemon);
+    drop(pad);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// With every seat taken, a held pad does nothing until somebody leaves.
+#[test]
+fn a_pad_cannot_take_a_seat_that_does_not_exist() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let _guard = LiveGuard::new(JOINER);
+    let root = std::env::temp_dir().join(format!("padmap-seating-full-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("run/padmap")).expect("mkdir");
+    let mut pad = TestPad::new(JOINER);
+
+    // One seat, and somebody already in it -- a pad that is not here, so the
+    // seat is held but unpublished.
+    let assignments = serde_json::json!([
+        {"player": 1, "path": "/dev/input/event9998", "name": "Someone Else",
+         "phys": "elsewhere", "vid": 1, "pid": 2}
+    ]);
+    std::fs::write(
+        root.join("run/padmap/assignments.json"),
+        serde_json::to_string_pretty(&assignments).expect("json"),
+    )
+    .expect("seed");
+
+    let mut daemon = Daemon::start(&root, JOINER);
+    daemon.send(serde_json::json!({"cmd": "seating", "open": true, "players": 1}));
+    daemon.events.clear();
+    pad.hold(FIRST_KEY, 0.8);
+    daemon.pump(1.2);
+    assert!(
+        daemon.last("claim").is_none(),
+        "a pad took a seat that was already held by an absent controller"
     );
 
     drop(daemon);

@@ -1,5 +1,9 @@
 # A controller should be able to join at any time
 
+> **Done**, as specified. See "What was built" at the end -- and one bug it
+> found in the fix for [resume-republishing](resume-republishing.md).
+
+
 **What happens now.** Taking a seat is a *session*. A front-end sends
 `{"cmd": "begin", "players": 4}`, padmap grabs every pad with `EVIOCGRAB`, the
 people holding them press a button in turn, and somebody sends `accept`. Until
@@ -55,3 +59,44 @@ on. The assignment screen stays for the case where somebody wants to *reorder*
 seats deliberately — that is a session, and grabbing the pads for it is
 correct, because reordering is something you do with everybody's attention
 rather than in the middle of a level.
+
+## What was built
+
+`{"cmd": "seating", "open": true, "players": 4}` and `{"open": false}`, exactly
+as proposed. While open, an unseated pad held for `HOLD_SECONDS` takes the
+lowest free seat, emits the same `progress` and `claim` events a session does,
+and padmap republishes and rewrites every consumer's config as `accept` does.
+
+No session is opened and **nothing is grabbed**: the unseated pads are read
+ungrabbed, so a press still reaches whatever has focus. Both bounds hold --
+only unseated pads, only free seats -- and each has a test.
+
+Seating suspends itself while a session is open, and lets go of its
+descriptors when one starts. A session grabs every pad and is about to rewrite
+the roster; reading underneath it would claim a seat the user is in the middle
+of assigning.
+
+`a_pad_can_take_a_free_seat_without_a_session` asserts the thing that makes
+this worth having: the state never passes through `assigning`, so no session
+was opened behind the scenes.
+
+## A bug this found
+
+Writing the "only free seats" test surfaced a real bug in the
+[resume-republishing](resume-republishing.md) fix, shipped one commit earlier.
+
+`restore()` logged *"keeping the seat"* for a pad that was not there -- and
+then dropped it from the roster anyway, because a seat carries a pad and an
+absent controller has none. The seat was kept in the log and nowhere else, so
+the next `save_assignments` would have **erased it from disk**. A wireless pad
+that slept through a daemon restart would have lost its seat permanently.
+
+Away seats are now held explicitly: saved, counted when finding the next free
+seat, and drawn by a front-end as `published: false`. A controller that comes
+back takes *its own* seat rather than a new one beside it, matched the way
+`assignments::resolve` matches, so a pad that woke on a different node comes
+home.
+
+The test caught it only when the suite ran in parallel -- serially, the
+seating test saw a roster the other tests had not yet disturbed. Worth knowing
+for anything else that reads the state file.

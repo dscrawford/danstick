@@ -15,7 +15,7 @@
 use serde_json::Value;
 
 /// Every command the socket accepts.
-pub const COMMANDS: [&str; 14] = [
+pub const COMMANDS: [&str; 15] = [
     "begin",
     "reset",
     "accept",
@@ -30,6 +30,7 @@ pub const COMMANDS: [&str; 14] = [
     "configure_end",
     "set_icon",
     "status",
+    "seating",
 ];
 
 /// A parsed command, with its arguments already coerced.
@@ -71,6 +72,19 @@ pub enum Command {
         icon: String,
     },
     Status,
+    /// Listen for an unseated controller taking a free seat, with no session
+    /// open and nothing grabbed.
+    ///
+    /// The moments a controller needs to join are the moments a modal screen
+    /// is most expensive: somebody arrives mid-game, a pad dies and is swapped
+    /// for a charged one, a controller is switched on after the picker has
+    /// started. Opening a session for any of them grabs every pad, so one
+    /// person joining costs everybody else the thing they were doing.
+    Seating {
+        open: bool,
+        /// How many seats exist. Only meaningful when opening.
+        players: i64,
+    },
 }
 
 /// Why a message could not be acted on.
@@ -170,6 +184,18 @@ impl Command {
                 icon: text("icon"),
             },
             "status" => Command::Status,
+            "seating" => Command::Seating {
+                // Absent means "open it", so a bare {"cmd":"seating"} turns it
+                // on rather than silently doing nothing.
+                open: match message.get("open") {
+                    Some(Value::Bool(value)) => *value,
+                    None => true,
+                    // A string or a number here is a client that thinks it is
+                    // saying something; refusing is better than guessing which.
+                    Some(_) => return Err(Refused::NotANumber { field: "open" }),
+                },
+                players: number("players", 4)?,
+            },
             // Unreachable: the membership test above is the only way in.
             other => return Err(Refused::Unknown(other.to_owned())),
         })

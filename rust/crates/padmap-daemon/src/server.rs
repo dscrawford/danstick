@@ -34,6 +34,7 @@ use crate::calibration::{CalibrationRun, Phase, Step};
 use crate::confirm::ConfirmHold;
 use crate::hotplug::{self, Attached};
 use crate::publish::{self, Slot};
+use crate::seating::Seating;
 use crate::session::{Raw, Session};
 use crate::{clean, events, now};
 
@@ -104,12 +105,21 @@ pub struct Server {
     state: &'static str,
     session: Option<Session>,
     slots_assigned: Vec<Slot>,
+    /// Seats whose controller is not here right now.
+    ///
+    /// A wireless pad that sleeps loses its node; its owner turned it off,
+    /// they did not give up their seat. Held apart from `slots_assigned`
+    /// because a `Slot` carries a pad and these have none -- but they are
+    /// saved, counted when finding the next free seat, and drawn by a
+    /// front-end as `published: false`.
+    away: Vec<assignments::Assignment>,
     republisher: Option<Republisher>,
     confirm: ConfirmHold,
     last_progress: f64,
     last_confirm: f64,
     slots: u32,
     icon_overrides: BTreeMap<String, String>,
+    seating: Seating,
     calibration: Option<CalibrationRun>,
     mapping: Option<Modal<MappingRun>>,
     choice: Option<Modal<Chooser>>,
@@ -218,12 +228,14 @@ impl Server {
             state: STATE_IDLE,
             session: None,
             slots_assigned: Vec::new(),
+            away: Vec::new(),
             republisher: None,
             confirm: ConfirmHold::default(),
             last_progress: 0.0,
             last_confirm: 0.0,
             slots: 4,
             icon_overrides: runtime::load_icon_overrides(),
+            seating: Seating::default(),
             calibration: None,
             mapping: None,
             choice: None,
@@ -304,7 +316,8 @@ impl Server {
                 pad: pad.clone(),
             })
             .collect();
-        for entry in missing {
+        self.away = missing.into_iter().cloned().collect();
+        for entry in &self.away {
             warn!(
                 "player {}: {} ({}) is not here; keeping the seat",
                 entry.player,
@@ -312,10 +325,15 @@ impl Server {
                 entry.path.display()
             );
         }
-        if restored.is_empty() {
+        if restored.is_empty() && self.away.is_empty() {
             return;
         }
-        self.slots = restored.iter().map(|slot| slot.player).max().unwrap_or(4);
+        self.slots = restored
+            .iter()
+            .map(|slot| slot.player)
+            .chain(self.away.iter().map(|entry| entry.player))
+            .max()
+            .unwrap_or(4);
         self.slots_assigned = restored;
         // Coming up idle is a state the user can fix from the setup screen;
         // not coming up is not.
@@ -352,6 +370,7 @@ impl Server {
                     Watched::Listener => self.on_accept(),
                     Watched::Client(fd) => self.on_client_read(fd),
                     Watched::Session(index) => self.on_session_read(index),
+                    Watched::Seating(index) => self.on_seating_read(index),
                     Watched::Source(index) => self.on_source_read(index),
                     Watched::Clone(index) => {
                         if let Some(republisher) = self.republisher.as_mut() {
@@ -369,6 +388,7 @@ impl Server {
 
     /// Release everything: the session's grabs, the clones, the socket.
     pub fn close(&mut self) {
+        self.close_seating();
         self.end_session();
         self.stop_republisher();
         let fds: Vec<i32> = self.clients.keys().copied().collect();
@@ -604,6 +624,21 @@ impl Server {
                 }
             }
             Command::SetIcon { player, icon } => self.set_icon(as_player(player), &icon),
+            Command::Seating { open, players } => {
+                if open {
+                    self.seating
+                        .open(players.clamp(1, i64::from(u16::MAX)) as u32);
+                    info!("seating open: {} seat(s)", self.seating.seats());
+                    // Watch straight away rather than waiting for the next
+                    // scan: somebody is holding a pad now.
+                    self.refresh_seating(&mut Scan::default());
+                } else {
+                    self.close_seating();
+                    info!("seating closed");
+                }
+                let state = self.state_event();
+                self.broadcast(&state);
+            }
             Command::Status => {
                 let state = self.state_event();
                 self.send(fd, &state);
@@ -631,6 +666,12 @@ impl Server {
         // Re-read so an icon correction takes effect on the next setup.
         self.icon_overrides = runtime::load_icon_overrides();
 
+        // Seating reads the unseated pads ungrabbed; a session is about to
+        // grab every one of them and rewrite the roster, so it lets go first.
+        for source in self.seating.sources() {
+            let _ = self.reactor.unwatch(source.as_fd());
+        }
+        self.seating.refresh(Vec::new());
         let session = match Session::open(pads) {
             Ok(session) => session,
             Err(error) => {
@@ -1372,6 +1413,134 @@ impl Server {
         }
     }
 
+    /// A watched, unseated pad had something to say.
+    fn on_seating_read(&mut self, index: usize) {
+        let clock = now();
+        self.seating.read(index, clock);
+    }
+
+    /// Stop watching, and drop every descriptor.
+    fn close_seating(&mut self) {
+        for source in self.seating.sources() {
+            let _ = self.reactor.unwatch(source.as_fd());
+        }
+        self.seating.close();
+    }
+
+    /// Watch exactly the pads that are here and hold no seat.
+    fn refresh_seating(&mut self, scan: &mut Scan) {
+        if !self.seating.is_open() {
+            return;
+        }
+        // A session owns every pad while it is open -- it holds EVIOCGRAB on
+        // them and is about to rewrite the whole roster. Reading underneath it
+        // would claim a seat the user is in the middle of assigning.
+        if self.state == STATE_ASSIGNING {
+            if !self.seating.pads().is_empty() {
+                for source in self.seating.sources() {
+                    let _ = self.reactor.unwatch(source.as_fd());
+                }
+                self.seating.refresh(Vec::new());
+            }
+            return;
+        }
+        let seated: Vec<PathBuf> = self
+            .slots_assigned
+            .iter()
+            .map(|slot| slot.pad.path.clone())
+            .collect();
+        let wanted = self.seating.wanted(scan.pads(), &seated);
+        // Unwatch first: `refresh` closes the old descriptors, and epoll must
+        // be told before a number it is holding is closed and reused.
+        for source in self.seating.sources() {
+            let _ = self.reactor.unwatch(source.as_fd());
+        }
+        if !self.seating.refresh(wanted) {
+            // Unchanged, so the descriptors above are the same ones: put them
+            // back.
+            for (index, source) in self.seating.sources().iter().enumerate() {
+                let _ = self.reactor.watch(source.as_fd(), Watched::Seating(index));
+            }
+            return;
+        }
+        for (index, source) in self.seating.sources().iter().enumerate() {
+            if let Err(error) = self.reactor.watch(source.as_fd(), Watched::Seating(index)) {
+                warn!("seating: could not watch pad {index}: {error}");
+            }
+        }
+    }
+
+    /// Give a seat to any pad that has been held long enough.
+    fn tick_seating(&mut self) {
+        if !self.seating.is_open() || self.state == STATE_ASSIGNING {
+            return;
+        }
+        let claimed = self.seating.tick(now());
+        for (index, fraction) in &claimed.progress {
+            if let Some(pad) = self.seating.pads().get(*index) {
+                let _ = pad;
+                self.broadcast(&events::progress(*fraction));
+            }
+        }
+        for index in claimed.pads {
+            let Some(pad) = self.seating.pads().get(index).cloned() else {
+                continue;
+            };
+            let player = padmap_core::announce::next_player(&self.taken_seats());
+            // Only the free seats. With every one taken there is nothing to
+            // claim, and a held pad does nothing until somebody leaves.
+            if player > self.seating.seats() {
+                info!("{} held a button but every seat is taken", clean(&pad.name));
+                self.seating.reset();
+                continue;
+            }
+            info!(
+                "seating: player {player} <- {} ({})",
+                clean(&pad.name),
+                pad.event()
+            );
+            self.slots_assigned.push(Slot {
+                player,
+                pad: pad.clone(),
+            });
+            self.attached
+                .live
+                .insert(profiles::signature_of(&pad), player);
+            // The same events a session's claim emits, so a front-end draws
+            // this exactly as it draws a seat taken on the setup screen.
+            let event = events::claim(
+                player,
+                &clean(&pad.name),
+                pad.event(),
+                publish::icon_for(&pad, &self.icon_overrides),
+                profiles::is_known(&pad, None),
+            );
+            self.broadcast(&event);
+            // Republish and rewrite every consumer's config, exactly as
+            // `accept` does -- the point is that the pad works now, not that
+            // it is written down.
+            if let Err(error) = self.start_republisher() {
+                warn!(
+                    "seating: could not republish after {} joined: {error}",
+                    clean(&pad.name)
+                );
+            }
+            if self.republisher.is_some() {
+                self.state = STATE_READY;
+            }
+            self.save_assignments();
+            let announced =
+                self.controller_event(padmap_core::announce::ACTION_ADDED, player, &pad, "");
+            self.broadcast(&announced);
+            let state = self.state_event();
+            self.broadcast(&state);
+            // The pad is seated now, so it stops being watched here and the
+            // republisher takes it.
+            self.seating.reset();
+            self.refresh_seating(&mut Scan::default());
+        }
+    }
+
     fn on_source_read(&mut self, index: usize) {
         let Some(republisher) = self.republisher.as_mut() else {
             return;
@@ -1431,6 +1600,8 @@ impl Server {
         self.sync_republish_pause();
         self.reap_dead_pads();
         self.republish_if_stale();
+        self.refresh_seating(&mut scan);
+        self.tick_seating();
 
         if self.session.is_none() {
             return;
@@ -1778,6 +1949,25 @@ impl Server {
     /// Attach a controller that has a mapping, and say so either way.
     fn announce_arrival(&mut self, pad: Pad) {
         let signature = profiles::signature_of(&pad);
+        // A seat this controller left is still its own. Matched the way
+        // `assignments::resolve` matches, so a pad that woke on a different
+        // node comes home rather than taking a new seat beside its old one.
+        if let Some(at) = self.away.iter().position(|entry| {
+            entry.name == pad.name
+                && entry.vid == pad.vid
+                && entry.pid == pad.pid
+                && (entry.phys == pad.phys || entry.path == pad.path)
+        }) {
+            let entry = self.away.remove(at);
+            info!("player {}: {} is back", entry.player, clean(&pad.name));
+            self.slots_assigned.push(Slot {
+                player: entry.player,
+                pad: pad.clone(),
+            });
+            self.attached.live.insert(signature.clone(), entry.player);
+            self.rebuild_for_attach(entry.player, &pad);
+            return;
+        }
         if let Some(existing) = self
             .slots_assigned
             .iter()
@@ -1810,8 +2000,7 @@ impl Server {
             );
             return;
         }
-        let taken: Vec<u32> = self.slots_assigned.iter().map(|slot| slot.player).collect();
-        let player = announce::next_player(&taken);
+        let player = announce::next_player(&self.taken_seats());
         if player > padmap_core::retroarch::MAX_PLAYERS {
             warn!(
                 "{} attached but every player slot is taken",
@@ -2066,6 +2255,15 @@ impl Server {
 
     // -- state ------------------------------------------------------------
 
+    /// Every seat that is spoken for, whether or not its pad is here.
+    fn taken_seats(&self) -> Vec<u32> {
+        self.slots_assigned
+            .iter()
+            .map(|slot| slot.player)
+            .chain(self.away.iter().map(|entry| entry.player))
+            .collect()
+    }
+
     /// Seats with a clone on the air right now.
     fn published_players(&self) -> Vec<u32> {
         self.republisher
@@ -2113,11 +2311,16 @@ impl Server {
     }
 
     fn save_assignments(&self) {
-        let entries: Vec<assignments::Assignment> = self
+        // The away seats go back too. Writing only the pads that are here
+        // would erase a seat because its controller was asleep when something
+        // else happened to save -- the same loss as never keeping it.
+        let mut entries: Vec<assignments::Assignment> = self
             .slots_assigned
             .iter()
             .map(to_input_assignment)
             .collect();
+        entries.extend(self.away.iter().cloned());
+        entries.sort_by_key(|entry| entry.player);
         if let Err(error) = assignments::save(&self.state_path, &entries) {
             warn!("could not save assignments: {error}");
         }

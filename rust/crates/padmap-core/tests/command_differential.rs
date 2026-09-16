@@ -59,6 +59,12 @@ fn as_fields(command: &Command) -> Value {
             serde_json::json!({"cmd": "set_icon", "player": player, "icon": icon})
         }
         Command::Status => serde_json::json!({"cmd": "status"}),
+        // Not in the corpus: the Python never had it. Rendered anyway so this
+        // stays exhaustive, which is what makes a command added and never
+        // routed a compile error rather than a key that does nothing.
+        Command::Seating { open, players } => {
+            serde_json::json!({"cmd": "seating", "open": open, "players": players})
+        }
     }
 }
 
@@ -71,7 +77,21 @@ fn the_two_agree_on_which_names_are_commands() {
         .iter()
         .map(|name| name.as_str().expect("a name"))
         .collect();
-    assert_eq!(COMMANDS.to_vec(), want);
+    // Every command the Python answered, padmap still answers -- and in the
+    // same order, since a client may show them in it. Extra commands are
+    // allowed: a front-end asks for what it wants by name and a daemon that
+    // knows one more breaks nobody, where a daemon that has *dropped* one
+    // leaves a key on a screen that does nothing.
+    let ours = COMMANDS.to_vec();
+    assert!(
+        ours.len() >= want.len(),
+        "commands went missing: {ours:?} against {want:?}"
+    );
+    assert_eq!(
+        ours[..want.len()].to_vec(),
+        want,
+        "a recorded command was dropped, renamed or reordered"
+    );
 }
 
 #[test]

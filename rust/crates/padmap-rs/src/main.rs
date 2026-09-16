@@ -548,7 +548,8 @@ fn cmd_run() -> Result<()> {
                 // daemon's, and are never registered here.
                 reactor::Watched::Listener
                 | reactor::Watched::Client(_)
-                | reactor::Watched::Session(_) => {}
+                | reactor::Watched::Session(_)
+                | reactor::Watched::Seating(_) => {}
             }
         }
     }

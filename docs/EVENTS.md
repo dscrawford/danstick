@@ -1,5 +1,39 @@
 # The `controller` event
 
+## Seating: taking a seat with no session
+
+```json
+{"cmd": "seating", "open": true, "players": 4}
+{"cmd": "seating", "open": false}
+```
+
+While it is open, holding a button on a controller that **holds no seat**
+claims the lowest free one after `HOLD_SECONDS` -- the same hold `begin` uses
+-- and padmap republishes and rewrites every consumer's config exactly as
+`accept` does. The same `progress` and `claim` events are emitted, so a
+front-end draws it the way it draws a seat taken on the setup screen.
+
+The difference is that **no session is opened and nothing is grabbed**. The
+pads are read ungrabbed, so a press still reaches whatever has focus and
+nobody else's controller stops working. That is the point: the moments a
+controller needs a seat -- somebody arriving mid-game, a pad swapped for a
+charged one, a controller switched on after the picker started -- are the
+moments a modal screen is most expensive.
+
+Two bounds make it safe to leave on:
+
+* **Only unseated pads.** A pad holding a seat is being played with, and
+  holding B to block in a fighting game must not reseat anybody.
+* **Only free seats.** With every seat taken a held pad does nothing until
+  somebody leaves. A seat whose controller is merely *away* still counts as
+  taken -- it is coming back.
+
+Seating suspends itself while an assignment session is open: the session grabs
+every pad and is about to rewrite the roster, so reading underneath it would
+claim a seat the user is in the middle of assigning. `begin` is still the way
+to *reorder* seats, which is something done with everybody's attention.
+
+
 padmap's premise is that a program attaches to it and gets stable virtual
 gamepads instead of configuring controllers itself. That worked at launch and
 not during play: a controller plugged in mid-game produced nothing a running

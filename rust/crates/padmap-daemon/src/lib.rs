@@ -27,6 +27,7 @@ pub mod confirm;
 pub mod events;
 pub mod hotplug;
 pub mod publish;
+pub mod seating;
 pub mod server;
 pub mod session;
 
