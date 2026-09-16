@@ -366,3 +366,88 @@ fn cemu_profiles_are_written_per_player_and_stop_at_cemus_limit() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn rewriting_ares_settings_touches_only_the_ports_padmap_manages() {
+    use padmap_input::artefacts;
+    use std::collections::BTreeMap;
+
+    // settings.bml holds every setting ares has -- video, audio, per-system
+    // paths, hotkeys -- so anything but a surgical edit throws away what the
+    // user configured.
+    let existing = "Video\n  Driver: OpenGL 3.2\n  Shader: None\n\
+                    VirtualPad1\n  A..South: ;;\n  Start: ;;\n\
+                    VirtualPad2\n  A..South: old;;\n\
+                    VirtualMouse1\n  X: ;;\n\
+                    Audio\n  Driver: SDL\n";
+    let mut blocks = BTreeMap::new();
+    blocks.insert(1u32, "VirtualPad1\n  A..South: new;;\n".to_owned());
+
+    let out = artefacts::rewrite_ares_settings(existing, &blocks);
+
+    assert!(out.contains("Video\n  Driver: OpenGL 3.2"), "{out}");
+    assert!(out.contains("Audio\n  Driver: SDL"), "{out}");
+    assert!(
+        out.contains("VirtualMouse1\n  X: ;;"),
+        "the mouse is not ours"
+    );
+    assert!(out.contains("A..South: new;;"), "player 1 was not replaced");
+    assert!(
+        out.contains("VirtualPad2\n  A..South: old;;"),
+        "an unmanaged port kept whatever was there: {out}"
+    );
+    assert!(
+        !out.contains("A..South: ;;"),
+        "the old player 1 survived: {out}"
+    );
+}
+
+#[test]
+fn rewriting_ryujinx_config_keeps_every_other_setting() {
+    use padmap_input::artefacts;
+
+    let dir = std::env::temp_dir().join(format!("padmap-ryujinx-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let path = dir.join("Config.json");
+    std::fs::write(
+        &path,
+        r#"{"version": 70, "res_scale": 2, "input_config": [
+             {"backend": "WindowKeyboard", "player_index": "Player1", "name": "Keyboard"}
+           ]}"#,
+    )
+    .expect("write");
+
+    let entry = padmap_core::ryujinx::input_config(
+        1,
+        "0600c9a7091200000100000001000000",
+        "padmap Player 1",
+        0,
+    )
+    .expect("an entry");
+    artefacts::write_ryujinx_config(vec![entry], Some(&path)).expect("writes");
+
+    let back: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).expect("read")).expect("json");
+    // Everything that was not input_config is untouched.
+    assert_eq!(back["version"], 70);
+    assert_eq!(back["res_scale"], 2);
+    let entries = back["input_config"].as_array().expect("an array");
+    assert_eq!(entries.len(), 1, "the keyboard was replaced, not appended");
+    assert_eq!(entries[0]["name"], "padmap Player 1");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn neither_writer_invents_a_config_that_was_never_there() {
+    use padmap_input::artefacts;
+    use std::collections::BTreeMap;
+
+    // Writing one from nothing would leave the emulator with padmap's ports
+    // and defaults for everything else -- worse than doing nothing, because
+    // it looks configured.
+    let missing = std::path::Path::new("/nonexistent-padmap-emulator/settings.bml");
+    assert!(artefacts::write_ares_settings(&BTreeMap::new(), Some(missing)).is_err());
+    assert!(artefacts::write_ryujinx_config(Vec::new(), Some(missing)).is_err());
+}

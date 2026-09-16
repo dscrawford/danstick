@@ -189,6 +189,122 @@ pub fn write_cemu_profiles(
     Ok(written)
 }
 
+/// Where ares keeps its settings.
+pub fn ares_settings_path() -> PathBuf {
+    if let Ok(path) = std::env::var("PADMAP_ARES_SETTINGS") {
+        if !path.is_empty() {
+            return PathBuf::from(path);
+        }
+    }
+    data_home().join("ares").join("settings.bml")
+}
+
+/// Where Ryujinx keeps its configuration.
+pub fn ryujinx_config_path() -> PathBuf {
+    if let Ok(path) = std::env::var("PADMAP_RYUJINX_CONFIG") {
+        if !path.is_empty() {
+            return PathBuf::from(path);
+        }
+    }
+    config_home().join("Ryujinx").join("Config.json")
+}
+
+fn data_home() -> PathBuf {
+    match std::env::var("XDG_DATA_HOME") {
+        Ok(path) if !path.is_empty() => PathBuf::from(path),
+        _ => home().join(".local").join("share"),
+    }
+}
+
+/// Replace the `VirtualPadN` blocks padmap manages, leaving the rest of the
+/// file alone.
+///
+/// settings.bml holds every setting ares has -- video, audio, per-system
+/// paths, hotkeys -- so rewriting it from scratch would throw away everything
+/// the user configured. Only the blocks for the players padmap is binding are
+/// replaced; a port it is not managing keeps whatever was there.
+pub fn rewrite_ares_settings(existing: &str, blocks: &BTreeMap<u32, String>) -> String {
+    let mut out = String::with_capacity(existing.len());
+    let mut skipping: Option<u32> = None;
+    for line in existing.split_inclusive('\n') {
+        let bare = line.trim_end_matches(['\n', '\r']);
+        if let Some(rest) = bare.strip_prefix("VirtualPad") {
+            // A new top-level block ends whatever was being skipped.
+            let player: Option<u32> = rest.parse().ok();
+            skipping = player.filter(|player| blocks.contains_key(player));
+            if let Some(player) = skipping {
+                out.push_str(&blocks[&player]);
+                continue;
+            }
+        } else if skipping.is_some() && !bare.starts_with("  ") {
+            // Any line that is not indented under the block we are dropping.
+            skipping = None;
+        }
+        if skipping.is_none() {
+            out.push_str(line);
+        }
+    }
+    out
+}
+
+/// Write ares' settings, replacing only padmap's ports.
+///
+/// Refuses rather than writes if ares has never run: its settings file holds
+/// every other setting too, and inventing one from nothing would leave ares
+/// with padmap's ports and defaults for everything else.
+pub fn write_ares_settings(
+    blocks: &BTreeMap<u32, String>,
+    path: Option<&Path>,
+) -> Result<PathBuf, WriteError> {
+    let target = path
+        .map(Path::to_path_buf)
+        .unwrap_or_else(ares_settings_path);
+    let existing =
+        std::fs::read_to_string(&target).map_err(|error| WriteError::Io(target.clone(), error))?;
+    std::fs::write(&target, rewrite_ares_settings(&existing, blocks))
+        .map_err(|error| WriteError::Io(target.clone(), error))?;
+    Ok(target)
+}
+
+/// Write Ryujinx's `input_config`, keeping every other setting in the file.
+///
+/// Same reasoning as ares: Config.json is the whole of Ryujinx's
+/// configuration, so only the one key is replaced, and only the players padmap
+/// is binding within it.
+pub fn write_ryujinx_config(
+    entries: Vec<serde_json::Value>,
+    path: Option<&Path>,
+) -> Result<PathBuf, WriteError> {
+    let target = path
+        .map(Path::to_path_buf)
+        .unwrap_or_else(ryujinx_config_path);
+    let text =
+        std::fs::read_to_string(&target).map_err(|error| WriteError::Io(target.clone(), error))?;
+    let mut config: serde_json::Value = serde_json::from_str(&text).map_err(|error| {
+        WriteError::Io(
+            target.clone(),
+            std::io::Error::new(std::io::ErrorKind::InvalidData, error),
+        )
+    })?;
+    let merged = padmap_core::ryujinx::merge(
+        config
+            .get("input_config")
+            .unwrap_or(&serde_json::Value::Null),
+        entries,
+    );
+    config["input_config"] = merged;
+    // Ryujinx writes this pretty-printed; matching it keeps the diff a user
+    // sees to the lines padmap actually changed.
+    let body = serde_json::to_string_pretty(&config).map_err(|error| {
+        WriteError::Io(
+            target.clone(),
+            std::io::Error::new(std::io::ErrorKind::InvalidData, error),
+        )
+    })?;
+    std::fs::write(&target, body + "\n").map_err(|error| WriteError::Io(target.clone(), error))?;
+    Ok(target)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
