@@ -16,6 +16,10 @@
 //! * **ares** binds raw SDL joystick indices, so a binding that does not fail
 //!   binds the *wrong* button. The indices come from the clone's own
 //!   capabilities, which is why [`Published`] carries them.
+//! * **Dolphin** is the easy one, and looks like it should be the hardest: it
+//!   names inputs by standard gamepad element and does the per-model lookup
+//!   itself, so there is no capture to translate. What has to be right is the
+//!   device line and the port's declared device type.
 //!
 //! Every write here is best-effort and reported rather than propagated. ares
 //! and Ryujinx keep all of their settings in one file, so padmap refuses to
@@ -64,6 +68,8 @@ pub struct Published {
 #[derive(Debug, Clone, Default)]
 pub struct Destinations {
     pub cemu_dir: Option<PathBuf>,
+    /// Dolphin's config *directory*, not a file: it needs two of them.
+    pub dolphin_dir: Option<PathBuf>,
     pub ares_settings: Option<PathBuf>,
     pub ryujinx_config: Option<PathBuf>,
     pub env_file: Option<PathBuf>,
@@ -165,6 +171,17 @@ pub fn publish(pads: &[Published], dirs: &Destinations) -> Written {
         Err(error) => written.skipped.push(("cemu", error.to_string())),
     }
 
+    // Dolphin: a section per port, plus the SIDevice lines that say the port
+    // holds a controller at all.
+    match artefacts::write_dolphin_config(
+        &players,
+        |player| by_player[&player].name.clone(),
+        dirs.dolphin_dir.as_deref(),
+    ) {
+        Ok(paths) => written.paths.extend(paths),
+        Err(error) => written.skipped.push(("dolphin", error.to_string())),
+    }
+
     // ares: one VirtualPad block per player, bound by raw SDL index.
     let blocks: BTreeMap<u32, String> = by_player
         .values()
@@ -250,6 +267,7 @@ mod tests {
         // rewriting the developer's own ares settings.
         Destinations {
             cemu_dir: Some(dir.join("cemu")),
+            dolphin_dir: Some(dir.join("dolphin-emu")),
             ares_settings: Some(dir.join("ares.bml")),
             ryujinx_config: Some(dir.join("Config.json")),
             env_file: Some(dir.join("env.sh")),
@@ -267,6 +285,12 @@ mod tests {
         let skipped: Vec<&str> = written.skipped.iter().map(|(what, _)| *what).collect();
         assert!(skipped.contains(&"ares"), "{written:?}");
         assert!(skipped.contains(&"ryujinx"), "{written:?}");
+        // Dolphin is not among them: neither of its files is the whole of
+        // Dolphin's settings, and it reads them at startup whether or not it
+        // has run before -- so bindings are worth having on the first run.
+        assert!(!skipped.contains(&"dolphin"), "{written:?}");
+        assert!(dir.join("dolphin-emu/GCPadNew.ini").exists());
+        assert!(dir.join("dolphin-emu/Dolphin.ini").exists());
         assert!(!dir.join("ares.bml").exists());
         assert!(!dir.join("Config.json").exists());
 

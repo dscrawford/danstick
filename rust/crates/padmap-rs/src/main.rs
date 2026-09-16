@@ -13,8 +13,8 @@
 //!     padmap ensure-daemon start the daemon, or restart a stale one
 //!     padmap clean-config  strip padmap values out of retroarch.cfg
 //!     padmap emit          write the emulator config files, from JSON
-//!                          (--cemu-dir, --ares-settings, --ryujinx-config,
-//!                          --env-file to say where)
+//!                          (--cemu-dir, --dolphin-dir, --ares-settings,
+//!                          --ryujinx-config, --env-file to say where)
 //!     padmap exec          run a program with padmap's mappings set
 //!     padmap sdl-mapping <guid>
 //!                          what SDL's built-in database says about a GUID
@@ -151,7 +151,8 @@ fn usage() {
     eprintln!(
         "usage: padmap list [--json] | setup | map | calibrate | forget | run | serve | \
          launch | play | hide | ensure-daemon | clean-config | \
-         emit [--cemu-dir D] [--ares-settings F] [--ryujinx-config F] \
+         emit [--cemu-dir D] [--dolphin-dir D] [--ares-settings F] \
+         [--ryujinx-config F] \
          [--env-file F] | \
          exec -- <program> [args...] | sdl-mapping <guid>"
     );
@@ -219,6 +220,7 @@ fn cmd_emit(args: &[String]) -> Result<()> {
     // others alone.
     let destinations = emulators::Destinations {
         cemu_dir: flag_value(args, &["--cemu-dir"]).map(PathBuf::from),
+        dolphin_dir: flag_value(args, &["--dolphin-dir"]).map(PathBuf::from),
         ares_settings: flag_value(args, &["--ares-settings"]).map(PathBuf::from),
         ryujinx_config: flag_value(args, &["--ryujinx-config"]).map(PathBuf::from),
         env_file: flag_value(args, &["--env-file"]).map(PathBuf::from),

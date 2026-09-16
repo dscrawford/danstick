@@ -189,6 +189,60 @@ pub fn write_cemu_profiles(
     Ok(written)
 }
 
+/// Where Dolphin keeps its configuration.
+pub fn dolphin_config_dir() -> PathBuf {
+    if let Ok(path) = std::env::var("PADMAP_DOLPHIN_DIR") {
+        if !path.is_empty() {
+            return PathBuf::from(path);
+        }
+    }
+    config_home().join("dolphin-emu")
+}
+
+/// Write Dolphin's GameCube bindings and declare a controller in each port.
+///
+/// Two files, and both matter: `GCPadNew.ini` binds the pads, and a port with
+/// no controller declared in `Dolphin.ini` is ignored however well its pad is
+/// bound.
+///
+/// Unlike ares and Ryujinx, this *does* write into a directory that does not
+/// exist yet. Dolphin creates its config on first run, but it reads these
+/// files at startup either way, so bindings are worth having on the first run
+/// too -- and neither file is the whole of Dolphin's settings the way
+/// `settings.bml` is the whole of ares'. `Dolphin.ini` is edited key by key;
+/// `GCPadNew.ini` keeps every section that is not a GameCube port.
+pub fn write_dolphin_config(
+    players: &[u32],
+    name_for: impl Fn(u32) -> String,
+    dir: Option<&Path>,
+) -> Result<Vec<PathBuf>, WriteError> {
+    use padmap_core::dolphin;
+
+    let target = dir
+        .map(Path::to_path_buf)
+        .unwrap_or_else(dolphin_config_dir);
+    std::fs::create_dir_all(&target).map_err(|error| WriteError::Io(target.clone(), error))?;
+
+    let bindings = target.join("GCPadNew.ini");
+    let existing = std::fs::read(&bindings)
+        .map(|raw| String::from_utf8_lossy(&raw).into_owned())
+        .unwrap_or_default();
+    let body = dolphin::sections(players, name_for);
+    std::fs::write(&bindings, dolphin::rewrite_bindings(&existing, &body))
+        .map_err(|error| WriteError::Io(bindings.clone(), error))?;
+
+    let core = target.join("Dolphin.ini");
+    let mut text = std::fs::read(&core)
+        .map(|raw| String::from_utf8_lossy(&raw).into_owned())
+        .unwrap_or_default();
+    for (key, kind) in dolphin::si_devices(players) {
+        text = dolphin::set_ini(&text, "Core", &key, &kind.to_string());
+    }
+    std::fs::write(&core, text).map_err(|error| WriteError::Io(core.clone(), error))?;
+
+    Ok(vec![bindings, core])
+}
+
 /// Where ares keeps its settings.
 pub fn ares_settings_path() -> PathBuf {
     if let Ok(path) = std::env::var("PADMAP_ARES_SETTINGS") {

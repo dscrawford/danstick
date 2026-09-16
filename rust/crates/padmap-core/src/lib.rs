@@ -22,6 +22,7 @@ pub mod capture;
 pub mod cemu;
 pub mod command;
 pub mod control;
+pub mod dolphin;
 pub mod emit;
 pub mod fields;
 pub mod guess;

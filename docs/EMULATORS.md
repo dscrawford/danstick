@@ -57,6 +57,36 @@ under the *physical* pad's signature.
 This is the one field mirroring deliberately does not carry, and
 `virtual.version_for` says so.
 
+## Dolphin
+
+The easiest of the targets, and worth saying why, because it looks like it
+should be the hardest: **Dolphin's SDL backend names inputs by standard gamepad
+element** -- `Button S`, `Left Y+`, `Pad N` -- and does the per-model lookup
+itself. There is no capture to translate and no table per controller, which is
+the opposite of ares.
+
+Two things have to be right, and neither is the bindings:
+
+* **The device line**, `SDL/<n>/<name>`, where `n` counts devices already
+  sharing that *name*. Every padmap pad is named for its player, so `n` is
+  always 0 -- simpler than counting devices that share a GUID, which is what
+  binding physical pads requires. A binding naming a device Dolphin cannot see
+  is silently inert.
+* **The port's device type.** `SIDevice0..3` in `Dolphin.ini`, and a port with
+  no controller declared in it is ignored however well its pad is bound. Note
+  `SIDeviceN` is zero-based where `[GCPadN]` is one-based.
+
+Unmanaged ports are set to `SIDEVICE_NONE` rather than left alone, for the
+same reason padmap clears an unused RetroArch reservation: a port still
+declared from a session with more players is a phantom controller in the next
+game.
+
+Both files are edited rather than rewritten -- `Dolphin.ini` key by key,
+`GCPadNew.ini` keeping every section that is not a GameCube port. Unlike ares
+and Ryujinx, padmap *will* create them: neither is the whole of Dolphin's
+settings, and Dolphin reads them at startup whether or not it has run before,
+so bindings are worth having on the first run too.
+
 ## Why the button tables are constant
 
 They look like they should be per-controller and they are not. For Cemu and
@@ -119,6 +149,7 @@ the mapping files having failed.
 ```sh
 padmap emit \
   --cemu-dir      "$STATE/config/Cemu/controllerProfiles" \
+  --dolphin-dir   "$STATE/config/dolphin-emu" \
   --ares-settings "$STATE/config/ares/settings.bml" \
   --ryujinx-config "$STATE/config/Ryujinx/Config.json" \
   --env-file      "$STATE/padmap-env.sh"   < pads.json

@@ -62,6 +62,7 @@ fn every_destination_can_be_pointed_somewhere_else() {
     std::fs::write(&ares, "Video\n  Driver: OpenGL\n").expect("seed ares");
     std::fs::write(&ryujinx, r#"{"version": 50}"#).expect("seed ryujinx");
     let cemu = game.join("Cemu/controllerProfiles");
+    let dolphin = game.join("dolphin-emu");
     let env_file = root.join("state/padmap-env.sh");
 
     let out = emit(
@@ -69,6 +70,8 @@ fn every_destination_can_be_pointed_somewhere_else() {
         &[
             "--cemu-dir",
             cemu.to_str().expect("utf8"),
+            "--dolphin-dir",
+            dolphin.to_str().expect("utf8"),
             "--ares-settings",
             ares.to_str().expect("utf8"),
             "--ryujinx-config",
@@ -102,6 +105,23 @@ fn every_destination_can_be_pointed_somewhere_else() {
     assert_eq!(config["input_config"].as_array().map(Vec::len), Some(2));
     let script = std::fs::read_to_string(&env_file).expect("env file");
     assert!(script.contains("padmap Player 1") && script.contains("padmap Player 2"));
+    let pads = std::fs::read_to_string(dolphin.join("GCPadNew.ini")).expect("GCPadNew.ini");
+    assert!(
+        pads.contains("[GCPad1]\nDevice = SDL/0/padmap Player 1"),
+        "{pads}"
+    );
+    assert!(pads.contains("[GCPad2]"), "{pads}");
+    let core = std::fs::read_to_string(dolphin.join("Dolphin.ini")).expect("Dolphin.ini");
+    // Two players seated, so the other two ports are emptied rather than left
+    // holding a controller from a previous session.
+    assert!(
+        core.contains("SIDevice0 = 6") && core.contains("SIDevice1 = 6"),
+        "{core}"
+    );
+    assert!(
+        core.contains("SIDevice2 = 0") && core.contains("SIDevice3 = 0"),
+        "{core}"
+    );
 
     // ...and nothing was written to the locations it was pointed away from.
     assert!(
@@ -113,7 +133,14 @@ fn every_destination_can_be_pointed_somewhere_else() {
     // The paths it reports are the ones it was given, so a caller can act on
     // stdout rather than guessing where its own flags landed.
     let written = String::from_utf8_lossy(&out.stdout);
-    for expected in [&cemu.join("controller0.xml"), &ares, &ryujinx, &env_file] {
+    for expected in [
+        &cemu.join("controller0.xml"),
+        &dolphin.join("GCPadNew.ini"),
+        &dolphin.join("Dolphin.ini"),
+        &ares,
+        &ryujinx,
+        &env_file,
+    ] {
         assert!(
             written.contains(&expected.display().to_string()),
             "{} is not in:\n{written}",
