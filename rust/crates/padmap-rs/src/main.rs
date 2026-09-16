@@ -13,6 +13,8 @@
 //!     padmap ensure-daemon start the daemon, or restart a stale one
 //!     padmap clean-config  strip padmap values out of retroarch.cfg
 //!     padmap emit          write the emulator config files, from JSON
+//!                          (--cemu-dir, --ares-settings, --ryujinx-config,
+//!                          --env-file to say where)
 //!     padmap exec          run a program with padmap's mappings set
 //!     padmap sdl-mapping <guid>
 //!                          what SDL's built-in database says about a GUID
@@ -59,7 +61,7 @@ fn main() -> Result<()> {
         Some("hide") => cmd_hide(&rest),
         Some("run") => cmd_run(),
         Some("serve") => cmd_serve(),
-        Some("emit") => cmd_emit(),
+        Some("emit") => cmd_emit(&rest),
         Some("exec") => cmd_exec(rest),
         Some("sdl-mapping") => cmd_sdl_mapping(rest.into_iter().next()),
         Some("play") => commands::cmd_play(rest),
@@ -142,7 +144,9 @@ fn parse_number<T: std::str::FromStr>(value: &str, flag: &str) -> T {
 fn usage() {
     eprintln!(
         "usage: padmap list | setup | map | calibrate | forget | run | serve | \
-         launch | play | hide | ensure-daemon | clean-config | emit | \
+         launch | play | hide | ensure-daemon | clean-config | \
+         emit [--cemu-dir D] [--ares-settings F] [--ryujinx-config F] \
+         [--env-file F] | \
          exec -- <program> [args...] | sdl-mapping <guid>"
     );
 }
@@ -195,14 +199,25 @@ fn cmd_sdl_mapping(guid: Option<String>) -> Result<()> {
 ///
 /// Always exits 0 on a well-formed request. An emulator that is not installed
 /// is a skip, and a daemon must not learn to treat that as a failure.
-fn cmd_emit() -> Result<()> {
+fn cmd_emit(args: &[String]) -> Result<()> {
     let mut body = String::new();
     std::io::Read::read_to_string(&mut std::io::stdin(), &mut body)
         .context("reading the pad list from stdin")?;
     let pads: Vec<emulators::Published> =
         serde_json::from_str(&body).context("parsing the pad list")?;
 
-    let written = emulators::publish(&pads, &emulators::Destinations::default());
+    // A caller that keeps each game in an environment of its own -- its own
+    // state directory, its own config -- is not writing to the user's home,
+    // and two variants of one game must not share a Ryujinx configuration.
+    // An absent flag keeps the default location, so overriding one leaves the
+    // others alone.
+    let destinations = emulators::Destinations {
+        cemu_dir: flag_value(args, &["--cemu-dir"]).map(PathBuf::from),
+        ares_settings: flag_value(args, &["--ares-settings"]).map(PathBuf::from),
+        ryujinx_config: flag_value(args, &["--ryujinx-config"]).map(PathBuf::from),
+        env_file: flag_value(args, &["--env-file"]).map(PathBuf::from),
+    };
+    let written = emulators::publish(&pads, &destinations);
     for path in &written.paths {
         println!("{}", path.display());
     }

@@ -37,10 +37,9 @@ use crate::artefacts;
 /// reason the GUID is: ares counts indices over the device SDL opened, and SDL
 /// opens the clone.
 ///
-/// Serialisable because the Python daemon is still the one that runs, and it
-/// hands these to `padmap-rs emit` on stdin rather than carrying a second copy
-/// of Cemu's, ares' and Ryujinx's formats. One implementation, two callers;
-/// when the Python daemon goes, so does the subprocess.
+/// Serialisable because `padmap emit` takes this list on stdin: a launcher
+/// that owns the roster -- and the directories the launch will use -- can have
+/// the configs written without going through the daemon.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Published {
     pub player: u32,
@@ -55,10 +54,13 @@ pub struct Published {
     pub sdl_line: String,
 }
 
-/// Where each file goes, so a test never has to set an environment variable.
+/// Where each file goes.
 ///
 /// `None` means the real location. Overriding one leaves the others alone,
-/// which is what a test wanting to check exactly one emulator needs.
+/// which is what a test wanting to check exactly one emulator needs -- and
+/// what a caller that runs each game in an isolated environment needs, since
+/// two variants of one game are two configurations that must never see each
+/// other, and neither of them is the one in the user's home.
 #[derive(Debug, Clone, Default)]
 pub struct Destinations {
     pub cemu_dir: Option<PathBuf>,

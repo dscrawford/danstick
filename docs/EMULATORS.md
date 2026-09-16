@@ -112,6 +112,29 @@ invent one for an emulator that has never run; on most machines at least one of
 the three is absent, and that has to read as an ordinary skip rather than as
 the mapping files having failed.
 
+## Writing somewhere other than the user's home
+
+`emit` takes a destination per target, and an absent flag keeps the default:
+
+```sh
+padmap emit \
+  --cemu-dir      "$STATE/config/Cemu/controllerProfiles" \
+  --ares-settings "$STATE/config/ares/settings.bml" \
+  --ryujinx-config "$STATE/config/Ryujinx/Config.json" \
+  --env-file      "$STATE/padmap-env.sh"   < pads.json
+```
+
+For a launcher that runs each game in an environment of its own. Two variants
+of one game -- the plain launch and the 120fps one -- are two configurations
+that must never see each other, and neither of them is the one in
+`~/.config`. Overriding one destination leaves the others where they were.
+
+The paths written are printed on stdout, one per line, so a caller can act on
+what happened rather than assuming its flags landed. A flag given without a
+value is refused rather than ignored: `--ryujinx-config` with the path
+forgotten would otherwise mean "the user's own Ryujinx config", which is the
+one file this exists to avoid.
+
 ## Reaching Cemu at all
 
 Cemu reads no mapping database, so a pad SDL does not already recognise as a
