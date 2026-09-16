@@ -27,6 +27,7 @@ pub mod fields;
 pub mod guess;
 pub mod hide;
 pub mod icons;
+pub mod launch;
 pub mod layout;
 pub mod profile;
 pub mod retroarch;

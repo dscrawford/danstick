@@ -1,14 +1,21 @@
 //! padmap's republisher, in Rust.
 //!
-//!     padmap-rs list     what is plugged in
-//!     padmap-rs hide     udev rules that hide the physical pads
-//!     padmap-rs run      republish the assigned pads and keep them alive
-//!     padmap-rs serve    the same, as a daemon a client drives over a socket
-//!     padmap-rs emit     write the emulator config files, from JSON on stdin
-//!     padmap-rs exec     run a program with padmap's mappings in its
-//!                        environment
-//!     padmap-rs sdl-mapping <guid>
-//!                        what SDL's built-in database says about a GUID
+//!     padmap list          what is plugged in
+//!     padmap setup         assign player order by pressing a button
+//!     padmap map           record which button is which
+//!     padmap calibrate     measure where each controller's sticks rest
+//!     padmap forget        delete stored controller profiles
+//!     padmap run           republish the assigned pads and keep them alive
+//!     padmap serve         the same, as a daemon a client drives
+//!     padmap launch        republish, then start RetroArch
+//!     padmap play          resolve mappings for the game about to run
+//!     padmap hide          udev rules that hide the physical pads
+//!     padmap ensure-daemon start the daemon, or restart a stale one
+//!     padmap clean-config  strip padmap values out of retroarch.cfg
+//!     padmap emit          write the emulator config files, from JSON
+//!     padmap exec          run a program with padmap's mappings set
+//!     padmap sdl-mapping <guid>
+//!                          what SDL's built-in database says about a GUID
 //!
 //! Deliberately not the whole of `padmap`. The daemon's socket protocol, the
 //! assignment session, the mapping wizard and every offline command stay in
@@ -29,6 +36,8 @@ use padmap_core::emit::{self, Identity};
 use padmap_core::hide;
 use std::path::PathBuf;
 
+mod commands;
+
 use padmap_input::{
     artefacts, assignments, clone, emulators, lizard, pad, profiles, reactor, republish, runtime,
     triton,
@@ -43,16 +52,55 @@ fn main() -> Result<()> {
         .init();
 
     let mut args = std::env::args().skip(1);
-    match args.next().as_deref() {
+    let command = args.next();
+    let rest: Vec<String> = args.collect();
+    match command.as_deref() {
         Some("list") => cmd_list(),
-        Some("hide") => cmd_hide(),
+        Some("hide") => cmd_hide(&rest),
         Some("run") => cmd_run(),
         Some("serve") => cmd_serve(),
         Some("emit") => cmd_emit(),
-        Some("exec") => cmd_exec(args.collect()),
-        Some("sdl-mapping") => cmd_sdl_mapping(args.next()),
+        Some("exec") => cmd_exec(rest),
+        Some("sdl-mapping") => cmd_sdl_mapping(rest.into_iter().next()),
+        Some("play") => commands::cmd_play(rest),
+        Some("setup") => {
+            let wanted = flag_value(&rest, &["-n", "--players"])
+                .map(|value| parse_number(&value, "--players"));
+            commands::cmd_setup(wanted)
+        }
+        Some("forget") => commands::cmd_forget(rest.iter().any(|arg| arg == "--all")),
+        Some("calibrate") => {
+            commands::cmd_calibrate(rest.iter().any(|arg| arg == "-f" || arg == "--force"))
+        }
+        Some("map") => commands::cmd_map(
+            flag_value(&rest, &["--layout"]),
+            flag_value(&rest, &["--pad"]),
+            flag_value(&rest, &["--scope"]).unwrap_or_default(),
+        ),
+        Some("clean-config") => commands::cmd_clean_config(
+            flag_value(&rest, &["--config"]),
+            rest.iter().any(|arg| arg == "--dry-run"),
+        ),
+        Some("ensure-daemon") => commands::cmd_ensure_daemon(
+            rest.iter().any(|arg| arg == "--check"),
+            flag_value(&rest, &["--timeout"])
+                .map(|value| parse_number::<f64>(&value, "--timeout"))
+                .unwrap_or(10.0),
+        ),
+        Some("launch") => {
+            // `--log` takes an optional value, so it is read before the rest
+            // is handed to RetroArch verbatim.
+            let log = rest.iter().position(|arg| arg == "--log").map(|at| {
+                rest.get(at + 1)
+                    .filter(|value| !value.starts_with('-'))
+                    .cloned()
+            });
+            let passthrough: Vec<String> =
+                rest.iter().filter(|arg| *arg != "--log").cloned().collect();
+            commands::cmd_launch(passthrough, log).map(|code| std::process::exit(code))
+        }
         Some(other) => {
-            eprintln!("padmap-rs: unknown command {other:?}");
+            eprintln!("padmap: unknown command {other:?}");
             usage();
             std::process::exit(2);
         }
@@ -63,10 +111,39 @@ fn main() -> Result<()> {
     }
 }
 
+/// The value after a flag, or `None` if the flag was not given.
+///
+/// A flag that *is* given and has no value is refused rather than ignored:
+/// `--layout` with the value forgotten would otherwise read as "no layout"
+/// and walk the generic pad, and `--config` as "the default config", which is
+/// the user's own retroarch.cfg.
+fn flag_value(args: &[String], names: &[&str]) -> Option<String> {
+    let at = args.iter().position(|arg| names.contains(&arg.as_str()))?;
+    match args.get(at + 1) {
+        Some(value) if !value.starts_with('-') => Some(value.clone()),
+        _ => {
+            eprintln!("padmap: {} expects a value", args[at]);
+            std::process::exit(2);
+        }
+    }
+}
+
+/// A number, or a refusal naming the flag -- not a silent zero.
+fn parse_number<T: std::str::FromStr>(value: &str, flag: &str) -> T {
+    match value.parse() {
+        Ok(parsed) => parsed,
+        Err(_) => {
+            eprintln!("padmap: {flag} expects a number, not {value:?}");
+            std::process::exit(2);
+        }
+    }
+}
+
 fn usage() {
     eprintln!(
-        "usage: padmap-rs list | hide | run | serve | emit | exec -- <program> [args...] | \
-         sdl-mapping <guid>"
+        "usage: padmap list | setup | map | calibrate | forget | run | serve | \
+         launch | play | hide | ensure-daemon | clean-config | emit | \
+         exec -- <program> [args...] | sdl-mapping <guid>"
     );
 }
 
@@ -281,7 +358,7 @@ fn report_dormant() {
 /// silently asks for a password on a machine plugged into a television is
 /// worse than one that shows you what to write. The Python's `padmap hide`
 /// installs them when it is already root; this does not yet.
-fn cmd_hide() -> Result<()> {
+fn cmd_hide(args: &[String]) -> Result<()> {
     let pads = pad::discover(pad::Filter::default()).context("enumerating input devices")?;
     let hideable: Vec<hide::Hideable> = pads
         .iter()
@@ -296,14 +373,50 @@ fn cmd_hide() -> Result<()> {
         println!("No pads with usable ids; there is nothing safe to match on.");
         return Ok(());
     }
-    print!("{}", hide::generate_rules(&targets));
-    eprintln!();
-    eprintln!("Write that to /run/udev/rules.d/99-padmap.rules and reload:");
-    eprintln!("  sudo udevadm control --reload-rules");
-    eprintln!("  sudo udevadm trigger --subsystem-match=input");
-    eprintln!();
-    eprintln!("While it is installed and padmap is NOT running, these");
-    eprintln!("controllers are invisible. Delete the file to undo it.");
+    let rules = hide::generate_rules(&targets);
+    // Running as root is taken as the instruction to install: there is no
+    // other reason to run this with privileges, and printing a script for
+    // someone who already typed `sudo` to paste back into the same shell is a
+    // step that exists only to be got wrong.
+    let root = rustix::process::geteuid().is_root();
+    if args.iter().any(|arg| arg == "--print") || !root {
+        if args.iter().any(|arg| arg == "--install") && !root {
+            eprintln!("Installing needs root. Re-run:  sudo padmap hide\n");
+        }
+        print!("{rules}");
+        eprintln!();
+        eprintln!("Write that to {} and reload:", commands::RUNTIME_RULES_PATH);
+        eprintln!("  sudo udevadm control --reload-rules");
+        eprintln!("  sudo udevadm trigger --subsystem-match=input");
+        eprintln!();
+        eprintln!("While it is installed and padmap is NOT running, these");
+        eprintln!("controllers are invisible. Delete the file to undo it.");
+        return Ok(());
+    }
+
+    println!("Hiding {} adapter(s):", targets.len());
+    for target in &targets {
+        println!("  {:04x}:{:04x}  {}", target.vid, target.pid, target.name);
+    }
+    println!();
+    let (changed, messages) = commands::install_rules(&rules);
+    for message in &messages {
+        println!("  {message}");
+    }
+    let failed = messages
+        .iter()
+        .any(|message| message.contains("could not") || message.contains("failed"));
+    if changed && !failed {
+        println!(
+            "\nCaution: while these rules are active and padmap is not running,\n\
+             these controllers are invisible entirely.\nUndo with:  sudo rm {} && \
+             sudo udevadm control --reload-rules",
+            commands::RUNTIME_RULES_PATH
+        );
+    }
+    if failed {
+        std::process::exit(1);
+    }
     Ok(())
 }
 

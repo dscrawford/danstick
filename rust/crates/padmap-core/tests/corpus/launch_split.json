@@ -1,0 +1,117 @@
+[
+ {
+  "argv": [
+   "-L",
+   "/cores/mupen64plus_next_libretro.so",
+   "/roms/mario.z64"
+  ],
+  "core": "/cores/mupen64plus_next_libretro.so",
+  "present": [
+   "/cores/mupen64plus_next_libretro.so",
+   "/roms/mario.z64"
+  ],
+  "rom": "/roms/mario.z64",
+  "title": "mario"
+ },
+ {
+  "argv": [
+   "--appendconfig",
+   "/run/launch.cfg",
+   "-L",
+   "/cores/snes9x.so",
+   "/roms/Zelda, The (v1.2).sfc"
+  ],
+  "core": "/cores/snes9x.so",
+  "present": [
+   "/run/launch.cfg",
+   "/cores/snes9x.so",
+   "/roms/Zelda, The (v1.2).sfc"
+  ],
+  "rom": "/roms/Zelda, The (v1.2).sfc",
+  "title": "Zelda, The (v1.2)"
+ },
+ {
+  "argv": [
+   "-L",
+   "/cores/x.so",
+   "/roms/gone.z64"
+  ],
+  "core": "/cores/x.so",
+  "present": [
+   "/cores/x.so"
+  ],
+  "rom": "",
+  "title": ""
+ },
+ {
+  "argv": [
+   "-L",
+   "/cores/x.so",
+   "/roms/a.sfc",
+   "/roms/b.sfc"
+  ],
+  "core": "/cores/x.so",
+  "present": [
+   "/roms/a.sfc",
+   "/roms/b.sfc"
+  ],
+  "rom": "/roms/b.sfc",
+  "title": "b"
+ },
+ {
+  "argv": [
+   "--nodevice",
+   "2",
+   "--verbose",
+   "-L",
+   "/cores/x.so",
+   "/roms/g.bin"
+  ],
+  "core": "/cores/x.so",
+  "present": [
+   "/roms/g.bin"
+  ],
+  "rom": "/roms/g.bin",
+  "title": "g"
+ },
+ {
+  "argv": [
+   "--libretro",
+   "/cores/y.dll",
+   "/roms/dir/"
+  ],
+  "core": "/cores/y.dll",
+  "present": [
+   "/roms/dir/"
+  ],
+  "rom": "/roms/dir/",
+  "title": "dir"
+ },
+ {
+  "argv": [],
+  "core": "",
+  "present": [],
+  "rom": "",
+  "title": ""
+ },
+ {
+  "argv": [
+   "-L"
+  ],
+  "core": "",
+  "present": [],
+  "rom": "",
+  "title": ""
+ },
+ {
+  "argv": [
+   "/roms/only.bin"
+  ],
+  "core": "",
+  "present": [
+   "/roms/only.bin"
+  ],
+  "rom": "/roms/only.bin",
+  "title": "only"
+ }
+]

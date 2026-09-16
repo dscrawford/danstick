@@ -1,0 +1,38 @@
+[
+ {
+  "out": "Super Mario 64",
+  "rom": "/roms/n64/Super_Mario_64.z64"
+ },
+ {
+  "out": "GoldenEye 007 (USA)",
+  "rom": "GoldenEye 007 (USA).z64"
+ },
+ {
+  "out": "Zelda, The (v1.2)",
+  "rom": "Zelda, The (v1.2).z64"
+ },
+ {
+  "out": "10yard",
+  "rom": "/roms/mame/10yard"
+ },
+ {
+  "out": "",
+  "rom": ""
+ },
+ {
+  "out": "a b c",
+  "rom": "a_b_c"
+ },
+ {
+  "out": "trailing",
+  "rom": "/roms/trailing/"
+ },
+ {
+  "out": "spaced",
+  "rom": "  spaced  .bin"
+ },
+ {
+  "out": "no-extension",
+  "rom": "no-extension"
+ }
+]

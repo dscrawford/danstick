@@ -912,6 +912,62 @@ def recent_games() -> None:
     write("recent_games_writes", writes)
 
 
+# -- reading a RetroArch command line ----------------------------------------
+def launch_command_line() -> None:
+    """Which argument is the core and which is the game.
+
+    `split_args` asks the filesystem whether a token is a file, so the corpus
+    records the *set of paths that existed* beside each answer -- the Rust
+    takes that as a predicate rather than touching a disk, and the two agree
+    about a case neither could otherwise be held to.
+    """
+    from padmap import launch
+
+    cases = []
+    scenarios = [
+        (["-L", "/cores/mupen64plus_next_libretro.so", "/roms/mario.z64"],
+         ["/cores/mupen64plus_next_libretro.so", "/roms/mario.z64"]),
+        # A flag value that is itself a real file.
+        (["--appendconfig", "/run/launch.cfg", "-L", "/cores/snes9x.so",
+          "/roms/Zelda, The (v1.2).sfc"],
+         ["/run/launch.cfg", "/cores/snes9x.so", "/roms/Zelda, The (v1.2).sfc"]),
+        # A ROM that is not there.
+        (["-L", "/cores/x.so", "/roms/gone.z64"], ["/cores/x.so"]),
+        # Subsystem load: several files, the last wins.
+        (["-L", "/cores/x.so", "/roms/a.sfc", "/roms/b.sfc"],
+         ["/roms/a.sfc", "/roms/b.sfc"]),
+        # Flags padmap itself emits, and unknown ones.
+        (["--nodevice", "2", "--verbose", "-L", "/cores/x.so", "/roms/g.bin"],
+         ["/roms/g.bin"]),
+        (["--libretro", "/cores/y.dll", "/roms/dir/"], ["/roms/dir/"]),
+        # Nothing at all, and a dangling core flag.
+        ([], []),
+        (["-L"], []),
+        (["/roms/only.bin"], ["/roms/only.bin"]),
+    ]
+    real_exists = launch.Path.exists
+    for argv, present in scenarios:
+        # str(Path(...)) normalises a trailing slash away, so the set has to
+        # be normalised too -- otherwise the recorded answer is the stub's
+        # quirk rather than what the launcher does with a real directory.
+        here = {str(launch.Path(p)) for p in present}
+        launch.Path.exists = lambda self, here=here: str(self) in here
+        try:
+            core, rom = launch.split_args(list(argv))
+        finally:
+            launch.Path.exists = real_exists
+        cases.append({"argv": argv, "present": present,
+                      "core": core, "rom": rom,
+                      "title": launch.title_for(rom) if rom else ""})
+    write("launch_split", cases)
+
+    titles = ["/roms/n64/Super_Mario_64.z64", "GoldenEye 007 (USA).z64",
+              "Zelda, The (v1.2).z64", "/roms/mame/10yard", "", "a_b_c",
+              "/roms/trailing/", "  spaced  .bin", "no-extension"]
+    write("launch_titles",
+          [{"rom": rom, "out": launch.title_for(rom)} for rom in titles])
+
+
 # -- the launch override -----------------------------------------------------
 def launch_config_corpus() -> None:
     """The whole --appendconfig text, and the copied-profile fallback.
@@ -1615,6 +1671,7 @@ def main() -> int:
     emitted_files()
     runtime_paths()
     recent_games()
+    launch_command_line()
     launch_config_corpus()
     capabilities()
     calibration_machine()
