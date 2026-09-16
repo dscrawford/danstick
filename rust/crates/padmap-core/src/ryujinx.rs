@@ -1,0 +1,175 @@
+//! Ryujinx input configuration.
+//!
+//! An entry per player in `input_config` in `~/.config/Ryujinx/Config.json`.
+//! The button fields are `GamepadInputId` names, so the table is a constant
+//! for the same reason Cemu's is: padmap's clone is already presented to SDL
+//! as a standard gamepad, and Ryujinx reads it through SDL's gamepad layer.
+//!
+//! # The device id collides, and it cannot be fixed here
+//!
+//! Ryujinx builds its device id from the SDL GUID and then **blanks the name
+//! CRC** -- its own comment says "Remove the first 4 char of the guid (CRC
+//! part) to make it stable". Those four characters are the *only* thing that
+//! differs between padmap's pads: every player shares a vendor, product and
+//! bus, and differs only in the CRC of `padmap Player N`.
+//!
+//! Measured on four players:
+//!
+//! ```text
+//! 0600c9a7091200000100000001000000  ->  0-00000006-1209-0000-0100-000001000000
+//! 060089a6091200000100000001000000  ->  0-00000006-1209-0000-0100-000001000000
+//! 06004866091200000100000001000000  ->  0-00000006-1209-0000-0100-000001000000
+//! 060009a4091200000100000001000000  ->  0-00000006-1209-0000-0100-000001000000
+//! ```
+//!
+//! Four distinct GUIDs, one id. Ryujinx separates them with the `n-` prefix,
+//! which is SDL *connection order* -- so the binding is only as stable as the
+//! order the clones are created in. padmap controls that order, and
+//! [`device_id`] takes it as an argument rather than pretending otherwise.
+//!
+//! Varying the product id per player would make it deterministic, and is not
+//! done here: in mirror mode the product is the source controller's, which is
+//! what makes SDL's own database match the pad, and changing it would move
+//! every existing stored mapping to a GUID nothing looks up.
+
+use serde_json::{json, Value};
+
+/// Ryujinx allows eight.
+pub const MAX_PLAYERS: u32 = 8;
+
+/// The backend name for an SDL gamepad.
+///
+/// Current Ryujinx writes `GamepadSDL3`, but both are accepted on read and
+/// older builds know only this one -- so this is the spelling that works
+/// everywhere.
+pub const BACKEND: &str = "GamepadSDL2";
+
+/// The id Ryujinx will generate for a pad with this SDL GUID.
+///
+/// `ordinal` is the pad's position among devices whose id would otherwise be
+/// identical, in SDL connection order. See the module note: for padmap that is
+/// every pad, so this is the player's creation order rather than a property of
+/// the device.
+pub fn device_id(guid: &str, ordinal: u32) -> Option<String> {
+    if guid.len() != 32 || !guid.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    let at = |range: std::ops::Range<usize>| &guid[range];
+    // The SDL GUID's bytes re-ordered into .NET Guid text layout, with the
+    // first four hex characters -- the name CRC -- replaced by zeros.
+    Some(format!(
+        "{ordinal}-0000{}{}-{}{}-{}-{}-{}",
+        at(2..4),
+        at(0..2),
+        at(10..12),
+        at(8..10),
+        at(12..16),
+        at(16..20),
+        at(20..32),
+    ))
+}
+
+/// `Player1`..`Player8`.
+pub fn player_index(player: u32) -> Option<String> {
+    (1..=MAX_PLAYERS)
+        .contains(&player)
+        .then(|| format!("Player{player}"))
+}
+
+/// One `input_config` entry.
+///
+/// The button names are `GamepadInputId` values, serialised as the C#
+/// identifier verbatim. `Back` and `Start` are aliases of `Minus` and `Plus`
+/// and are written as the latter, which is what Ryujinx itself writes.
+pub fn input_config(player: u32, guid: &str, name: &str, ordinal: u32) -> Option<Value> {
+    let id = device_id(guid, ordinal)?;
+    let index = player_index(player)?;
+    Some(json!({
+        "left_joycon_stick": {
+            "joystick": "Left",
+            "invert_stick_x": false,
+            "invert_stick_y": false,
+            "rotate90_cw": false,
+            "stick_button": "LeftStick"
+        },
+        "right_joycon_stick": {
+            "joystick": "Right",
+            "invert_stick_x": false,
+            "invert_stick_y": false,
+            "rotate90_cw": false,
+            "stick_button": "RightStick"
+        },
+        "deadzone_left": 0.1,
+        "deadzone_right": 0.1,
+        "range_left": 1.0,
+        "range_right": 1.0,
+        "trigger_threshold": 0.5,
+        "motion": {
+            "motion_backend": "GamepadDriver",
+            "sensitivity": 100,
+            "gyro_deadzone": 1.0,
+            "enable_motion": false
+        },
+        "rumble": {
+            "strong_rumble": 1.0,
+            "weak_rumble": 1.0,
+            "enable_rumble": false
+        },
+        "left_joycon": {
+            "button_minus": "Minus",
+            "button_l": "LeftShoulder",
+            "button_zl": "LeftTrigger",
+            "button_sl": "Unbound",
+            "button_sr": "Unbound",
+            "dpad_up": "DpadUp",
+            "dpad_down": "DpadDown",
+            "dpad_left": "DpadLeft",
+            "dpad_right": "DpadRight"
+        },
+        "right_joycon": {
+            "button_plus": "Plus",
+            "button_r": "RightShoulder",
+            "button_zr": "RightTrigger",
+            "button_sl": "Unbound",
+            "button_sr": "Unbound",
+            // Switch labels are mirrored against everyone else's, and Ryujinx
+            // reads through SDL's gamepad layer -- so Switch A is SDL's East,
+            // which SDL calls "B". Writing the obvious pairing swaps A and B
+            // in every game.
+            "button_a": "B",
+            "button_b": "A",
+            "button_x": "Y",
+            "button_y": "X"
+        },
+        "version": 1,
+        "backend": BACKEND,
+        "id": id,
+        "name": name,
+        "controller_type": "ProController",
+        "player_index": index
+    }))
+}
+
+/// Replace padmap's entries in an existing `input_config`, keeping the rest.
+///
+/// A user's keyboard entry, or a controller padmap is not managing, is theirs.
+/// Matching is by `player_index`: a slot padmap is binding is replaced, and
+/// every other entry is left exactly as it was.
+pub fn merge(existing: &Value, ours: Vec<Value>) -> Value {
+    let taken: Vec<&Value> = ours
+        .iter()
+        .filter_map(|entry| entry.get("player_index"))
+        .collect();
+    let mut out: Vec<Value> = existing
+        .as_array()
+        .map(|entries| {
+            entries
+                .iter()
+                .filter(|entry| !taken.contains(&entry.get("player_index").unwrap_or(&Value::Null)))
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default();
+    out.extend(ours);
+    Value::Array(out)
+}

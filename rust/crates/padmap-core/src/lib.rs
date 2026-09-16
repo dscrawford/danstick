@@ -29,6 +29,7 @@ pub mod icons;
 pub mod layout;
 pub mod profile;
 pub mod retroarch;
+pub mod ryujinx;
 pub mod scope;
 pub mod sdl;
 pub mod state;
