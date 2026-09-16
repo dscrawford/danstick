@@ -8,7 +8,6 @@
     padmap serve     the same, as a daemon a client can drive over a socket
     padmap launch    run, then start RetroArch bound to the assigned order
     padmap hide      print udev rules hiding the physical pads
-    padmap fetch-art download box art for the playlists from libretro
     padmap ensure-daemon
                      start the daemon, or restart it if it is running old code
     padmap clean-config
@@ -40,12 +39,6 @@ LAUNCH_CONFIG_PATH = STATE_DIR / "launch.cfg"
 # be expressed as config settings at all -- see retroarch.launch_args.
 LAUNCH_ARGS_PATH = STATE_DIR / "launch.args"
 LOG_PATH = STATE_DIR / "retroarch.log"
-
-# Duplicated from artwork.KINDS rather than imported: argparse needs the
-# choices while the parser is built, and importing artwork here would pull
-# urllib into every `padmap list`.
-_ART_KINDS = ("Named_Boxarts", "Named_Snaps", "Named_Titles")
-
 
 def cmd_list(_args: argparse.Namespace) -> int:
     pads = devices.discover()
@@ -885,93 +878,6 @@ def cmd_clean_config(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_fetch_art(args: argparse.Namespace) -> int:
-    from . import artwork
-
-    playlist_dir = Path(args.playlists).expanduser()
-    if not playlist_dir.is_dir():
-        print(f"No playlist directory at {playlist_dir}")
-        return 1
-
-    dest = Path(args.dest).expanduser() if args.dest else artwork.thumbnail_dir()
-    only = args.playlist or None
-
-    print(f"Source:      {artwork.server()}")
-    print(f"Destination: {dest}")
-    print(f"Kind:        {args.kind}\n")
-    print("Reading upstream indexes...")
-
-    plans, error = artwork.plan_all(
-        playlist_dir, args.kind, dest, only, args.system,
-    )
-    if error:
-        print(error)
-        return 1
-    if not plans:
-        print(f"No usable playlists in {playlist_dir}")
-        return 1
-
-    for plan in plans:
-        if plan.note:
-            print(f"  {plan.playlist:<12} skipped: {plan.note}")
-            continue
-        print(f"  {plan.playlist:<12} {plan.system:<24}"
-              f" {plan.matched:>5}/{plan.entries} matched,"
-              f" {plan.present} already here,"
-              f" {plan.missing} with no upstream art")
-
-    # Without the MAME table an arcade playlist matches on raw set names,
-    # which upstream has never heard of: 3 hits out of 8302 here. That is
-    # indistinguishable from "there is no art" unless it is said out loud.
-    from .titles import ENV_TITLES, find_titles
-    if not find_titles() and any(
-        p.system in ("MAME", "FBNeo - Arcade Games") for p in plans
-    ):
-        print(f"\nNote: no MAME title table ({ENV_TITLES} is unset), so arcade"
-              "\n  set names are matched literally and almost nothing will"
-              "\n  match. Run this through the padmap wrapper, which sets it.")
-
-    wanted = [p for p in plans if p.wanted]
-    total = sum(len(p.wanted) for p in wanted)
-    size = sum(p.bytes for p in wanted)
-    if not total:
-        print("\nNothing to download; everything matched is already on disk.")
-        return 0
-
-    print(f"\nTo download: {total} image(s), about {artwork.human(size)}.")
-    free = artwork.free_space(dest)
-    if free and size > free:
-        print(f"Not enough free space at {dest}"
-              f" ({artwork.human(free)} available).")
-        return 1
-    if args.dry_run:
-        print("Dry run; nothing fetched.")
-        return 0
-
-    # Re-running is cheap and safe, so an interrupted run needs no cleanup
-    # beyond dropping half-written files.
-    artwork.prune_partials(dest)
-
-    failures = 0
-    downloaded = 0
-    for plan in wanted:
-        report = artwork.run_plan(
-            plan, workers=args.jobs, out=sys.stdout,
-        )
-        downloaded += report.downloaded
-        failures += report.failed
-        if report.failed:
-            print(f"  {plan.playlist}: {report.failed} failed"
-                  f" (first: {report.reason})")
-
-    print(f"\nFetched {downloaded} image(s); {failures} failed.")
-    if failures:
-        # Not an error worth a non-zero exit: what did arrive is usable, and
-        # re-running picks up only the gaps.
-        print("Re-run to retry only what is still missing.")
-    return 0
-
-
 def cmd_hide(args: argparse.Namespace) -> int:
     """Show the udev rules, or install them outright when run as root.
 
@@ -1043,41 +949,6 @@ def main(argv: list[str] | None = None) -> int:
     cal.add_argument("-f", "--force", action="store_true",
                      help="re-measure controllers that already have a profile")
     cal.set_defaults(func=cmd_calibrate)
-
-    art = sub.add_parser(
-        "fetch-art",
-        help="download box art from libretro's thumbnail server",
-    )
-    art.add_argument(
-        "--playlists", default="~/.config/retroarch/playlists",
-        help="where the .lpl files are (default %(default)s)",
-    )
-    art.add_argument(
-        "--dest", default="",
-        help="thumbnail tree to fill (default: RetroArch's own)",
-    )
-    art.add_argument(
-        "--kind", default="Named_Boxarts", choices=list(_ART_KINDS),
-        help="which artwork to fetch (default %(default)s)",
-    )
-    art.add_argument(
-        "--playlist", action="append", default=[], metavar="STEM",
-        help="only this playlist; repeatable",
-    )
-    art.add_argument(
-        "--system", default=None,
-        help="upstream system name, when the core name does not identify one"
-             ' (e.g. "MAME"). Only sensible with a single --playlist.',
-    )
-    art.add_argument(
-        "--jobs", type=int, default=8,
-        help="parallel downloads (default %(default)s)",
-    )
-    art.add_argument(
-        "--dry-run", action="store_true",
-        help="report what would be fetched, and how big, without fetching",
-    )
-    art.set_defaults(func=cmd_fetch_art)
 
     mapper = sub.add_parser(
         "map", help="record which button is which, from a terminal")

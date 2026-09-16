@@ -79,7 +79,7 @@ order, and the three things that need a decision rather than a translation.
 | --- | --- |
 | hidraw (Switch family) | those pads fall back to an evdev node that carries nothing, so they do nothing |
 | the daemon socket, sessions, the wizard | `padmap-rs` cannot be driven by the front-end; use `padmap serve` |
-| `padmap hide`, `export-pegasus`, `fetch-art`, `clean-config` | still Python, and should stay that way -- see below |
+| `padmap hide`, `clean-config` | still Python, and should stay that way -- see below |
 
 Order to continue in: hidraw decoding (the report decoders are pure functions
 over byte slices, so they test from a recording), then the socket protocol,
@@ -94,8 +94,6 @@ then the session state machine.
   surrogateescape; a correct port must be byte-oriented throughout. It is a
   one-shot maintenance command that rewrites a file the user owns. Zero
   benefit, maximal blast radius.
-* **`artwork.py`**, **`titles.py`**, **`pegasus.py`**. Offline, run once,
-  failure already tolerated by design. `titles.py` runs at Nix build time.
 * **`ui/`**. PySide6 and QML, and a fallback for a front-end that is itself the
   real interface. A candidate for deletion, not for porting.
 * **`tools/`**, 43,000 lines. Not ported -- repurposed. They are the oracle in

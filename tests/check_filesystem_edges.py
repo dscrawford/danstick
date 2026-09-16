@@ -20,13 +20,13 @@ this file exists to catch. Three different promises are being made:
     ~/.local/share/padmap/devices; a writer that needs its parent to exist
     would fail on exactly the runs that matter most, the first ones.
 
-  REFUSES TO CREATE ANYTHING. clean_user_config, and titles.dump_json. That
+  REFUSES TO CREATE ANYTHING. clean_user_config. That
     file is the *user's* retroarch.cfg. Creating a tree for it means padmap
     has been pointed at a path that is not the config it was asked to clean,
     and writing there is worse than failing (S21).
 
   NEVER RAISES AT ALL. hide.install, Server._save_prompted,
-    cli._forget_prompted, artwork._safe -- and, by way of the guard in
+    cli._forget_prompted -- and, by way of the guard in
     Server._handle_command, every writer the daemon reaches through a
     command. A daemon that dies holds EVIOCGRAB on every physical pad as it
     goes, so its virtual pads vanish and the real ones stay grabbed: the
@@ -91,8 +91,8 @@ for _sub in ("run/padmap", "config", "data", "devices", "retroarch"):
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from padmap import (  # noqa: E402
-    artwork, cli, controllercfg, devices, hide, launch, profiles,
-    protocol, retroarch, server, titles,
+    cli, controllercfg, devices, hide, launch, profiles,
+    protocol, retroarch, server,
 )
 from padmap.assign import Assignment  # noqa: E402
 from padmap.devices import Pad  # noqa: E402
@@ -1047,85 +1047,6 @@ def check_forget_prompted_writer() -> None:
                f"({removed} removed)")
 
 
-# -- artwork, which fails per file or not at all ----------------------------
-
-
-def check_artwork_writer() -> None:
-    heading("artwork._safe -- contract: per-file failure, never raises")
-
-    original = artwork.fetch
-    artwork.fetch = lambda url, timeout: b"\x89PNG\r\n\x1a\n fake"  # type: ignore[assignment]
-    try:
-        base = fresh("artwork")
-        dest = base / "Named_Boxarts" / "deep" / "Zelda.png"
-        problem = survives("downloading into a directory tree that has none",
-                           lambda: artwork._safe(
-                               artwork.Image(url="u", dest=dest), 1.0))
-        if problem:
-            fail(f"a download into a fresh tree reported {problem!r}; the "
-                 f"thumbnail tree does not exist before the first run")
-        if not dest.is_file():
-            fail("the image was reported as downloaded but is not there")
-        ok("the artwork tree is created and the image lands in it")
-        if list(dest.parent.glob("*.part")):
-            fail("a .part staging file was left behind; a later run skips "
-                 "whatever is already present, so a half file is permanent")
-        ok("no .part staging file is left behind")
-
-        blocked = fresh("artwork-dir") / "Zelda.png"
-        blocked.mkdir(parents=True)
-        problem = survives("the image path is a directory",
-                           lambda: artwork._safe(
-                               artwork.Image(url="u", dest=blocked), 1.0))
-        if not problem:
-            fail("writing over a directory was reported as a successful "
-                 "download, so the run counts art it does not have")
-        ok("a directory in the way is counted as a failure, not raised")
-
-        if not skip_as_root("a read-only artwork directory"):
-            base = fresh("artwork-read-only")
-            with read_only(base):
-                problem = survives("the artwork directory is read-only",
-                                   lambda: artwork._safe(
-                                       artwork.Image(url="u",
-                                                     dest=base / "Zelda.png"),
-                                       1.0))
-            if not problem:
-                fail("a download into a read-only directory reported success")
-            ok("a read-only directory is counted as a failure, not raised")
-
-        base = fresh("artwork-symlink-out")
-        victim = _SANDBOX / "cases" / "not-artwork.png"
-        victim.write_text("PRECIOUS\n")
-        (base / "Zelda.png").symlink_to(victim)
-        survives("the image path is a symlink out of the artwork tree",
-                 lambda: artwork._safe(
-                     artwork.Image(url="u", dest=base / "Zelda.png"), 1.0))
-        if victim.read_text() != "PRECIOUS\n":
-            fail("artwork followed a symlink out of the thumbnail tree and "
-                 "overwrote the file it pointed at")
-        ok("os.replace replaces the link rather than following it")
-    finally:
-        artwork.fetch = original                # type: ignore[assignment]
-
-
-# -- titles, the build-time table -------------------------------------------
-
-
-def check_titles_writer() -> None:
-    heading("titles.dump_json -- contract: creates NOTHING")
-
-    missing = fresh("titles") / "not-there" / "titles.json"
-    refuses("a title table under a directory that does not exist",
-            lambda: titles.dump_json({}, missing),
-            expect=FileNotFoundError)
-    if missing.parent.exists():
-        fail("titles.dump_json invented a directory. This one runs from the "
-             "flake at build time with an explicit path; a typo that creates "
-             "a tree rather than failing produces a table nothing reads")
-    ok("and no directory was invented for it")
-
-
 # -- the sandbox itself ------------------------------------------------------
 
 
@@ -1185,8 +1106,6 @@ def main() -> int:
     check_daemon_survives_every_failed_write()
     check_forget_prompted_writer()
 
-    check_artwork_writer()
-    check_titles_writer()
 
     check_nothing_real_was_touched()
 

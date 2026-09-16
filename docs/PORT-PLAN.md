@@ -80,7 +80,7 @@ consumer.
 | 3 — device layer | done: `hidraw`, `virtual`, `calibrate` |
 | 4 — writers | pure surface done: profiles, autoconfig text, the launch override, the config cleaner |
 | 5 — daemon | **protocol surface done** (commands, state event); orchestration outstanding |
-| 6 — front door | outstanding: `cli`, `launch`, `artwork` |
+| 6 — front door | outstanding: `cli`, `launch` |
 
 Seven modules have a complete Rust counterpart. None has been deleted, for the
 reason given above: they all still have Python callers.
@@ -107,7 +107,6 @@ Rough remaining shape, by what the code *is* rather than by line count:
 |---|---:|---|
 | `server` orchestration | ~2,400 | socket, selector, session lifecycle, modal sequencing |
 | `cli` | 1,162 | argument parsing and thirteen subcommands, mostly thin |
-| `artwork` | 593 | HTTP against a remote host — see the decision below |
 | `launch` | 214 | resolves a scope and rewrites the autoconfig directory |
 
 ## The order
@@ -123,7 +122,6 @@ depends on.
 | `protocol` | 455 | the wire format. Corpus: `encode`, `LineReader.feed` |
 | `mapping` | 578 | `sdl_guid`, `stick_fields`, `rests_centred` — mostly corpused already |
 | `layouts` | 621 | already loaded by `padmap-core/src/layout.rs`; finish and delete |
-| `titles` | 250 | a regex pass over 43MB of XML; a build-time product |
 
 `safeio` is the odd one. All 47 lines exist because Python's
 `Path.read_text()` raises `UnicodeDecodeError` on a bad byte — a `ValueError`,
@@ -151,8 +149,7 @@ exists: everything above is a dependency of it. Not corpusable; needs a real
 socket and a real client. `tests/check_daemon_*.py` describe the behaviour to
 preserve, and they are the specification to port, not to delete early.
 
-**Phase 6 — the front door** (1,162 lines): `cli`, then `launch`, then
-`artwork`. `artwork` is last on purpose — see below.
+**Phase 6 — the front door** (1,376 lines): `cli`, then `launch`.
 
 ## Three things that need a decision, not a port
 
@@ -162,11 +159,8 @@ bundle `gamecontrollerdb.txt` and read it directly, link SDL3 and call it, or
 drop the last-resort lookup. Bundling is probably right, and it is a
 decision about behaviour rather than a translation.
 
-**`artwork`, 593 lines of HTTP** against `thumbnails.libretro.com`. Porting it
-means adding an HTTP client and a TLS stack to a program that currently links
-`udev` and nothing else. It is also the module furthest from padmap's purpose:
-it fetches box art. A reasonable answer is to leave it out of the binary
-entirely and ship it as a separate tool, which is not the same as porting it.
+**`artwork`** and **`titles`** — decided: removed. Box art is handled
+elsewhere, and the MAME title table existed only to match art to set names.
 
 **`fakepad`, 771 lines.** Test scaffolding, not runtime. It should grow a Rust
 half rather than be replaced — the fixtures are data, and both languages

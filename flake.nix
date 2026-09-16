@@ -64,8 +64,7 @@
         devPadmap = pkgs.writeShellScriptBin "padmap" ''
           set -euo pipefail
           ${devRoot}
-          # PYTHONPATH, PADMAP_AUTOCONFIG_DIRS, PADMAP_MAME_TITLES and
-          # PADMAP_PLAY all come from the shell environment; the wrapper adds
+          # PYTHONPATH, PADMAP_AUTOCONFIG_DIRS and PADMAP_PLAY all come from the shell environment; the wrapper adds
           # nothing but the entry point, so what runs here and what a client
           # of the daemon runs are the same program.
           #
@@ -136,10 +135,8 @@
             # that `cd rust` does not change which padmap `padmap list` runs.
             export PADMAP_DEV_ROOT="$PWD"
             export PYTHONPATH="$PWD/src''${PYTHONPATH:+:$PYTHONPATH}"
-            # The same two the `padmap` wrapper sets. Without them a launch
-            # from this shell resolves no MAME set names and invokes a bare
-            # `retroarch`, which looks like it worked.
-            export PADMAP_MAME_TITLES="${self.packages.${system}.mame-titles}/share/padmap/mame-titles.json"
+            # The same the `padmap` wrapper sets. Without it a launch from
+            # this shell invokes a bare `retroarch`, which looks like it worked.
             export PADMAP_PLAY="${self.packages.${system}.padmap-play}/bin/padmap-play"
             # The Python daemon shells out to this to write Cemu's, ares' and
             # Ryujinx's config files -- see src/padmap/emulators.py. The dev
@@ -181,7 +178,6 @@
             # something nothing else about it reveals.
             export PADMAP_BUILD_ID="${./src}"
             export PADMAP_AUTOCONFIG_DIRS="${autoconfigDir}"
-            export PADMAP_MAME_TITLES="${self.packages.${system}.mame-titles}/share/padmap/mame-titles.json"
             # Absolute, so generated launch commands work from a front-end
             # that has neither padmap nor RetroArch on its PATH.
             export PADMAP_PLAY="${self.packages.${system}.padmap-play}/bin/padmap-play"
@@ -192,27 +188,6 @@
             exec python3 -m padmap.cli "$@"
           '';
         };
-
-        packages.mame-titles =
-          let
-            xml = pkgs.fetchurl {
-              url = "https://raw.githubusercontent.com/libretro/libretro-database/"
-                + "4b57e60778c9a69459a7587d6cc7e464b3a35ad9/metadat/mame/MAME%202010%20XML.xml";
-              hash = "sha256-IOtLCpQEzCsN9kidA3DiFexfPSVcEyH3A334md/e7DY=";
-            };
-          in
-          pkgs.runCommand "padmap-mame-titles"
-            { nativeBuildInputs = [ pythonEnv ]; }
-            ''
-              mkdir -p "$out/share/padmap"
-              PYTHONPATH=${./src} python3 -c "
-              from pathlib import Path
-              from padmap import titles
-              table = titles.parse_mame_xml(Path('${xml}'))
-              titles.dump_json(table, Path('$out/share/padmap/mame-titles.json'))
-              print(f'{len(table)} MAME titles')
-              "
-            '';
 
         packages.padmap-play = pkgs.writeShellApplication {
           name = "padmap-play";

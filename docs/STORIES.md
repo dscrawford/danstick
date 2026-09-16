@@ -885,7 +885,6 @@ S1-S23. Grouped by where it lives.
 | `padmap launch [--log[=PATH]] [-- ...]` | Republish, then start RetroArch with `--appendconfig` and the `--nodevice` flags, capturing output | Unknown args after `launch` are forwarded, because `argparse.REMAINDER` refuses any leading option |
 | `padmap serve` | The daemon itself | argv must stay exactly `["-m","padmap.cli","serve"]` — see S18 |
 | `padmap calibrate [-f]` | Terminal calibration, two phases, Enter-driven | The CLI twin of S12/S13, with `--force` to redo a configured pad |
-| `padmap fetch-art [--playlists] [--dest] [--kind] [--playlist] [--system] [--jobs] [--dry-run]` | Downloads box art / snaps / titles from libretro's thumbnail server, resumable, free-space-checked | Warns when `PADMAP_MAME_TITLES` is unset, because arcade set names then match almost nothing and that is indistinguishable from "there is no art" |
 | `padmap forget --all` | The whole store, not just connected pads | The `--all` half of S20 |
 | `padmap hide --print` | Print even as root | |
 | `padmap ensure-daemon --check` | Report staleness, change nothing, exit non-zero | |

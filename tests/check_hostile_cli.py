@@ -1,8 +1,8 @@
 """Every padmap command line, given arguments nobody would type on purpose.
 
 Maintenance is done from a shell, usually from a script, usually in a hurry:
-`padmap clean-config --config "$CFG"` with CFG unset, `padmap fetch-art
---dest ~/art` where that name is already a file, `padmap forget --all`
+`padmap clean-config --config "$CFG"` with CFG unset, `padmap map --layout`
+with the value forgotten, `padmap forget --all`
 against a profile directory something else has been rummaging in. The promise
 these stories make is not that any of that works -- it is that padmap says
 what is wrong and stops, rather than printing a Python traceback at a user
@@ -554,7 +554,6 @@ def scenario_unknown_commands_and_flags():
         ("forget", "--bogus"),
         ("clean-config", "--bogus"),
         ("map", "--bogus"),
-        ("fetch-art", "--bogus"),
         ("ensure-daemon", "--bogus"),
         ("hide", "--bogus"),
         ("serve", "--bogus"),
@@ -600,9 +599,6 @@ def scenario_flag_values_that_look_like_flags():
         (("map", "--layout"), "map --layout <nothing>"),
         (("map", "--layout", "--pad"), "map --layout --pad"),
         (("map", "--scope", "--layout"), "map --scope --layout"),
-        (("fetch-art", "--playlists", "--dry-run"),
-         "fetch-art --playlists --dry-run"),
-        (("fetch-art", "--dest", "--kind"), "fetch-art --dest --kind"),
         (("ensure-daemon", "--timeout"), "ensure-daemon --timeout <nothing>"),
         (("ensure-daemon", "--timeout", "--check"),
          "ensure-daemon --timeout --check"),
@@ -618,8 +614,6 @@ def scenario_numeric_flags():
     for args, label in (
         (("ensure-daemon", "--timeout", "abc"), "ensure-daemon --timeout abc"),
         (("ensure-daemon", "--timeout", "10s"), "ensure-daemon --timeout 10s"),
-        (("fetch-art", "--jobs", "abc"), "fetch-art --jobs abc"),
-        (("fetch-art", "--jobs", "1e9"), "fetch-art --jobs 1e9"),
         (("setup", "-n", "abc"), "setup -n abc"),
         (("setup", "-n", "3.5"), "setup -n 3.5"),
         (("ui", "-n", "abc"), "ui -n abc"),
@@ -628,10 +622,6 @@ def scenario_numeric_flags():
         proc = padmap(*args)
         refused(proc, f"`{label}`", expect_message="invalid")
         no_traceback(proc, f"`{label}`")
-
-    proc = padmap("fetch-art", "--kind", "Named_Bogus")
-    refused(proc, "`fetch-art --kind Named_Bogus`",
-            expect_message="invalid choice")
 
     # ensure-daemon with a nonsense timeout must still not start anything:
     # --check is the read-only mode.
