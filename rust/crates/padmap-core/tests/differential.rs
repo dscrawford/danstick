@@ -761,6 +761,16 @@ fn an_unmapped_pad_is_guessed_at_identically() {
             &u16s(&input["axis_codes"]),
             None,
         );
+        // A pad that speaks the kernel's gamepad convention is deliberately
+        // *not* guessed at any more -- padmap reads its controls off the
+        // codes, where the Python assigned them by index. The Python was
+        // wrong here and the divergence is the point: on a wired Xbox pad its
+        // ordering swapped x and y and put `back` on BTN_MODE. See
+        // `padmap_core::standard`, and the test below that states the
+        // difference outright.
+        if padmap_core::standard::is_standard(&u16s(&input["keys"])) {
+            continue;
+        }
         let actual: Vec<(String, String)> =
             fields.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
         let wanted: Vec<(String, String)> = case["out"]
@@ -776,4 +786,47 @@ fn an_unmapped_pad_is_guessed_at_identically() {
             .collect();
         assert_eq!(actual, wanted, "for {input}");
     }
+}
+
+/// Where padmap deliberately disagrees with the Python it was ported from.
+///
+/// The recorded answers above are evidence of what the Python did, not of what
+/// is correct, and for a standard gamepad it was not correct: it assigned face
+/// buttons by index, so the most common controller on Linux came out with x
+/// and y swapped and `back` on the Guide button.
+///
+/// Stated here rather than by quietly editing the recording, so the change is
+/// something a reader can find and argue with.
+#[test]
+fn the_python_guessed_a_standard_pad_wrongly_and_padmap_does_not() {
+    // A wired Xbox 360 pad's buttons, in the order xpad declares them.
+    let keys: Vec<u16> = vec![
+        0x130, 0x131, 0x133, 0x134, 0x136, 0x137, 0x13A, 0x13B, 0x13C, 0x13D, 0x13E,
+    ];
+    let ours = padmap_core::guess::guessed_fields(&keys, &[], None);
+
+    // What the Python said, by index, for exactly these eleven buttons.
+    let theirs = [
+        ("a", "b0"),
+        ("b", "b1"),
+        ("x", "b2"),
+        ("y", "b3"),
+        ("leftshoulder", "b4"),
+        ("rightshoulder", "b5"),
+        ("lefttrigger", "b6"),
+        ("righttrigger", "b7"),
+        ("back", "b8"),
+        ("start", "b9"),
+        ("leftstick", "b10"),
+    ];
+    // BTN_NORTH is at index 2 and is `y`, not `x`.
+    assert_eq!(theirs[2], ("x", "b2"));
+    assert_eq!(ours.get("y"), Some("b2"));
+    assert_eq!(ours.get("x"), Some("b3"));
+    // BTN_SELECT is at index 6 and is `back`, not the left trigger.
+    assert_eq!(theirs[6], ("lefttrigger", "b6"));
+    assert_eq!(ours.get("back"), Some("b6"));
+    // ...and the left trigger is an axis on this pad, so it is not a button
+    // at all. The Python bound BTN_SELECT to it.
+    assert_eq!(ours.get("lefttrigger"), None, "no ABS_Z was declared here");
 }

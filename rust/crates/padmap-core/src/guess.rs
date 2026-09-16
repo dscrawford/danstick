@@ -73,12 +73,22 @@ pub fn stick_and_dpad_fields(
     fields
 }
 
-/// A whole guessed mapping for an unmapped pad.
+/// A whole mapping for a pad with no capture.
+///
+/// A pad that speaks the kernel's gamepad convention is not guessed at -- see
+/// [`crate::standard`], which reads its controls off the codes exactly. Only a
+/// device that does not (an arcade stick, a wheel, something exotic) reaches
+/// the positional ordering below, which is the one case where the face buttons
+/// really are a guess.
 pub fn guessed_fields(
     keys: &[u16],
     axis_codes: &[u16],
     axes: Option<&BTreeMap<u16, AxisSpan>>,
 ) -> Fields {
+    if let Some(mut known) = crate::standard::standard_fields(keys, axis_codes, axes) {
+        known.extend(&stick_and_dpad_fields(axis_codes, keys, axes));
+        return known;
+    }
     let mut sorted: Vec<u16> = keys.to_vec();
     sorted.sort_unstable();
     // SDL's own ordering: the joystick range first, then anything below it.
@@ -163,11 +173,21 @@ mod tests {
         assert_eq!(fields.get("righty"), None);
     }
 
+    /// Joystick-range codes a gamepad never reports: BTN_TRIGGER, BTN_THUMB,
+    /// BTN_THUMB2... This is the device whose face buttons genuinely are a
+    /// guess, and the only one that still reaches the positional ordering.
+    fn arcade(count: u16) -> Vec<u16> {
+        // Capped below BTN_SOUTH: a list that ran into the gamepad range
+        // would *be* a standard pad, and would take the other path.
+        assert!(count <= 0x10, "0x120 + {count:#x} reaches BTN_SOUTH");
+        (0x120..0x120 + count).collect()
+    }
+
     #[test]
     fn a_pad_with_fewer_buttons_than_the_order_gets_only_what_it_has() {
         // Naming a button the pad does not have is a binding that does
         // nothing, on a pad reported as configured.
-        let fields = guessed_fields(&[0x130, 0x131, 0x132], &[], None);
+        let fields = guessed_fields(&arcade(3), &[], None);
         assert_eq!(fields.get("a"), Some("b0"));
         assert_eq!(fields.get("x"), Some("b2"));
         assert_eq!(fields.get("y"), None);
@@ -176,23 +196,33 @@ mod tests {
 
     #[test]
     fn a_pad_with_more_buttons_than_the_order_stops_at_the_order() {
-        let keys: Vec<u16> = (0x130..0x150).collect();
-        let fields = guessed_fields(&keys, &[], None);
+        let fields = guessed_fields(&arcade(0x10), &[], None);
         assert_eq!(fields.get("rightstick"), Some("b11"));
         assert_eq!(fields.len(), GUESS_BUTTON_ORDER.len());
     }
 
     #[test]
     fn the_guess_is_face_buttons_in_order_then_everything_measured() {
-        let fields = guessed_fields(
-            &(0x130..0x13c).collect::<Vec<u16>>(),
-            &[0x00, 0x01, ABS_HAT0X, ABS_HAT0Y],
-            None,
-        );
+        let fields = guessed_fields(&arcade(12), &[0x00, 0x01, ABS_HAT0X, ABS_HAT0Y], None);
         let names: Vec<String> = pairs(&fields).into_iter().map(|(k, _)| k).collect();
         assert_eq!(&names[..GUESS_BUTTON_ORDER.len()], &GUESS_BUTTON_ORDER[..]);
         assert!(names.contains(&"dpup".to_owned()));
         assert!(names.contains(&"leftx".to_owned()));
+    }
+
+    #[test]
+    fn a_pad_that_speaks_the_convention_is_read_rather_than_guessed() {
+        // The same codes an Xbox pad reports. Positionally, `x` and `y` come
+        // out swapped and `back` lands on BTN_MODE; by code they are exact.
+        // Everything below the face buttons is unchanged either way.
+        let keys = vec![0x130, 0x131, 0x133, 0x134, 0x13A, 0x13B, 0x13C];
+        let fields = guessed_fields(&keys, &[0x00, 0x01, ABS_HAT0X, ABS_HAT0Y], None);
+        assert_eq!(fields.get("y"), Some("b2"), "BTN_NORTH");
+        assert_eq!(fields.get("x"), Some("b3"), "BTN_WEST");
+        assert_eq!(fields.get("back"), Some("b4"), "BTN_SELECT");
+        assert_eq!(fields.get("guide"), Some("b6"), "BTN_MODE");
+        assert_eq!(fields.get("dpup"), Some("h0.1"));
+        assert_eq!(fields.get("leftx"), Some("a0"));
     }
 
     #[test]

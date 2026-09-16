@@ -1,5 +1,18 @@
 # The `controller` event
 
+## A controller that binds itself
+
+`controller.autobound` in `list --json` says padmap can bind this pad
+correctly with no capture: it speaks the kernel's gamepad convention, so its
+controls are read off the codes rather than guessed at. A picker can use it to
+say *this already works, remap only if you want to* instead of sending
+everybody through a wizard.
+
+It is separate from `configured`, which means a capture has been **recorded**.
+A pad can be `autobound: true, configured: false` -- working, and never
+walked through anything -- and a capture always wins where one exists, so
+remapping stays available and stays optional.
+
 ## Seating: taking a seat with no session
 
 ```json

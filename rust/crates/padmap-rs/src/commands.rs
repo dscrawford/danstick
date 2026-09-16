@@ -49,6 +49,11 @@ pub fn cmd_list_json() -> Result<()> {
 
     let mut entries = Vec::new();
     for pad in &pads {
+        // Whether padmap can bind this pad correctly with no capture at all,
+        // so a picker can say "this already works; remap only if you want to"
+        // rather than sending everybody through a wizard they do not need.
+        let facts = publish::pad_facts(pad);
+        let autobound = padmap_core::standard::is_standard(&facts.keys);
         let player = saved
             .iter()
             .find(|entry| entry.path == pad.path)
@@ -85,6 +90,7 @@ pub fn cmd_list_json() -> Result<()> {
                 "uniq": pad.uniq,
                 "signature": profiles::signature_of(pad),
                 "configured": publish::has_mapping(pad),
+                "autobound": autobound,
                 // False once `padmap hide` has cleared ID_INPUT_JOYSTICK.
                 "retroarch_visible": pad.retroarch_visible,
                 // The controller's own motion sensor, and **not** something

@@ -34,6 +34,12 @@ anything can consume them:
 | RetroArch autoconfig profiles | `$XDG_RUNTIME_DIR/padmap/autoconfig/udev/` |
 | a control socket | `$XDG_RUNTIME_DIR/padmap/padmap.sock` |
 
+A controller that follows the kernel's gamepad convention binds itself the
+moment it is plugged in — no wizard, nothing to configure. `BTN_SOUTH` *is*
+the bottom face button, so padmap reads the controls off the codes rather than
+guessing at them, and `padmap map` is there to change the result rather than
+to produce one.
+
 `padmap list --json` answers the same questions for a script that runs once
 and should not have to start a daemon:
 
