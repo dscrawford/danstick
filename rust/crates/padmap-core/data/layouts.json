@@ -7,6 +7,7 @@
     "gamecube",
     "ps2",
     "switch",
+    "wiiu",
     "genesis"
   ],
   "default": "generic",

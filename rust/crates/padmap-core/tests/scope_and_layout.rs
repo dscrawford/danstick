@@ -794,7 +794,7 @@ fn consoles_preserves_catalogue_order() {
     // of `data/layouts.json` chose.
     assert_eq!(
         layout::consoles(),
-        ["snes", "n64", "arcade", "gamecube", "ps2", "switch", "genesis"]
+        ["snes", "n64", "arcade", "gamecube", "ps2", "switch", "wiiu", "genesis"]
     );
 }
 

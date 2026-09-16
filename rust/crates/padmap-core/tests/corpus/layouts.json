@@ -1112,6 +1112,170 @@
   }
  },
  {
+  "in": "wiiu",
+  "out": {
+   "controls": [
+    {
+     "canonical": "a",
+     "kind": "button",
+     "label": "B (bottom)",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.72,
+     "y": 0.52
+    },
+    {
+     "canonical": "b",
+     "kind": "button",
+     "label": "A (right)",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.78,
+     "y": 0.42
+    },
+    {
+     "canonical": "x",
+     "kind": "button",
+     "label": "Y (left)",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.66,
+     "y": 0.42
+    },
+    {
+     "canonical": "y",
+     "kind": "button",
+     "label": "X (top)",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.72,
+     "y": 0.32
+    },
+    {
+     "canonical": "dpup",
+     "kind": "dpad",
+     "label": "D-pad up",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.28,
+     "y": 0.36
+    },
+    {
+     "canonical": "dpdown",
+     "kind": "dpad",
+     "label": "D-pad down",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.28,
+     "y": 0.52
+    },
+    {
+     "canonical": "dpleft",
+     "kind": "dpad",
+     "label": "D-pad left",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.23,
+     "y": 0.44
+    },
+    {
+     "canonical": "dpright",
+     "kind": "dpad",
+     "label": "D-pad right",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.33,
+     "y": 0.44
+    },
+    {
+     "canonical": "back",
+     "kind": "button",
+     "label": "Minus",
+     "radius": 0.035,
+     "retroarch": "",
+     "x": 0.45,
+     "y": 0.44
+    },
+    {
+     "canonical": "start",
+     "kind": "button",
+     "label": "Plus",
+     "radius": 0.035,
+     "retroarch": "",
+     "x": 0.55,
+     "y": 0.44
+    },
+    {
+     "canonical": "leftshoulder",
+     "kind": "shoulder",
+     "label": "L",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.26,
+     "y": 0.2
+    },
+    {
+     "canonical": "rightshoulder",
+     "kind": "shoulder",
+     "label": "R",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.74,
+     "y": 0.2
+    },
+    {
+     "canonical": "lefttrigger",
+     "kind": "shoulder",
+     "label": "ZL",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.34,
+     "y": 0.12
+    },
+    {
+     "canonical": "righttrigger",
+     "kind": "shoulder",
+     "label": "ZR",
+     "radius": 0.045,
+     "retroarch": "",
+     "x": 0.66,
+     "y": 0.12
+    }
+   ],
+   "id": "wiiu",
+   "image": "",
+   "label": "Wii U Pro",
+   "shapes": [
+    {
+     "kind": "rect",
+     "points": [
+      0.18,
+      0.3,
+      0.64,
+      0.34
+     ],
+     "radius": 0.16
+    },
+    {
+     "kind": "circle",
+     "points": [
+      0.28,
+      0.7
+     ],
+     "radius": 0.13
+    },
+    {
+     "kind": "circle",
+     "points": [
+      0.72,
+      0.7
+     ],
+     "radius": 0.13
+    }
+   ]
+  }
+ },
+ {
   "in": "genesis",
   "out": {
    "controls": [

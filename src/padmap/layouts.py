@@ -435,6 +435,20 @@ SWITCH = Layout(
     ),
 )
 
+# The Wii U Pro Controller is the Switch Pro's control set under a different
+# name: A right, B bottom, X top, Y left, L/R, ZL/ZR, Plus/Minus. Same
+# positions, same Nintendo labels, same absence of overrides. It is its own
+# layout rather than an alias so that "my pad, when playing Wii U games" is
+# a scope a user can map to and Cemu's profile can name -- which it could
+# not while the only Nintendo layout was called Switch.
+WIIU = Layout(
+    id="wiiu",
+    label="Wii U Pro",
+    console_label="Wii U",
+    shapes=_PAD_BODY,
+    controls=SWITCH.controls,
+)
+
 # Six face buttons in two rows, no shoulders, and a Mode button nobody uses.
 #
 # Verified against genesis-plus-gx, libretro/libretro.c, the DEVICE_PAD6B case:
@@ -480,7 +494,8 @@ GENESIS = Layout(
 
 ALL: dict[str, Layout] = {
     layout.id: layout
-    for layout in (GENERIC, SNES, N64, ARCADE, GAMECUBE, PS2, SWITCH, GENESIS)
+    for layout in (GENERIC, SNES, N64, ARCADE, GAMECUBE, PS2, SWITCH, WIIU,
+                   GENESIS)
 }
 
 DEFAULT = GENERIC.id

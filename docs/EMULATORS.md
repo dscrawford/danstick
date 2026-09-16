@@ -74,6 +74,15 @@ is. So Wii U **A** is SDL *East* and Switch **A** is SDL's `"B"`. Writing the
 obvious pairing swaps A and B in every game, which feels like the emulator's
 fault rather than padmap's.
 
+## The Wii U layout
+
+The Wii U Pro Controller is the Switch Pro's control set under a different
+name — A right, B bottom, X top, Y left, L/R, ZL/ZR, Plus/Minus — so the
+`wiiu` layout is the `switch` layout's controls under its own id. It exists so
+"my pad, when playing Wii U games" is a scope a user can map to, and so the
+wizard says Wii U when that is what is being set up. Cemu's profile does not
+depend on which of the two was used: its table maps by SDL position.
+
 ## What these files are checked against
 
 Not documentation. For Cemu, a `controller0.xml` Cemu itself wrote on the

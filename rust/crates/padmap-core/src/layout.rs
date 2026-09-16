@@ -143,6 +143,7 @@ const LAYOUT_FILES: &[(&str, &str)] = &[
     ("gamecube", include_str!("../data/layouts/gamecube.json")),
     ("ps2", include_str!("../data/layouts/ps2.json")),
     ("switch", include_str!("../data/layouts/switch.json")),
+    ("wiiu", include_str!("../data/layouts/wiiu.json")),
     ("genesis", include_str!("../data/layouts/genesis.json")),
 ];
 
