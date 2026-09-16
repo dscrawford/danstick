@@ -82,6 +82,39 @@ class Identity:
     version: int
 
 
+def version_for(player: int) -> int:
+    """The version a player's clone advertises: the player number itself.
+
+    padmap is the layer that makes controllers work the same everywhere, so a
+    consumer that cannot tell two of its pads apart is padmap's problem to
+    solve rather than the consumer's to be blamed for.
+
+    Ryujinx is the one that forces this. It builds its device id from the SDL
+    GUID and then blanks the name checksum -- "Remove the first 4 char of the
+    guid (CRC part) to make it stable", says its own comment -- and that
+    checksum was the only field distinguishing padmap's pads from each other.
+    Four players collapsed to one id, leaving the binding to depend on SDL
+    connection order.
+
+    The version is the right field to move because it is the one SDL's own
+    matching ignores. Measured: two pads identical but for their version got
+    distinct GUIDs and *both* were still matched to "Xbox 360 Controller" out
+    of SDL's built-in database. So mirror mode keeps working -- a controller
+    nobody has mapped still behaves as it did before padmap existed -- while
+    every consumer downstream now sees N distinct devices.
+
+    Nothing else keys on it: RetroArch's autoconfig matches on name and
+    vid/pid, and a stored profile is filed under the *physical* pad's
+    signature. The GUIDs change, and padmap rewrites everything keyed on them
+    on the same pass.
+
+    Player 0 means "no particular player" and keeps the old constant, so a
+    caller that has no player number gets a stable answer rather than one that
+    collides with player zero.
+    """
+    return PADMAP_VERSION if player <= 0 else player
+
+
 def identity_mode() -> str:
     """`mirror` (default) or `padmap`.
 
@@ -116,7 +149,7 @@ def identity_mode() -> str:
 
 
 def identity_for(
-    pad: Pad, source: evdev.InputDevice | None = None
+    pad: Pad, source: evdev.InputDevice | None = None, player: int = 0
 ) -> Identity:
     """The identity a pad's virtual counterpart will advertise.
 
@@ -127,7 +160,7 @@ def identity_for(
     """
     if identity_mode() == IDENTITY_PADMAP:
         return Identity(PADMAP_VID, PADMAP_PID, ecodes.BUS_VIRTUAL,
-                        PADMAP_VERSION)
+                        version_for(player))
 
     info = None
     device = source
@@ -146,8 +179,9 @@ def identity_for(
         # Deliberately the same answer padmap mode gives, so a pad that cannot
         # be read still has *one* identity rather than two half-applied ones.
         return Identity(PADMAP_VID, PADMAP_PID, ecodes.BUS_VIRTUAL,
-                        PADMAP_VERSION)
-    return Identity(info.vendor, info.product, info.bustype, info.version)
+                        version_for(player))
+    return Identity(info.vendor, info.product, info.bustype,
+                    version_for(player))
 
 # Event types that flow controller -> host. EV_FF and EV_FF_STATUS travel the
 # other way and are handled separately.
@@ -255,7 +289,7 @@ def create(pad: Pad, player: int, grab: bool = True) -> VirtualPad:
     # identity_for, which is the only place that decides, because a GUID
     # written from one answer and a device created from another is a mapping
     # that is simply never matched, with nothing said by anyone.
-    identity = identity_for(pad, source)
+    identity = identity_for(pad, source, player)
     ui = evdev.UInput(
         events=_capabilities_for(source),
         name=virtual_name(player),

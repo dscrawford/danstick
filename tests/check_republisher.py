@@ -613,9 +613,17 @@ def check_identity_is_mirrored_by_default() -> None:
                  f"{src.device.info.product:#06x}")
         ok("the clone carries the source's vendor and product ids")
 
-        if info.version != 0x0102:
-            fail(f"version {info.version:#06x} != 0x0102")
-        ok("the clone carries the source's version")
+        # The version is the one field mirroring deliberately does *not*
+        # carry: it holds the player number instead. A consumer that blanks
+        # the GUID's name checksum -- Ryujinx does, to make its device id
+        # "stable" -- would otherwise see every padmap pad as one device.
+        # SDL ignores the version when matching its database, measured, so
+        # nothing about mirroring's purpose is lost.
+        expected = virtual.version_for(vpad.player)
+        if info.version != expected:
+            fail(f"version {info.version:#06x} != {expected:#06x}")
+        ok(f"the clone's version is its player number ({expected}), not the "
+           f"source's 0x0102")
 
         if info.bustype != ecodes.BUS_USB:
             fail(f"bus {info.bustype} != BUS_USB; SDL's database is keyed on a "
@@ -651,9 +659,11 @@ def check_padmap_identity_mode() -> None:
             fail(f"bus is {info.bustype}, not BUS_VIRTUAL")
         ok("the bus is BUS_VIRTUAL")
 
-        if info.version != virtual.PADMAP_VERSION:
-            fail(f"version {info.version} != {virtual.PADMAP_VERSION}")
-        ok("the version is padmap's own, not the source's 0x0102")
+        expected = virtual.version_for(vpad.player)
+        if info.version != expected:
+            fail(f"version {info.version} != {expected}")
+        ok(f"the version is the player number ({expected}), not the "
+           f"source's 0x0102")
     finally:
         os.environ.pop("PADMAP_PAD_IDENTITY", None)
         bench.close()

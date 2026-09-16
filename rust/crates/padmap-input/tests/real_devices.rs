@@ -180,12 +180,14 @@ fn a_clone_mirrors_the_source_and_carries_padmaps_own_name() {
     let identity = clone::Identity::for_source(
         clone::IdentityMode::Mirror,
         &Device::open(&found.path).expect("open"),
+        3,
     );
     assert_eq!((identity.vendor, identity.product), (VID, PID));
 
     let padmap_identity = clone::Identity::for_source(
         clone::IdentityMode::Padmap,
         &Device::open(&found.path).expect("open"),
+        3,
     );
     assert_ne!(
         (padmap_identity.vendor, padmap_identity.product),

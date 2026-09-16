@@ -30,27 +30,32 @@ profile alone is not enough — padmap's mapping has to reach it through
 the profile and not the variable produces a profile naming a controller that
 does not appear in the list.
 
-**Ryujinx cannot tell padmap's pads apart.** It builds its device id from the
-SDL GUID and then blanks the name CRC — its own comment says "Remove the first
-4 char of the guid (CRC part) to make it stable". That CRC is the only thing
-distinguishing padmap's pads:
+**Ryujinx could not tell padmap's pads apart, so padmap changed.** It builds
+its device id from the SDL GUID and blanks the name CRC — its own comment says
+"Remove the first 4 char of the guid (CRC part) to make it stable". That CRC
+was the only thing distinguishing padmap's pads, so four players collapsed to
+one id and the binding fell back to SDL connection order.
+
+padmap is the abstraction layer, so this is padmap's problem and not a caveat
+to hand the user. Each clone now advertises **the player number as its GUID
+version** — a field Ryujinx preserves and SDL's own matching ignores:
 
 ```
-0600c9a7091200000100000001000000  ->  0-00000006-1209-0000-0100-000001000000
-060089a6091200000100000001000000  ->  0-00000006-1209-0000-0100-000001000000
-06004866091200000100000001000000  ->  0-00000006-1209-0000-0100-000001000000
-060009a4091200000100000001000000  ->  0-00000006-1209-0000-0100-000001000000
+player 1  0-00000006-1209-0000-0100-000001000000
+player 2  0-00000006-1209-0000-0100-000002000000
+player 3  0-00000006-1209-0000-0100-000003000000
+player 4  0-00000006-1209-0000-0100-000004000000
 ```
 
-Four GUIDs, one id. What separates them is a `n-` prefix that is SDL
-*connection order*, so the binding is only as stable as the order padmap
-creates its clones in. `ryujinx::device_id` takes that ordinal as an argument
-rather than pretending the id is a property of the device.
+Measured, not assumed: two pads identical but for their version got distinct
+GUIDs and *both* were still matched to "Xbox 360 Controller" out of SDL's
+built-in database. So mirror mode keeps working — a controller nobody has
+mapped still behaves as it did before padmap existed — and nothing else keys
+on the field. RetroArch matches on name and vid/pid; a stored capture is filed
+under the *physical* pad's signature.
 
-Varying the product id per player would fix it, and is deliberately not done:
-in mirror mode the product is the source controller's, which is what makes
-SDL's own database match the pad, and changing it would move every stored
-mapping to a GUID nothing looks up.
+This is the one field mirroring deliberately does not carry, and
+`virtual.version_for` says so.
 
 ## Why the button tables are constant
 
@@ -79,8 +84,10 @@ it does not recognise, so a misspelling leaves the control dead and silent.
 
 ## Not wired up yet
 
-The emitters and the file writers exist and are tested. What does not exist yet
-is the daemon calling them when assignments change, the way it already calls
-`write_sdl_database` and `install_profiles`, and setting
-`SDL_GAMECONTROLLERCONFIG` in the launch environment. Until that lands these are
-libraries with no caller.
+The emitters, the writers and the identity change are done and tested. What
+does not exist yet is the daemon calling them when assignments change, the way
+it already calls `write_sdl_database` and `install_profiles`, and putting
+`SDL_GAMECONTROLLERCONFIG` into the environment a game is launched with.
+
+Until that lands, `emit::sdl_config_value` and the three writers are libraries
+with no caller.

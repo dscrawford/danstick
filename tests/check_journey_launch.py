@@ -777,11 +777,23 @@ def check_two_players_are_two_players() -> None:
         fail(f"both virtual pads compute the SDL GUID {guids[1]}; the ids are "
              f"identical, so the name checksum is the only field that differs "
              f"-- one mapping line would then match both players")
-    if guids[1][:4] != guids[2][:4] or guids[1][8:] != guids[2][8:]:
-        fail(f"the GUIDs differ somewhere other than the name checksum "
-             f"({guids[1]} vs {guids[2]}), which means the identity padmap "
-             f"advertises is not what it thinks it is")
-    ok(f"GUIDs differ only in the name CRC: {guids[1][4:8]} vs {guids[2][4:8]}")
+    # The checksum and the version may differ between players; nothing else
+    # may. padmap puts the player number in the version deliberately -- a
+    # consumer that blanks the checksum, as Ryujinx does to make its device id
+    # "stable", would otherwise see every player as one device. SDL ignores
+    # both fields when matching its database, so mirror mode is unaffected.
+    def comparable(guid: str) -> str:
+        return guid[:4] + guid[8:24] + guid[28:]
+
+    if comparable(guids[1]) != comparable(guids[2]):
+        fail(f"the GUIDs differ somewhere other than the name checksum and "
+             f"the version ({guids[1]} vs {guids[2]}), which means the "
+             f"identity padmap advertises is not what it thinks it is")
+    if guids[1][24:28] == guids[2][24:28]:
+        fail(f"both players advertise version {guids[1][24:28]}; a consumer "
+             f"that blanks the name checksum cannot then tell them apart")
+    ok(f"GUIDs differ in the CRC ({guids[1][4:8]} vs {guids[2][4:8]}) and the "
+       f"version ({guids[1][24:28]} vs {guids[2][24:28]})")
 
     dest = Path(tempfile.mkdtemp(dir=_SANDBOX))
     retroarch.install_profiles(assignments, dest=dest)

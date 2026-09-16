@@ -5,7 +5,7 @@
 //! for the same reason Cemu's is: padmap's clone is already presented to SDL
 //! as a standard gamepad, and Ryujinx reads it through SDL's gamepad layer.
 //!
-//! # The device id collides, and it cannot be fixed here
+//! # The device id used to collide, and padmap fixes it upstream
 //!
 //! Ryujinx builds its device id from the SDL GUID and then **blanks the name
 //! CRC** -- its own comment says "Remove the first 4 char of the guid (CRC
@@ -22,15 +22,24 @@
 //! 060009a4091200000100000001000000  ->  0-00000006-1209-0000-0100-000001000000
 //! ```
 //!
-//! Four distinct GUIDs, one id. Ryujinx separates them with the `n-` prefix,
-//! which is SDL *connection order* -- so the binding is only as stable as the
-//! order the clones are created in. padmap controls that order, and
-//! [`device_id`] takes it as an argument rather than pretending otherwise.
+//! Four distinct GUIDs, one id -- leaving the binding to depend on SDL
+//! connection order, via the `n-` prefix.
 //!
-//! Varying the product id per player would make it deterministic, and is not
-//! done here: in mirror mode the product is the source controller's, which is
-//! what makes SDL's own database match the pad, and changing it would move
-//! every existing stored mapping to a GUID nothing looks up.
+//! padmap is the abstraction layer, so this is padmap's problem rather than
+//! Ryujinx's fault. `clone::version_for` now puts the **player number in the
+//! GUID's version field**, which Ryujinx preserves and SDL's own database
+//! matching ignores -- measured: two pads identical but for their version got
+//! distinct GUIDs and both still matched "Xbox 360 Controller" from SDL's
+//! built-in database. Every player now has a distinct id:
+//!
+//! ```text
+//! 0600c9a7091200000100000001000000  ->  0-00000006-1209-0000-0100-000001000000
+//! 060089a6091200000100000002000000  ->  0-00000006-1209-0000-0100-000002000000
+//! ```
+//!
+//! The ordinal remains an argument because it is Ryujinx's to assign when two
+//! devices really do collide -- two identical physical pads in mirror mode
+//! still can -- but for padmap's own pads it is always zero.
 
 use serde_json::{json, Value};
 

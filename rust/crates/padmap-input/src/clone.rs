@@ -17,6 +17,7 @@ use evdev::{
 };
 use log::{info, warn};
 use padmap_core::calibration::AxisCalibration;
+use padmap_core::emit::version_for;
 
 use crate::pad::{Pad, VIRTUAL_PHYS_PREFIX};
 use crate::triton;
@@ -26,7 +27,7 @@ use crate::triton;
 /// any autoconfig heuristic that matches on vid/pid.
 pub const PADMAP_VID: u16 = 0x1209;
 pub const PADMAP_PID: u16 = 0x0001;
-pub const PADMAP_VERSION: u16 = 0x0001;
+pub use padmap_core::emit::PADMAP_VERSION;
 const BUS_VIRTUAL: u16 = 0x06;
 
 pub const ENV_IDENTITY: &str = "PADMAP_PAD_IDENTITY";
@@ -129,16 +130,20 @@ impl Identity {
     /// The single place this is decided. Everything that computes an SDL GUID
     /// or writes a vid/pid has to agree with what the device actually reports,
     /// and disagreement is silent in both directions.
-    pub fn for_source(mode: IdentityMode, source: &Device) -> Identity {
+    pub fn for_source(mode: IdentityMode, source: &Device, player: u32) -> Identity {
+        let version = version_for(player);
         match mode {
-            IdentityMode::Padmap => Identity::PADMAP,
+            IdentityMode::Padmap => Identity {
+                version,
+                ..Identity::PADMAP
+            },
             IdentityMode::Mirror => {
                 let id = source.input_id();
                 Identity {
                     vendor: id.vendor(),
                     product: id.product(),
                     bustype: id.bus_type().0,
-                    version: id.version(),
+                    version,
                 }
             }
         }
@@ -377,12 +382,15 @@ pub fn create(
         // how it is attached and the bus is the field SDL's database is keyed
         // on.
         let identity = match mode {
-            IdentityMode::Padmap => Identity::PADMAP,
+            IdentityMode::Padmap => Identity {
+                version: version_for(player),
+                ..Identity::PADMAP
+            },
             IdentityMode::Mirror => Identity {
                 vendor: pad.vid,
                 product: pad.pid,
                 bustype: BusType::BUS_USB.0,
-                version: 0,
+                version: version_for(player),
             },
         };
         let (keys, axes) = source.capabilities();
@@ -402,7 +410,7 @@ pub fn create(
                 );
             }
         }
-        let identity = Identity::for_source(mode, &source);
+        let identity = Identity::for_source(mode, &source, player);
         let clone = build_clone(&source, player, identity)
             .map_err(|error| CloneError::Build(player, error))?;
         (Source::Evdev(Box::new(source)), identity, clone)

@@ -701,12 +701,25 @@ const PADMAP_IDENTITY: padmap_core::emit::Identity = padmap_core::emit::Identity
     version: 0x0001,
 };
 
+/// The same, with the version carrying the player number.
+///
+/// padmap puts the player in that field so that consumers which cannot
+/// otherwise tell its pads apart -- Ryujinx blanks the name CRC -- still see
+/// N distinct devices. Anything computing a GUID has to use the same one the
+/// clone advertises, or it writes a mapping under a GUID nothing looks up.
+fn identity_for(player: u32) -> padmap_core::emit::Identity {
+    padmap_core::emit::Identity {
+        version: padmap_core::emit::version_for(player),
+        ..PADMAP_IDENTITY
+    }
+}
+
 #[test]
 fn a_virtual_pads_guid_is_the_one_the_python_computed() {
     for case in corpus("virtual_guids") {
         let player = case["in"]["player"].as_u64().expect("player") as u32;
         assert_eq!(
-            padmap_core::emit::virtual_guid(player, PADMAP_IDENTITY),
+            padmap_core::emit::virtual_guid(player, identity_for(player)),
             case["out"].as_str().expect("a guid"),
             "player {player}"
         );

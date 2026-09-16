@@ -971,7 +971,7 @@ def check_vendor_zero() -> None:
     print("\nS15: a pad that reports vendor 0 and product 0")
     zero = virtual.Identity(0, 0, 0x03, 0x0111)
     real_identity = controllercfg.identity_for
-    controllercfg.identity_for = lambda _pad: zero
+    controllercfg.identity_for = lambda _pad, source=None, player=0: zero
     try:
         captured = controllercfg.retroarch_profile(
             1, pad("Zero Ids", 0, 0), {"a": Binding("button", 1)}, layout="")

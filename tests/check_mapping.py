@@ -872,22 +872,37 @@ def check_identity_modes() -> None:
                                     product=identity.product,
                                     version=identity.version)
         physical = mapping.sdl_guid(name=FIGHTSTICK_NAME, **FIGHTSTICK_IDS_GUID)
-        if mirrored[:4] + mirrored[8:] != physical[:4] + physical[8:]:
+        # Bus, vendor and product must match; the name checksum and the
+        # *version* may differ. Both are fields SDL ignores when matching,
+        # which is measured rather than assumed: two pads identical but for
+        # their version were both resolved to "Xbox 360 Controller" out of
+        # SDL's built-in database.
+        #
+        # The version is where padmap puts the player number, so that a
+        # consumer which blanks the checksum -- Ryujinx does, to make its
+        # device id "stable" -- can still tell one padmap pad from another.
+        # See virtual.version_for.
+        def comparable(guid: str) -> str:
+            return guid[:4] + guid[8:24] + guid[28:]
+
+        if comparable(mirrored) != comparable(physical):
             raise SystemExit(
                 f"FAIL: {mirrored} and {physical} differ outside the name "
-                f"checksum, so SDL would not match the same entry")
+                f"checksum and the version, so SDL would not match the same "
+                f"entry")
         if mirrored == physical:
             raise SystemExit(
                 "FAIL: identical -- the virtual pad is not distinguishable "
                 "from the controller behind it")
-        # SDL zeroes bytes 2-3 (the name checksum) before comparing, which is
-        # measured, not assumed: a GUID with these ids and a different name
-        # resolved to the same database entry.
+        # SDL zeroes bytes 2-3 (the name checksum) before comparing and
+        # ignores the version, both measured rather than assumed: a GUID with
+        # these ids and a different name resolved to the same database entry,
+        # and so did two differing only in version.
         print(f"  ok  {mirrored} vs {physical}")
 
         print("\nthe whole chain uses it, not just the device:")
         real = controllercfg.identity_for
-        controllercfg.identity_for = lambda p, source=None: identity
+        controllercfg.identity_for = lambda p, source=None, player=0: identity
         try:
             line = controllercfg.sdl_line_for(1, {"a": Binding("button", 1)},
                                               pad=pad)

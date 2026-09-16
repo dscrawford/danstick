@@ -37,6 +37,38 @@ pub struct Identity {
 ///
 /// Every input is known in advance -- padmap creates the device -- so a mapping
 /// can be written before SDL has ever seen it.
+/// The version a clone with no particular player advertises.
+pub const PADMAP_VERSION: u16 = 0x0001;
+
+/// The version a player's clone advertises: the player number itself.
+///
+/// padmap is the layer that makes controllers work the same everywhere, so a
+/// consumer that cannot tell two of its pads apart is padmap's problem rather
+/// than the consumer's fault.
+///
+/// Ryujinx forces this. It builds its device id from the SDL GUID and blanks
+/// the name checksum -- "Remove the first 4 char of the guid (CRC part) to
+/// make it stable" -- and that checksum was the only field distinguishing
+/// padmap's pads. Four players collapsed to one id, leaving the binding to
+/// depend on SDL connection order.
+///
+/// The version is the field to move because it is the one SDL's own matching
+/// ignores. Measured: two pads identical but for their version got distinct
+/// GUIDs and *both* were still matched to "Xbox 360 Controller" from SDL's
+/// built-in database. Mirror mode keeps working and every consumer downstream
+/// now sees N distinct devices.
+///
+/// Nothing else keys on it -- RetroArch matches on name and vid/pid, a stored
+/// profile is filed under the *physical* pad's signature -- and padmap
+/// rewrites everything that does key on the GUID on the same pass.
+pub fn version_for(player: u32) -> u16 {
+    if player == 0 {
+        PADMAP_VERSION
+    } else {
+        player.min(u32::from(u16::MAX)) as u16
+    }
+}
+
 pub fn virtual_guid(player: u32, identity: Identity) -> String {
     sdl::guid(
         identity.bustype,
@@ -207,6 +239,35 @@ pub fn rewrite_sdl_database(
         body.push(line.clone());
     }
     body.join("\n") + "\n"
+}
+
+/// The environment a consumer should be launched with.
+///
+/// Some readers have no controller database of their own. Cemu loads no
+/// `gamecontrollerdb.txt` at all and only lists devices SDL already recognises
+/// as gamepads, so without this padmap's pads do not appear in it -- not
+/// misconfigured, absent. Ryujinx does have a database file and overwrites it
+/// from the internet on launch, so writing to that file is no better.
+///
+/// SDL reads this variable directly, ahead of everything else, and merges it
+/// with whatever else it knows. It is the one delivery mechanism no consumer
+/// can take away, which is why padmap uses it rather than asking each one
+/// nicely.
+///
+/// padmap is the abstraction layer. A consumer that cannot see a controller is
+/// padmap's problem to solve, not the user's to work around.
+pub const SDL_CONFIG_ENV: &str = "SDL_GAMECONTROLLERCONFIG";
+
+/// Every mapping padmap publishes, as one value for [`SDL_CONFIG_ENV`].
+///
+/// Newline-separated, which is what SDL's own parser expects -- it reads the
+/// variable with the same reader it uses for a database file.
+pub fn sdl_config_value(lines: &BTreeMap<u32, String>) -> String {
+    lines
+        .values()
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 #[cfg(test)]

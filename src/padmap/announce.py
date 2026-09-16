@@ -117,7 +117,8 @@ def _virtual_fields(entry: Attached) -> dict[str, Any]:
     # 1209:0001. Either way it is what the clone advertises, and a consumer
     # matching on vid/pid has to be told the advertised one rather than the
     # hardware's -- they differ exactly when it matters.
-    identity = entry.identity or virtual.identity_for(entry.pad)
+    identity = entry.identity or virtual.identity_for(
+        entry.pad, player=entry.player)
     name = virtual.virtual_name(entry.player)
     return {
         "name": name,

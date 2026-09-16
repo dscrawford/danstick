@@ -13,9 +13,9 @@ use serde_json::Value;
 /// padmap's own GUIDs for players 1..4, in padmap identity mode.
 const PADMAP_GUIDS: [&str; 4] = [
     "0600c9a7091200000100000001000000",
-    "060089a6091200000100000001000000",
-    "06004866091200000100000001000000",
-    "060009a4091200000100000001000000",
+    "060089a6091200000100000002000000",
+    "06004866091200000100000003000000",
+    "060009a4091200000100000004000000",
 ];
 
 #[test]
@@ -33,30 +33,41 @@ fn the_id_is_the_guid_rearranged_with_the_crc_blanked() {
 }
 
 #[test]
-fn every_padmap_pad_collapses_to_the_same_id() {
-    // Not a bug being tested for -- a constraint being pinned. If a future
-    // change to padmap's identity makes these distinct, this test fails and
-    // whoever changed it can delete the ordinal plumbing that exists only
-    // because of this.
+fn every_padmap_pad_gets_its_own_id() {
+    // It did not always. Ryujinx blanks the name CRC out of the GUID, and
+    // that CRC was the only field distinguishing padmap's pads -- four
+    // players collapsed to one id and the binding fell back to SDL
+    // connection order.
+    //
+    // padmap is the abstraction layer, so it fixed that upstream rather than
+    // documenting it: `clone::version_for` puts the player number in the
+    // version field, which Ryujinx keeps and SDL's database matching ignores.
+    // This is the test that says so.
     let ids: Vec<String> = PADMAP_GUIDS
         .iter()
         .map(|guid| ryujinx::device_id(guid, 0).expect("a valid guid"))
         .collect();
     let distinct: std::collections::BTreeSet<&String> = ids.iter().collect();
-    assert_eq!(PADMAP_GUIDS.len(), 4, "four distinct GUIDs going in");
     assert_eq!(
         distinct.len(),
-        1,
-        "and they no longer collapse to one Ryujinx id: {distinct:?}"
+        PADMAP_GUIDS.len(),
+        "players share an id again: {ids:?}"
     );
+    // And with no help from the ordinal, so the binding does not depend on
+    // the order the clones happened to be created in.
+    assert!(ids.iter().all(|id| id.starts_with("0-")), "{ids:?}");
+}
 
-    // Which is why the ordinal has to do the separating.
-    let separated: std::collections::BTreeSet<String> = PADMAP_GUIDS
-        .iter()
-        .enumerate()
-        .map(|(at, guid)| ryujinx::device_id(guid, at as u32).expect("valid"))
-        .collect();
-    assert_eq!(separated.len(), 4);
+#[test]
+fn only_the_name_crc_is_blanked() {
+    // The fix relies on the version surviving. If a future Ryujinx blanked
+    // more of the GUID, the ids would collide again silently.
+    let a = ryujinx::device_id("0600c9a7091200000100000001000000", 0).expect("valid");
+    let b = ryujinx::device_id("0600ffff091200000100000001000000", 0).expect("valid");
+    assert_eq!(a, b, "the CRC must not reach the id");
+
+    let versioned = ryujinx::device_id("0600c9a7091200000100000002000000", 0).expect("valid");
+    assert_ne!(a, versioned, "the version must reach the id");
 }
 
 #[test]
@@ -87,13 +98,15 @@ fn a_and_b_are_mirrored_the_way_nintendo_labels_them() {
 
 #[test]
 fn an_entry_carries_what_ryujinx_needs_to_read_it() {
-    let entry = ryujinx::input_config(2, PADMAP_GUIDS[1], "padmap Player 2", 1).expect("an entry");
+    // Ordinal zero: padmap's pads no longer collide, so nothing has to
+    // disambiguate them.
+    let entry = ryujinx::input_config(2, PADMAP_GUIDS[1], "padmap Player 2", 0).expect("an entry");
     assert_eq!(entry["backend"], "GamepadSDL2");
     assert_eq!(entry["version"], 1);
     assert_eq!(entry["player_index"], "Player2");
     assert_eq!(entry["controller_type"], "ProController");
     assert_eq!(entry["name"], "padmap Player 2");
-    assert_eq!(entry["id"], "1-00000006-1209-0000-0100-000001000000");
+    assert_eq!(entry["id"], "0-00000006-1209-0000-0100-000002000000");
     // The objects a gamepad entry has and a keyboard entry does not.
     for field in [
         "left_joycon_stick",

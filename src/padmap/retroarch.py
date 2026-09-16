@@ -364,7 +364,7 @@ def profile_text(
     # coincide in mirror mode and do not in padmap mode, and a profile
     # claiming a vid/pid the device does not report scores against itself in
     # RetroArch's autoconfig matching.
-    identity = virtual.identity_for(pad)
+    identity = virtual.identity_for(pad, player=player)
     return derive_profile(
         source, player, vid=identity.vendor, pid=identity.product)
 
