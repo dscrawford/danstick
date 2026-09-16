@@ -13,9 +13,11 @@
 
         pythonEnv = pkgs.python3.withPackages (ps: with ps; [
           evdev # raw /dev/input access + uinput device creation
-          # Only for the last-resort lookup in controllercfg: asking SDL what
-          # mapping it already has for a GUID, in a subprocess so SDL is never
-          # loaded into the daemon. Goes when that moves to Rust.
+          # Test-only: tests/check_sdl_live.py drives real SDL against a
+          # uinput pad to prove a mapping added mid-session rebinds an open
+          # controller. Runtime asks SDL through `padmap-rs sdl-mapping`,
+          # which links SDL3 directly; this reaches the same SDL3 through
+          # sdl2-compat. Goes when that test is ported.
           pysdl2
           mypy
         ]);
@@ -91,8 +93,10 @@
             --bin padmap-rs -- "$@"
         '';
 
-        # Everything a crate that opens a device node needs to link.
-        rustBuildInputs = [ pkgs.udev ];
+        # Everything a crate that opens a device node needs to link -- and
+        # SDL3, for the one question only SDL can answer: what its built-in
+        # database says about a GUID. See padmap-input/src/sdlprobe.rs.
+        rustBuildInputs = [ pkgs.udev pkgs.sdl3 ];
         rustNativeBuildInputs = [ pkgs.pkg-config ];
 
         # The whole workspace, built and tested in the sandbox.
@@ -117,6 +121,7 @@
             autoconfig
             pkgs.evsieve # reference implementation of evdev republishing
             pkgs.udev # udevadm, for inspecting ID_INPUT_JOYSTICK
+            pkgs.sdl3 # linked by padmap-rs for `sdl-mapping`
             pkgs.evemu # replay a recorded device, for latency measurement
             pkgs.linuxPackages.perf # where the forwarding path actually goes
             devPadmap # `padmap ...`, running the working tree

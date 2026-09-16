@@ -6,6 +6,8 @@
 //!     padmap-rs emit     write the emulator config files, from JSON on stdin
 //!     padmap-rs exec     run a program with padmap's mappings in its
 //!                        environment
+//!     padmap-rs sdl-mapping <guid>
+//!                        what SDL's built-in database says about a GUID
 //!
 //! Deliberately not the whole of `padmap`. The daemon's socket protocol, the
 //! assignment session, the mapping wizard and every offline command stay in
@@ -46,6 +48,7 @@ fn main() -> Result<()> {
         Some("run") => cmd_run(),
         Some("emit") => cmd_emit(),
         Some("exec") => cmd_exec(args.collect()),
+        Some("sdl-mapping") => cmd_sdl_mapping(args.next()),
         Some(other) => {
             eprintln!("padmap-rs: unknown command {other:?}");
             usage();
@@ -59,7 +62,29 @@ fn main() -> Result<()> {
 }
 
 fn usage() {
-    eprintln!("usage: padmap-rs list | hide | run | emit | exec -- <program> [args...]");
+    eprintln!(
+        "usage: padmap-rs list | hide | run | emit | exec -- <program> [args...] | \
+         sdl-mapping <guid>"
+    );
+}
+
+/// Print SDL's own mapping line for a GUID, or nothing.
+///
+/// A process of its own on purpose: `SDL_Init` starts threads and enumerates
+/// every joystick, and the daemon that asks holds those same devices grabbed.
+/// See `padmap_input::sdlprobe`. Exit 0 with empty output is "SDL has never
+/// heard of it", which is the ordinary answer and not a failure.
+fn cmd_sdl_mapping(guid: Option<String>) -> Result<()> {
+    let Some(guid) = guid else {
+        eprintln!("usage: padmap-rs sdl-mapping <guid>");
+        std::process::exit(2);
+    };
+    match padmap_input::sdlprobe::builtin_mapping(&guid) {
+        Ok(Some(line)) => println!("{line}"),
+        Ok(None) => {}
+        Err(error) => anyhow::bail!("{error}"),
+    }
+    Ok(())
 }
 
 /// Write the emulator config files for the pads described on stdin.

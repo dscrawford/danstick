@@ -18,7 +18,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from . import devices, layouts, mapping, profiles, virtual
+from . import devices, emulators, layouts, mapping, profiles, virtual
 from .devices import Pad
 from .mapping import Binding
 from .virtual import (PADMAP_PID, PADMAP_VERSION, PADMAP_VID, VIRTUAL_PREFIX,
@@ -390,21 +390,10 @@ def _binding_fields(fields: dict[str, str]) -> dict[str, str]:
 #
 # SDL's built-in database is compiled into the library as a C array, so there
 # is no file to read; the library itself is the only place it exists. The
-# lookup runs in a subprocess so the daemon never loads SDL, never holds its
-# threads, and cannot be taken down by it -- and with every device ignored, so
-# the probe opens no controllers at all. Verified: `joysticks 0`, and the
-# Fightstick's mapping still returned, in 0.4s.
-_SDL_PROBE = """
-import ctypes, sys
-import sdl2
-sdl2.SDL_Init(sdl2.SDL_INIT_GAMECONTROLLER)
-guid = sdl2.SDL_JoystickGetGUIDFromString(sys.argv[1].encode())
-found = sdl2.SDL_GameControllerMappingForGUID(guid)
-if found:
-    sys.stdout.write(ctypes.cast(found, ctypes.c_char_p).value.decode())
-sdl2.SDL_Quit()
-"""
-
+# lookup is `padmap-rs sdl-mapping`, a process of its own, so the daemon never
+# loads SDL, never holds its threads, and cannot be taken down by it. That
+# binary sets the hints that keep SDL from opening any controller -- verified:
+# `joysticks 0`, and the Fightstick's mapping still returned.
 _builtin_cache: dict[str, dict[str, str]] = {}
 
 
@@ -417,26 +406,22 @@ def sdl_builtin_fields(guid: str) -> dict[str, str]:
     if guid in _builtin_cache:
         return _builtin_cache[guid]
 
-    environment = dict(os.environ)
-    # Enumerating devices is not wanted and is not free -- and doing it while
-    # the daemon holds EVIOCGRAB on those same pads is worth avoiding on
-    # principle. A vid/pid no device has leaves SDL with the database loaded
-    # and nothing open.
-    environment["SDL_GAMECONTROLLER_IGNORE_DEVICES_EXCEPT"] = "0xffff/0xffff"
-    environment["SDL_VIDEODRIVER"] = "dummy"
-    # SDL reads these two itself, and the file scan above has already covered
-    # them -- with the check that skips padmap's own lines, which SDL has no
-    # way to make. Leaving them set fed a line padmap wrote straight back to
-    # it as though the controller had come with it.
-    environment.pop("SDL_GAMECONTROLLERCONFIG", None)
-    environment.pop("SDL_GAMECONTROLLERCONFIG_FILE", None)
+    binary = emulators.binary()
+    if binary is None:
+        log.debug("no padmap-rs; SDL's built-in database is not consulted")
+        _builtin_cache[guid] = {}
+        return {}
     try:
         result = subprocess.run(
-            [sys.executable, "-c", _SDL_PROBE, guid],
-            capture_output=True, text=True, timeout=15, env=environment,
+            [binary, "sdl-mapping", guid],
+            capture_output=True, text=True, timeout=15, check=False,
         )
     except (OSError, subprocess.SubprocessError) as error:
         log.debug("SDL mapping probe failed: %s", error)
+        _builtin_cache[guid] = {}
+        return {}
+    if result.returncode != 0:
+        log.debug("SDL mapping probe failed: %s", result.stderr.strip())
         _builtin_cache[guid] = {}
         return {}
 
