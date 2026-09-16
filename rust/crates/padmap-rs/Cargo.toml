@@ -13,6 +13,7 @@ path = "src/main.rs"
 [dependencies]
 padmap-core = { path = "../padmap-core" }
 padmap-input = { path = "../padmap-input" }
+padmap-daemon = { path = "../padmap-daemon" }
 anyhow = "1"
 env_logger = "0.11"
 # A flag the loop reads and a handler writes, without hand-rolling the
@@ -23,6 +24,10 @@ log = "0.4"
 # a failure, and treating it as one would end the daemon on every Ctrl-Z.
 rustix = { version = "1", features = ["event", "std"] }
 serde_json = { workspace = true }
+
+[dev-dependencies]
+# The daemon journey creates a uinput pad of its own and presses it.
+evdev = "0.13"
 
 [lints]
 workspace = true

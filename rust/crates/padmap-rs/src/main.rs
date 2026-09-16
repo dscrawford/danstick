@@ -3,6 +3,7 @@
 //!     padmap-rs list     what is plugged in
 //!     padmap-rs hide     udev rules that hide the physical pads
 //!     padmap-rs run      republish the assigned pads and keep them alive
+//!     padmap-rs serve    the same, as a daemon a client drives over a socket
 //!     padmap-rs emit     write the emulator config files, from JSON on stdin
 //!     padmap-rs exec     run a program with padmap's mappings in its
 //!                        environment
@@ -46,6 +47,7 @@ fn main() -> Result<()> {
         Some("list") => cmd_list(),
         Some("hide") => cmd_hide(),
         Some("run") => cmd_run(),
+        Some("serve") => cmd_serve(),
         Some("emit") => cmd_emit(),
         Some("exec") => cmd_exec(args.collect()),
         Some("sdl-mapping") => cmd_sdl_mapping(args.next()),
@@ -63,9 +65,28 @@ fn main() -> Result<()> {
 
 fn usage() {
     eprintln!(
-        "usage: padmap-rs list | hide | run | emit | exec -- <program> [args...] | \
+        "usage: padmap-rs list | hide | run | serve | emit | exec -- <program> [args...] | \
          sdl-mapping <guid>"
     );
+}
+
+/// The daemon.
+///
+/// SIGTERM has to release the grabs: without a handler an open session keeps
+/// EVIOCGRAB on every pad as the process dies, leaving the machine with no
+/// working controllers. Ask the loop to exit instead, so the normal teardown
+/// runs -- and install the handlers *after* restore, so a restart interrupted
+/// mid-restore still tears down through the same path.
+fn cmd_serve() -> Result<()> {
+    let mut server = padmap_daemon::server::Server::new().context("preparing the daemon")?;
+    server.start().context("starting the daemon")?;
+    server.restore();
+    let stop = Arc::new(AtomicBool::new(false));
+    install_signal_handlers(&stop)?;
+    server.run(&stop);
+    info!("terminating");
+    server.close();
+    Ok(())
 }
 
 /// Print SDL's own mapping line for a GUID, or nothing.

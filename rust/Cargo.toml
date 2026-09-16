@@ -18,6 +18,7 @@ resolver = "2"
 members = [
     "crates/padmap-core",
     "crates/padmap-input",
+    "crates/padmap-daemon",
     "crates/padmap-rs",
 ]
 

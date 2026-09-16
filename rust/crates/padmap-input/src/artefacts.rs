@@ -335,6 +335,15 @@ pub fn retroarch_config_dir() -> PathBuf {
 /// falls back to globbing the Nix store, which can pick an older autoconfig
 /// package at random.
 pub fn autoconfig_dirs() -> Vec<PathBuf> {
+    // Once per process. Listing /nix/store is tens of thousands of entries,
+    // and this is reached from the daemon's tick -- on the thread that
+    // forwards controller events. The set of installed databases does not
+    // change while the daemon runs; a new one arrives with a new daemon.
+    static DIRS: std::sync::OnceLock<Vec<PathBuf>> = std::sync::OnceLock::new();
+    DIRS.get_or_init(scan_autoconfig_dirs).clone()
+}
+
+fn scan_autoconfig_dirs() -> Vec<PathBuf> {
     let mut dirs: Vec<PathBuf> = Vec::new();
     if let Ok(value) = std::env::var("PADMAP_AUTOCONFIG_DIRS") {
         dirs.extend(
@@ -396,6 +405,27 @@ fn profiles_under(base: &Path) -> Vec<PathBuf> {
 /// settings in file order, which is what [`padmap_core::retroarch::derive_profile`]
 /// copies.
 pub fn find_profile(name: &str, vid: u16, pid: u16) -> Option<(String, Vec<(String, String)>)> {
+    // Memoised for the same reason the directory list is: a lookup reads
+    // every profile in every database, a thousand files and more, and it is
+    // asked on every hotplug and every republish for every pad. The answer
+    // for a given controller does not change while the daemon runs.
+    type Found = Option<(String, Vec<(String, String)>)>;
+    type Cache = std::sync::OnceLock<std::sync::Mutex<BTreeMap<(String, u16, u16), Found>>>;
+    static CACHE: Cache = std::sync::OnceLock::new();
+    let key = (name.to_owned(), vid, pid);
+    if let Ok(cache) = CACHE.get_or_init(Default::default).lock() {
+        if let Some(found) = cache.get(&key) {
+            return found.clone();
+        }
+    }
+    let found = scan_for_profile(name, vid, pid);
+    if let Ok(mut cache) = CACHE.get_or_init(Default::default).lock() {
+        cache.insert(key, found.clone());
+    }
+    found
+}
+
+fn scan_for_profile(name: &str, vid: u16, pid: u16) -> Option<(String, Vec<(String, String)>)> {
     let mut by_ids: Option<(String, Vec<(String, String)>)> = None;
     for base in autoconfig_dirs() {
         for path in profiles_under(&base) {
@@ -501,7 +531,7 @@ pub fn carried_fields(guid: &str) -> Option<(padmap_core::fields::Fields, String
 /// carried over: the clone has its own identity.
 const IDENTITY_FIELDS: [&str; 5] = ["platform", "crc", "hint", "sdk", "type"];
 
-fn binding_fields(fields: &padmap_core::fields::Fields) -> padmap_core::fields::Fields {
+pub fn binding_fields(fields: &padmap_core::fields::Fields) -> padmap_core::fields::Fields {
     let mut out = padmap_core::fields::Fields::new();
     for (field, target) in fields.iter() {
         if !IDENTITY_FIELDS.contains(&field.as_str()) {

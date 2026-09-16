@@ -336,6 +336,8 @@ pub fn open_source(pad: &Pad, grab: bool) -> Result<Source, CloneError> {
     }
     let mut source = Device::open(&pad.path)
         .map_err(|error| CloneError::Open(pad.path.display().to_string(), error))?;
+    // See `Source::drain`: a blocking source stops the loop dead.
+    let _ = source.set_nonblocking(true);
     if grab {
         if let Err(error) = source.grab() {
             warn!(
@@ -430,7 +432,11 @@ impl Source {
         while self.fetch_events(&mut sink).is_ok() && !sink.is_empty() {
             sink.clear();
         }
-        let _ = self.set_nonblocking(false);
+        // Left non-blocking, deliberately. Every reader of a source is
+        // epoll-driven, and epoll only promises that *one* read will not
+        // block -- a second, to finish a frame or drain the rest, blocks the
+        // whole daemon on a pad that has gone quiet. That is not a stall, it
+        // is the end: one loop serves every pad and the socket too.
     }
 }
 
@@ -513,6 +519,9 @@ pub fn create(
     } else {
         let mut source = Device::open(&pad.path)
             .map_err(|error| CloneError::Open(pad.path.display().to_string(), error))?;
+        // See `Source::drain`: epoll promises one read will not block, and
+        // the forwarder does more than one.
+        let _ = source.set_nonblocking(true);
         if grab {
             if let Err(error) = source.grab() {
                 // Worth saying out loud rather than swallowing: a failed grab
@@ -719,6 +728,41 @@ fn assemble(
 }
 
 impl VirtualPad {
+    /// `/dev/input/eventN` of the clone, as a consumer would open it.
+    ///
+    /// Asked of the kernel rather than remembered: the node appears a moment
+    /// after the device is created, and the `controller` event that names it
+    /// must not be sent before it exists.
+    pub fn node(&mut self) -> Option<String> {
+        // The eventN child of the sysfs input directory appears a moment
+        // after the device is created, so a first look right after `create`
+        // finds nothing. A short bounded wait rather than a fixed sleep:
+        // this is off the hot path (a few republishes a session), and the
+        // node is usually there on the first or second try.
+        for attempt in 0..50 {
+            if attempt > 0 {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            let found = self
+                .clone
+                .enumerate_dev_nodes_blocking()
+                .ok()
+                .and_then(|mut nodes| {
+                    nodes.find_map(|path| {
+                        path.ok().filter(|path| {
+                            path.file_name()
+                                .and_then(|n| n.to_str())
+                                .is_some_and(|n| n.starts_with("event"))
+                        })
+                    })
+                });
+            if let Some(path) = found {
+                return Some(path.display().to_string());
+            }
+        }
+        None
+    }
+
     pub fn name(&self) -> String {
         virtual_name(self.player)
     }

@@ -393,6 +393,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "padmap-daemon"
+version = "0.1.0"
+dependencies = [
+ "evdev",
+ "log",
+ "padmap-core",
+ "padmap-input",
+ "rustix",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "padmap-input"
 version = "0.1.0"
 dependencies = [
@@ -412,8 +425,10 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "env_logger",
+ "evdev",
  "log",
  "padmap-core",
+ "padmap-daemon",
  "padmap-input",
  "rustix",
  "serde_json",
