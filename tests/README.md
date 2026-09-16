@@ -2,65 +2,70 @@
 
     nix develop --command python3 tests/run.py              # everything
     nix develop --command python3 tests/run.py --coverage   # with a number
-    nix develop --command python3 tests/run.py --e2e        # plus the slow ones
+    nix develop --command python3 tests/run.py --lint       # plus fmt+clippy
 
-## Where they are, and why they are not all here
+Or, equivalently, `cd rust && cargo test`.
 
-| | count | location | why there |
-|---|---|---|---|
-| Python suites | 53 files, 380 assertions | `tests/check_*.py` | here |
-| End-to-end | 3 files | `tests/e2e_*.py` | here; start a daemon, so opt-in |
-| Rust unit | 301 | `rust/crates/*/src/**.rs` | cargo requires unit tests beside the code |
-| Rust integration | 480 | `rust/crates/*/tests/` | cargo requires these in the crate |
+## Where they are
 
-Only the Python half was a choice. Cargo will not collect `#[test]` from a
-directory outside the crate, so the Rust tests cannot move here; `tests/run.py`
-runs them where they are instead, which is the part that actually matters — one
-command, everything.
+padmap is one Rust workspace and cargo decides where tests live: unit tests
+beside the code they test, integration tests in each crate's `tests/`. There
+is no separate suite directory, and `tests/run.py` collects nothing — it
+exists so "how do I run the tests" has one answer that does not depend on
+knowing where cargo wants to be invoked from.
 
-## Why the Python suites are not pytest
+| | where | what |
+|---|---|---|
+| unit | `rust/crates/*/src/**.rs` | the decisions, exhaustively |
+| integration | `rust/crates/*/tests/` | whole files, real devices, a real daemon |
+| corpus | `rust/crates/padmap-core/tests/corpus/` | recorded answers, replayed |
 
-Each is a standalone program with a `check(name, condition, detail)` helper
-that prints a line per assertion and exits non-zero. That is deliberate. These
-tests open real device nodes, create real uinput devices, bind real sockets and
-stand up a real daemon; a framework that owns process lifetime, captures
-stdout and reorders tests got in the way more than it helped. The cost is no
-fixtures and no parametrisation, which for suites this shape has not been felt.
+## The corpus
 
-`tests/run.py` gives each suite a fresh `XDG_RUNTIME_DIR`, because several bind
-a socket or write a daemon marker and sharing one lets an earlier suite's
-leftovers decide a later one's result.
+`tests/corpus/*.json` are answers the **Python** implementation gave, recorded
+before it was deleted, and replayed by the `*_differential.rs` tests. They are
+the reason the port can be trusted: a hand-written expectation encodes what
+the porter *believed* the old code did, and that belief is the thing most
+likely to be wrong.
+
+They caught real divergences — Python's `round` is ties-to-even where Rust's
+rounds away from zero, `//` floors where `/` truncates, `str(None)` is the
+four characters `"None"`, and `title_for` read a trailing slash differently
+from the two functions that must agree with it. None of those would have been
+written into a unit test by hand.
+
+The Python is gone, so the corpus is now frozen evidence rather than something
+regenerable. A deliberate behaviour change means editing the recorded answer
+and saying why in the commit.
+
+## Tests that need real hardware
+
+Several create a uinput device and drive it: `daemon_journey.rs` stands up a
+real `padmap serve` and presses a pad at it. They **skip rather than fail**
+where `/dev/uinput` is not writable, so the suite still runs on a machine that
+cannot make one.
+
+They are safe to run on a live machine by construction: their own runtime,
+config and profile directories; `PADMAP_ONLY_DEVICE` so no real controller is
+ever grabbed; and the fixture's signature written into the live daemon's
+`prompted` file first, because creating a joystick node is not a neutral act
+while a daemon is watching for unfamiliar controllers.
+
+## Fixtures
+
+`padmap_input::fakepad` is real controllers written down: an Xbox 360 pad, an
+Xbox Series X pad and a Mayflash GameCube adapter, each citing where its
+numbers came from. The GameCube adapter is there because everything awkward
+about it is real — triggers on `ABS_RX`/`ABS_RY` resting at 24 of 0-255, which
+broke capture, re-arming and half-axis binds at once.
+
+The two controllers padmap drives over hidraw have no evdev node to build, so
+their report bytes are fixtures instead: `triton_protocol.rs` and
+`nintendo_differential.rs`.
 
 ## Coverage
 
-Measured, not estimated:
-
     nix develop --command python3 tests/run.py --coverage
 
-**89.9% of regions, 89.5% of lines** across the Rust workspace. `padmap-core`
-— every pure decision padmap makes — is 94–100% on every file.
-
-The remainder is not evenly spread, and it is worth knowing what it is:
-
-| file | cover | what is uncovered |
-|---|---|---|
-| `padmap-rs/src/main.rs` | 0% | the binary: argument dispatch, printing, the run loop |
-| `clone.rs` | 53% | force-feedback proxying, and the uinput retry path |
-| `republish.rs` | 70% | feedback, and the paused-drain branch |
-| `reactor.rs` | 81% | epoll error paths |
-
-`main.rs` is the single biggest block and the most misleading: it is 455
-regions of `println!` and `match args.next()`. Covering it means moving its
-logic into the library, which is worth doing for its own sake and is the next
-step — not writing a test that asserts a program printed something.
-
-## Adding a test
-
-Copy the shape of an existing suite. A new `tests/check_*.py` is picked up by
-`run.py` automatically; a new Rust test goes beside the code it tests, or in
-the crate's `tests/` if it needs the crate's public API only.
-
-`tests/real_devices.rs` in `padmap-input` is the pattern for anything needing
-hardware: it creates a uinput device, and skips rather than fails where
-`/dev/uinput` is not writable — a sandboxed build has no business failing over
-a device node it was never given.
+`padmap-core` — every pure decision padmap makes — is the part worth holding
+high, and is 94–100% per file.

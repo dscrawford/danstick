@@ -17,7 +17,7 @@ disagree, the code is right and this file is a bug.
 > that name a keypress ("Details", "Filters", "Prev-page", "M", a number key)
 > were describing that theme's bindings. The daemon commands they exercised
 > are all still there and still reachable over the socket
-> (`src/padmap/protocol.py` lists them), and the mapping wizard is now also
+> (`padmap-core`'s `command.rs` lists them), and the mapping wizard is now also
 > reachable from a terminal as `padmap map`. What has gone with the front-end
 > is the library browser and the collection exporter -- stories S22 and S23,
 > deleted rather than rewritten, because their subject does not exist.
@@ -61,8 +61,8 @@ daemon, not by the front-end, for the same grab reason:
 * **hold any button ~0.70 s** (`server.CONFIRM_HOLD_SECONDS`) — confirm the
   session
 
-Daemon commands and events are `src/padmap/protocol.py`; the CLI is
-`src/padmap/cli.py`; the front-end API surface is
+Daemon commands and events are `padmap-core`'s `command.rs` and `state.rs`;
+the CLI is `padmap-rs/src/{main,commands}.rs`; the front-end API surface is
 `pegasus/0001-padmap-api.patch`.
 
 ---
@@ -544,7 +544,7 @@ ones the user corrected for this console or this game specifically.
 **Keys and commands.** `Enter` (Accept) on a focused game →
 `game.launch()` → the collection's `launch:` line, which names
 `~/.local/share/padmap/bin/padmap-play`. That wrapper runs
-`python3 -m padmap.launch -- "$@"`, which does
+`padmap play -- "$@"`, which does
 `layouts.for_core(core)` → console, `profiles.game_key(console, rom)` → key,
 records the launch with `protocol.write_last_game`, and calls
 `retroarch.install_profiles(assignments, console=, game=, context=)`.
@@ -874,13 +874,12 @@ Ranked by how quiet the failure would be.
 Everything below is reachable in the shipped code and is not described by
 S1-S23. Grouped by where it lives.
 
-## CLI subcommands (`src/padmap/cli.py`)
+## CLI subcommands (`rust/crates/padmap-rs/src/`)
 
 | Command | What it does | Notes |
 |---|---|---|
 | `padmap list` | Prints the pads in RetroArch's enumeration order, marks hidden ones `--`, and names groups indistinguishable by every static attribute | The diagnostic that explains *why* assignment is done by pressing a button |
 | `padmap setup [-n N]` | The whole of S3/S4 from a terminal, `Ctrl-C` to finish | `KeyboardInterrupt` keeps what was already claimed rather than discarding it |
-| `padmap ui [-n N]` | The same screen in PySide6 (`src/padmap/ui/`), independent of Pegasus | A second, parallel front-end nobody has written a story for |
 | `padmap run` | Republish assigned pads and hold them until `Ctrl-C`; no RetroArch | The pre-daemon way to work |
 | `padmap launch [--log[=PATH]] [-- ...]` | Republish, then start RetroArch with `--appendconfig` and the `--nodevice` flags, capturing output | Unknown args after `launch` are forwarded, because `argparse.REMAINDER` refuses any leading option |
 | `padmap serve` | The daemon itself | argv must stay exactly `["-m","padmap.cli","serve"]` — see S18 |
@@ -890,7 +889,7 @@ S1-S23. Grouped by where it lives.
 | `padmap ensure-daemon --check` | Report staleness, change nothing, exit non-zero | |
 | `padmap -v/--verbose` | Debug logging | Must precede the subcommand |
 
-## Daemon commands and events (`src/padmap/protocol.py`, `server.py`)
+## Daemon commands and events (`padmap-core/src/command.rs`, `padmap-daemon/src/server.rs`)
 
 * **`{"cmd": "status"}`** — asks for a `state` event, and is answered with a
   `sdl_mapping` event *as well*, on every connect. Pegasus reads

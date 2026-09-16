@@ -31,73 +31,59 @@ port and pinned a dozen shared quirks that nobody had written down.
     padmap-core    vocabulary, layouts, mappings, scopes, calibration,
                    profiles, the wizard state machines, wire framing. No I/O,
                    no clock, no unsafe, no Linux.
-    padmap-input   evdev, uinput, udev, the profile store. The only crate that
-                   opens a device.
-    padmap-rs      a binary: `list` and `run`.
+    padmap-input   evdev, uinput, udev, hidraw, the profile store, the files
+                   other programs read. The only crate that opens a device.
+    padmap-daemon  the socket, the session, the modal flows, hotplug.
+    padmap-rs      the binary: every subcommand, and `serve`.
 
-The cut line is the unix socket, not a language boundary inside one process.
+The cut line was the unix socket, not a language boundary inside one process.
 A front-end is a socket client and knows nothing about which daemon it is
-talking to, so a Rust daemon that binds the same path is a drop-in and a
-rollback is starting the Python one. Both read the same `assignments.json`.
+talking to, so the Rust daemon binding the same path was a drop-in, and while
+both existed a rollback was starting the other one. Both read the same
+`assignments.json`.
 
 This is why there is no PyO3 anywhere. A Rust core called from a Python loop
-would leave the loop, the selector, the tick and the once-a-second scan in
-Python -- which is all of what was actually wrong -- and would buy a
-dependency whose API has broken seven times in nineteen months.
+would have left the loop, the selector, the tick and the once-a-second scan in
+Python -- which is all of what was actually wrong -- and bought a dependency
+whose API has broken seven times in nineteen months.
 
 ## Done
+
+All of it. The Python is deleted; `padmap` is a Rust binary.
 
 * **`padmap-core`**, entire. Control vocabulary as an enum rather than a bare
   string, so the SDL and RetroArch tables are exhaustive by construction.
   Layouts moved out of code into `data/layouts/*.json`: a new console is a file
   and a manifest line, which is the generalisation this port was for.
-* **A differential corpus.** `tools/gen_corpus.py` calls the real Python and
-  records 704 answers plus 2,700 swept axis readings; `tests/differential.rs`
-  replays them. A hand-written expectation encodes what the porter believed the
-  Python did, which is the thing most likely to be wrong.
+* **A differential corpus**, recorded off the real Python before it went. See
+  [PORT-PLAN.md](PORT-PLAN.md) for what it caught; it is frozen evidence now.
 * **A latency harness** and a recorded baseline, taken before any Rust ran.
 * **The forwarding path**: discovery through libudev, epoll with the tick on a
   timerfd, frame-batched writes, force-feedback proxying, calibration applied
   in transit.
-* **The profile store**, reading and writing the same files the Python does --
-  same directory, same filenames, same JSON including the two keys written only
-  so a rollback still finds the controller mapped.
-  `tests/check_rust_calibration.py` writes a profile with the *Python* and
-  checks every value of an axis through the *Rust* republisher against the
-  Python's own `AxisCalibration.apply`.
+* **The hidraw controllers**: a 2026 Steam Controller through its receiver,
+  and the Switch Pro family.
+* **The daemon**: socket, assignment session, the layout and scope pickers,
+  the mapping wizard, calibration, hotplug, and the files every consumer
+  reads.
+* **`clean_user_config`**, which this document said should never be ported --
+  see below.
 
-## The plan for the rest
+## What the port changed its mind about
 
-[docs/PORT-PLAN.md](PORT-PLAN.md) is the ordered plan for deleting the
-remaining 13,599 lines of Python: the method (record the Python's answers,
-fail against them, implement, delete both in one commit), the dependency
-order, and the three things that need a decision rather than a translation.
+`retroarch.clean_user_config` was listed here as *not to port*: it round-trips
+the user's `retroarch.cfg` through `errors="surrogateescape"` so a latin-1 ROM
+path comes back byte-identical, and Rust has no surrogateescape.
 
-## Not done, and what each one costs
+That was the right worry and the wrong conclusion. A correct port has to be
+byte-oriented throughout -- which is what `userconfig::clean_bytes` is: it
+splits on bytes, passes through any line that is not UTF-8 unexamined, and
+only ever rewrites lines whose setting name it recognises. Every rule keys on
+an ASCII name and compares an ASCII value, so a line whose bytes cannot be
+read is a line no rule would have changed. It is *easier* to get right in Rust
+than in Python, because bytes are the default rather than the escape hatch.
 
-| | cost of the gap |
-| --- | --- |
-| hidraw (Switch family) | those pads fall back to an evdev node that carries nothing, so they do nothing |
-| the daemon socket, sessions, the wizard | `padmap-rs` cannot be driven by the front-end; use `padmap serve` |
-| `padmap hide`, `clean-config` | still Python, and should stay that way -- see below |
-
-Order to continue in: hidraw decoding (the report decoders are pure functions
-over byte slices, so they test from a recording), then the socket protocol,
-then the session state machine.
-
-## What should not be ported
-
-* **`retroarch.clean_user_config`.** It round-trips the user's `retroarch.cfg`
-  through `errors="surrogateescape"` so a latin-1 ROM path comes back
-  byte-identical, and splits lines on `\n` only because `str.splitlines()`
-  breaks on characters RetroArch's `fgets` does not. Rust has no
-  surrogateescape; a correct port must be byte-oriented throughout. It is a
-  one-shot maintenance command that rewrites a file the user owns. Zero
-  benefit, maximal blast radius.
-* **`ui/`**. PySide6 and QML, and a fallback for a front-end that is itself the
-  real interface. A candidate for deletion, not for porting.
-* **`tools/`**, 43,000 lines. Not ported -- repurposed. They are the oracle in
-  `gen_corpus.py` and they keep testing whatever stays Python.
+`ui/` and `artwork` really were not ported. They were deleted.
 
 ## Things that bite
 

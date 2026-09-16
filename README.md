@@ -39,7 +39,9 @@ captured:
 
     SDL_GAMECONTROLLERCONFIG_FILE=~/.config/padmap/sdl_controllers.txt yourgame
 
-The socket is newline-delimited JSON, documented in `src/padmap/protocol.py`.
+The socket is newline-delimited JSON, documented in
+`rust/crates/padmap-core/src/command.rs` (what a client may ask) and
+`state.rs` (what it is told).
 A client sends commands and renders the events it gets back; the daemon is
 authoritative and holds no expectation about who is listening. `tools/padctl.py`
 is a working client in a hundred lines.
@@ -61,18 +63,18 @@ player slot it happened to claim.
 
     nix run .#padmap -- list
     nix run .#padmap-start          # daemon + udev hide rules
-    nix develop                     # python, cargo, clippy, evemu, perf
+    nix develop                     # cargo, clippy, evemu, perf
 
-Inside the dev shell, `padmap` and `padmap-rs` are on `PATH` and run the
-working tree, not a store copy — so `padmap list` reflects the file you just
-edited. They stay pointed at the directory the shell was entered from, so
-`cd rust` does not change which padmap you are running.
+padmap is a single Rust binary; the workspace is under `rust/`. Inside the dev
+shell `padmap` is on `PATH` and is built from the working tree rather than a
+store copy, so `padmap list` reflects the file you just edited. It stays
+pointed at the directory the shell was entered from, so `cd rust` does not
+change which padmap you are running.
 
     padmap list                     # same CLI as `nix run .#padmap --`
-    padmap-rs list                  # the Rust port; rebuilds on first use
+    (cd rust && cargo test)         # the tests
 
-There is a Rust port in progress under `rust/` — see
-[docs/RUSTIFY.md](docs/RUSTIFY.md) for what is ported and what is not, and
+See [docs/RUSTIFY.md](docs/RUSTIFY.md) for how it got here and
 [docs/LATENCY.md](docs/LATENCY.md) for what padmap actually costs a
 controller, measured.
 

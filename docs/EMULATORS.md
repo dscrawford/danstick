@@ -97,7 +97,7 @@ On every republish, beside the SDL database and the RetroArch autoconfig — the
 same moment, from the same input. `padmap_input::emulators::publish` does the
 writing; the Rust daemon calls it directly from `publish_artefacts`, and the
 Python daemon, which is still the one that runs, calls it through
-`padmap-rs emit` from `src/padmap/emulators.py`.
+`padmap_daemon::publish`, which calls it directly.
 
 The subprocess exists so there is one implementation of three file formats
 rather than two. Ryujinx's device id and ares' raw joystick indices are exactly

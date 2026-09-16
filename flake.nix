@@ -11,15 +11,11 @@
       let
         pkgs = nixpkgs.legacyPackages.${system};
 
+        # Test scaffolding only -- padmap itself is a Rust binary. These are
+        # what `tools/` and the uinput fixtures need to stand a fake
+        # controller up in front of the real thing.
         pythonEnv = pkgs.python3.withPackages (ps: with ps; [
-          evdev # raw /dev/input access + uinput device creation
-          # Test-only: tests/check_sdl_live.py drives real SDL against a
-          # uinput pad to prove a mapping added mid-session rebinds an open
-          # controller. Runtime asks SDL through `padmap-rs sdl-mapping`,
-          # which links SDL3 directly; this reaches the same SDL3 through
-          # sdl2-compat. Goes when that test is ported.
-          pysdl2
-          mypy
+          evdev # create the uinput pads the fixtures press
         ]);
         # Pinned explicitly: RetroArch's bundled joypad profiles are the source
         # we copy button mappings from when renaming a pad for a virtual one.
@@ -63,29 +59,19 @@
           fi
         '';
 
+        # Builds on first use and after every edit. That is the point --
+        # `padmap list` should never be stale -- but it means the first call
+        # after touching a source file pauses to compile, and cargo writes its
+        # progress to stderr so it is visible rather than a hang.
+        #
+        # PADMAP_BUILD_ID is deliberately *not* set here. packages.padmap sets
+        # it to a store path, which is the right identity there because the
+        # path changes with every edit. In the dev shell the binary is
+        # rebuilt in place, so a value baked in at shell entry would make
+        # `ensure-daemon` call a daemon current after you had edited under it
+        # -- exactly the failure the build id exists to catch. Left unset, it
+        # falls back to the binary's own mtime, which does change.
         devPadmap = pkgs.writeShellScriptBin "padmap" ''
-          set -euo pipefail
-          ${devRoot}
-          # PYTHONPATH, PADMAP_AUTOCONFIG_DIRS and PADMAP_PLAY all come from the shell environment; the wrapper adds
-          # nothing but the entry point, so what runs here and what a client
-          # of the daemon runs are the same program.
-          #
-          # PADMAP_BUILD_ID is deliberately *not* set. packages.padmap sets it
-          # to a store path, which is the right identity there because the
-          # path changes with every edit. Here the source is mutable, so a
-          # baked-in value would be frozen at shell entry and `ensure-daemon`
-          # would call a daemon current after you had edited under it --
-          # exactly the failure the build id exists to catch. Left unset,
-          # protocol.build_id falls back to the newest mtime in src/padmap,
-          # which does change when you edit.
-          exec ${pythonEnv}/bin/python3 -m padmap.cli "$@"
-        '';
-
-        # Note this builds on first use and after every edit. That is the
-        # point -- `padmap-rs list` should never be stale -- but it means the
-        # first call after touching a source file pauses to compile, and cargo
-        # writes its progress to stderr so it is visible rather than a hang.
-        devPadmapRs = pkgs.writeShellScriptBin "padmap-rs" ''
           set -euo pipefail
           ${devRoot}
           exec cargo run --quiet --release \
@@ -124,8 +110,7 @@
             pkgs.sdl3 # linked by padmap-rs for `sdl-mapping`
             pkgs.evemu # replay a recorded device, for latency measurement
             pkgs.linuxPackages.perf # where the forwarding path actually goes
-            devPadmap # `padmap ...`, running the working tree
-            devPadmapRs # `padmap-rs ...`, likewise
+            devPadmap # `padmap ...`, built from the working tree
             # The launch wrapper as the real thing, so a `padmap launch` from
             # this shell takes the same path a packaged one does.
             self.packages.${system}.padmap-play
@@ -139,29 +124,23 @@
             # Pinned once, at entry. The wrappers read this instead of $PWD so
             # that `cd rust` does not change which padmap `padmap list` runs.
             export PADMAP_DEV_ROOT="$PWD"
-            export PYTHONPATH="$PWD/src''${PYTHONPATH:+:$PYTHONPATH}"
-            # The same the `padmap` wrapper sets. Without it a launch from
-            # this shell invokes a bare `retroarch`, which looks like it worked.
+            # Without it a launch from this shell invokes a bare `retroarch`,
+            # which looks like it worked.
             export PADMAP_PLAY="${self.packages.${system}.padmap-play}/bin/padmap-play"
-            # The Python daemon shells out to this to write Cemu's, ares' and
-            # Ryujinx's config files -- see src/padmap/emulators.py. The dev
-            # wrapper, so the emulator formats a running daemon writes are the
-            # ones in the working tree rather than a store copy.
-            export PADMAP_RS="${devPadmapRs}/bin/padmap-rs"
             # cargo writes here; keeping it out of the source tree means a
             # `nix build` of the flake never sees a 2GB target/ in its source.
             export CARGO_HOME="''${CARGO_HOME:-$PWD/.cargo-home}"
-            echo "padmap dev shell -- these run $PADMAP_DEV_ROOT, not a store copy"
+            echo "padmap dev shell -- these build from $PADMAP_DEV_ROOT, not a store copy"
             echo "  padmap list          - what is plugged in"
             echo "  padmap setup         - assign player order"
             echo "  padmap run           - republish assigned pads"
             echo "  padmap map           - record which button is which"
             echo "  padmap launch        - republish, then start RetroArch"
             echo "  padmap hide          - udev rules hiding the physical pads (root)"
+            echo "  padmap play          - resolve mappings for a game (padmap-play)"
+            echo "  padmap exec -- CMD   - run CMD with padmap's mappings (Cemu, ...)"
             echo "  padmap --help        - the rest"
-            echo "  padmap-rs list|run|hide  - the Rust port (rebuilds on first use)"
-            echo "  padmap-rs exec -- CMD    - run CMD with padmap's mappings (Cemu, ...)"
-            echo "  (cd rust && cargo test)  - the Rust port's tests"
+            echo "  (cd rust && cargo test)  - the tests"
             echo "  (cd rust && cargo clippy --all-targets -- -D warnings)"
             echo
             if [ ! -w /dev/uinput ]; then
@@ -174,29 +153,24 @@
 
         packages.padmap = pkgs.writeShellApplication {
           name = "padmap";
-          runtimeInputs = [ pythonEnv pkgs.udev pkgs.retroarch ];
+          runtimeInputs = [ pkgs.udev pkgs.retroarch ];
           text = ''
-            export PYTHONPATH="${./src}''${PYTHONPATH:+:$PYTHONPATH}"
             # Identity of the code being run. The store path changes with
             # every source edit, which is what lets a client notice that a
             # long-running daemon is still on the previous version --
             # something nothing else about it reveals.
-            export PADMAP_BUILD_ID="${./src}"
+            export PADMAP_BUILD_ID="${padmap-rs}"
             export PADMAP_AUTOCONFIG_DIRS="${autoconfigDir}"
             # Absolute, so generated launch commands work from a front-end
             # that has neither padmap nor RetroArch on its PATH.
             export PADMAP_PLAY="${self.packages.${system}.padmap-play}/bin/padmap-play"
-            # Cemu, ares and Ryujinx: the daemon hands their formats to the
-            # Rust side rather than carrying a second copy. Absolute, because
-            # a daemon started from a .desktop file has no useful PATH.
-            export PADMAP_RS="${padmap-rs}/bin/padmap-rs"
-            exec python3 -m padmap.cli "$@"
+            exec ${padmap-rs}/bin/padmap-rs "$@"
           '';
         };
 
         packages.padmap-play = pkgs.writeShellApplication {
           name = "padmap-play";
-          runtimeInputs = [ pkgs.retroarch pythonEnv ];
+          runtimeInputs = [ pkgs.retroarch ];
           text = ''
             state="''${XDG_RUNTIME_DIR:-/tmp}/padmap"
             config="$state/launch.cfg"
@@ -209,17 +183,16 @@
             # console or *this* game is resolved here, rewriting the same
             # autoconfig directory the launch override already points at.
             #
-            # Python rather than shell. Deciding a console from a core name
-            # and a stable key from a ROM path are both table lookups that
-            # already exist on the padmap side, and a second copy in shell
-            # would be a table with nothing to notice when it fell behind --
-            # the failure this project has hit with the launcher path, the
-            # theme link and the daemon itself.
+            # padmap itself rather than a second copy in shell. Deciding a
+            # console from a core name and a stable key from a ROM path are
+            # table lookups that already exist on the padmap side, and a
+            # shell copy would be a table with nothing to notice when it fell
+            # behind -- the failure this project has hit with the launcher
+            # path, the theme link and the daemon itself.
             #
             # Never fatal: the default profiles are already on disk, so the
             # worst case is the mapping padmap wrote before scopes existed.
-            PYTHONPATH="${./src}''${PYTHONPATH:+:$PYTHONPATH}" \
-              python3 -m padmap.launch -- "$@" \
+            ${padmap-rs}/bin/padmap-rs play -- "$@" \
               || echo "padmap: mapping resolution failed; using defaults" >&2
 
             # Flags that cannot be expressed as config settings, one token
@@ -342,23 +315,12 @@
 
         packages.padmap-rs = padmap-rs;
 
-        # The republisher, in Rust, reading the same assignments.json the
-        # Python writes. Not a replacement for `padmap` -- it is `run` and
-        # `list` and nothing else -- but it is the forwarding path, which is
-        # where the input lag was. See docs/LATENCY.md.
+        # padmap itself. Kept under this name as well as `packages.padmap`
+        # so `nix run .#padmap-rs` still works for anyone who scripted it.
         apps.padmap-rs = {
           type = "app";
           program = "${padmap-rs}/bin/padmap-rs";
         };
-
-        checks.mypy = pkgs.runCommand "padmap-mypy"
-          { nativeBuildInputs = [ pythonEnv ]; }
-          ''
-            cp -r ${./src} src
-            export MYPY_CACHE_DIR="$TMPDIR/mypy"
-            mypy --config-file ${./mypy.ini} src/padmap
-            touch $out
-          '';
 
         # buildRustPackage runs `cargo test` in its checkPhase, so building
         # this is running the suite. Separate from checks.rust-lint so a

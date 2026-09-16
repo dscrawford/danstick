@@ -1,0 +1,443 @@
+//! Real controllers, written down and executable.
+//!
+//! Everything padmap has been caught out by is some controller behaving
+//! unlike the one in front of the person writing the code. A GameCube
+//! adapter's triggers are not on the codes their names suggest, rest at 81%
+//! deflected and never return to centre; an Xbox Series pad declares a
+//! trigger four times wider than a 360's from the same driver switch; a
+//! hid-generic pad sends a scancode before every key and xpad does not.
+//!
+//! These are those surprises as fixtures. Each carries a `source` citing
+//! where its numbers came from -- a fixture nobody can check is a guess with
+//! a struct around it.
+//!
+//! The two controllers padmap drives over hidraw are not here: a Steam
+//! Controller and a Switch Pro have no evdev node to build, and their report
+//! bytes are already fixtures in `tests/triton_protocol.rs` and
+//! `tests/nintendo_differential.rs`.
+
+/// One absolute axis, exactly as its driver declares it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Axis {
+    pub code: u16,
+    pub minimum: i32,
+    pub maximum: i32,
+    /// Where it sits untouched -- *not* always the middle of the range.
+    pub rest: i32,
+    pub fuzz: i32,
+    /// The deadzone the driver asks for. padmap's calibration reads it, and a
+    /// fixture that dropped it would test a stick more sensitive than any
+    /// real one.
+    pub flat: i32,
+}
+
+impl Axis {
+    const fn new(code: u16, minimum: i32, maximum: i32, rest: i32) -> Axis {
+        Axis {
+            code,
+            minimum,
+            maximum,
+            rest,
+            fuzz: 0,
+            flat: 0,
+        }
+    }
+
+    /// A 360-family stick, as `xpad_set_up_abs` declares one:
+    /// `input_set_abs_params(input_dev, abs, -32768, 32767, 16, 128)`.
+    const fn xpad_stick(code: u16) -> Axis {
+        Axis {
+            code,
+            minimum: -32768,
+            maximum: 32767,
+            rest: 0,
+            fuzz: 16,
+            flat: 128,
+        }
+    }
+}
+
+/// One real controller model, as the kernel publishes it.
+#[derive(Debug, Clone)]
+pub struct Fixture {
+    /// Exactly the string the driver publishes. padmap matches profiles on
+    /// it, so "close enough" is a different controller.
+    pub name: &'static str,
+    pub vid: u16,
+    pub pid: u16,
+    pub bustype: u16,
+    /// Where the numbers came from. Not decoration: every one is checkable.
+    pub source: &'static str,
+    /// Vocabulary name -> evdev key code.
+    pub buttons: &'static [(&'static str, u16)],
+    /// Vocabulary name -> axis.
+    pub axes: &'static [(&'static str, Axis)],
+    /// Does its driver emit `MSC_SCAN` before each key?
+    ///
+    /// hid-generic does -- `hid-input.c:1787` sends `EV_MSC, MSC_SCAN,
+    /// usage->hid` ahead of the key -- and xpad, which is not a hid-input
+    /// driver, does not. padmap sees both, so both are reproduced: a capture
+    /// that mistook the scancode for the press would work on an Xbox pad and
+    /// fail on everything driven by hid-generic.
+    pub emits_scan: bool,
+    /// Vocabulary name -> the HID usage its driver puts in `MSC_SCAN`.
+    pub scancodes: &'static [(&'static str, u32)],
+    /// Is the d-pad a hat (`ABS_HAT0X`/`Y`) rather than four keys?
+    pub dpad_is_hat: bool,
+}
+
+// evdev codes, spelled out so this module needs no evdev import to be read.
+const BTN_SOUTH: u16 = 0x130;
+const BTN_EAST: u16 = 0x131;
+const BTN_NORTH: u16 = 0x133;
+const BTN_WEST: u16 = 0x134;
+const BTN_TL: u16 = 0x136;
+const BTN_TR: u16 = 0x137;
+const BTN_SELECT: u16 = 0x13A;
+const BTN_START: u16 = 0x13B;
+const BTN_MODE: u16 = 0x13C;
+const BTN_THUMBL: u16 = 0x13D;
+const BTN_THUMBR: u16 = 0x13E;
+/// `KEY_RECORD`. A key code, not a `BTN_` -- worth testing in itself, since
+/// padmap must not assume every control on a joypad is a `BTN_`.
+const KEY_RECORD: u16 = 167;
+
+const ABS_X: u16 = 0x00;
+const ABS_Y: u16 = 0x01;
+const ABS_Z: u16 = 0x02;
+const ABS_RX: u16 = 0x03;
+const ABS_RY: u16 = 0x04;
+const ABS_RZ: u16 = 0x05;
+pub const ABS_HAT0X: u16 = 0x10;
+pub const ABS_HAT0Y: u16 = 0x11;
+
+const BUS_USB: u16 = 0x03;
+
+/// The pad every other pad is compared against.
+///
+/// Worth having precisely because it is unremarkable: sticks centred at zero,
+/// triggers starting at zero, a hat for the d-pad. Anything that only works
+/// here is assuming this shape.
+pub const XBOX_360: Fixture = Fixture {
+    name: "Microsoft X-Box 360 pad",
+    vid: 0x045E,
+    pid: 0x028E,
+    bustype: BUS_USB,
+    source: "drivers/input/joystick/xpad.c: device table line 123, \
+             xpad_common_btn/xpad_btn_pad line 411, xpad_set_up_abs line 1898",
+    emits_scan: false,
+    scancodes: &[],
+    buttons: &[
+        ("a", BTN_SOUTH),
+        ("b", BTN_EAST),
+        ("x", BTN_WEST),
+        ("y", BTN_NORTH),
+        ("l", BTN_TL),
+        ("r", BTN_TR),
+        ("select", BTN_SELECT),
+        ("start", BTN_START),
+        ("home", BTN_MODE),
+        ("l3", BTN_THUMBL),
+        ("r3", BTN_THUMBR),
+    ],
+    axes: &[
+        ("lx", Axis::xpad_stick(ABS_X)),
+        ("ly", Axis::xpad_stick(ABS_Y)),
+        ("rx", Axis::xpad_stick(ABS_RX)),
+        ("ry", Axis::xpad_stick(ABS_RY)),
+        // XTYPE_XBOX360: 0..255. The Series X is 0..1023 from the same
+        // switch, which is the only difference a mapping would notice.
+        ("lt", Axis::new(ABS_Z, 0, 255, 0)),
+        ("rt", Axis::new(ABS_RZ, 0, 255, 0)),
+    ],
+    dpad_is_hat: true,
+};
+
+/// Same driver, wider triggers, one extra button.
+///
+/// Here to catch anything that hard-codes 0..255 for a trigger because the
+/// 360 does. `xpad_set_up_abs` picks 0..1023 for every XTYPE_XBOXONE pad, and
+/// a binding captured on one and applied to the other is wrong by a factor of
+/// four with nothing to say so.
+pub const XBOX_SERIES_X: Fixture = Fixture {
+    name: "Microsoft Xbox Series S|X Controller",
+    vid: 0x045E,
+    pid: 0x0B12,
+    bustype: BUS_USB,
+    source: "drivers/input/joystick/xpad.c: device table line 134 \
+             (MAP_SHARE_BUTTON|MAP_SHARE_OFFSET, XTYPE_XBOXONE), \
+             xpad_set_up_abs line 1904",
+    emits_scan: false,
+    scancodes: &[],
+    buttons: &[
+        ("a", BTN_SOUTH),
+        ("b", BTN_EAST),
+        ("x", BTN_WEST),
+        ("y", BTN_NORTH),
+        ("l", BTN_TL),
+        ("r", BTN_TR),
+        ("select", BTN_SELECT),
+        ("start", BTN_START),
+        ("home", BTN_MODE),
+        ("l3", BTN_THUMBL),
+        ("r3", BTN_THUMBR),
+        ("capture", KEY_RECORD),
+    ],
+    axes: &[
+        ("lx", Axis::xpad_stick(ABS_X)),
+        ("ly", Axis::xpad_stick(ABS_Y)),
+        ("rx", Axis::xpad_stick(ABS_RX)),
+        ("ry", Axis::xpad_stick(ABS_RY)),
+        ("lt", Axis::new(ABS_Z, 0, 1023, 0)),
+        ("rt", Axis::new(ABS_RZ, 0, 1023, 0)),
+    ],
+    dpad_is_hat: true,
+};
+
+/// The adapter that broke three things at once.
+///
+/// Everything awkward about it is real and measured, and is why it is here
+/// rather than a second Xbox pad:
+///
+/// * **the triggers are ABS_RX and ABS_RY**, not the ABS_Z/ABS_RZ the names
+///   would suggest. Code that assumed which codes a trigger lives on found
+///   nothing at all.
+/// * **they rest at 24 and 25 of 0-255** -- 81% deflected, untouched. A
+///   capture recorded the direction the axis was moving away from, a resting
+///   report answered a prompt nothing had touched, and re-arming waited for a
+///   return to centre that a trigger never makes -- so after one press the
+///   trigger was dead and every later press was dropped in silence.
+/// * **no axis rests at zero**, because 0..255 has no such value once the
+///   midpoint is 127.5. Half-axis binds cannot work both ways on it.
+/// * it is driven by hid-generic, so it **emits MSC_SCAN** before every key.
+pub const MAYFLASH_GAMECUBE: Fixture = Fixture {
+    name: "mayflash MAYFLASH GameCube Controller Adapter",
+    vid: 0x0079,
+    pid: 0x1843,
+    bustype: BUS_USB,
+    source: "measured absinfo on the development machine -- ABS_RX rest=24, \
+             ABS_RY rest=25, both of 0-255; hid-generic, so MSC_SCAN per \
+             hid-input.c:1787",
+    emits_scan: true,
+    buttons: &[
+        ("a", BTN_SOUTH),
+        ("b", BTN_EAST),
+        ("x", BTN_WEST),
+        ("y", BTN_NORTH),
+        ("l", BTN_TL),
+        ("r", BTN_TR),
+        ("start", BTN_START),
+        ("select", BTN_SELECT),
+    ],
+    // hid-generic puts the HID usage in MSC_SCAN: Button page usages,
+    // 0x00090001 upwards.
+    scancodes: &[
+        ("a", 0x0009_0001),
+        ("b", 0x0009_0002),
+        ("x", 0x0009_0003),
+        ("y", 0x0009_0004),
+        ("l", 0x0009_0005),
+        ("r", 0x0009_0006),
+        ("select", 0x0009_0007),
+        ("start", 0x0009_0008),
+    ],
+    axes: &[
+        ("lx", Axis::new(ABS_X, 0, 255, 128)),
+        ("ly", Axis::new(ABS_Y, 0, 255, 128)),
+        // The C-stick. padmap publishes its Y on ABS_Z, which RetroArch then
+        // treats as an analogue trigger.
+        ("cx", Axis::new(ABS_RZ, 0, 255, 128)),
+        ("cy", Axis::new(ABS_Z, 0, 255, 131)),
+        // See the note above for why these axes and these rest values.
+        ("lt", Axis::new(ABS_RX, 0, 255, 24)),
+        ("rt", Axis::new(ABS_RY, 0, 255, 25)),
+    ],
+    dpad_is_hat: true,
+};
+
+/// Every fixture padmap carries.
+pub const EVERY: [&Fixture; 3] = [&XBOX_360, &XBOX_SERIES_X, &MAYFLASH_GAMECUBE];
+
+/// The four d-pad directions, when the pad reports them as a hat.
+pub const DPAD: [&str; 4] = ["up", "down", "left", "right"];
+
+impl Fixture {
+    /// Every name this controller answers to.
+    pub fn controls(&self) -> Vec<&'static str> {
+        let mut names: Vec<&'static str> = self
+            .buttons
+            .iter()
+            .map(|(name, _)| *name)
+            .chain(self.axes.iter().map(|(name, _)| *name))
+            .collect();
+        if self.dpad_is_hat {
+            names.extend(DPAD);
+        }
+        names.sort_unstable();
+        names.dedup();
+        names
+    }
+
+    pub fn button(&self, control: &str) -> Option<u16> {
+        self.buttons
+            .iter()
+            .find(|(name, _)| *name == control)
+            .map(|(_, code)| *code)
+    }
+
+    pub fn axis(&self, control: &str) -> Option<Axis> {
+        self.axes
+            .iter()
+            .find(|(name, _)| *name == control)
+            .map(|(_, axis)| *axis)
+    }
+
+    pub fn scancode(&self, control: &str) -> Option<u32> {
+        self.scancodes
+            .iter()
+            .find(|(name, _)| *name == control)
+            .map(|(_, usage)| *usage)
+    }
+
+    /// Every key code this pad declares, sorted as the kernel reports them.
+    pub fn key_codes(&self) -> Vec<u16> {
+        let mut codes: Vec<u16> = self.buttons.iter().map(|(_, code)| *code).collect();
+        codes.sort_unstable();
+        codes
+    }
+
+    /// Every absolute axis this pad declares, the hat included.
+    pub fn abs_codes(&self) -> Vec<u16> {
+        let mut codes: Vec<u16> = self.axes.iter().map(|(_, axis)| axis.code).collect();
+        if self.dpad_is_hat {
+            codes.push(ABS_HAT0X);
+            codes.push(ABS_HAT0Y);
+        }
+        codes.sort_unstable();
+        codes
+    }
+
+    /// Four held directions as a hat.
+    ///
+    /// Opposites cancel: the hardware cannot report both, and a fixture that
+    /// did would be testing padmap against a pad that does not exist.
+    pub fn hat_from(held: &[&str]) -> (i32, i32) {
+        let has = |name: &str| held.contains(&name);
+        (
+            i32::from(has("right")) - i32::from(has("left")),
+            i32::from(has("down")) - i32::from(has("up")),
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeSet;
+
+    #[test]
+    fn every_fixture_is_coherent() {
+        for fixture in EVERY {
+            assert!(!fixture.name.is_empty());
+            assert!(
+                !fixture.source.is_empty(),
+                "{}: a fixture nobody can check is a guess",
+                fixture.name
+            );
+            assert!(fixture.vid != 0 && fixture.pid != 0, "{}", fixture.name);
+            // No control answers to two things, and every scancode names a
+            // button this pad actually has.
+            let names: BTreeSet<&str> = fixture.controls().into_iter().collect();
+            assert_eq!(names.len(), fixture.controls().len(), "{}", fixture.name);
+            for (name, _) in fixture.scancodes {
+                assert!(
+                    fixture.button(name).is_some(),
+                    "{}: scancode for {name:?}, which it has no button for",
+                    fixture.name
+                );
+            }
+            if fixture.emits_scan {
+                assert!(
+                    !fixture.scancodes.is_empty(),
+                    "{}: claims MSC_SCAN and names no usages",
+                    fixture.name
+                );
+            }
+            // Every axis declares travel, and rests inside it.
+            for (name, axis) in fixture.axes {
+                assert!(
+                    axis.maximum > axis.minimum,
+                    "{}: {name} declares no travel",
+                    fixture.name
+                );
+                assert!(
+                    (axis.minimum..=axis.maximum).contains(&axis.rest),
+                    "{}: {name} rests outside its own range",
+                    fixture.name
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_gamecube_triggers_are_where_they_actually_are() {
+        // The whole reason this fixture exists: not ABS_Z/ABS_RZ, and not
+        // resting anywhere near centre.
+        let lt = MAYFLASH_GAMECUBE.axis("lt").expect("lt");
+        let rt = MAYFLASH_GAMECUBE.axis("rt").expect("rt");
+        assert_eq!((lt.code, lt.rest), (ABS_RX, 24));
+        assert_eq!((rt.code, rt.rest), (ABS_RY, 25));
+        // And a stick that does centre, so the difference is the point.
+        assert_eq!(MAYFLASH_GAMECUBE.axis("lx").expect("lx").rest, 128);
+    }
+
+    #[test]
+    fn the_two_xbox_pads_differ_only_where_the_driver_says_they_do() {
+        let three_sixty = XBOX_360.axis("lt").expect("lt");
+        let series = XBOX_SERIES_X.axis("lt").expect("lt");
+        assert_eq!(three_sixty.maximum, 255);
+        assert_eq!(series.maximum, 1023, "XTYPE_XBOXONE is four times wider");
+        assert_eq!(XBOX_360.axis("lx"), XBOX_SERIES_X.axis("lx"));
+        // The Series pad's extra control is a KEY_, not a BTN_.
+        assert_eq!(XBOX_SERIES_X.button("capture"), Some(KEY_RECORD));
+        assert!(XBOX_360.button("capture").is_none());
+    }
+
+    #[test]
+    fn only_the_hid_generic_pad_sends_a_scancode() {
+        // Checked when the crate builds, not when the test runs: these are
+        // facts about constants, and stating them in a const block puts the
+        // failure at the edit that broke them.
+        const { assert!(MAYFLASH_GAMECUBE.emits_scan) }; // hid-generic does
+        const { assert!(!XBOX_360.emits_scan) }; // xpad is not a hid-input driver
+        const { assert!(!XBOX_SERIES_X.emits_scan) };
+    }
+
+    #[test]
+    fn opposite_directions_cancel_on_the_hat() {
+        assert_eq!(Fixture::hat_from(&["right"]), (1, 0));
+        assert_eq!(Fixture::hat_from(&["up"]), (0, -1));
+        assert_eq!(Fixture::hat_from(&["left", "right"]), (0, 0));
+        assert_eq!(Fixture::hat_from(&["down", "right"]), (1, 1));
+        assert_eq!(Fixture::hat_from(&[]), (0, 0));
+    }
+
+    #[test]
+    fn a_hat_pad_declares_the_hat_axes_it_reports_the_dpad_on() {
+        for fixture in EVERY {
+            if fixture.dpad_is_hat {
+                let codes = fixture.abs_codes();
+                assert!(codes.contains(&ABS_HAT0X), "{}", fixture.name);
+                assert!(codes.contains(&ABS_HAT0Y), "{}", fixture.name);
+                // ...and answers to the four directions by name.
+                for direction in DPAD {
+                    assert!(
+                        fixture.controls().contains(&direction),
+                        "{}: no {direction}",
+                        fixture.name
+                    );
+                }
+            }
+        }
+    }
+}

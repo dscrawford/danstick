@@ -12,11 +12,12 @@ front-end will actually receive.
 import json
 import socket
 import sys
+from pathlib import Path
 import time
 
-sys.path.insert(0, "src")
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from padmap import protocol  # noqa: E402
+import _padmap as protocol  # noqa: E402
 
 
 def connect() -> socket.socket:

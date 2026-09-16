@@ -28,7 +28,7 @@ stays silent until something asks for it.
 
 ## What padmap does
 
-Drives it. Both halves: `src/padmap/triton.py` for the daemon, and
+Drives it. Both halves: `rust/crates/padmap-input/src/triton.rs`, and
 `rust/crates/padmap-input/src/triton.rs` for `padmap-rs`. It arrives in
 `padmap list` as an ordinary controller, with no note, because there is
 nothing left to say about it.
@@ -40,7 +40,7 @@ should still be a controller.
 
 ### The protocol
 
-`src/padmap/triton.py`, a port of SDL's `SDL_hidapi_steam_triton.c` (zlib,
+`triton.rs`, a port of SDL's `SDL_hidapi_steam_triton.c` (zlib,
 upstream 2025-11-12) and its two headers. Three things in it are worth knowing
 before changing anything:
 

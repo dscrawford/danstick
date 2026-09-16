@@ -27,7 +27,7 @@ import time
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 # Line-buffered: piping this into `tee` block-buffers stdout, and a
 # Ctrl-C then discards everything the run had printed.
@@ -36,7 +36,7 @@ sys.stdout.reconfigure(line_buffering=True)
 import evdev  # noqa: E402
 from evdev import ecodes  # noqa: E402
 
-from padmap import protocol  # noqa: E402
+import _padmap as protocol  # noqa: E402
 
 VIRTUAL_PREFIX = "padmap Player"
 

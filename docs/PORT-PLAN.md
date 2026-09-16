@@ -1,184 +1,75 @@
 # Replacing the Python
 
-13,599 lines across 23 modules. The goal is none of them, and a `padmap`
-binary with no interpreter behind it.
+**Done.** padmap was 13,747 lines of Python across 23 modules; it is now a
+Rust workspace and a `padmap` binary with no interpreter behind it.
 
-This is a plan, not a schedule. What matters is the *method* and the *order*;
-both are chosen so that a half-finished port is never a broken program.
+This file is kept for the method, which is the part worth reusing.
 
-## The method, which already works
+## The method
 
-`tools/gen_corpus.py` calls the real Python functions and records every answer
-under `rust/crates/padmap-core/tests/corpus/` — 23 files today.
-`differential.rs` replays them. From its own header:
+`tools/gen_corpus.py` called the real Python functions and recorded every
+answer under `rust/crates/padmap-core/tests/corpus/`. `differential.rs` and
+its siblings replay them. From the header of the first one:
 
 > A hand-written expectation encodes what the porter *believed* the Python
 > did, and that belief is the thing most likely to be wrong.
 
-That is not a theory. Two corpus files exist because the languages disagree
-silently — Python's `round` is ties-to-even where Rust's rounds away from
-zero, and `//` floors where `/` truncates — and both are on the per-event
-path. A unit test written from reading the Python would have encoded the bug.
+That was not a theory. The corpus caught, among others:
 
-So, per module, in this order:
+* Python's `round` is ties-to-even where Rust's rounds away from zero, and
+  `//` floors where `/` truncates — both on the per-event path;
+* `str(None)` is the four characters `"None"`, which was being written into a
+  profile as though somebody had chosen an icon called None;
+* `title_for` read a trailing slash differently from the two functions that
+  have to agree with it, so a directory-shaped ROM got an empty title.
 
-1. **Record.** Add a `gen_corpus.py` section that calls the Python over every
-   input shape that matters, including the ugly ones. This is the step that
-   must not be rushed: the corpus is the specification.
-2. **Fail.** Write the Rust signature, return `todo!()`, watch the differential
-   test fail against real recorded answers.
-3. **Implement** until it agrees.
-4. **Decide the disagreements.** A failure is not automatically a Rust bug. It
-   is a divergence, and the question is which side is right. Where the Python
-   was wrong, move the case to an explicit test that says so.
-5. **Delete the Python, when it has no callers left.** See below: that is
-   later than this list makes it sound.
+None of those would have been written into a hand-made test.
 
-### Porting goes bottom-up; deleting goes top-down
+So, per module: **record** every input shape that matters, including the ugly
+ones; **fail** against the recorded answers with a `todo!()`; **implement**
+until it agrees; **decide the disagreements**, because a failure is a
+divergence and the question is which side is right; and only then delete.
+
+### Porting went bottom-up; deleting went top-down
 
 The first version of this plan said "delete the Python module and its suites
 in the same commit that replaces it", and phase 1 proved that impossible on
-the first try. `protocol.py` has no *outgoing* dependencies, which is what
-makes it a leaf and a good place to start — but it has ten *incoming* ones,
-and every one of them is still Python. A leaf by import order is the last
-thing that can be removed, not the first.
+the first try. `protocol.py` had no *outgoing* dependencies, which is what
+made it a good place to start — and ten *incoming* ones, every one of them
+still Python. A leaf by import order is the last thing that can be removed,
+not the first.
 
-So the two directions are opposite, and both are right:
-
-* **Port** bottom-up, because a module cannot be written before what it
-  depends on.
-* **Delete** top-down, because a module cannot be removed before what depends
-  on *it*.
-
-Which means Python shrinks late, and mostly at once, when `cli` and `server`
-flip. That is worth knowing in advance rather than discovering at phase 5: the
+Which meant Python shrank late and mostly at once, when `cli` and `server`
+flipped. Worth knowing in advance rather than discovering at phase 5: the
 intermediate state is both implementations installed, which is exactly the
-state the differential corpus exists to police. The rule that survives is the
-narrower one — **a test suite is deleted in the same commit as the module it
-tests, never before.**
+state the corpus exists to police.
 
 ### What a corpus cannot record
 
-Sockets, device grabs, uinput, epoll. For those the pattern is the one
-`tests/triton_protocol.rs` and `tests/real_devices.rs` established: make a
-real thing. A uinput device is a real joypad the kernel publishes; a
-`/dev/ptmx` pair is a real character device that `open_hidraw`'s `fstat`
-accepts. Both work unprivileged, and both skip rather than fail where the
-device node is unavailable.
+Sockets, device grabs, uinput, epoll. For those the pattern was: make a real
+thing. A uinput device is a real joypad the kernel publishes; a `/dev/ptmx`
+pair is a real character device that `open_hidraw`'s `fstat` accepts. Both
+work unprivileged, and both skip rather than fail where the device node is
+unavailable. `daemon_journey.rs` stands up a real daemon and presses a real
+pad at it, and is what found the two bugs that would have hung it.
 
-## Where it stands
+## What was removed rather than ported
 
-Phases 1 to 4 are done, and phase 5's protocol surface with them. What that
-means precisely: **every pure decision padmap makes is now in Rust and held to
-the Python by a recorded corpus.** There is no corpus file without a Rust
-consumer.
+* **`artwork` (593 lines)** and **`titles` (250)**. Box art is handled
+  elsewhere; the MAME title table existed only to match art to set names and
+  nothing else read it.
+* **`ui/`**. PySide6 and QML, and a fallback for a front-end that is itself
+  the real interface.
+* **`safeio` (47 lines)**. All of it existed because Python's
+  `Path.read_text()` raises `UnicodeDecodeError` on a bad byte — a
+  `ValueError`, which `except OSError` misses — and that hole was found in six
+  separate places. Rust has no such trap:
+  `String::from_utf8_lossy(&fs::read(path)?)` is the whole of it. The module
+  died with its last caller and contributed no Rust.
 
-| phase | state |
-|---|---|
-| 1 — leaves | done. `safeio` contributes no Rust; Rust has no `UnicodeDecodeError` to guard |
-| 2 — `devices` | done, and 286ms faster per scan |
-| 3 — device layer | done: `hidraw`, `virtual`, `calibrate` |
-| 4 — writers | pure surface done: profiles, autoconfig text, the launch override, the config cleaner |
-| 5 — daemon | **protocol surface done** (commands, state event); orchestration outstanding |
-| 6 — front door | outstanding: `cli`, `launch` |
+## What is left of the corpus
 
-Seven modules have a complete Rust counterpart. None has been deleted, for the
-reason given above: they all still have Python callers.
-
-### What is actually left
-
-Not more algorithms. The daemon's decisions are already ported —
-`assign.rs` has the claim logic, `capture.rs` the wizard, `calibration.rs` the
-arithmetic, `clone.rs` and `republish.rs` the forwarding, `emit.rs` and
-`artefacts.rs` the file writing. What `server.py` still holds is **orchestration
-and I/O**: a Unix socket listener, client bookkeeping, the session lifecycle
-that grabs and releases pads, and the sequencing of three nested modal flows.
-116 of its lines touch a device, a socket or a selector.
-
-That is a different kind of work from everything above, and it needs a
-different kind of test. A corpus cannot record it; it needs a live daemon and a
-live client, which is what `tests/check_daemon_*.py` and `tests/e2e_*.py`
-already are. Those suites are the specification for this phase — they describe
-the behaviour to preserve, and they are the last thing that should be deleted.
-
-Rough remaining shape, by what the code *is* rather than by line count:
-
-| | lines | kind |
-|---|---:|---|
-| `server` orchestration | ~2,400 | socket, selector, session lifecycle, modal sequencing |
-| `cli` | 1,162 | argument parsing and thirteen subcommands, mostly thin |
-| `launch` | 214 | resolves a scope and rewrites the autoconfig directory |
-
-## The order
-
-From the import graph. Leaves first, so nothing is ported before what it
-depends on.
-
-**Phase 1 — the leaves** (1,951 lines, no internal dependencies)
-
-| module | lines | note |
-|---|---:|---|
-| `safeio` | 47 | **nothing to port** — see below |
-| `protocol` | 455 | the wire format. Corpus: `encode`, `LineReader.feed` |
-| `mapping` | 578 | `sdl_guid`, `stick_fields`, `rests_centred` — mostly corpused already |
-| `layouts` | 621 | already loaded by `padmap-core/src/layout.rs`; finish and delete |
-
-`safeio` is the odd one. All 47 lines exist because Python's
-`Path.read_text()` raises `UnicodeDecodeError` on a bad byte — a `ValueError`,
-which `except OSError` misses — and that hole was found in six separate
-places. Rust has no such trap: `String::from_utf8_lossy(&fs::read(path)?)` is
-the whole of it, and it is already what `triton.rs` and `lizard.rs` do. There
-is no `safeio.rs` to write. The module dies with its last Python caller and
-contributes no Rust.
-
-**Phase 2 — devices** (404 lines). The root of everything else. Rust
-`pad::discover` already does most of it; the gap is `_ask_udev_about`'s
-batching and the capability sniffing. Corpus: a recorded sysfs tree.
-
-**Phase 3 — the device layer** (1,474 lines): `hidraw`, `virtual`,
-`calibrate`. `clone.rs` and `republish.rs` already cover most of `virtual`.
-Needs uinput and pty fixtures, not a corpus.
-
-**Phase 4 — the writers** (1,594 lines): finish `retroarch` and `profiles`,
-then `controllercfg`, then `announce`. These emit the files RetroArch and SDL
-read, so the corpus is exact file content — `emitted_files` already does this
-for some of it.
-
-**Phase 5 — the daemon** (2,370 lines). The big one, and the reason this order
-exists: everything above is a dependency of it. Not corpusable; needs a real
-socket and a real client. `tests/check_daemon_*.py` describe the behaviour to
-preserve, and they are the specification to port, not to delete early.
-
-**Phase 6 — the front door** (1,376 lines): `cli`, then `launch`.
-
-## Three things that need a decision, not a port
-
-**`pysdl2`.** Used for exactly one thing, in a subprocess: asking SDL what
-mapping it already has for a GUID (`controllercfg.py:399`). Three ways out —
-bundle `gamecontrollerdb.txt` and read it directly, link SDL3 and call it, or
-drop the last-resort lookup. Bundling is probably right, and it is a
-decision about behaviour rather than a translation.
-
-**`artwork`** and **`titles`** — decided: removed. Box art is handled
-elsewhere, and the MAME title table existed only to match art to set names.
-
-**`fakepad`, 771 lines.** Test scaffolding, not runtime. It should grow a Rust
-half rather than be replaced — the fixtures are data, and both languages
-should read the same ones. See `docs/FAKEPAD.md`.
-
-## What "done" means
-
-Per module: the Python file is gone, its suites in `tests/` are gone, the
-corpus section that recorded it is gone, and `nix develop` no longer needs
-that import. Per project: `pythonEnv` drops out of `flake.nix`, and
-`packages.default` points at a Rust binary.
-
-Until then both implementations are live and both test suites earn their
-place — see the note at the end of `tests/README.md`.
-
-## The first commit
-
-`safeio` and `protocol`. Together 502 lines, no dependencies, and `protocol`
-has 83 assertions describing the wire format already. It is the smallest
-change that exercises every step of the method above, including the one that
-matters: deleting Python in the same commit that replaces it.
+It is frozen evidence now: the Python that produced it is gone, so
+`gen_corpus.py` went with it. A deliberate behaviour change means editing the
+recorded answer and saying why in the commit — which is the right amount of
+friction for changing something a user's stored profile depends on.
