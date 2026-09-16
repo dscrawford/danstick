@@ -1,6 +1,6 @@
 //! padmap's republisher, in Rust.
 //!
-//!     padmap list          what is plugged in
+//!     padmap list          what is plugged in (--json for a launcher)
 //!     padmap setup         assign player order by pressing a button
 //!     padmap map           record which button is which
 //!     padmap calibrate     measure where each controller's sticks rest
@@ -57,7 +57,13 @@ fn main() -> Result<()> {
     let command = args.next();
     let rest: Vec<String> = args.collect();
     match command.as_deref() {
-        Some("list") => cmd_list(),
+        Some("list") => {
+            if rest.iter().any(|arg| arg == "--json") {
+                commands::cmd_list_json()
+            } else {
+                cmd_list()
+            }
+        }
         Some("hide") => cmd_hide(&rest),
         Some("run") => cmd_run(),
         Some("serve") => cmd_serve(),
@@ -143,7 +149,7 @@ fn parse_number<T: std::str::FromStr>(value: &str, flag: &str) -> T {
 
 fn usage() {
     eprintln!(
-        "usage: padmap list | setup | map | calibrate | forget | run | serve | \
+        "usage: padmap list [--json] | setup | map | calibrate | forget | run | serve | \
          launch | play | hide | ensure-daemon | clean-config | \
          emit [--cemu-dir D] [--ares-settings F] [--ryujinx-config F] \
          [--env-file F] | \

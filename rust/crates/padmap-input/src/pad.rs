@@ -17,6 +17,7 @@
 //! answers come from libudev directly here, which is the same database the
 //! subprocess was printing.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use log::debug;
@@ -60,6 +61,12 @@ pub struct Pad {
     /// False once the `padmap hide` udev rules have cleared ID_INPUT_JOYSTICK:
     /// padmap can still open and republish the pad, RetroArch cannot see it.
     pub retroarch_visible: bool,
+    /// The controller's motion sensor, if the kernel publishes one.
+    ///
+    /// A separate device node, and **not** something padmap republishes: a
+    /// clone carries the axes its source's joypad node declares, and a gyro is
+    /// never among them. Anything that wants motion has to open this.
+    pub motion: Option<PathBuf>,
 }
 
 impl Pad {
@@ -145,6 +152,10 @@ pub fn discover(filter: Filter) -> std::io::Result<Vec<Pad>> {
     let mut enumerator = udev::Enumerator::new()?;
     enumerator.match_subsystem("input")?;
 
+    // Every motion sensor on the machine, so each pad can be asked whether one
+    // of them is its own. Collected in the same pass rather than a second
+    // enumeration: this runs on the daemon's tick.
+    let mut accelerometers: Vec<(PathBuf, PathBuf)> = Vec::new();
     let mut pads: Vec<Pad> = Vec::new();
     for device in enumerator.scan_devices()? {
         let Some(devnode) = device.devnode().map(Path::to_path_buf) else {
@@ -152,6 +163,14 @@ pub fn discover(filter: Filter) -> std::io::Result<Vec<Pad>> {
         };
         if !devnode.to_string_lossy().starts_with("/dev/input/event") {
             continue;
+        }
+
+        if property(&device, "ID_INPUT_ACCELEROMETER").as_deref() == Some("1") {
+            accelerometers.push((
+                std::fs::canonicalize(device.syspath())
+                    .unwrap_or_else(|_| device.syspath().to_path_buf()),
+                devnode.clone(),
+            ));
         }
 
         // RetroArch's own filter, udev_joypad.c:1053.
@@ -189,7 +208,13 @@ pub fn discover(filter: Filter) -> std::io::Result<Vec<Pad>> {
             pid: hex_attribute(owner, "id/product"),
             retroarch_visible: visible,
             path: devnode,
+            // Filled in below: every accelerometer has to be seen first.
+            motion: None,
         });
+    }
+
+    for pad in &mut pads {
+        pad.motion = motion_sibling(&pad.syspath, &accelerometers).map(Path::to_path_buf);
     }
 
     pads.sort_by(|left, right| left.syspath.cmp(&right.syspath));
@@ -209,6 +234,66 @@ pub fn discover(filter: Filter) -> std::io::Result<Vec<Pad>> {
         }
     }
     Ok(pads)
+}
+
+/// Every padmap clone the kernel is publishing, by name.
+///
+/// Read from sysfs rather than through [`discover`], and deliberately *not*
+/// subject to `PADMAP_ONLY_DEVICE`: that switch exists so padmap cannot open
+/// or grab hardware it was not told about, and a clone is padmap's own output.
+/// Filtering it out of a read-only listing protects nothing and makes the
+/// listing wrong -- a seated player whose node reads `null` looks unbound.
+pub fn clone_nodes() -> BTreeMap<String, PathBuf> {
+    let mut found = BTreeMap::new();
+    let Ok(entries) = std::fs::read_dir("/sys/class/input") else {
+        return found;
+    };
+    for entry in entries.flatten() {
+        let node = entry.file_name();
+        let Some(node) = node.to_str() else { continue };
+        if !node.starts_with("event") {
+            continue;
+        }
+        let Ok(name) = std::fs::read_to_string(entry.path().join("device/name")) else {
+            continue;
+        };
+        let name = name.trim();
+        if name.starts_with(crate::clone::VIRTUAL_PREFIX) {
+            found.insert(name.to_owned(), PathBuf::from("/dev/input").join(node));
+        }
+    }
+    found
+}
+
+/// The motion sensor belonging to a pad, given every accelerometer on the
+/// machine and where each one sits.
+///
+/// A controller with a gyro publishes it as a *separate* input device --
+/// hid-nintendo calls one "Nintendo Switch Pro Controller IMU",
+/// hid-playstation "DualSense Motion Sensors" -- sharing a parent with the
+/// joypad node but carrying no buttons. So the question "does this pad have
+/// motion" is answered by looking for a sibling, and the answer is a path
+/// rather than a flag because anything that wants the gyro has to open it.
+///
+/// Matched on the longest shared syspath prefix that is a real ancestor of
+/// both. A USB controller's two nodes hang off the same interface; matching on
+/// anything shorter would hand a pad the gyro of a different device on the
+/// same hub.
+///
+/// Pure, and takes the candidates as an argument, because there is no gyro pad
+/// on the machine this was written on and a rule nobody can test is a guess.
+pub fn motion_sibling<'a>(
+    pad: &Path,
+    accelerometers: &'a [(PathBuf, PathBuf)],
+) -> Option<&'a Path> {
+    let mine = pad.parent()?;
+    accelerometers
+        .iter()
+        // Same parent directory: the two nodes of one controller sit side by
+        // side under its input device, or under the same HID interface.
+        .filter(|(syspath, _)| syspath.parent() == Some(mine) || syspath.starts_with(mine))
+        .map(|(_, devnode)| devnode.as_path())
+        .next()
 }
 
 /// Pads that no static identifier can tell apart.
@@ -317,6 +402,52 @@ fn hex_attribute(device: &udev::Device, name: &str) -> u16 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_pads_gyro_is_the_sibling_under_its_own_parent() {
+        // What hid-nintendo publishes: two input devices under one HID
+        // interface, one of them the IMU.
+        let hid = PathBuf::from("/sys/devices/pci0000:00/usb1/1-2/1-2:1.0/0003:057E:2009.0001");
+        let pad = hid.join("input/input20/event18");
+        let imu = hid.join("input/input21/event19");
+        let accelerometers = vec![(imu.clone(), PathBuf::from("/dev/input/event19"))];
+        // The pad's parent is input20; the IMU is under input21, so the match
+        // has to reach the interface rather than the immediate directory.
+        assert_eq!(
+            motion_sibling(&pad, &accelerometers),
+            None,
+            "input21 is not under input20, and must not be claimed by prefix alone"
+        );
+
+        // Side by side under one input device, which is the other shape.
+        let together = PathBuf::from("/sys/devices/pci0000:00/usb1/1-2/input/input20");
+        let pad = together.join("event18");
+        let accelerometers = vec![(
+            together.join("event19"),
+            PathBuf::from("/dev/input/event19"),
+        )];
+        assert_eq!(
+            motion_sibling(&pad, &accelerometers).map(Path::to_path_buf),
+            Some(PathBuf::from("/dev/input/event19"))
+        );
+    }
+
+    #[test]
+    fn a_gyro_on_a_different_device_is_not_claimed() {
+        // Two controllers on one hub. Handing the first pad the second's gyro
+        // would be worse than reporting none: a consumer would open it and
+        // read somebody else's wrist.
+        let mine = PathBuf::from("/sys/devices/usb1/1-2/input/input20");
+        let theirs = PathBuf::from("/sys/devices/usb1/1-3/input/input30");
+        let accelerometers = vec![(theirs.join("event31"), PathBuf::from("/dev/input/event31"))];
+        assert_eq!(motion_sibling(&mine.join("event18"), &accelerometers), None);
+    }
+
+    #[test]
+    fn a_pad_with_no_accelerometer_anywhere_has_none() {
+        let pad = PathBuf::from("/sys/devices/usb1/1-2/input/input20/event18");
+        assert_eq!(motion_sibling(&pad, &[]), None);
+    }
+
     use super::*;
 
     fn pad(name: &str, phys: &str, uniq: &str, vid: u16, pid: u16, event: &str) -> Pad {
@@ -329,6 +460,7 @@ mod tests {
             pid,
             syspath: PathBuf::from(format!("/sys/devices/{event}")),
             retroarch_visible: true,
+            motion: None,
         }
     }
 

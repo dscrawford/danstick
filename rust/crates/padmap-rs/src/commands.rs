@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use padmap_core::capture::{self, MappingRun};
+use padmap_core::emit;
 use padmap_core::launch;
 use padmap_daemon::publish;
 use padmap_input::clone::IdentityMode;
@@ -21,6 +22,90 @@ use padmap_input::{artefacts, assignments, profiles, runtime};
 /// Discover the pads a command should act on.
 pub fn discover() -> Result<Vec<Pad>> {
     pad::discover(pad::Filter::default()).context("enumerating input devices")
+}
+
+/// What is plugged in, as JSON.
+///
+/// For a launcher: it runs once, needs one answer, has `jq`, and should not
+/// have to start a daemon to ask. The socket is the right answer for a
+/// front-end that is already connected; this is for the script that runs
+/// before the game does.
+///
+/// The vocabulary is deliberately the `controller` event's -- same keys, same
+/// meanings -- so a caller that reads both learns one shape rather than two.
+///
+/// Entries come out in the order a consumer enumerates pads, with assigned
+/// players first, and an unassigned controller has `"player": null`.
+pub fn cmd_list_json() -> Result<()> {
+    use serde_json::json;
+
+    let pads = pad::discover(pad::Filter::default())?;
+    // Clones too, so a player's node can be reported: they are what a game
+    // actually opens, and a launcher binds those rather than the hardware.
+    let clones = pad::clone_nodes();
+    let saved = assignments::load(&runtime::assignments_path()).unwrap_or_default();
+    let order = publish::visible_order();
+    let mode = IdentityMode::from_env();
+
+    let mut entries = Vec::new();
+    for pad in &pads {
+        let player = saved
+            .iter()
+            .find(|entry| entry.path == pad.path)
+            .map(|entry| entry.player);
+        let clone = player.and_then(|player| clones.get(&emit::virtual_name(player)));
+        let virtual_pad = player.map(|player| {
+            let identity = publish::identity_of(pad, player, mode);
+            let node = clone.map(|path| path.display().to_string());
+            json!({
+                "name": emit::virtual_name(player),
+                "node": node,
+                "guid": emit::virtual_guid(player, identity),
+                "vid": format!("{:04x}", identity.vendor),
+                "pid": format!("{:04x}", identity.product),
+                "bustype": identity.bustype,
+                // Where a consumer enumerating pads will find it, or null:
+                // a clone that is not running yet has no index, and guessing
+                // one would point a port at somebody else's controller.
+                "index": node
+                    .as_ref()
+                    .and_then(|node| {
+                        order.iter().find(|(_, path)| *path == node).map(|(index, _)| *index)
+                    }),
+            })
+        });
+        entries.push(json!({
+            "player": player,
+            "controller": {
+                "name": pad.name,
+                "path": pad.path.display().to_string(),
+                "vid": format!("{:04x}", pad.vid),
+                "pid": format!("{:04x}", pad.pid),
+                "phys": pad.phys,
+                "uniq": pad.uniq,
+                "signature": profiles::signature_of(pad),
+                "configured": publish::has_mapping(pad),
+                // False once `padmap hide` has cleared ID_INPUT_JOYSTICK.
+                "retroarch_visible": pad.retroarch_visible,
+                // The controller's own motion sensor, and **not** something
+                // padmap republishes: a clone carries the axes its source's
+                // joypad node declares, and a gyro is never among them. Open
+                // this to read motion; the clone will never carry it.
+                "motion": pad.motion.is_some(),
+                "motion_node": pad.motion.as_ref().map(|path| path.display().to_string()),
+            },
+            "virtual": virtual_pad,
+        }));
+    }
+    // Assigned players first and in seat order, so `.[0]` is player 1.
+    entries.sort_by_key(|entry| {
+        entry["player"]
+            .as_u64()
+            .map(|player| (0, player))
+            .unwrap_or((1, 0))
+    });
+    println!("{}", serde_json::to_string_pretty(&entries)?);
+    Ok(())
 }
 
 /// Resolve each controller's mapping for the game that is about to start.

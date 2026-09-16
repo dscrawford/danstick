@@ -34,6 +34,12 @@ anything can consume them:
 | RetroArch autoconfig profiles | `$XDG_RUNTIME_DIR/padmap/autoconfig/udev/` |
 | a control socket | `$XDG_RUNTIME_DIR/padmap/padmap.sock` |
 
+`padmap list --json` answers the same questions for a script that runs once
+and should not have to start a daemon:
+
+    padmap list --json | jq -r '.[] | select(.player) | "\(.player) \(.virtual.node)"'
+
+
 Point any SDL program at the database and it gets the mappings padmap
 captured:
 

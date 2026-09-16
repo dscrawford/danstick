@@ -378,6 +378,47 @@ fn a_session_claims_confirms_and_writes_what_a_launch_reads() {
     assert!(sdl.contains("padmap Player 1"), "{sdl}");
     let mapping = daemon.last("sdl_mapping").expect("sdl_mapping");
     assert_eq!(mapping["lines"].as_array().map(Vec::len), Some(1));
+
+    // What a launcher sees, without connecting to the daemon at all: the
+    // seated player, the node its clone is on, and the GUID a mapping is
+    // filed under -- the same three facts the socket would have given it.
+    let listed = Command::new(env!("CARGO_BIN_EXE_padmap-rs"))
+        .args(["list", "--json"])
+        .env("XDG_RUNTIME_DIR", &daemon.runtime)
+        .env("XDG_CONFIG_HOME", root.join("config"))
+        .env("XDG_DATA_HOME", root.join("data"))
+        .env("PADMAP_PROFILE_DIR", &daemon.profiles)
+        .env("PADMAP_ONLY_DEVICE", JOURNEY.only)
+        .output()
+        .expect("list --json");
+    assert!(listed.status.success(), "{listed:?}");
+    let entries: Value = serde_json::from_slice(&listed.stdout).expect("valid JSON");
+    let entries = entries.as_array().expect("an array");
+    assert_eq!(entries.len(), 1, "{entries:?}");
+    let seated = &entries[0];
+    assert_eq!(seated["player"], 1);
+    assert_eq!(seated["controller"]["name"], JOURNEY.name);
+    assert_eq!(seated["controller"]["configured"], false, "not mapped yet");
+    // The clone's node, which is the thing a launcher binds.
+    let node = seated["virtual"]["node"]
+        .as_str()
+        .expect("the clone's node")
+        .to_owned();
+    assert!(node.starts_with("/dev/input/event"), "{node}");
+    // ...and it is the GUID the SDL line was written under, so a mapping
+    // registered from this output is one SDL will actually look up.
+    let guid = seated["virtual"]["guid"].as_str().expect("guid");
+    assert!(
+        mapping["lines"][0]
+            .as_str()
+            .expect("line")
+            .starts_with(guid),
+        "list says {guid}, the SDL line says {}",
+        mapping["lines"][0]
+    );
+    // This pad has no gyro, and says so rather than leaving the field out.
+    assert_eq!(seated["controller"]["motion"], false);
+    assert!(seated["controller"]["motion_node"].is_null());
     // A clone exists and is named for the player.
     let clones: BTreeSet<String> = std::fs::read_dir("/sys/class/input")
         .expect("sysfs")

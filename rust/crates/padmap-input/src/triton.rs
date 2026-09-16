@@ -409,6 +409,11 @@ pub fn slots_where(probe: bool, wanted: impl Fn(&str) -> bool) -> Vec<Pad> {
             // RetroArch's pad-index arithmetic, where it would shift every
             // other player by one.
             retroarch_visible: false,
+            // Its gyro streams, and padmap decodes none of it: the kernel
+            // publishes no evdev node for this controller at all, so there is
+            // nothing a consumer could open. Saying so is better than a flag
+            // that promises motion nothing can read.
+            motion: None,
         });
     }
     found

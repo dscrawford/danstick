@@ -234,6 +234,7 @@ fn only_valve_ids_on_a_hidraw_node_are_ours() {
         pid: 0x1304,
         syspath: "/sys/x".into(),
         retroarch_visible: false,
+        motion: None,
     };
     assert!(triton::owns(&ours));
 

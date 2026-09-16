@@ -102,6 +102,7 @@ mod tests {
             pid: 0x1879,
             syspath: PathBuf::from("/sys"),
             retroarch_visible: true,
+            motion: None,
         }
     }
 
