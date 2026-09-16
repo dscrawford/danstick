@@ -220,6 +220,21 @@ pub fn parse_profile_text(text: &str) -> BTreeMap<String, String> {
         .collect()
 }
 
+/// The same parse, keeping the file's order and every repeated key.
+///
+/// For copying a profile: [`parse_profile_text`] answers "what does this key
+/// say", and a `BTreeMap` is right for that; a copy has to come out in the
+/// order it went in, or a diff against the original is noise.
+pub fn parse_profile_pairs(text: &str) -> Vec<(String, String)> {
+    static LINE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r#"^\s*([A-Za-z0-9_]+)\s*=\s*"?([^"]*)"?\s*$"#).expect("a valid regex")
+    });
+    text.lines()
+        .filter_map(|line| LINE.captures(line))
+        .map(|found| (found[1].to_owned(), found[2].to_owned()))
+        .collect()
+}
+
 /// The same, on the bytes of a file rather than a `str`.
 ///
 /// A `retroarch.cfg` is not guaranteed to be UTF-8 -- a latin-1 ROM path in

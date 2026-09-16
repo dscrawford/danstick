@@ -912,6 +912,98 @@ def recent_games() -> None:
     write("recent_games_writes", writes)
 
 
+# -- the launch override -----------------------------------------------------
+def launch_config_corpus() -> None:
+    """The whole --appendconfig text, and the copied-profile fallback.
+
+    `launch_config` reads the live enumeration and every managed pad's
+    profile; both are replaced here so the recorded text depends only on the
+    inputs written beside it. Sixteen slots, every one written, and the exact
+    comment lines matter: the file is what a user diffs when a launch behaves
+    oddly, and a port that reads differently is a port that cannot be diffed
+    against what the Python wrote yesterday.
+    """
+    from padmap import profiles, retroarch
+    from padmap.assign import Assignment
+    from padmap.devices import Pad
+
+    def pad(n: int) -> Pad:
+        return Pad(path=f"/dev/input/event{n}", name=f"Pad {n}", phys="",
+                   uniq="", vid=0x1234, pid=n, syspath="")
+
+    calibrated = {"axes": {0: profiles.AxisCalibration(
+        center=128, minimum=0, maximum=255, flat=10)}}
+    scenarios = [
+        # (players, virtual paths, enumeration, calibrated pads, verbose)
+        ([1, 2], {1: "/dev/input/event90", 2: "/dev/input/event91"},
+         ["/dev/input/event90", "/dev/input/event91"], [1, 2], False),
+        ([1, 2], {1: "/dev/input/event90", 2: "/dev/input/event91"},
+         ["/dev/input/event90", "/dev/input/event91"], [1], False),
+        ([1, 3], {1: "/dev/input/event90", 3: "/dev/input/event92"},
+         ["/dev/input/event5", "/dev/input/event90", "/dev/input/event92"],
+         [1, 3], True),
+        # A clone missing from the enumeration is not managed.
+        ([1, 2], {1: "/dev/input/event90", 2: "/dev/input/event91"},
+         ["/dev/input/event90"], [1, 2], False),
+        # Out of range players are dropped rather than crashing.
+        ([1, 17, 0], {1: "/dev/input/event90", 17: "/dev/input/event97",
+                      0: "/dev/input/event80"},
+         ["/dev/input/event90", "/dev/input/event97", "/dev/input/event80"],
+         [1, 17, 0], False),
+        ([], {}, ["/dev/input/event1"], [], False),
+    ]
+    real_order, real_load = retroarch.visible_order, profiles.load
+    cases = []
+    try:
+        for players, paths, order, cal, verbose in scenarios:
+            assignments = [Assignment(player=p, pad=pad(p), button=0)
+                           for p in players]
+            enumeration = dict(enumerate(order))
+            retroarch.visible_order = lambda e=enumeration: dict(e)
+            profiles.load = (lambda p, directory=None, cal=cal:
+                             profiles.Profile(signature="s", name="n",
+                                              **calibrated)
+                             if p.pid in cal else None)
+            cases.append({
+                "players": players, "paths": {str(k): v for k, v in paths.items()},
+                "order": order, "calibrated": cal, "verbose": verbose,
+                "autoconfig_dir": str(retroarch.runtime_autoconfig_dir()),
+                "out": retroarch.launch_config(assignments, paths,
+                                               verbose=verbose),
+            })
+    finally:
+        retroarch.visible_order, profiles.load = real_order, real_load
+    write("launch_config", cases)
+
+    derived = []
+    source_values = {
+        "input_driver": "udev", "input_device": "Their Pad",
+        "input_vendor_id": "1234", "input_product_id": "5678",
+        "input_b_btn": "1", "input_a_btn": "0", "input_phys": "x",
+        "input_l_x_plus_axis": "+0",
+    }
+    for source, player, vid, pid in [
+        (None, 1, None, None), (None, 2, 0, 0),
+        ("theirs.cfg", 1, 0x1234, 0x5678), ("theirs.cfg", 16, 0, 1),
+    ]:
+        path = None
+        if source:
+            import tempfile
+            d = Path(tempfile.mkdtemp())
+            path = d / source
+            path.write_text("".join(f'{k} = "{v}"\n'
+                                    for k, v in source_values.items()))
+        derived.append({
+            "source": source,
+            # Ordered pairs, because the copy keeps the source's order and a
+            # JSON object written with sort_keys would lose it.
+            "values": list(source_values.items()) if source else [],
+            "player": player, "vid": vid, "pid": pid,
+            "out": retroarch.derive_profile(path, player, vid=vid, pid=pid),
+        })
+    write("derive_profile", derived)
+
+
 # -- capability bitmaps ------------------------------------------------------
 def capabilities() -> None:
     """What makes a device a joypad, read from sysfs rather than by opening it.
@@ -1523,6 +1615,7 @@ def main() -> int:
     emitted_files()
     runtime_paths()
     recent_games()
+    launch_config_corpus()
     capabilities()
     calibration_machine()
     switch_reports()

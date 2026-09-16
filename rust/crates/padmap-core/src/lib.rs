@@ -12,6 +12,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod announce;
 pub mod ares;
 pub mod assign;
 pub mod binding;
