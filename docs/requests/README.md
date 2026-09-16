@@ -22,3 +22,4 @@ needs when the thing calling it keeps each emulator in a directory of its own.
 | [machine-readable-list.md](machine-readable-list.md) | a launcher has to enumerate pads without a daemon and without parsing prose |
 | [always-seating.md](always-seating.md) | a controller that arrives mid-game should be able to join without everybody stopping |
 | [triton-assignment.md](triton-assignment.md) | **bug**: the 2026 Steam Controller pairs in a session and is then never read |
+| [resume-republishing.md](resume-republishing.md) | **bug**: one sleeping wireless pad leaves every controller unpublished |
