@@ -73,9 +73,207 @@ pub fn game_is_running_at(marker: &std::path::Path) -> bool {
     false
 }
 
+/// Controller models the daemon has already offered a setup screen for.
+///
+/// Distinct from the profile store: a profile means "configured", this means
+/// "already asked, do not ask again". In `XDG_RUNTIME_DIR`, so declining
+/// lasts the login session and a fresh boot asks again.
+pub fn read_prompted(path: &Path) -> std::collections::BTreeSet<String> {
+    // Lossy rather than failing: the file lives where anything may have
+    // written it, and the Python could not start at all on one that was not
+    // UTF-8.
+    let Ok(raw) = std::fs::read(path) else {
+        return Default::default();
+    };
+    String::from_utf8_lossy(&raw)
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+pub fn write_prompted(
+    path: &Path,
+    prompted: &std::collections::BTreeSet<String>,
+) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let body: String = prompted.iter().map(|line| format!("{line}\n")).collect();
+    std::fs::write(path, body)
+}
+
+/// The user's per-directory config home.
+pub fn config_home() -> PathBuf {
+    match std::env::var("XDG_CONFIG_HOME") {
+        Ok(value) if !value.is_empty() => PathBuf::from(value),
+        _ => std::env::var("HOME")
+            .map(|home| PathBuf::from(home).join(".config"))
+            .unwrap_or_else(|_| PathBuf::from(".config")),
+    }
+}
+
+/// The user's icon overrides, `{"0079:1879": "n64"}`.
+pub fn icon_overrides_path() -> PathBuf {
+    config_home().join("padmap").join("icons.json")
+}
+
+pub fn load_icon_overrides() -> std::collections::BTreeMap<String, String> {
+    std::fs::read_to_string(icon_overrides_path())
+        .map(|text| padmap_core::icons::parse_overrides(&text))
+        .unwrap_or_default()
+}
+
+/// Identity of the code *this binary* is running.
+///
+/// The build id of the Python was the newest source file; a binary has one
+/// file, itself. `PADMAP_BUILD_ID` still wins, because under Nix it is the
+/// store path and that changes with every edit, which is exactly the property
+/// wanted.
+pub fn build_id_of_binary() -> String {
+    if let Ok(store) = std::env::var("PADMAP_BUILD_ID") {
+        if !store.is_empty() {
+            return store;
+        }
+    }
+    let Ok(exe) = std::env::current_exe() else {
+        return "unknown".to_owned();
+    };
+    let newest = std::fs::metadata(&exe)
+        .ok()
+        .and_then(|meta| meta.modified().ok())
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|since| since.as_nanos());
+    match newest {
+        Some(nanos) => format!("mtime:{}:{nanos}", exe.display()),
+        None => "unknown".to_owned(),
+    }
+}
+
+fn proc_field(pid: u32, name: &str) -> Vec<String> {
+    let Ok(raw) = std::fs::read(format!("/proc/{pid}/{name}")) else {
+        return Vec::new();
+    };
+    raw.split(|byte| *byte == 0)
+        .filter(|part| !part.is_empty())
+        .map(|part| String::from_utf8_lossy(part).into_owned())
+        .collect()
+}
+
+/// Whether an argv is a padmap daemon.
+///
+/// Structurally, not by substring: `pgrep -f` also matches any shell whose
+/// command line mentions the string, including the terminal running a
+/// diagnostic about daemons, and signalling that kills the shell.
+///
+/// Both spellings, for as long as both daemons exist: the binary's
+/// `padmap serve`, and the interpreter's `python -m padmap.cli serve`.
+pub fn is_daemon_argv(argv: &[String]) -> bool {
+    let Some(last) = argv.last() else {
+        return false;
+    };
+    if last != "serve" || argv.len() < 2 {
+        return false;
+    }
+    let before = &argv[argv.len() - 2];
+    if before == "padmap.cli" {
+        return argv.iter().any(|arg| arg == "-m");
+    }
+    let program = Path::new(before)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("");
+    program == "padmap" || program == "padmap-rs"
+}
+
+/// Pids of padmap daemons serving a given `XDG_RUNTIME_DIR`.
+///
+/// Filtered by runtime dir, since that is what decides which socket a daemon
+/// serves. Without it a caller managing its own daemon reaches into every
+/// other one the user is running.
+pub fn daemon_pids(runtime: Option<&str>) -> Vec<u32> {
+    use std::os::unix::fs::MetadataExt;
+    let wanted = runtime
+        .map(str::to_owned)
+        .unwrap_or_else(|| std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_owned()));
+    let uid = rustix::process::getuid().as_raw();
+    let mut pids = Vec::new();
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return pids;
+    };
+    for entry in entries.flatten() {
+        let Some(pid) = entry
+            .file_name()
+            .to_str()
+            .and_then(|name| name.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        let Ok(meta) = entry.metadata() else {
+            continue;
+        };
+        if meta.uid() != uid {
+            continue;
+        }
+        if !is_daemon_argv(&proc_field(pid, "cmdline")) {
+            continue;
+        }
+        let theirs = proc_field(pid, "environ")
+            .into_iter()
+            .find_map(|item| item.strip_prefix("XDG_RUNTIME_DIR=").map(str::to_owned))
+            .unwrap_or_else(|| "/tmp".to_owned());
+        if same_runtime(&theirs, &wanted) {
+            pids.push(pid);
+        }
+    }
+    pids.sort_unstable();
+    pids
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_daemon_is_recognised_by_its_argv_shape_not_a_substring() {
+        let owned =
+            |parts: &[&str]| -> Vec<String> { parts.iter().map(|p| (*p).to_owned()).collect() };
+        assert!(is_daemon_argv(&owned(&[
+            "/nix/store/x/bin/padmap",
+            "serve"
+        ])));
+        assert!(is_daemon_argv(&owned(&["padmap-rs", "serve"])));
+        assert!(is_daemon_argv(&owned(&[
+            "python3",
+            "-m",
+            "padmap.cli",
+            "serve"
+        ])));
+        // A shell mentioning the words is not a daemon.
+        assert!(!is_daemon_argv(&owned(&["bash", "-c", "padmap serve"])));
+        assert!(!is_daemon_argv(&owned(&["padmap", "list"])));
+        assert!(!is_daemon_argv(&owned(&["padmap.cli", "serve"])), "no -m");
+        assert!(!is_daemon_argv(&owned(&["serve"])));
+        assert!(!is_daemon_argv(&owned(&[])));
+    }
+
+    #[test]
+    fn the_prompted_file_round_trips_and_survives_bytes_that_are_not_utf8() {
+        let dir = std::env::temp_dir().join(format!("padmap-prompted-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("nested").join("prompted");
+        let mut set = std::collections::BTreeSet::new();
+        set.insert("1234:0001:Pad".to_owned());
+        set.insert("abcd:0002:Other".to_owned());
+        write_prompted(&path, &set).expect("creates the directory");
+        assert_eq!(read_prompted(&path), set);
+        std::fs::write(&path, b"1234:0001:Pad\n\xff\xfe\n\n").expect("seed");
+        let read = read_prompted(&path);
+        assert!(read.contains("1234:0001:Pad"));
+        assert_eq!(read.len(), 2, "the bad line is kept lossily, not fatal");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn every_path_hangs_off_one_directory() {

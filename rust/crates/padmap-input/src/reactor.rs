@@ -29,14 +29,31 @@ pub enum Watched {
     Clone(usize),
     /// The periodic tick.
     Tick,
+    /// The daemon's listening socket.
+    Listener,
+    /// A connected client, by its descriptor number.
+    Client(i32),
+    /// A pad held open by an assignment session, by index into it.
+    Session(usize),
 }
+
+/// Low three bits of a token say which kind; the rest is the index.
+const TAG_SOURCE: u64 = 0;
+const TAG_CLONE: u64 = 1;
+const TAG_LISTENER: u64 = 2;
+const TAG_CLIENT: u64 = 3;
+const TAG_SESSION: u64 = 4;
 
 impl Watched {
     fn token(self) -> u64 {
         match self {
-            Watched::Source(index) => (index as u64) << 2,
-            Watched::Clone(index) => ((index as u64) << 2) | 1,
+            Watched::Source(index) => ((index as u64) << 3) | TAG_SOURCE,
+            Watched::Clone(index) => ((index as u64) << 3) | TAG_CLONE,
             Watched::Tick => u64::MAX,
+            Watched::Listener => TAG_LISTENER,
+            // A descriptor is non-negative; the cast is lossless.
+            Watched::Client(fd) => ((fd as u64) << 3) | TAG_CLIENT,
+            Watched::Session(index) => ((index as u64) << 3) | TAG_SESSION,
         }
     }
 
@@ -44,11 +61,13 @@ impl Watched {
         if token == u64::MAX {
             return Watched::Tick;
         }
-        let index = (token >> 2) as usize;
-        if token & 1 == 1 {
-            Watched::Clone(index)
-        } else {
-            Watched::Source(index)
+        let index = (token >> 3) as usize;
+        match token & 0b111 {
+            TAG_CLONE => Watched::Clone(index),
+            TAG_LISTENER => Watched::Listener,
+            TAG_CLIENT => Watched::Client(index as i32),
+            TAG_SESSION => Watched::Session(index),
+            _ => Watched::Source(index),
         }
     }
 }
@@ -207,6 +226,30 @@ mod tests {
             );
         }
         assert_eq!(Watched::from_token(Watched::Tick.token()), Watched::Tick);
+        assert_eq!(
+            Watched::from_token(Watched::Listener.token()),
+            Watched::Listener
+        );
+        for fd in [0i32, 3, 4, 1023, i32::MAX] {
+            assert_eq!(
+                Watched::from_token(Watched::Client(fd).token()),
+                Watched::Client(fd)
+            );
+        }
+        for index in [0usize, 5, 4096] {
+            assert_eq!(
+                Watched::from_token(Watched::Session(index).token()),
+                Watched::Session(index)
+            );
+        }
+    }
+
+    #[test]
+    fn a_session_pad_and_a_republished_source_are_different_tokens() {
+        // Index 0 in a session and index 0 in the republisher are different
+        // descriptors, serviced by different code.
+        assert_ne!(Watched::Session(0).token(), Watched::Source(0).token());
+        assert_ne!(Watched::Client(0).token(), Watched::Listener.token());
     }
 
     #[test]

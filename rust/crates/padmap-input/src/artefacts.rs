@@ -321,6 +321,211 @@ pub fn write_ryujinx_config(
     Ok(target)
 }
 
+/// RetroArch's own config directory.
+pub fn retroarch_config_dir() -> PathBuf {
+    match std::env::var("RETROARCH_CONFIG_DIR") {
+        Ok(value) if !value.is_empty() => PathBuf::from(value),
+        _ => home().join(".config").join("retroarch"),
+    }
+}
+
+/// Where to look for existing joypad profiles, most specific first.
+///
+/// `PADMAP_AUTOCONFIG_DIRS` is what the flake sets; without it the module
+/// falls back to globbing the Nix store, which can pick an older autoconfig
+/// package at random.
+pub fn autoconfig_dirs() -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    if let Ok(value) = std::env::var("PADMAP_AUTOCONFIG_DIRS") {
+        dirs.extend(
+            value
+                .split(':')
+                .filter(|p| !p.is_empty())
+                .map(PathBuf::from),
+        );
+    }
+    dirs.push(retroarch_config_dir().join("autoconfig"));
+    dirs.push(PathBuf::from(
+        "/run/current-system/sw/share/libretro/autoconfig",
+    ));
+    // Nix has no global share dir; fall back to the store paths directly,
+    // newest name first.
+    if let Ok(entries) = std::fs::read_dir("/nix/store") {
+        let mut stores: Vec<PathBuf> = entries
+            .flatten()
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_str()
+                    .is_some_and(|name| name.contains("retroarch-joypad-autoconfig-"))
+            })
+            .map(|entry| entry.path().join("share/libretro/autoconfig"))
+            .collect();
+        stores.sort();
+        stores.reverse();
+        dirs.extend(stores);
+    }
+    dirs.into_iter().filter(|dir| dir.is_dir()).collect()
+}
+
+/// Every `.cfg` under a directory, in sorted order.
+fn profiles_under(base: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let mut stack = vec![base.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if path.extension().is_some_and(|ext| ext == "cfg") {
+                out.push(path);
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+/// The best existing libretro profile for a physical pad.
+///
+/// Exact name match wins; a vid/pid match is the fallback, mirroring how
+/// RetroArch scores autoconfig candidates. Returns the file's name and its
+/// settings in file order, which is what [`padmap_core::retroarch::derive_profile`]
+/// copies.
+pub fn find_profile(name: &str, vid: u16, pid: u16) -> Option<(String, Vec<(String, String)>)> {
+    let mut by_ids: Option<(String, Vec<(String, String)>)> = None;
+    for base in autoconfig_dirs() {
+        for path in profiles_under(&base) {
+            let Ok(raw) = std::fs::read(&path) else {
+                continue;
+            };
+            let text = String::from_utf8_lossy(&raw);
+            let pairs = padmap_core::userconfig::parse_profile_pairs(&text);
+            let file = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("")
+                .to_owned();
+            let value = |key: &str| {
+                pairs
+                    .iter()
+                    .find(|(k, _)| k == key)
+                    .map(|(_, v)| v.as_str())
+            };
+            if value("input_device") == Some(name) {
+                return Some((file, pairs));
+            }
+            if by_ids.is_none() && vid != 0 && pid != 0 {
+                let matches = value("input_vendor_id")
+                    .and_then(|v| v.parse::<u32>().ok())
+                    .zip(value("input_product_id").and_then(|v| v.parse::<u32>().ok()))
+                    .is_some_and(|(v, p)| v == u32::from(vid) && p == u32::from(pid));
+                if matches {
+                    by_ids = Some((file, pairs));
+                }
+            }
+        }
+    }
+    by_ids
+}
+
+/// Files SDL itself would read a mapping out of, the user's own first.
+///
+/// A line in the user's file was either written by a Gamepad Editor or typed
+/// by hand, and either way it is a statement about this machine rather than
+/// a database's guess about a product line. The legacy location is where the
+/// database lived while padmap shipped a particular front-end; dropping it
+/// would orphan exactly the mappings this exists to carry over.
+pub fn sdl_database_paths() -> Vec<PathBuf> {
+    let mut paths = vec![sdl_database_path()];
+    let legacy = config_home()
+        .join("pegasus-frontend")
+        .join("sdl_controllers.txt");
+    if !paths.contains(&legacy) {
+        paths.push(legacy);
+    }
+    if let Ok(value) = std::env::var("SDL_GAMECONTROLLERCONFIG_FILE") {
+        paths.extend(
+            value
+                .split(':')
+                .filter(|p| !p.is_empty())
+                .map(PathBuf::from),
+        );
+    }
+    paths
+}
+
+/// A mapping for this GUID already on disk, and where it came from.
+///
+/// For a pad nobody has mapped through padmap: a line the user wrote for the
+/// physical controller is worth more than a guess, and it is carried over to
+/// the clone. padmap's own lines are skipped -- one written for a virtual pad
+/// cannot also be the physical pad's, and matching one would let a stale
+/// generation feed itself back in.
+pub fn carried_fields(guid: &str) -> Option<(padmap_core::fields::Fields, String)> {
+    if guid.is_empty() {
+        return None;
+    }
+    for path in sdl_database_paths() {
+        let text = match std::fs::read(&path) {
+            Ok(raw) => String::from_utf8_lossy(&raw).into_owned(),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                // A database that is there and unreadable is not the same
+                // thing as absent, and skipping it quietly means a user's own
+                // mapping is passed over in favour of a guess.
+                warn!(
+                    "cannot read {}, so a mapping in it will not be carried over: {error}",
+                    path.display()
+                );
+                continue;
+            }
+        };
+        for line in text.lines() {
+            let Some((found, name, fields)) = padmap_core::sdl::parse_line(line) else {
+                continue;
+            };
+            if found != guid || name.starts_with(emit::VIRTUAL_PREFIX) {
+                continue;
+            }
+            return Some((binding_fields(&fields), path.display().to_string()));
+        }
+    }
+    None
+}
+
+/// Fields that describe the pad rather than bind it, dropped when a line is
+/// carried over: the clone has its own identity.
+const IDENTITY_FIELDS: [&str; 5] = ["platform", "crc", "hint", "sdk", "type"];
+
+fn binding_fields(fields: &padmap_core::fields::Fields) -> padmap_core::fields::Fields {
+    let mut out = padmap_core::fields::Fields::new();
+    for (field, target) in fields.iter() {
+        if !IDENTITY_FIELDS.contains(&field.as_str()) {
+            out.insert(field.clone(), target.clone());
+        }
+    }
+    out
+}
+
+/// Write the launch override, creating its directory.
+pub fn write_launch_config(path: &Path, text: &str) -> Result<(), WriteError> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| WriteError::Io(parent.to_path_buf(), error))?;
+    }
+    std::fs::write(path, text).map_err(|error| WriteError::Io(path.to_path_buf(), error))
+}
+
+/// Persist the `--nodevice` flags, one token per line, for the launch wrapper.
+pub fn write_launch_args(path: &Path, args: &[String]) -> Result<(), WriteError> {
+    let body: String = args.iter().map(|arg| format!("{arg}\n")).collect();
+    write_launch_config(path, &body)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -342,6 +547,80 @@ mod tests {
         [(1, "aaa,padmap Player 1,a:b0,".to_owned())]
             .into_iter()
             .collect()
+    }
+
+    #[test]
+    fn a_libretro_profile_is_found_by_name_before_ids() {
+        let dir = scratch("find");
+        std::fs::create_dir_all(dir.join("udev")).expect("mkdir");
+        std::fs::write(
+            dir.join("udev").join("ids.cfg"),
+            "input_driver = \"udev\"\ninput_device = \"Other\"\ninput_vendor_id = \"4660\"\ninput_product_id = \"1\"\ninput_b_btn = \"1\"\n",
+        )
+        .expect("seed");
+        std::fs::write(
+            dir.join("udev").join("name.cfg"),
+            "input_device = \"Mine\"\ninput_vendor_id = \"0\"\ninput_product_id = \"0\"\ninput_a_btn = \"0\"\n",
+        )
+        .expect("seed");
+        // Through the environment the flake sets, without touching the
+        // process's own: a temporary child sees it.
+        let out = std::process::Command::new(std::env::current_exe().expect("exe"))
+            .args([
+                "--exact",
+                "artefacts::tests::find_profile_child",
+                "--nocapture",
+                "--quiet",
+            ])
+            .env("PADMAP_AUTOCONFIG_DIRS", &dir)
+            .env("PADMAP_FIND_CHILD", "1")
+            .output()
+            .expect("run");
+        let text = String::from_utf8_lossy(&out.stdout);
+        assert!(text.contains("by-name=name.cfg"), "{text}");
+        assert!(text.contains("by-ids=ids.cfg"), "{text}");
+        assert!(text.contains("none=-"), "{text}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The other half of the test above, run in a child with the environment
+    /// set. Prints rather than asserts; the parent checks.
+    #[test]
+    fn find_profile_child() {
+        if std::env::var("PADMAP_FIND_CHILD").is_err() {
+            return;
+        }
+        println!(
+            "by-name={}",
+            find_profile("Mine", 0x1234, 1)
+                .map(|(f, _)| f)
+                .unwrap_or("-".into())
+        );
+        println!(
+            "by-ids={}",
+            find_profile("Nobody", 0x1234, 1)
+                .map(|(f, _)| f)
+                .unwrap_or("-".into())
+        );
+        println!(
+            "none={}",
+            find_profile("Nobody", 0, 0)
+                .map(|(f, _)| f)
+                .unwrap_or("-".into())
+        );
+    }
+
+    #[test]
+    fn a_carried_line_drops_the_identity_fields_and_skips_our_own() {
+        let mut fields = padmap_core::fields::Fields::new();
+        fields.insert("a", "b0");
+        fields.insert("platform", "Linux");
+        fields.insert("crc", "abcd");
+        let kept = binding_fields(&fields);
+        assert_eq!(kept.get("a"), Some("b0"));
+        assert!(!kept.contains_key("platform"));
+        assert!(!kept.contains_key("crc"));
+        assert!(carried_fields("").is_none(), "no GUID, nothing to look up");
     }
 
     #[test]

@@ -387,6 +387,11 @@ fn cmd_run() -> Result<()> {
                         late_ticks += expiries - 1;
                     }
                 }
+                // `run` has no socket and no session; those kinds are the
+                // daemon's, and are never registered here.
+                reactor::Watched::Listener
+                | reactor::Watched::Client(_)
+                | reactor::Watched::Session(_) => {}
             }
         }
     }

@@ -321,6 +321,119 @@ impl std::os::fd::AsRawFd for Source {
     }
 }
 
+/// Open a pad for reading, as the republisher would, without cloning it.
+///
+/// For an assignment session and the wizards: they read the *physical* pad
+/// directly, grabbed so the front-end never sees the presses. The same source
+/// the republisher picks, not always the evdev node -- a pad that has to be
+/// read over hidraw has to be read that way here too, or the screen that maps
+/// a controller cannot see the controller it is mapping.
+pub fn open_source(pad: &Pad, grab: bool) -> Result<Source, CloneError> {
+    if triton::owns(pad) {
+        let source = triton::Source::open(&pad.path)
+            .map_err(|error| CloneError::Open(pad.path.display().to_string(), error))?;
+        return Ok(Source::Triton(Box::new(source)));
+    }
+    let mut source = Device::open(&pad.path)
+        .map_err(|error| CloneError::Open(pad.path.display().to_string(), error))?;
+    if grab {
+        if let Err(error) = source.grab() {
+            warn!(
+                "could not grab {} ({error}): presses will leak through to other applications",
+                pad.event()
+            );
+        }
+    }
+    Ok(Source::Evdev(Box::new(source)))
+}
+
+impl Source {
+    /// Whether the kernel let us hold this exclusively. A hidraw source is
+    /// never grabbed and never needs to be.
+    pub fn grab(&mut self) -> std::io::Result<()> {
+        match self {
+            Source::Evdev(device) => device.grab(),
+            Source::Triton(_) => Ok(()),
+        }
+    }
+
+    /// Every axis as the driver declares it, for calibration.
+    pub fn declared_axes(&self) -> BTreeMap<u16, padmap_core::calibration::Declared> {
+        use padmap_core::calibration::Declared;
+        match self {
+            Source::Evdev(device) => device
+                .get_absinfo()
+                .map(|axes| {
+                    axes.map(|(code, info)| {
+                        (
+                            code.0,
+                            Declared {
+                                minimum: info.minimum(),
+                                maximum: info.maximum(),
+                                value: info.value(),
+                                flat: info.flat(),
+                            },
+                        )
+                    })
+                    .collect()
+                })
+                .unwrap_or_default(),
+            Source::Triton(source) => source
+                .capabilities()
+                .1
+                .into_iter()
+                .map(|(code, info)| {
+                    (
+                        code,
+                        Declared {
+                            minimum: info.minimum(),
+                            maximum: info.maximum(),
+                            value: info.value(),
+                            flat: info.flat(),
+                        },
+                    )
+                })
+                .collect(),
+        }
+    }
+
+    /// The GUID SDL computes for the *physical* controller, or `None` for a
+    /// source SDL never sees.
+    ///
+    /// Deliberately the device's raw name, not the cleaned one: SDL checksums
+    /// what the kernel reports, and the N64 adapter measured here prefixes its
+    /// name with a 0x18 byte. Stripping it changes the checksum and the lookup
+    /// silently matches nothing.
+    pub fn physical_guid(&self) -> Option<String> {
+        match self {
+            Source::Evdev(device) => {
+                let id = device.input_id();
+                Some(padmap_core::sdl::guid(
+                    id.bus_type().0,
+                    id.vendor(),
+                    id.product(),
+                    id.version(),
+                    device.name().unwrap_or(""),
+                ))
+            }
+            // The kernel publishes no joypad for it, so SDL has no GUID for it
+            // and no database entry that could be carried over.
+            Source::Triton(_) => None,
+        }
+    }
+
+    /// Discard whatever is queued, so a press from before a session opened
+    /// cannot claim a slot.
+    pub fn drain(&mut self) {
+        let mut sink = Vec::new();
+        let _ = self.set_nonblocking(true);
+        while self.fetch_events(&mut sink).is_ok() && !sink.is_empty() {
+            sink.clear();
+        }
+        let _ = self.set_nonblocking(false);
+    }
+}
+
 /// A physical pad, its clone, and what passes between them.
 #[derive(Debug)]
 pub struct VirtualPad {
