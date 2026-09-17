@@ -19,12 +19,21 @@ fn as_fields(command: &Command) -> Value {
         Command::Reset => json!({"cmd": "reset"}),
         Command::Accept => json!({"cmd": "accept"}),
         Command::Cancel => json!({"cmd": "cancel"}),
-        Command::Map { player, layout, scope } => {
+        Command::Map {
+            player,
+            layout,
+            scope,
+        } => {
             json!({"cmd": "map", "player": player, "layout": layout, "scope": scope})
         }
         Command::ChooseLayout { player } => json!({"cmd": "choose_layout", "player": player}),
         Command::ChooseScope { player } => json!({"cmd": "choose_scope", "player": player}),
-        Command::MapForGame { player, console, key, title } => json!({
+        Command::MapForGame {
+            player,
+            console,
+            key,
+            title,
+        } => json!({
             "cmd": "map_for_game", "player": player,
             "console": console, "key": key, "title": title
         }),
@@ -32,11 +41,19 @@ fn as_fields(command: &Command) -> Value {
         Command::SkipControl => json!({"cmd": "skip_control"}),
         Command::Calibrate { player } => json!({"cmd": "calibrate", "player": player}),
         Command::ConfigureEnd => json!({"cmd": "configure_end"}),
-        Command::SetIcon { player, icon } => json!({"cmd": "set_icon", "player": player, "icon": icon}),
+        Command::SetIcon { player, icon } => {
+            json!({"cmd": "set_icon", "player": player, "icon": icon})
+        }
         Command::Status => json!({"cmd": "status"}),
         // Exhaustive on purpose: a command added and never routed is a compile error here.
-        Command::Seating { open, players } => json!({"cmd": "seating", "open": open, "players": players}),
-        Command::Tune { player, signature, request } => {
+        Command::Seating { open, players } => {
+            json!({"cmd": "seating", "open": open, "players": players})
+        }
+        Command::Tune {
+            player,
+            signature,
+            request,
+        } => {
             let mut out = request.to_json();
             out["cmd"] = "tune".into();
             out["player"] = (*player).into();
@@ -49,12 +66,23 @@ fn as_fields(command: &Command) -> Value {
 #[test]
 fn the_two_agree_on_which_names_are_commands() {
     let recorded = corpus("daemon_command_names");
-    let want: Vec<&str> =
-        recorded[0]["commands"].as_array().expect("commands").iter().map(|n| n.as_str().expect("a name")).collect();
+    let want: Vec<&str> = recorded[0]["commands"]
+        .as_array()
+        .expect("commands")
+        .iter()
+        .map(|n| n.as_str().expect("a name"))
+        .collect();
     // Same order (a client may show them in it); extra commands at the end are allowed.
     let ours = COMMANDS.to_vec();
-    assert!(ours.len() >= want.len(), "commands went missing: {ours:?} against {want:?}");
-    assert_eq!(ours[..want.len()].to_vec(), want, "a recorded command was dropped, renamed or reordered");
+    assert!(
+        ours.len() >= want.len(),
+        "commands went missing: {ours:?} against {want:?}"
+    );
+    assert_eq!(
+        ours[..want.len()].to_vec(),
+        want,
+        "a recorded command was dropped, renamed or reordered"
+    );
 }
 
 #[test]
@@ -65,15 +93,23 @@ fn every_recorded_message_parses_the_same_way() {
         if case["ok"].as_bool().expect("ok") {
             match &case["value"] {
                 // The Python answers None for an unknown name; both refuse to act.
-                Value::Null => assert!(matches!(got, Err(Refused::Unknown(_))), "{message} should be refused, got {got:?}"),
+                Value::Null => assert!(
+                    matches!(got, Err(Refused::Unknown(_))),
+                    "{message} should be refused, got {got:?}"
+                ),
                 want => {
-                    let parsed =
-                        got.unwrap_or_else(|error| panic!("{message} was refused as {error}, expected {want}"));
+                    let parsed = got.unwrap_or_else(|error| {
+                        panic!("{message} was refused as {error}, expected {want}")
+                    });
                     assert_eq!(&as_fields(&parsed), want, "for {message}");
                 }
             }
         } else {
-            assert!(got.is_err(), "{message} raised {} in Python, parsed as {got:?} here", case["error"]);
+            assert!(
+                got.is_err(),
+                "{message} raised {} in Python, parsed as {got:?} here",
+                case["error"]
+            );
         }
     }
 }
@@ -90,7 +126,10 @@ fn a_name_that_is_not_a_command_is_refused_rather_than_guessed() {
         json!({"cmd": " begin"}),
         json!({"cmd": "begin "}),
     ] {
-        assert!(matches!(Command::parse(&message), Err(Refused::Unknown(_))), "{message} should be unknown");
+        assert!(
+            matches!(Command::parse(&message), Err(Refused::Unknown(_))),
+            "{message} should be unknown"
+        );
     }
 }
 
@@ -103,23 +142,50 @@ fn a_field_that_must_be_a_number_refuses_rather_than_defaulting() {
         json!({"cmd": "calibrate", "player": "x"}),
         json!({"cmd": "map", "player": {}}),
     ] {
-        assert!(matches!(Command::parse(&message), Err(Refused::NotANumber { .. })), "{message} should be refused");
+        assert!(
+            matches!(Command::parse(&message), Err(Refused::NotANumber { .. })),
+            "{message} should be refused"
+        );
     }
 }
 
 #[test]
 fn the_shapes_python_accepts_are_accepted_too() {
     for (name, message, want) in [
-        ("a numeric string", json!({"cmd": "begin", "players": "3"}), Command::Begin { players: 3 }),
-        ("int() truncates toward zero", json!({"cmd": "begin", "players": 2.9}), Command::Begin { players: 2 }),
-        ("int(True) is 1", json!({"cmd": "begin", "players": true}), Command::Begin { players: 1 }),
-        ("a missing field takes its default", json!({"cmd": "begin"}), Command::Begin { players: 4 }),
+        (
+            "a numeric string",
+            json!({"cmd": "begin", "players": "3"}),
+            Command::Begin { players: 3 },
+        ),
+        (
+            "int() truncates toward zero",
+            json!({"cmd": "begin", "players": 2.9}),
+            Command::Begin { players: 2 },
+        ),
+        (
+            "int(True) is 1",
+            json!({"cmd": "begin", "players": true}),
+            Command::Begin { players: 1 },
+        ),
+        (
+            "a missing field takes its default",
+            json!({"cmd": "begin"}),
+            Command::Begin { players: 4 },
+        ),
         (
             "map defaults every field",
             json!({"cmd": "map"}),
-            Command::Map { player: 0, layout: String::new(), scope: String::new() },
+            Command::Map {
+                player: 0,
+                layout: String::new(),
+                scope: String::new(),
+            },
         ),
-        ("an extra field is ignored", json!({"cmd": "status", "extra": "ignored"}), Command::Status),
+        (
+            "an extra field is ignored",
+            json!({"cmd": "status", "extra": "ignored"}),
+            Command::Status,
+        ),
     ] {
         assert_eq!(Command::parse(&message), Ok(want), "{name}");
     }

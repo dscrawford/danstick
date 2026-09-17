@@ -20,17 +20,32 @@ fn config(player: u32, guid: &str) -> Value {
 fn the_id_is_the_guid_rearranged_with_the_crc_blanked() {
     // Worked through by hand from Ryujinx's GenerateGamepadId.
     let guid = "03002854de2800000413000002006800";
-    assert_eq!(ryujinx::device_id(guid, 0).as_deref(), Some("0-00000003-28de-0000-0413-000002006800"));
-    assert_eq!(ryujinx::device_id(guid, 2).as_deref(), Some("2-00000003-28de-0000-0413-000002006800"));
+    assert_eq!(
+        ryujinx::device_id(guid, 0).as_deref(),
+        Some("0-00000003-28de-0000-0413-000002006800")
+    );
+    assert_eq!(
+        ryujinx::device_id(guid, 2).as_deref(),
+        Some("2-00000003-28de-0000-0413-000002006800")
+    );
 }
 
 #[test]
 fn every_padmap_pad_gets_its_own_id() {
-    let ids: Vec<String> =
-        PADMAP_GUIDS.iter().map(|guid| ryujinx::device_id(guid, 0).expect("a valid guid")).collect();
+    let ids: Vec<String> = PADMAP_GUIDS
+        .iter()
+        .map(|guid| ryujinx::device_id(guid, 0).expect("a valid guid"))
+        .collect();
     let distinct: std::collections::BTreeSet<&String> = ids.iter().collect();
-    assert_eq!(distinct.len(), PADMAP_GUIDS.len(), "players share an id again: {ids:?}");
-    assert!(ids.iter().all(|id| id.starts_with("0-")), "no help from the ordinal: {ids:?}");
+    assert_eq!(
+        distinct.len(),
+        PADMAP_GUIDS.len(),
+        "players share an id again: {ids:?}"
+    );
+    assert!(
+        ids.iter().all(|id| id.starts_with("0-")),
+        "no help from the ordinal: {ids:?}"
+    );
 }
 
 #[test]
@@ -44,7 +59,12 @@ fn only_the_name_crc_is_blanked() {
 
 #[test]
 fn a_guid_that_is_not_one_is_refused_rather_than_sliced() {
-    for guid in ["", "abc", "0600c9a70912000001000000010000", "zz00c9a7091200000100000001000000"] {
+    for guid in [
+        "",
+        "abc",
+        "0600c9a70912000001000000010000",
+        "zz00c9a7091200000100000001000000",
+    ] {
         assert_eq!(ryujinx::device_id(guid, 0), None, "{guid:?}");
     }
 }
@@ -68,7 +88,14 @@ fn an_entry_carries_what_ryujinx_needs_to_read_it() {
     assert_eq!(entry["controller_type"], "ProController");
     assert_eq!(entry["name"], "padmap Player 2");
     assert_eq!(entry["id"], "0-00000006-1209-0000-0100-000002000000");
-    for field in ["left_joycon_stick", "right_joycon_stick", "deadzone_left", "trigger_threshold", "motion", "rumble"] {
+    for field in [
+        "left_joycon_stick",
+        "right_joycon_stick",
+        "deadzone_left",
+        "trigger_threshold",
+        "motion",
+        "rumble",
+    ] {
         assert!(entry.get(field).is_some(), "{field} is missing");
     }
 }
@@ -86,11 +113,15 @@ fn merging_keeps_entries_padmap_is_not_managing() {
         {"backend": "WindowKeyboard", "player_index": "Player1", "name": "Keyboard"},
         {"backend": "GamepadSDL2", "player_index": "Player4", "name": "Someone else's pad"}
     ]);
-    let ours = vec![ryujinx::input_config(1, PADMAP_GUIDS[0], "padmap Player 1", 0).expect("entry")];
+    let ours =
+        vec![ryujinx::input_config(1, PADMAP_GUIDS[0], "padmap Player 1", 0).expect("entry")];
     let merged = ryujinx::merge(&existing, ours);
     let entries = merged.as_array().expect("an array");
     assert_eq!(entries.len(), 2, "{merged}");
-    let one: Vec<&Value> = entries.iter().filter(|e| e["player_index"] == "Player1").collect();
+    let one: Vec<&Value> = entries
+        .iter()
+        .filter(|e| e["player_index"] == "Player1")
+        .collect();
     assert_eq!(one.len(), 1, "the keyboard entry was not replaced");
     assert_eq!(one[0]["name"], "padmap Player 1");
     assert!(entries.iter().any(|e| e["name"] == "Someone else's pad"));
@@ -124,14 +155,21 @@ fn player_one_takes_slot_zero() {
 #[test]
 fn the_backend_name_is_one_ryujinx_will_accept() {
     // Its JSON converter throws on an unrecognised `motion_backend`.
-    let backend = config(1, PADMAP_GUIDS[0])["motion"]["motion_backend"].as_str().expect("a string").to_owned();
+    let backend = config(1, PADMAP_GUIDS[0])["motion"]["motion_backend"]
+        .as_str()
+        .expect("a string")
+        .to_owned();
     assert!(["CemuHook", "GamepadDriver"].contains(&backend.as_str()));
 }
 
 #[test]
 fn a_player_beyond_the_four_dsu_slots_has_motion_off() {
     for player in 5..=8u32 {
-        assert_eq!(config(player, PADMAP_GUIDS[0])["motion"]["enable_motion"], false, "player {player}");
+        assert_eq!(
+            config(player, PADMAP_GUIDS[0])["motion"]["enable_motion"],
+            false,
+            "player {player}"
+        );
     }
     assert_eq!(config(4, PADMAP_GUIDS[0])["motion"]["enable_motion"], true);
 }

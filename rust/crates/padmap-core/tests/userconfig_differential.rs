@@ -14,7 +14,10 @@ fn corpus(name: &str) -> Vec<Value> {
 
 fn unhex(value: &Value) -> Vec<u8> {
     let text = value.as_str().expect("hex");
-    (0..text.len()).step_by(2).map(|at| u8::from_str_radix(&text[at..at + 2], 16).expect("a hex byte")).collect()
+    (0..text.len())
+        .step_by(2)
+        .map(|at| u8::from_str_radix(&text[at..at + 2], 16).expect("a hex byte"))
+        .collect()
 }
 
 #[test]
@@ -23,8 +26,12 @@ fn every_config_cleans_to_the_same_bytes() {
     for case in corpus("clean_user_config") {
         let input = unhex(&case["in"]);
         let (changes, out) = userconfig::clean_bytes(&input);
-        let want_changes: Vec<&str> =
-            case["changes"].as_array().expect("changes").iter().map(|c| c.as_str().expect("a change")).collect();
+        let want_changes: Vec<&str> = case["changes"]
+            .as_array()
+            .expect("changes")
+            .iter()
+            .map(|c| c.as_str().expect("a change"))
+            .collect();
         let shown = String::from_utf8_lossy(&input);
         assert_eq!(changes, want_changes, "for {shown:?}");
         assert_eq!(out, unhex(&case["out"]), "output bytes, for {shown:?}");
@@ -66,10 +73,18 @@ fn line_endings_and_spacing_survive_a_change() {
     assert_eq!(cleaned.changes.len(), 1, "{:?}", cleaned.changes);
     assert!(cleaned.text.starts_with("keep_me = \"yes\"\r\n"));
     assert!(cleaned.text.ends_with("also = \"kept\"\r\n"));
-    assert!(cleaned.text.contains("input_player1_reserved_device = \"\""), "{}", cleaned.text);
+    assert!(
+        cleaned
+            .text
+            .contains("input_player1_reserved_device = \"\""),
+        "{}",
+        cleaned.text
+    );
 
     let spaced = userconfig::clean("  input_player1_reserved_device  =  \"padmap Player 1\"   \n");
-    assert!(spaced.text.starts_with("  input_player1_reserved_device  =  "));
+    assert!(spaced
+        .text
+        .starts_with("  input_player1_reserved_device  =  "));
     assert!(spaced.text.ends_with("   \n"), "{:?}", spaced.text);
 }
 
@@ -79,8 +94,14 @@ fn an_unquoted_line_stays_unquoted_unless_it_cannot() {
     assert_eq!(userconfig::render_value("2", false), "2");
     assert_eq!(userconfig::render_value("2", true), "\"2\"");
     assert_eq!(userconfig::render_value("", false), "\"\"");
-    assert_eq!(userconfig::render_value("has space", false), "\"has space\"");
-    assert_eq!(userconfig::render_value("has\"quote", false), "\"has\"quote\"");
+    assert_eq!(
+        userconfig::render_value("has space", false),
+        "\"has space\""
+    );
+    assert_eq!(
+        userconfig::render_value("has\"quote", false),
+        "\"has\"quote\""
+    );
 
     let cleaned = userconfig::clean("input_player1_reserved_device = padmapPlayer\n");
     assert!(cleaned.changes.is_empty(), "not a virtual pad's name");
@@ -108,7 +129,9 @@ fn a_joypad_index_resets_to_what_retroarch_would_default_to() {
     let cleaned = userconfig::clean("input_player3_joypad_index = \"7\"\n");
     assert_eq!(cleaned.changes.len(), 1);
     assert!(cleaned.text.contains("\"2\""), "{}", cleaned.text);
-    assert!(userconfig::clean("input_player3_joypad_index = \"2\"\n").changes.is_empty());
+    assert!(userconfig::clean("input_player3_joypad_index = \"2\"\n")
+        .changes
+        .is_empty());
 }
 
 #[test]
@@ -127,7 +150,11 @@ fn every_autoconfig_profile_parses_the_same() {
         let want = case["settings"].as_object().expect("settings");
         assert_eq!(ours.len(), want.len(), "for {text:?}: {ours:?} vs {want:?}");
         for (key, value) in want {
-            assert_eq!(ours.get(key).map(String::as_str), value.as_str(), "{key} in {text:?}");
+            assert_eq!(
+                ours.get(key).map(String::as_str),
+                value.as_str(),
+                "{key} in {text:?}"
+            );
         }
     }
 }

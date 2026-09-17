@@ -13,12 +13,18 @@ fn pairs(xml: &str) -> BTreeMap<u32, u32> {
     let mut rest = xml;
     while let Some(at) = rest.find("<mapping>") {
         let after = &rest[at + "<mapping>".len()..];
-        let Some(end) = after.find("</mapping>") else { break };
+        let Some(end) = after.find("</mapping>") else {
+            break;
+        };
         let mapping: u32 = after[..end].trim().parse().expect("a mapping id");
         let tail = &after[end..];
-        let Some(bat) = tail.find("<button>") else { break };
+        let Some(bat) = tail.find("<button>") else {
+            break;
+        };
         let after_button = &tail[bat + "<button>".len()..];
-        let Some(bend) = after_button.find("</button>") else { break };
+        let Some(bend) = after_button.find("</button>") else {
+            break;
+        };
         let button: u32 = after_button[..bend].trim().parse().expect("a button id");
         out.insert(mapping, button);
         rest = &after_button[bend..];
@@ -38,10 +44,20 @@ fn every_binding_matches_the_one_cemu_wrote_itself() {
     let ours = pairs(&cemu::profile(2, GUID, "padmap Player 1"));
     assert!(!theirs.is_empty(), "the reference profile has no mappings");
     for (mapping, button) in &theirs {
-        assert_eq!(ours.get(mapping), Some(button), "Wii U control {mapping} should bind SDL id {button}");
+        assert_eq!(
+            ours.get(mapping),
+            Some(button),
+            "Wii U control {mapping} should bind SDL id {button}"
+        );
     }
     // Cemu left Home (11) unbound; padmap adds nothing Cemu did not.
-    assert_eq!(ours.len(), theirs.len(), "ours {:?} vs Cemu's {:?}", ours.keys(), theirs.keys());
+    assert_eq!(
+        ours.len(),
+        theirs.len(),
+        "ours {:?} vs Cemu's {:?}",
+        ours.keys(),
+        theirs.keys()
+    );
 }
 
 #[test]
@@ -72,7 +88,10 @@ fn the_type_is_the_one_the_mapping_table_is_for() {
 #[test]
 fn a_name_with_xml_in_it_cannot_break_the_file() {
     let xml = cemu::profile(1, "0", "Pad & \"quoted\" <thing>");
-    assert!(xml.contains("Pad &amp; &quot;quoted&quot; &lt;thing&gt;"), "{xml}");
+    assert!(
+        xml.contains("Pad &amp; &quot;quoted&quot; &lt;thing&gt;"),
+        "{xml}"
+    );
     assert!(!xml.contains("<thing>"));
 }
 
@@ -89,7 +108,14 @@ fn the_profile_is_well_formed_enough_for_cemu_to_read() {
     let xml = cemu::profile(1, GUID, "padmap Player 1");
     assert!(xml.starts_with("<?xml version=\"1.0\" encoding=\"UTF-8\"?>"));
     assert!(xml.trim_end().ends_with("</emulated_controller>"));
-    for tag in ["emulated_controller", "controller", "mappings", "axis", "rotation", "trigger"] {
+    for tag in [
+        "emulated_controller",
+        "controller",
+        "mappings",
+        "axis",
+        "rotation",
+        "trigger",
+    ] {
         assert_eq!(
             xml.matches(&format!("<{tag}>")).count(),
             xml.matches(&format!("</{tag}>")).count(),
@@ -112,7 +138,10 @@ fn the_gamepad_numbers_its_controls_one_lower_from_the_dpad_on() {
     // VPADController::ButtonId has Up at 11 where ProController::ButtonId skips to 12.
     assert_eq!(cemu::GamePad::Minus as u8, cemu::WiiU::Minus as u8);
     assert_eq!(cemu::GamePad::Up as u8, cemu::WiiU::Up as u8 - 1);
-    assert_eq!(cemu::GamePad::StickRRight as u8, cemu::WiiU::StickRRight as u8 - 1);
+    assert_eq!(
+        cemu::GamePad::StickRRight as u8,
+        cemu::WiiU::StickRRight as u8 - 1
+    );
 }
 
 #[test]
@@ -139,7 +168,10 @@ fn the_motion_uuid_is_a_bare_slot_number() {
     // ControllerFactory parses a DSU uuid with ConvertString<uint32>; a `0_` prefix throws.
     for player in 1..=4u32 {
         let xml = cemu::profile(player, "0", "padmap");
-        assert!(xml.contains(&format!("<uuid>{}</uuid>", player - 1)), "player {player}: {xml}");
+        assert!(
+            xml.contains(&format!("<uuid>{}</uuid>", player - 1)),
+            "player {player}: {xml}"
+        );
     }
 }
 
@@ -147,7 +179,10 @@ fn the_motion_uuid_is_a_bare_slot_number() {
 fn the_motion_entry_binds_no_buttons() {
     // Mappings on the DSU entry would deliver every press twice.
     let xml = cemu::profile(1, "0", "padmap");
-    let after = xml.split("<api>DSUController</api>").nth(1).expect("a DSU entry");
+    let after = xml
+        .split("<api>DSUController</api>")
+        .nth(1)
+        .expect("a DSU entry");
     assert!(!after.contains("<mapping>"), "{after}");
 }
 

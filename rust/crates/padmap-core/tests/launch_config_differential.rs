@@ -14,18 +14,31 @@ fn corpus(name: &str) -> Vec<Value> {
 }
 
 fn u32s(raw: &Value) -> Vec<u32> {
-    raw.as_array().expect("array").iter().map(|p| p.as_i64().expect("int") as u32).collect()
+    raw.as_array()
+        .expect("array")
+        .iter()
+        .map(|p| p.as_i64().expect("int") as u32)
+        .collect()
 }
 
 fn strs(raw: &Value) -> Vec<String> {
-    raw.as_array().expect("array").iter().map(|p| p.as_str().expect("string").to_owned()).collect()
+    raw.as_array()
+        .expect("array")
+        .iter()
+        .map(|p| p.as_str().expect("string").to_owned())
+        .collect()
 }
 
 fn paths(raw: &Value) -> BTreeMap<u32, String> {
     raw.as_object()
         .expect("object")
         .iter()
-        .map(|(k, v)| (k.parse().expect("player"), v.as_str().expect("string").to_owned()))
+        .map(|(k, v)| {
+            (
+                k.parse().expect("player"),
+                v.as_str().expect("string").to_owned(),
+            )
+        })
         .collect()
 }
 
@@ -50,7 +63,11 @@ fn every_launch_override_is_written_the_same() {
             verbose: case["verbose"].as_bool().expect("bool"),
         };
         let ours = retroarch::launch_config(&players, &paths, &order, &facts, virtual_name);
-        assert_eq!(ours, case["out"].as_str().expect("out"), "players {players:?}");
+        assert_eq!(
+            ours,
+            case["out"].as_str().expect("out"),
+            "players {players:?}"
+        );
     }
 }
 
@@ -61,9 +78,16 @@ fn every_derived_profile_is_written_the_same() {
             .as_array()
             .expect("pairs")
             .iter()
-            .map(|pair| (pair[0].as_str().expect("key").to_owned(), pair[1].as_str().expect("value").to_owned()))
+            .map(|pair| {
+                (
+                    pair[0].as_str().expect("key").to_owned(),
+                    pair[1].as_str().expect("value").to_owned(),
+                )
+            })
             .collect();
-        let source = case["source"].as_str().map(|name| (name, values.as_slice()));
+        let source = case["source"]
+            .as_str()
+            .map(|name| (name, values.as_slice()));
         let player = case["player"].as_i64().expect("player") as u32;
         // The Python takes None to mean "padmap's own id".
         let vid = case["vid"].as_i64().map(|v| v as u16).unwrap_or(0x1209);

@@ -228,10 +228,7 @@ impl Source {
         match self {
             Source::Evdev(device) => device
                 .get_absinfo()
-                .map(|axes| {
-                    axes.map(|(code, info)| (code.0, declared(&info)))
-                        .collect()
-                })
+                .map(|axes| axes.map(|(code, info)| (code.0, declared(&info))).collect())
                 .unwrap_or_default(),
             Source::Triton(source) => source
                 .capabilities()
@@ -750,9 +747,7 @@ pub fn axis_spans(source: &Device) -> BTreeMap<u16, AxisSpan> {
     let Ok(absinfo) = source.get_absinfo() else {
         return BTreeMap::new();
     };
-    absinfo
-        .map(|(code, info)| (code.0, span(&info)))
-        .collect()
+    absinfo.map(|(code, info)| (code.0, span(&info))).collect()
 }
 
 pub fn held_keys(source: &Device) -> AttributeSet<evdev::KeyCode> {

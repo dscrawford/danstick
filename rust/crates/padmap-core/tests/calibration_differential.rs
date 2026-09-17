@@ -17,19 +17,45 @@ fn int(value: &Value) -> i32 {
 }
 
 fn declared(minimum: i32, maximum: i32, value: i32, flat: i32) -> Declared {
-    Declared { minimum, maximum, value, flat }
+    Declared {
+        minimum,
+        maximum,
+        value,
+        flat,
+    }
 }
 
 fn unmeasured(center: i32, minimum: i32, maximum: i32, flat: i32) -> AxisCalibration {
-    AxisCalibration { center, minimum, maximum, flat, reach_min: None, reach_max: None }
+    AxisCalibration {
+        center,
+        minimum,
+        maximum,
+        flat,
+        reach_min: None,
+        reach_max: None,
+    }
 }
 
 #[test]
 fn a_rest_sample_becomes_the_same_centre_and_dead_band() {
     for case in corpus("calibration_rest") {
-        let d = declared(int(&case["min"]), int(&case["max"]), int(&case["value"]), int(&case["flat"]));
-        let samples: Vec<i32> = case["samples"].as_array().expect("samples").iter().map(int).collect();
-        let observed = samples.iter().min().zip(samples.iter().max()).map(|(lo, hi)| (*lo, *hi));
+        let d = declared(
+            int(&case["min"]),
+            int(&case["max"]),
+            int(&case["value"]),
+            int(&case["flat"]),
+        );
+        let samples: Vec<i32> = case["samples"]
+            .as_array()
+            .expect("samples")
+            .iter()
+            .map(int)
+            .collect();
+        let observed = samples
+            .iter()
+            .min()
+            .zip(samples.iter().max())
+            .map(|(lo, hi)| (*lo, *hi));
         let got = d.rest_calibration(observed);
         assert_eq!(got.center, int(&case["center"]), "centre, for {case}");
         assert_eq!(got.flat, int(&case["cal_flat"]), "dead band, for {case}");
@@ -50,8 +76,15 @@ fn the_centre_floors_the_way_python_divides() {
 #[test]
 fn a_sweep_inside_the_dead_band_is_not_a_measurement() {
     for case in corpus("calibration_reach") {
-        let cal = unmeasured(int(&case["center"]), int(&case["min"]), int(&case["max"]), int(&case["flat"]));
-        let observed = case["reach"].as_array().map(|pair| (int(&pair[0]), int(&pair[1])));
+        let cal = unmeasured(
+            int(&case["center"]),
+            int(&case["min"]),
+            int(&case["max"]),
+            int(&case["flat"]),
+        );
+        let observed = case["reach"]
+            .as_array()
+            .map(|pair| (int(&pair[0]), int(&pair[1])));
         let got = cal.merge_reach(observed);
         let want = |name: &str| case[name].as_i64().map(|v| v as i32);
         assert_eq!(got.reach_min, want("reach_min"), "reach_min, for {case}");
@@ -77,12 +110,19 @@ fn which_axes_are_worth_centring_matches() {
             .expect("axes")
             .iter()
             .map(|entry| entry.as_array().expect("[code, min, max, value]"))
-            .filter(|row| declared(int(&row[1]), int(&row[2]), int(&row[3]), 0).calibratable(int(&row[0]) as u16))
+            .filter(|row| {
+                declared(int(&row[1]), int(&row[2]), int(&row[3]), 0)
+                    .calibratable(int(&row[0]) as u16)
+            })
             .map(|row| int(&row[0]) as u16)
             .collect();
         ours.sort_unstable();
-        let want: Vec<u16> =
-            case["calibratable"].as_array().expect("calibratable").iter().map(|c| int(c) as u16).collect();
+        let want: Vec<u16> = case["calibratable"]
+            .as_array()
+            .expect("calibratable")
+            .iter()
+            .map(|c| int(c) as u16)
+            .collect();
         assert_eq!(ours, want, "{}", case["what"]);
     }
 }
@@ -91,7 +131,10 @@ fn which_axes_are_worth_centring_matches() {
 fn the_gamecube_adapters_triggers_are_not_taken_for_sticks() {
     // That adapter puts analogue triggers on the stick codes ABS_RX/ABS_RY, resting at 24/25 of 0-255.
     for (code, rest) in [(0x03u16, 24), (0x04u16, 25)] {
-        assert!(!declared(0, 255, rest, 0).calibratable(code), "axis {code:#x} resting at {rest} is a trigger");
+        assert!(
+            !declared(0, 255, rest, 0).calibratable(code),
+            "axis {code:#x} resting at {rest} is a trigger"
+        );
     }
     assert!(declared(0, 255, 128, 0).calibratable(0x00));
 }

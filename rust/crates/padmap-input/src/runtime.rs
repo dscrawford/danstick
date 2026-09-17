@@ -115,7 +115,11 @@ pub fn load_icon_overrides() -> BTreeMap<String, String> {
 }
 
 fn mtime_nanos(meta: std::fs::Metadata) -> Option<u128> {
-    let since = meta.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?;
+    let since = meta
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?;
     Some(since.as_nanos())
 }
 

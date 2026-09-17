@@ -18,11 +18,19 @@ fn virtual_name(player: u32) -> String {
 }
 
 fn u32s(raw: &Value) -> Vec<u32> {
-    raw.as_array().expect("array").iter().map(|v| v.as_u64().expect("an int") as u32).collect()
+    raw.as_array()
+        .expect("array")
+        .iter()
+        .map(|v| v.as_u64().expect("an int") as u32)
+        .collect()
 }
 
 fn usizes(raw: &Value) -> Vec<usize> {
-    raw.as_array().expect("array").iter().map(|v| v.as_u64().expect("an int") as usize).collect()
+    raw.as_array()
+        .expect("array")
+        .iter()
+        .map(|v| v.as_u64().expect("an int") as usize)
+        .collect()
 }
 
 fn keyed<K: std::str::FromStr + Ord, V>(raw: &Value, value: impl Fn(&Value) -> V) -> BTreeMap<K, V>
@@ -57,7 +65,11 @@ fn vacant_indices_are_distinct_and_never_past_the_last_slot() {
     for case in corpus("empty_indices") {
         let pads = case["pads"].as_u64().expect("pads") as usize;
         let wanted = case["wanted"].as_u64().expect("wanted") as usize;
-        assert_eq!(retroarch::empty_indices(pads, wanted), usizes(&case["indices"]), "{pads} pads, {wanted} wanted");
+        assert_eq!(
+            retroarch::empty_indices(pads, wanted),
+            usizes(&case["indices"]),
+            "{pads} pads, {wanted} wanted"
+        );
     }
 }
 
@@ -73,7 +85,12 @@ fn every_enumeration_maps_players_to_the_same_indices() {
     for case in corpus("pad_indices") {
         let order = as_order(&case["order"]);
         let paths = as_paths(&case["paths"]);
-        assert_eq!(retroarch::compute_pad_indices(&paths, &order), as_players(&case["indices"]), "{}", case["what"]);
+        assert_eq!(
+            retroarch::compute_pad_indices(&paths, &order),
+            as_players(&case["indices"]),
+            "{}",
+            case["what"]
+        );
         let players: Vec<u32> = paths.keys().copied().collect();
         assert_eq!(
             retroarch::managed_players(&players, &paths, &order),
@@ -136,8 +153,18 @@ fn every_unassigned_core_port_is_emptied_the_same_way() {
         let order = as_order(&case["order"]);
         let paths = as_paths(&case["paths"]);
         let players: Vec<u32> = paths.keys().copied().collect();
-        let want: Vec<&str> = case["args"].as_array().expect("args").iter().map(|a| a.as_str().expect("an arg")).collect();
-        assert_eq!(retroarch::launch_args(&players, &paths, &order), want, "{}", case["what"]);
+        let want: Vec<&str> = case["args"]
+            .as_array()
+            .expect("args")
+            .iter()
+            .map(|a| a.as_str().expect("an arg"))
+            .collect();
+        assert_eq!(
+            retroarch::launch_args(&players, &paths, &order),
+            want,
+            "{}",
+            case["what"]
+        );
     }
 }
 

@@ -109,7 +109,13 @@ proptest! {
 fn a_port_request_naming_more_slots_than_exist_asks_only_about_the_first_four() {
     let packet = client_packet(Kind::PortInfo, &[8, 0, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7]);
     let got = dsu::parse_request(&packet).expect("a clamped request");
-    assert_eq!(got.request, Request::PortInfo { slots: [0, 1, 2, 3], count: 4 });
+    assert_eq!(
+        got.request,
+        Request::PortInfo {
+            slots: [0, 1, 2, 3],
+            count: 4
+        }
+    );
 }
 
 #[test]
@@ -122,7 +128,10 @@ fn an_unknown_subscription_flag_is_declined_rather_than_treated_as_all() {
 #[test]
 fn a_subscription_by_slot_ignores_the_mac_bytes_and_vice_versa() {
     let by_slot = client_packet(Kind::PadData, &[1, 2, 9, 9, 9, 9, 9, 9]);
-    assert_eq!(dsu::parse_request(&by_slot).expect("parses").request, Request::PadData(Subscribe::Slot(2)));
+    assert_eq!(
+        dsu::parse_request(&by_slot).expect("parses").request,
+        Request::PadData(Subscribe::Slot(2))
+    );
     let by_mac = client_packet(Kind::PadData, &[2, 9, 1, 2, 3, 4, 5, 6]);
     assert_eq!(
         dsu::parse_request(&by_mac).expect("parses").request,
@@ -171,14 +180,29 @@ fn every_field_of_a_pad_sample_sits_at_its_struct_offset() {
         right_x: 30,
         right_y: 40,
         analog,
-        touch: [Touch { down: true, id: 5, x: 0x1234, y: 0x5678 }, Touch::default()],
-        motion: Motion { accel: [0.5, -1.0, 0.25], gyro: [10.0, -20.0, 30.0], timestamp_us: 0xDEAD_BEEF_CAFE },
+        touch: [
+            Touch {
+                down: true,
+                id: 5,
+                x: 0x1234,
+                y: 0x5678,
+            },
+            Touch::default(),
+        ],
+        motion: Motion {
+            accel: [0.5, -1.0, 0.25],
+            gyro: [10.0, -20.0, 30.0],
+            timestamp_us: 0xDEAD_BEEF_CAFE,
+        },
     };
     let packet = dsu::pad_reply(0x11, &port, 0x0102_0304, &pad);
     let body = &packet[dsu::HEADER_BYTES..];
     assert_eq!(body.len(), layout::END);
 
-    assert_eq!(&body[layout::INFO..layout::INFO + 12], &[2, 2, 2, 2, 1, 2, 3, 4, 5, 6, 4, 1]);
+    assert_eq!(
+        &body[layout::INFO..layout::INFO + 12],
+        &[2, 2, 2, 2, 1, 2, 3, 4, 5, 6, 4, 1]
+    );
     assert_eq!(&body[layout::COUNTER..layout::COUNTER + 4], &[4, 3, 2, 1]);
     let buttons = u16::from_le_bytes([body[layout::BUTTONS], body[layout::BUTTONS + 1]]);
     assert_eq!(buttons, button::CROSS | button::UP | button::L2);
@@ -194,13 +218,26 @@ fn every_field_of_a_pad_sample_sits_at_its_struct_offset() {
     ] {
         assert_eq!(body[at], want, "byte {at}");
     }
-    assert_eq!(&body[layout::TOUCH..layout::TOUCH + 6], &[1, 5, 0x34, 0x12, 0x78, 0x56]);
+    assert_eq!(
+        &body[layout::TOUCH..layout::TOUCH + 6],
+        &[1, 5, 0x34, 0x12, 0x78, 0x56]
+    );
     assert_eq!(&body[layout::TOUCH + 6..layout::TOUCH + 12], &[0; 6]);
-    let timestamp = u64::from_le_bytes(body[layout::TIMESTAMP..layout::TIMESTAMP + 8].try_into().expect("8"));
+    let timestamp = u64::from_le_bytes(
+        body[layout::TIMESTAMP..layout::TIMESTAMP + 8]
+            .try_into()
+            .expect("8"),
+    );
     assert_eq!(timestamp, 0xDEAD_BEEF_CAFE);
     let f = |at: usize| f32::from_le_bytes(body[at..at + 4].try_into().expect("4"));
-    assert_eq!([f(layout::ACCEL), f(layout::ACCEL + 4), f(layout::ACCEL + 8)], [0.5, -1.0, 0.25]);
-    assert_eq!([f(layout::GYRO), f(layout::GYRO + 4), f(layout::GYRO + 8)], [10.0, -20.0, 30.0]);
+    assert_eq!(
+        [f(layout::ACCEL), f(layout::ACCEL + 4), f(layout::ACCEL + 8)],
+        [0.5, -1.0, 0.25]
+    );
+    assert_eq!(
+        [f(layout::GYRO), f(layout::GYRO + 4), f(layout::GYRO + 8)],
+        [10.0, -20.0, 30.0]
+    );
 }
 
 #[test]
@@ -212,7 +249,10 @@ fn the_analog_block_is_in_the_structs_order_not_the_bitfields() {
     assert_eq!(dsu::ANALOG_ORDER[analog::L1], "l1");
     assert_eq!(dsu::ANALOG_ORDER[analog::R2], "r2");
     assert_eq!(dsu::ANALOG_ORDER[analog::L2], "l2");
-    assert_eq!([analog::R1, analog::L1, analog::R2, analog::L2], [8, 9, 10, 11]);
+    assert_eq!(
+        [analog::R1, analog::L1, analog::R2, analog::L2],
+        [8, 9, 10, 11]
+    );
 }
 
 #[test]

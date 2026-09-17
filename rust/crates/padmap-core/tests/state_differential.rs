@@ -16,14 +16,20 @@ fn corpus(name: &str) -> Vec<Value> {
 fn carries_everything_in(ours: &Value, want: &Value, path: &str) {
     match want {
         Value::Object(fields) => {
-            let ours = ours.as_object().unwrap_or_else(|| panic!("{path}: an object became {ours}"));
+            let ours = ours
+                .as_object()
+                .unwrap_or_else(|| panic!("{path}: an object became {ours}"));
             for (key, value) in fields {
-                let mine = ours.get(key).unwrap_or_else(|| panic!("{path}.{key} is gone"));
+                let mine = ours
+                    .get(key)
+                    .unwrap_or_else(|| panic!("{path}.{key} is gone"));
                 carries_everything_in(mine, value, &format!("{path}.{key}"));
             }
         }
         Value::Array(items) => {
-            let ours = ours.as_array().unwrap_or_else(|| panic!("{path}: an array became {ours}"));
+            let ours = ours
+                .as_array()
+                .unwrap_or_else(|| panic!("{path}: an array became {ours}"));
             assert_eq!(ours.len(), items.len(), "{path}: length changed");
             for (at, value) in items.iter().enumerate() {
                 carries_everything_in(&ours[at], value, &format!("{path}[{at}]"));
@@ -37,7 +43,8 @@ fn carries_everything_in(ours: &Value, want: &Value, path: &str) {
 fn every_recorded_state_event_round_trips() {
     for case in corpus("state_events") {
         let want = &case["event"];
-        let parsed: StateEvent = serde_json::from_value(want.clone()).expect("the Python's event parses");
+        let parsed: StateEvent =
+            serde_json::from_value(want.clone()).expect("the Python's event parses");
         let ours = serde_json::to_value(&parsed).expect("serialises");
         carries_everything_in(&ours, want, "state");
     }

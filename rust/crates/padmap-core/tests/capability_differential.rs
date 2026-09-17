@@ -22,11 +22,23 @@ fn every_bitmap_parses_to_the_same_bits() {
         // A null `raw` is "the file was not there".
         let raw = case["raw"].as_str();
         let parsed = raw.and_then(Mask::parse);
-        assert_eq!(parsed.is_none(), case["none"].as_bool().expect("none"), "for {raw:?}");
+        assert_eq!(
+            parsed.is_none(),
+            case["none"].as_bool().expect("none"),
+            "for {raw:?}"
+        );
         let Some(mask) = parsed else { continue };
-        assert_eq!(mask.is_empty(), case["zero"].as_bool().expect("zero"), "for {raw:?}");
-        let want: Vec<usize> =
-            case["bits"].as_array().expect("bits").iter().map(|b| b.as_u64().expect("a bit") as usize).collect();
+        assert_eq!(
+            mask.is_empty(),
+            case["zero"].as_bool().expect("zero"),
+            "for {raw:?}"
+        );
+        let want: Vec<usize> = case["bits"]
+            .as_array()
+            .expect("bits")
+            .iter()
+            .map(|b| b.as_u64().expect("a bit") as usize)
+            .collect();
         assert_eq!(mask.bits(1024), want, "for {raw:?}");
     }
 }
@@ -38,8 +50,16 @@ fn a_mask_of_zero_is_not_a_mask_that_could_not_be_read() {
     assert!(zero.is_empty());
     assert!(Mask::parse("").is_none());
     assert!(Mask::parse("   ").is_none());
-    assert_eq!(capability::joypad(Some(&zero), Some(&mask("1"))), Some(false), "no axes is a definite no");
-    assert_eq!(capability::joypad(None, Some(&mask("1"))), None, "unreadable is 'cannot tell'");
+    assert_eq!(
+        capability::joypad(Some(&zero), Some(&mask("1"))),
+        Some(false),
+        "no axes is a definite no"
+    );
+    assert_eq!(
+        capability::joypad(None, Some(&mask("1"))),
+        None,
+        "unreadable is 'cannot tell'"
+    );
 }
 
 #[test]
@@ -61,7 +81,9 @@ fn every_recorded_decision_matches() {
     for case in corpus("joypad_by_capability") {
         let absolute = to_mask(&case["abs"]);
         let keys = to_mask(&case["keys"]);
-        if (case["abs"].is_string() && absolute.is_none()) || (case["keys"].is_string() && keys.is_none()) {
+        if (case["abs"].is_string() && absolute.is_none())
+            || (case["keys"].is_string() && keys.is_none())
+        {
             continue;
         }
         let want = match &case["verdict"] {
@@ -88,10 +110,22 @@ fn every_device_on_the_recording_machine_is_judged_the_same() {
         let absolute = case["abs_raw"].as_str().and_then(Mask::parse);
         let keys = case["key_raw"].as_str().and_then(Mask::parse);
         // Every recorded node had both files, so `None` is itself a divergence.
-        let verdict = capability::joypad(absolute.as_ref(), keys.as_ref())
-            .unwrap_or_else(|| panic!("could not judge a device the Python judged: abs {:?}", case["abs_raw"]));
-        assert_eq!(verdict, case["joypad"].as_bool().expect("joypad"), "abs {:?}", case["abs_raw"]);
+        let verdict = capability::joypad(absolute.as_ref(), keys.as_ref()).unwrap_or_else(|| {
+            panic!(
+                "could not judge a device the Python judged: abs {:?}",
+                case["abs_raw"]
+            )
+        });
+        assert_eq!(
+            verdict,
+            case["joypad"].as_bool().expect("joypad"),
+            "abs {:?}",
+            case["abs_raw"]
+        );
         joypads += usize::from(verdict);
     }
-    assert_eq!(joypads, cases.iter().filter(|c| c["joypad"] == true).count());
+    assert_eq!(
+        joypads,
+        cases.iter().filter(|c| c["joypad"] == true).count()
+    );
 }

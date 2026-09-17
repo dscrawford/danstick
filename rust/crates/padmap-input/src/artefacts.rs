@@ -121,7 +121,8 @@ pub fn write_autoconfig(
 }
 
 pub fn cemu_profile_dir() -> PathBuf {
-    env_path("PADMAP_CEMU_DIR").unwrap_or_else(|| config_home().join("Cemu").join("controllerProfiles"))
+    env_path("PADMAP_CEMU_DIR")
+        .unwrap_or_else(|| config_home().join("Cemu").join("controllerProfiles"))
 }
 
 /// Up to Cemu's eight slots; profiles for players padmap is not managing are left alone.
@@ -182,11 +183,13 @@ pub fn write_dolphin_config(
 }
 
 pub fn ares_settings_path() -> PathBuf {
-    env_path("PADMAP_ARES_SETTINGS").unwrap_or_else(|| data_home().join("ares").join("settings.bml"))
+    env_path("PADMAP_ARES_SETTINGS")
+        .unwrap_or_else(|| data_home().join("ares").join("settings.bml"))
 }
 
 pub fn ryujinx_config_path() -> PathBuf {
-    env_path("PADMAP_RYUJINX_CONFIG").unwrap_or_else(|| config_home().join("Ryujinx").join("Config.json"))
+    env_path("PADMAP_RYUJINX_CONFIG")
+        .unwrap_or_else(|| config_home().join("Ryujinx").join("Config.json"))
 }
 
 /// Replace the `VirtualPadN` blocks padmap manages; blocks ares never wrote are appended.
@@ -213,7 +216,10 @@ pub fn rewrite_ares_settings(existing: &str, blocks: &BTreeMap<u32, String>) -> 
             out.push_str(line);
         }
     }
-    for (_, block) in blocks.iter().filter(|(player, _)| !replaced.contains(player)) {
+    for (_, block) in blocks
+        .iter()
+        .filter(|(player, _)| !replaced.contains(player))
+    {
         if !out.is_empty() && !out.ends_with('\n') {
             out.push('\n');
         }

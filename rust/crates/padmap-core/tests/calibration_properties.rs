@@ -4,19 +4,44 @@
 use padmap_core::calibration::{AxisCalibration, EVDEV_VALUE_MAX, EVDEV_VALUE_MIN};
 use proptest::prelude::*;
 
-fn cal(center: i32, minimum: i32, maximum: i32, flat: i32, reach: (Option<i32>, Option<i32>)) -> AxisCalibration {
-    AxisCalibration { center, minimum, maximum, flat, reach_min: reach.0, reach_max: reach.1 }
+fn cal(
+    center: i32,
+    minimum: i32,
+    maximum: i32,
+    flat: i32,
+    reach: (Option<i32>, Option<i32>),
+) -> AxisCalibration {
+    AxisCalibration {
+        center,
+        minimum,
+        maximum,
+        flat,
+        reach_min: reach.0,
+        reach_max: reach.1,
+    }
 }
 
 /// Declared ranges real absinfo hands out; uniform i32 pairs would never hit the two that run.
-const DECLARED_RANGES: &[(i32, i32)] =
-    &[(0, 1), (0, 255), (-128, 127), (0, 1023), (-32768, 32767), (-32767, 32767), (0, 65535)];
+const DECLARED_RANGES: &[(i32, i32)] = &[
+    (0, 1),
+    (0, 255),
+    (-128, 127),
+    (0, 1023),
+    (-32768, 32767),
+    (-32767, 32767),
+    (0, 65535),
+];
 
 fn plausible_calibration() -> impl Strategy<Value = AxisCalibration> {
     proptest::sample::select(DECLARED_RANGES).prop_flat_map(|(minimum, maximum)| {
         let span = i64::from(maximum) - i64::from(minimum);
         let widest_band = i32::try_from(span / 8).unwrap_or(i32::MAX).max(1);
-        (minimum..=maximum, 0..=widest_band, prop::option::of(minimum..=maximum), prop::option::of(minimum..=maximum))
+        (
+            minimum..=maximum,
+            0..=widest_band,
+            prop::option::of(minimum..=maximum),
+            prop::option::of(minimum..=maximum),
+        )
             .prop_map(move |(center, flat, reach_min, reach_max)| {
                 cal(center, minimum, maximum, flat, (reach_min, reach_max))
             })
@@ -34,7 +59,13 @@ fn adversarial_calibration() -> impl Strategy<Value = AxisCalibration> {
         prop::option::of(any::<i32>()),
     )
         .prop_map(|(center, first, second, flat, reach_min, reach_max)| {
-            cal(center, first.min(second), first.max(second), flat, (reach_min, reach_max))
+            cal(
+                center,
+                first.min(second),
+                first.max(second),
+                flat,
+                (reach_min, reach_max),
+            )
         })
 }
 
@@ -44,7 +75,10 @@ fn any_calibration() -> impl Strategy<Value = AxisCalibration> {
 
 /// A negative `flat` is an inverted band, pinned separately; centred-at-rest properties want a real one.
 fn calibration_with_a_real_dead_band() -> impl Strategy<Value = AxisCalibration> {
-    any_calibration().prop_map(|cal| AxisCalibration { flat: cal.flat.saturating_abs(), ..cal })
+    any_calibration().prop_map(|cal| AxisCalibration {
+        flat: cal.flat.saturating_abs(),
+        ..cal
+    })
 }
 
 fn any_reading() -> impl Strategy<Value = i32> {
@@ -90,7 +124,10 @@ fn sweep(cal: &AxisCalibration) -> Vec<i32> {
     let from = low - margin;
     let to = high + margin;
     let step = ((to - from) / SAMPLES).max(1);
-    let mut points: Vec<i64> = (0..).map(|n| from + n * step).take_while(|at| *at < to).collect();
+    let mut points: Vec<i64> = (0..)
+        .map(|n| from + n * step)
+        .take_while(|at| *at < to)
+        .collect();
     points.push(to);
     for anchor in [
         i64::from(cal.center),
@@ -107,7 +144,10 @@ fn sweep(cal: &AxisCalibration) -> Vec<i32> {
     points.push(i64::from(i32::MAX));
     points.sort_unstable();
     points.dedup();
-    points.into_iter().filter_map(|value| i32::try_from(value).ok()).collect()
+    points
+        .into_iter()
+        .filter_map(|value| i32::try_from(value).ok())
+        .collect()
 }
 
 proptest! {
@@ -284,7 +324,11 @@ proptest! {
 #[test]
 fn a_true_centred_pad_moves_nothing_it_does_not_have_to() {
     let cal = AxisCalibration::new(128, 0, 255);
-    assert_eq!(cal.apply(128), 127, "the declared midpoint of 0..255 floors");
+    assert_eq!(
+        cal.apply(128),
+        127,
+        "the declared midpoint of 0..255 floors"
+    );
     assert_eq!(cal.apply(0), 0);
     assert_eq!(cal.apply(255), 255);
     for value in 0..=255 {
@@ -300,7 +344,10 @@ fn the_worn_n64_stick_resting_at_174_still_reaches_both_of_its_stops() {
     assert_eq!(cal.apply(174), 127, "rest must read as the middle");
     assert_eq!(cal.apply(0), 0, "full left");
     assert_eq!(cal.apply(255), 255, "full right");
-    assert!(cal.apply(173) < 127 && cal.apply(175) > 127, "either side of rest");
+    assert!(
+        cal.apply(173) < 127 && cal.apply(175) > 127,
+        "either side of rest"
+    );
 }
 
 #[test]
@@ -309,9 +356,17 @@ fn a_gamecube_trigger_resting_at_its_minimum_reads_centred_until_it_is_pressed()
     let trigger = AxisCalibration::new(0, 0, 255);
     assert_eq!(trigger.low(), 0, "there is no travel below rest");
     assert_eq!(trigger.high(), 255);
-    assert_eq!(trigger.apply(0), 127, "rest is the midpoint, as for any axis");
+    assert_eq!(
+        trigger.apply(0),
+        127,
+        "rest is the midpoint, as for any axis"
+    );
     assert_eq!(trigger.apply(255), 255, "fully pressed reaches the stop");
-    assert_eq!(trigger.apply(-1), 127, "noise below rest falls back to the middle");
+    assert_eq!(
+        trigger.apply(-1),
+        127,
+        "noise below rest falls back to the middle"
+    );
     assert_eq!(trigger.apply(i32::MIN), 127);
 }
 
@@ -320,7 +375,10 @@ fn an_adapter_that_declares_more_travel_than_the_stick_has_still_gets_full_left(
     // Declares 0-255, physically emits 160-255: five counts of travel left of rest.
     let declared = AxisCalibration::new(200, 0, 255);
     let measured = AxisCalibration::new(200, 0, 255).with_reach(160, 255);
-    assert!(declared.apply(160) > measured.apply(160), "the measured reach must open the short side up");
+    assert!(
+        declared.apply(160) > measured.apply(160),
+        "the measured reach must open the short side up"
+    );
     assert_eq!(measured.apply(160), 0, "full left now reaches the stop");
     assert_eq!(measured.apply(200), 127, "rest is still the middle");
     assert_eq!(measured.apply(255), 255, "full right is unchanged");
@@ -352,7 +410,10 @@ fn a_dead_band_costs_the_stick_none_of_its_travel() {
         let mut previous = cal.apply(0);
         for value in 0..=255 {
             let out = cal.apply(value);
-            assert!(out >= previous, "band {band}: {value} went backwards: {previous} -> {out}");
+            assert!(
+                out >= previous,
+                "band {band}: {value} went backwards: {previous} -> {out}"
+            );
             previous = out;
         }
     }
@@ -362,7 +423,11 @@ fn a_dead_band_costs_the_stick_none_of_its_travel() {
 fn a_dead_band_wider_than_the_axis_flattens_every_reading_to_the_midpoint() {
     let swallowed = AxisCalibration::new(128, 0, 255).with_flat(1000);
     for value in [i32::MIN, -5000, 0, 128, 255, 5000, i32::MAX] {
-        assert_eq!(swallowed.apply(value), 127, "{value} escaped a band of 1000");
+        assert_eq!(
+            swallowed.apply(value),
+            127,
+            "{value} escaped a band of 1000"
+        );
     }
 }
 
@@ -370,7 +435,11 @@ fn a_dead_band_wider_than_the_axis_flattens_every_reading_to_the_midpoint() {
 fn a_negative_dead_band_widens_the_scale_instead_of_narrowing_it() {
     // Matches the Python: `abs(..) <= flat` is never true, so the band edges move outward from centre.
     let inverted_band = AxisCalibration::new(128, 0, 255).with_flat(-10);
-    assert_eq!(inverted_band.apply(128), 136, "rest is pushed off the middle");
+    assert_eq!(
+        inverted_band.apply(128),
+        136,
+        "rest is pushed off the middle"
+    );
     assert_eq!(inverted_band.apply(127), 117);
     assert_eq!(inverted_band.apply(0), 0);
     assert_eq!(inverted_band.apply(255), 255);
@@ -381,8 +450,16 @@ fn a_reach_recorded_entirely_on_one_side_of_centre_collapses_that_side() {
     let cal = AxisCalibration::new(128, 0, 255).with_reach(200, 240);
     assert_eq!(cal.low(), 128, "the reach cannot be dragged past centre");
     assert_eq!(cal.high(), 240);
-    assert_eq!(cal.apply(100), 127, "a span of zero collapses to the middle");
-    assert_eq!(cal.apply(240), 255, "the side that does have travel still works");
+    assert_eq!(
+        cal.apply(100),
+        127,
+        "a span of zero collapses to the middle"
+    );
+    assert_eq!(
+        cal.apply(240),
+        255,
+        "the side that does have travel still works"
+    );
 }
 
 #[test]
@@ -397,7 +474,16 @@ fn a_reach_recorded_inverted_is_still_pulled_back_around_centre() {
 #[test]
 fn an_overshoot_past_the_measured_reach_is_clamped_to_the_declared_range() {
     let cal = AxisCalibration::new(128, 0, 255).with_reach(40, 200);
-    for (value, want) in [(40, 0), (200, 255), (0, 0), (255, 255), (-5000, 0), (5000, 255), (i32::MIN, 0), (i32::MAX, 255)] {
+    for (value, want) in [
+        (40, 0),
+        (200, 255),
+        (0, 0),
+        (255, 255),
+        (-5000, 0),
+        (5000, 255),
+        (i32::MIN, 0),
+        (i32::MAX, 255),
+    ] {
         assert_eq!(cal.apply(value), want, "apply({value})");
     }
 }
@@ -428,10 +514,20 @@ fn the_midpoint_floors_towards_negative_infinity_across_zero() {
 #[test]
 fn every_range_an_i32_can_hold_is_one_evdev_can_carry() {
     // The i32 extremes are legal __s32 values; the guard must not over-correct.
-    let extremes = cal(0, i32::MIN, i32::MAX, i32::MAX, (Some(i32::MIN), Some(i32::MAX)));
+    let extremes = cal(
+        0,
+        i32::MIN,
+        i32::MAX,
+        i32::MAX,
+        (Some(i32::MIN), Some(i32::MAX)),
+    );
     assert!(extremes.fits(), "the i32 extremes themselves are writable");
     assert!(AxisCalibration::new(0, 0, 255).fits());
-    assert_eq!(EVDEV_VALUE_MIN, i64::from(i32::MIN), "the evdev floor is an __s32 floor");
+    assert_eq!(
+        EVDEV_VALUE_MIN,
+        i64::from(i32::MIN),
+        "the evdev floor is an __s32 floor"
+    );
     assert_eq!(EVDEV_VALUE_MAX, i64::from(i32::MAX));
 }
 
@@ -449,7 +545,11 @@ fn an_unmeasured_reach_reads_back_as_unmeasured_rather_than_as_zero() {
     let raw = serde_json::json!({"center": 128, "min": 0, "max": 255});
     let parsed: AxisCalibration = serde_json::from_value(raw).expect("parse");
     assert_eq!((parsed.reach_min, parsed.reach_max), (None, None));
-    assert_eq!((parsed.low(), parsed.high()), (0, 255), "falls back to the declared range");
+    assert_eq!(
+        (parsed.low(), parsed.high()),
+        (0, 255),
+        "falls back to the declared range"
+    );
 }
 
 #[test]
@@ -457,14 +557,21 @@ fn an_absent_dead_band_reads_back_as_no_band_at_all() {
     let raw = serde_json::json!({"center": 128, "min": 0, "max": 255});
     let parsed: AxisCalibration = serde_json::from_value(raw).expect("parse");
     assert_eq!(parsed.flat, 0);
-    assert_ne!(parsed.apply(129), parsed.apply(128), "with no band, one count moves");
+    assert_ne!(
+        parsed.apply(129),
+        parsed.apply(128),
+        "with no band, one count moves"
+    );
 }
 
 #[test]
 fn a_half_written_profile_missing_a_required_field_is_refused_rather_than_guessed() {
     let raw = serde_json::json!({"min": 0, "max": 255});
     let parsed: Result<AxisCalibration, _> = serde_json::from_value(raw);
-    assert!(parsed.is_err(), "a profile with no recorded centre must not parse");
+    assert!(
+        parsed.is_err(),
+        "a profile with no recorded centre must not parse"
+    );
 }
 
 #[test]
