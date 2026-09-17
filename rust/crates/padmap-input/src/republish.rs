@@ -94,6 +94,9 @@ impl Republisher {
     /// launch another one.
     fn release_all(&mut self) {
         for vpad in &mut self.pads {
+            // The DSU picture is the same pad seen by a different consumer,
+            // and needs the same release.
+            vpad.tracker.release_all();
             let held = vpad.source.held_keys();
             let mut frame: Vec<InputEvent> = held
                 .iter()
@@ -202,6 +205,11 @@ impl Republisher {
     /// Separate from `forward` because it is a separate descriptor: a gyro
     /// node emits at its own rate, faster than the buttons and independently
     /// of them, and a pad held perfectly still still reports gravity.
+    ///
+    /// `gone` says the sensor's device has vanished. It is left in place for
+    /// the caller to unwatch first -- epoll is keyed on the descriptor, and a
+    /// sensor dropped before it is unregistered leaves nothing to unregister
+    /// with -- and then dropped with [`Republisher::drop_sensor`].
     pub fn read_motion(&mut self, index: usize) -> Pumped {
         let mut out = Pumped::default();
         let Some(vpad) = self.pads.get_mut(index) else {
@@ -213,15 +221,7 @@ impl Republisher {
         match sensor.read() {
             Ok(true) => {}
             Ok(false) => {
-                // The sensor is gone. Not fatal to the pad: the buttons live
-                // on a different node and may well still be there, and a
-                // controller that works without its gyro beats one that
-                // disappears.
-                warn!(
-                    "player {}: motion sensor disappeared, dropping it",
-                    vpad.player
-                );
-                vpad.sensor = None;
+                out.gone = true;
                 return out;
             }
             Err(error) => {
@@ -234,6 +234,22 @@ impl Republisher {
             out.frames = 1;
         }
         out
+    }
+
+    /// Let go of a sensor whose device has gone.
+    ///
+    /// Not fatal to the pad: the buttons live on a different node and may
+    /// well still be there, and a controller that works without its gyro
+    /// beats one that disappears.
+    pub fn drop_sensor(&mut self, index: usize) {
+        if let Some(vpad) = self.pads.get_mut(index) {
+            if vpad.sensor.take().is_some() {
+                warn!(
+                    "player {}: motion sensor disappeared, dropping it",
+                    vpad.player
+                );
+            }
+        }
     }
 
     /// Proxy rumble from a clone back to its physical pad.

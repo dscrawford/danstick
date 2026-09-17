@@ -197,3 +197,15 @@ fn the_backend_name_is_one_ryujinx_will_accept() {
             .expect("a string")
     ));
 }
+
+#[test]
+fn a_player_beyond_the_four_dsu_slots_has_motion_off() {
+    // Slot 4 and up never receive a sample; leaving motion enabled there is a
+    // gyro option that silently does nothing.
+    for player in 5..=8u32 {
+        let config = ryujinx::input_config(player, PADMAP_GUIDS[0], "padmap", 0).expect("a config");
+        assert_eq!(config["motion"]["enable_motion"], false, "player {player}");
+    }
+    let config = ryujinx::input_config(4, PADMAP_GUIDS[0], "padmap", 0).expect("a config");
+    assert_eq!(config["motion"]["enable_motion"], true);
+}

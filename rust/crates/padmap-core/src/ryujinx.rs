@@ -125,7 +125,9 @@ pub fn input_config(player: u32, guid: &str, name: &str, ordinal: u32) -> Option
             "motion_backend": "CemuHook",
             "sensitivity": 100,
             "gyro_deadzone": 1.0,
-            "enable_motion": true,
+            // Slot 4 and up never receive a sample; motion left on there is
+            // an option that silently does nothing.
+            "enable_motion": player <= crate::dsu::MAX_SLOTS as u32,
             "slot": player - 1,
             "alt_slot": player - 1,
             "mirror_input": false,

@@ -228,3 +228,17 @@ fn the_motion_entry_binds_no_buttons() {
         .expect("a DSU entry");
     assert!(!after.contains("<mapping>"), "{after}");
 }
+
+#[test]
+fn a_player_beyond_the_four_dsu_slots_gets_no_motion_entry() {
+    // DSUController's constructor throws for an index past the provider's
+    // limit, and Cemu skips the whole <controller> with one log line. The
+    // SDL entry survives, but a profile that provokes an exception on every
+    // load is not one to ship.
+    for player in 5..=8u32 {
+        let xml = cemu::profile(player, "0", "padmap");
+        assert!(!xml.contains("DSUController"), "player {player}: {xml}");
+        assert_eq!(xml.matches("<controller>").count(), 1);
+    }
+    assert!(cemu::profile(4, "0", "padmap").contains("DSUController"));
+}

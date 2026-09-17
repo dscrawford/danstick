@@ -231,3 +231,90 @@ fn two_servers_cannot_hold_one_port() {
     assert!(second.is_err(), "the port is taken");
     drop(server);
 }
+
+#[test]
+fn a_client_that_subscribes_late_gets_the_current_sample() {
+    // The first client was sent the sample. A second emulator started later
+    // must get it too, without waiting for the pad to move: a controller
+    // lying still on the table is the ordinary state of a gyro pad.
+    let (mut server, first, to) = pair();
+    ask(&first, to, Kind::PadData, &[0, 0, 0, 0, 0, 0, 0, 0]);
+    server.serve(&[seated(0)]);
+    server.publish(&[seated(0)], &[moving(50)]);
+    assert!(hear(&first).is_some());
+
+    let second = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0)).expect("a client");
+    second
+        .set_read_timeout(Some(Duration::from_millis(500)))
+        .expect("timeout");
+    ask(&second, to, Kind::PadData, &[0, 0, 0, 0, 0, 0, 0, 0]);
+    server.serve(&[seated(0)]);
+    server.publish(&[seated(0)], &[moving(50)]);
+    assert!(hear(&second).is_some(), "the late client got nothing");
+    assert!(hear(&first).is_none(), "the first was not sent it twice");
+}
+
+#[test]
+fn a_client_that_stops_asking_stops_being_sent_to() {
+    let (mut server, client, to) = pair();
+    ask(&client, to, Kind::PadData, &[0, 0, 0, 0, 0, 0, 0, 0]);
+    server.serve(&[seated(0)]);
+    assert!(server.has_clients());
+    let later = std::time::Instant::now() + Duration::from_secs(dsu::SUBSCRIPTION_SECONDS + 1);
+    server.publish_at(later, &[seated(0)], &[moving(1)]);
+    assert!(!server.has_clients(), "an expired client is still listed");
+    assert!(hear(&client).is_none(), "and was written to anyway");
+}
+
+#[test]
+fn a_renewed_subscription_outlives_the_timeout() {
+    let (mut server, client, to) = pair();
+    ask(&client, to, Kind::PadData, &[0, 0, 0, 0, 0, 0, 0, 0]);
+    server.serve(&[seated(0)]);
+    ask(&client, to, Kind::PadData, &[0, 0, 0, 0, 0, 0, 0, 0]);
+    server.serve_at(
+        std::time::Instant::now() + Duration::from_secs(4),
+        &[seated(0)],
+    );
+    let later = std::time::Instant::now() + Duration::from_secs(dsu::SUBSCRIPTION_SECONDS + 1);
+    server.publish_at(later, &[seated(0)], &[moving(1)]);
+    assert!(
+        server.has_clients(),
+        "a renewal four seconds in was not counted"
+    );
+}
+
+#[test]
+fn a_pad_without_motion_is_not_streamed_on_every_wakeup() {
+    // Its timestamp never moves. Deduplicating on the timestamp alone streams
+    // it on every source event of every other pad; the buttons are what
+    // change, so that is what has to be compared.
+    let (mut server, client, to) = pair();
+    ask(&client, to, Kind::PadData, &[0, 0, 0, 0, 0, 0, 0, 0]);
+    let port = padmap_daemon::dsu::port_for(1, false);
+    server.serve(&[port]);
+    let still = Pad::default();
+    server.publish(&[port], &[still]);
+    assert!(hear(&client).is_some(), "the first picture");
+    for _ in 0..5 {
+        server.publish(&[port], &[still]);
+    }
+    assert!(hear(&client).is_none(), "the same picture again");
+    let pressed = Pad {
+        buttons: padmap_core::dsu::button::CROSS,
+        ..Pad::default()
+    };
+    server.publish(&[port], &[pressed]);
+    assert!(hear(&client).is_some(), "a press is a change");
+}
+
+#[test]
+fn a_slot_whose_player_left_is_reported_empty_when_asked() {
+    let (mut server, client, to) = pair();
+    ask(&client, to, Kind::PortInfo, &[1, 0, 0, 0, 1]);
+    server.serve(&[seated(0), seated(1)]);
+    assert_eq!(hear(&client).expect("a reply")[21], 2, "connected");
+    ask(&client, to, Kind::PortInfo, &[1, 0, 0, 0, 1]);
+    server.serve(&[seated(0)]);
+    assert_eq!(hear(&client).expect("a reply")[21], 0, "gone");
+}

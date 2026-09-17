@@ -30,6 +30,13 @@ const SERVER_ID: u32 = 0x7061_646D; // "padm"
 struct Client {
     subscribe: Subscribe,
     last_asked: Instant,
+    /// The last picture sent to *this* client, per slot.
+    ///
+    /// Per client rather than per slot: a second emulator that subscribes
+    /// while the first already has the current sample must still be sent
+    /// it, and a pad lying still on the table is the ordinary state of a
+    /// gyro pad -- it would otherwise wait for someone to pick it up.
+    sent: [Option<Pad>; MAX_SLOTS],
 }
 
 /// The UDP server, and what it has told whom.
@@ -42,9 +49,6 @@ pub struct Motion {
     /// Per slot, so a consumer can tell a dropped datagram from a still pad.
     /// UDP loses packets and nothing retransmits them.
     counters: [u32; MAX_SLOTS],
-    /// The last sample sent per slot, so an unchanged pad is not resent at the
-    /// rate the loop happens to run at.
-    sent: [Option<u64>; MAX_SLOTS],
 }
 
 impl Motion {
@@ -63,7 +67,6 @@ impl Motion {
             socket,
             clients: HashMap::new(),
             counters: [0; MAX_SLOTS],
-            sent: [None; MAX_SLOTS],
         })
     }
 
@@ -82,6 +85,12 @@ impl Motion {
     /// consumer that asks while a controller is being assigned gets the truth
     /// rather than a cached roster.
     pub fn serve(&mut self, ports: &[Port]) {
+        self.serve_at(Instant::now(), ports);
+    }
+
+    /// [`Motion::serve`] with the clock supplied, so a test can age a
+    /// subscription without waiting for it.
+    pub fn serve_at(&mut self, now: Instant, ports: &[Port]) {
         // Bounded, like every other drain in the daemon: a peer that sends as
         // fast as we read must not hold the thread that forwards input.
         const MAX_PER_WAKE: usize = 32;
@@ -103,11 +112,11 @@ impl Motion {
                 debug!("motion server: ignoring {size} bytes from {from}");
                 continue;
             };
-            self.answer(from, incoming, ports);
+            self.answer(now, from, incoming, ports);
         }
     }
 
-    fn answer(&mut self, from: SocketAddr, incoming: Incoming, ports: &[Port]) {
+    fn answer(&mut self, now: Instant, from: SocketAddr, incoming: Incoming, ports: &[Port]) {
         match incoming.request {
             Request::Version => self.send(from, &dsu::version_reply(SERVER_ID)),
             Request::PortInfo { slots, count } => {
@@ -124,29 +133,43 @@ impl Motion {
                 }
             }
             Request::PadData(subscribe) => {
-                let fresh = !self.clients.contains_key(&from);
+                let sent = match self.clients.get(&from) {
+                    // A renewal keeps what it has been sent; a change of
+                    // subscription starts afresh.
+                    Some(client) if client.subscribe == subscribe => client.sent,
+                    Some(_) => [None; MAX_SLOTS],
+                    None => {
+                        info!("motion: {from} subscribed ({subscribe:?})");
+                        [None; MAX_SLOTS]
+                    }
+                };
                 self.clients.insert(
                     from,
                     Client {
                         subscribe,
-                        last_asked: Instant::now(),
+                        last_asked: now,
+                        sent,
                     },
                 );
-                if fresh {
-                    info!("motion: {from} subscribed ({subscribe:?})");
-                }
             }
         }
     }
 
     /// Send one sample per slot to everyone who asked for it.
     ///
-    /// `pads` is indexed alongside `ports`. A slot whose sample has not
-    /// advanced is skipped: a consumer integrates the gap between timestamps,
-    /// and resending one it already has is either discarded (Cemu) or
-    /// integrated twice.
+    /// `pads` is indexed alongside `ports`. A client is sent a slot only when
+    /// its picture differs from the last one that client was sent: a
+    /// consumer integrates the gap between motion timestamps, and resending
+    /// a sample it already has is either discarded (Cemu) or integrated
+    /// twice, while a pad with no motion would otherwise be streamed on every
+    /// event of every other pad.
     pub fn publish(&mut self, ports: &[Port], pads: &[Pad]) {
-        self.expire();
+        self.publish_at(Instant::now(), ports, pads);
+    }
+
+    /// [`Motion::publish`] with the clock supplied.
+    pub fn publish_at(&mut self, now: Instant, ports: &[Port], pads: &[Pad]) {
+        self.expire(now);
         if self.clients.is_empty() {
             return;
         }
@@ -155,13 +178,12 @@ impl Motion {
             if slot >= MAX_SLOTS {
                 continue;
             }
-            if self.sent[slot] == Some(pad.motion.timestamp_us) && pad.motion.timestamp_us != 0 {
-                continue;
-            }
             let interested: Vec<SocketAddr> = self
                 .clients
                 .iter()
-                .filter(|(_, client)| client.subscribe.covers(port))
+                .filter(|(_, client)| {
+                    client.subscribe.covers(port) && client.sent[slot].as_ref() != Some(pad)
+                })
                 .map(|(address, _)| *address)
                 .collect();
             if interested.is_empty() {
@@ -171,17 +193,18 @@ impl Motion {
             let packet = dsu::pad_reply(SERVER_ID, port, self.counters[slot], pad);
             for address in interested {
                 self.send(address, &packet);
+                if let Some(client) = self.clients.get_mut(&address) {
+                    client.sent[slot] = Some(*pad);
+                }
             }
-            self.sent[slot] = Some(pad.motion.timestamp_us);
         }
     }
 
     /// Forget anyone who has not asked lately.
-    fn expire(&mut self) {
+    fn expire(&mut self, now: Instant) {
         let cutoff = Duration::from_secs(SUBSCRIPTION_SECONDS);
-        let now = Instant::now();
         self.clients.retain(|address, client| {
-            let alive = now.duration_since(client.last_asked) < cutoff;
+            let alive = now.saturating_duration_since(client.last_asked) < cutoff;
             if !alive {
                 info!("motion: {address} stopped asking");
             }

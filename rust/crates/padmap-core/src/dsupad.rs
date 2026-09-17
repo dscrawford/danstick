@@ -12,6 +12,7 @@ use std::collections::BTreeMap;
 
 use crate::dsu::{analog, button, Pad, CENTRE};
 use crate::motion::Motion;
+use crate::sdl::AxisSpan;
 
 /// `EV_KEY`.
 pub const EV_KEY: u16 = 0x01;
@@ -39,6 +40,17 @@ pub const BUTTON_BITS: [(u16, u16); 12] = [
 
 /// `BTN_MODE`, which the packet carries as a byte of its own.
 pub const BTN_MODE: u16 = 0x13C;
+
+/// `BTN_DPAD_UP..BTN_DPAD_RIGHT`: a d-pad reported as keys rather than a hat.
+///
+/// hid-nintendo does this for a Switch Pro; xpad uses a hat. Both land on the
+/// same four bits, or a Switch Pro has no d-pad over DSU.
+const DPAD_KEYS: [(u16, u16, usize); 4] = [
+    (0x220, button::UP, analog::DPAD_UP),
+    (0x221, button::DOWN, analog::DPAD_DOWN),
+    (0x222, button::LEFT, analog::DPAD_LEFT),
+    (0x223, button::RIGHT, analog::DPAD_RIGHT),
+];
 
 /// Kernel button code -> the byte it fills in `AnalogButton`.
 ///
@@ -69,9 +81,30 @@ const ABS_HAT0Y: u16 = 0x11;
 pub struct Range {
     pub min: i32,
     pub max: i32,
+    /// Where the driver says it sits untouched. Not always the middle: a
+    /// trigger rests at its minimum, and the Mayflash GameCube adapter's
+    /// triggers rest 81% deflected on axes whose *codes* say "right stick".
+    pub rest: i32,
 }
 
 impl Range {
+    /// From what the driver declared.
+    pub fn declared(min: i32, max: i32, rest: i32) -> Range {
+        Range { min, max, rest }
+    }
+
+    /// Whether this axis rests in the middle -- a stick -- rather than at an
+    /// end, which is a trigger. The same judgement `standard::standard_fields`
+    /// makes, because the same adapters defeat the same code-only reading.
+    pub fn rests_centred(&self) -> bool {
+        AxisSpan {
+            minimum: self.min,
+            maximum: self.max,
+            rest: self.rest,
+        }
+        .rests_centred()
+    }
+
     /// `value` mapped onto 0..=255, clamped.
     ///
     /// A degenerate range -- a driver that declares min == max -- yields the
@@ -95,11 +128,71 @@ impl Range {
         255 - self.to_u8(value)
     }
 
-    /// `value` mapped onto 0..=255 from the minimum, for a trigger, which
-    /// rests at its minimum rather than its middle.
+    /// A trigger's travel, from where it rests to its maximum.
+    ///
+    /// From the *rest* rather than the minimum. The Mayflash adapter's
+    /// triggers rest at 24 of 0..255; scaled from zero they read 9% pressed
+    /// untouched, and a consumer with a small deadzone sees a phantom
+    /// half-press for as long as the adapter is plugged in.
     pub fn to_trigger(&self, value: i32) -> u8 {
-        self.to_u8(value)
+        let released = Range {
+            min: self.rest.min(self.max),
+            max: self.max,
+            rest: self.rest,
+        };
+        released.to_u8(value)
     }
+}
+
+/// What one ABS code means on this pad.
+///
+/// Decided once from the declared rest position rather than from the code
+/// alone, because the codes lie: the Mayflash GameCube adapter has its
+/// C-stick on `ABS_Z`/`ABS_RZ` and its triggers on `ABS_RX`/`ABS_RY`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Role {
+    LeftX,
+    LeftY,
+    RightX,
+    RightY,
+    L2,
+    R2,
+}
+
+/// Roles for a pad's declared axes.
+///
+/// `ABS_X`/`ABS_Y` are always the left stick. Of the other four, an axis that
+/// rests centred is a stick and one that rests at an end is a trigger --
+/// `RX`/`RY` first, then `Z`/`RZ` take whatever is left. A pad with two
+/// centred pairs keeps the conventional one.
+fn roles(ranges: &BTreeMap<u16, Range>) -> BTreeMap<u16, Role> {
+    let mut out = BTreeMap::new();
+    let centred = |code: u16| ranges.get(&code).is_some_and(Range::rests_centred);
+    if ranges.contains_key(&ABS_X) {
+        out.insert(ABS_X, Role::LeftX);
+    }
+    if ranges.contains_key(&ABS_Y) {
+        out.insert(ABS_Y, Role::LeftY);
+    }
+    let mut right_taken = false;
+    let mut triggers_taken = false;
+    for (x, y) in [(ABS_RX, ABS_RY), (ABS_Z, ABS_RZ)] {
+        let pair_centred = centred(x) || centred(y);
+        if pair_centred && !right_taken {
+            out.insert(x, Role::RightX);
+            out.insert(y, Role::RightY);
+            right_taken = true;
+        } else if !pair_centred && !triggers_taken {
+            if ranges.contains_key(&x) {
+                out.insert(x, Role::L2);
+            }
+            if ranges.contains_key(&y) {
+                out.insert(y, Role::R2);
+            }
+            triggers_taken = ranges.contains_key(&x) || ranges.contains_key(&y);
+        }
+    }
+    out
 }
 
 /// A DSU picture of one controller, updated event by event.
@@ -110,14 +203,29 @@ pub struct Tracker {
     /// than guessed: a pad that does not have it will never send it, and one
     /// that does always declares it.
     ranges: BTreeMap<u16, Range>,
+    roles: BTreeMap<u16, Role>,
 }
 
 impl Tracker {
     pub fn new(ranges: BTreeMap<u16, Range>) -> Tracker {
+        let roles = roles(&ranges);
         Tracker {
             pad: Pad::default(),
             ranges,
+            roles,
         }
+    }
+
+    /// Lift every button, as the clone does when forwarding pauses.
+    ///
+    /// The clone gets a release for each held key so a game is not left with
+    /// a button down; the DSU picture is the same pad seen by a different
+    /// consumer and needs the same release, or an emulator reading padmap over
+    /// UDP holds the button for the whole wizard and after it.
+    pub fn release_all(&mut self) {
+        self.pad.buttons = 0;
+        self.pad.home = 0;
+        self.pad.analog = [0; 12];
     }
 
     /// The picture as it stands.
@@ -164,6 +272,11 @@ impl Tracker {
                 self.pad.analog[index] = if down { 255 } else { 0 };
             }
         }
+        for (key, bit, index) in DPAD_KEYS {
+            if key == code {
+                self.set_dpad(bit, index, down);
+            }
+        }
     }
 
     fn apply_abs(&mut self, code: u16, value: i32) {
@@ -184,12 +297,15 @@ impl Tracker {
         let Some(range) = self.ranges.get(&code).copied() else {
             return;
         };
-        match code {
-            ABS_X => self.pad.left_x = range.to_u8(value),
-            ABS_Y => self.pad.left_y = range.to_u8_inverted(value),
-            ABS_RX => self.pad.right_x = range.to_u8(value),
-            ABS_RY => self.pad.right_y = range.to_u8_inverted(value),
-            ABS_Z => {
+        let Some(role) = self.roles.get(&code).copied() else {
+            return;
+        };
+        match role {
+            Role::LeftX => self.pad.left_x = range.to_u8(value),
+            Role::LeftY => self.pad.left_y = range.to_u8_inverted(value),
+            Role::RightX => self.pad.right_x = range.to_u8(value),
+            Role::RightY => self.pad.right_y = range.to_u8_inverted(value),
+            Role::L2 => {
                 let pressed = range.to_trigger(value);
                 self.pad.analog[analog::L2] = pressed;
                 // A pad with an analog trigger usually has no BTN_TL2 to go
@@ -197,12 +313,11 @@ impl Tracker {
                 // every emulator uses for a digital read of an analog trigger.
                 self.set_bit(button::L2, pressed >= CENTRE);
             }
-            ABS_RZ => {
+            Role::R2 => {
                 let pressed = range.to_trigger(value);
                 self.pad.analog[analog::R2] = pressed;
                 self.set_bit(button::R2, pressed >= CENTRE);
             }
-            _ => {}
         }
     }
 
@@ -225,11 +340,8 @@ mod tests {
     use super::*;
 
     fn stick_ranges() -> BTreeMap<u16, Range> {
-        let full = Range {
-            min: -32768,
-            max: 32767,
-        };
-        let trigger = Range { min: 0, max: 255 };
+        let full = Range::declared(-32768, 32767, 0);
+        let trigger = Range::declared(0, 255, 0);
         BTreeMap::from([
             (ABS_X, full),
             (ABS_Y, full),
@@ -348,7 +460,7 @@ mod tests {
 
     #[test]
     fn a_driver_declaring_a_degenerate_range_gives_the_centre() {
-        let ranges = BTreeMap::from([(ABS_X, Range { min: 5, max: 5 })]);
+        let ranges = BTreeMap::from([(ABS_X, Range::declared(5, 5, 5))]);
         let mut tracker = Tracker::new(ranges);
         tracker.apply(EV_ABS, ABS_X, 5);
         assert_eq!(tracker.pad().left_x, CENTRE);

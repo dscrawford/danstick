@@ -267,11 +267,11 @@ pub fn parse_request(datagram: &[u8]) -> Option<Incoming> {
     }
     let crc = u32_at(datagram, 8);
     if crc != 0 {
-        let mut copy = [0u8; MAX_PACKET_BYTES];
-        let len = datagram.len().min(MAX_PACKET_BYTES);
-        copy[..len].copy_from_slice(&datagram[..len]);
+        // Over everything the client sent, not the first hundred bytes: a
+        // client that pads its datagram computed its CRC over the padding.
+        let mut copy = datagram.to_vec();
         copy[8..12].fill(0);
-        if crc32(&copy[..len]) != crc {
+        if crc32(&copy) != crc {
             return None;
         }
     }

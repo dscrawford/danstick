@@ -1608,23 +1608,19 @@ impl Server {
         let Some(republisher) = self.republisher.as_mut() else {
             return;
         };
-        let before = republisher
-            .pads
-            .get(index)
-            .and_then(|vpad| vpad.sensor.as_ref())
-            .map(|sensor| sensor.as_fd().try_clone_to_owned());
-        republisher.read_motion(index);
-        // A sensor that went away is dropped by `read_motion`; a dead node
-        // stays readable for ever, so it has to leave the epoll set too or the
-        // loop spins on it for as long as the daemon runs.
-        let still_there = republisher
-            .pads
-            .get(index)
-            .is_some_and(|vpad| vpad.sensor.is_some());
-        if !still_there {
-            if let Some(Ok(fd)) = before {
-                let _ = self.reactor.unwatch(fd.as_fd());
+        if republisher.read_motion(index).gone {
+            // A dead node stays readable for ever: out of the epoll set
+            // first, while the descriptor is still there to name it, then
+            // dropped.
+            if let Some(sensor) = republisher
+                .pads
+                .get(index)
+                .and_then(|vpad| vpad.sensor.as_ref())
+            {
+                let _ = self.reactor.unwatch(sensor.as_fd());
             }
+            republisher.drop_sensor(index);
+            return;
         }
         self.publish_motion();
     }

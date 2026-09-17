@@ -453,3 +453,190 @@ fn neither_writer_invents_a_config_that_was_never_there() {
     assert!(artefacts::write_ares_settings(&BTreeMap::new(), Some(missing)).is_err());
     assert!(artefacts::write_ryujinx_config(Vec::new(), Some(missing)).is_err());
 }
+
+// --- the DSU picture, from a real device ------------------------------------
+
+#[test]
+fn a_press_on_the_source_shows_in_the_dsu_picture() {
+    needs_uinput!();
+    let mut source = spawn_source();
+    let found = find(&mut source).expect("discover");
+    let mut republisher = republish::Republisher::new(vec![clone_of(&found, 1)]);
+    let _ = republisher.forward(0);
+
+    source
+        .emit(&[
+            InputEvent::new(EventType::KEY.0, KeyCode::BTN_SOUTH.code(), 1),
+            InputEvent::new(EventType::ABSOLUTE.0, AbsoluteAxisCode::ABS_Y.0, -32768),
+            InputEvent::new(EventType::SYNCHRONIZATION.0, 0, 0),
+        ])
+        .expect("emit");
+    let mut seen = false;
+    for _ in 0..50 {
+        let _ = republisher.forward(0);
+        let pad = republisher.pads[0].tracker.pad();
+        if pad.buttons & padmap_core::dsu::button::CROSS != 0 {
+            assert_eq!(pad.left_y, 255, "stick up is 255 in DSU");
+            seen = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(seen, "the press never reached the DSU picture");
+    republisher.close();
+}
+
+#[test]
+fn pausing_releases_the_dsu_picture_as_well_as_the_clone() {
+    // A wizard opens while B is held: the clone gets a release, so the game
+    // does not see a stuck button. The DSU picture has to get one too, or an
+    // emulator reading padmap over UDP holds the button for the whole wizard
+    // and after it.
+    needs_uinput!();
+    let mut source = spawn_source();
+    let found = find(&mut source).expect("discover");
+    let mut republisher = republish::Republisher::new(vec![clone_of(&found, 1)]);
+    let _ = republisher.forward(0);
+
+    source
+        .emit(&[
+            InputEvent::new(EventType::KEY.0, KeyCode::BTN_EAST.code(), 1),
+            InputEvent::new(EventType::SYNCHRONIZATION.0, 0, 0),
+        ])
+        .expect("emit");
+    let mut held = false;
+    for _ in 0..50 {
+        let _ = republisher.forward(0);
+        if republisher.pads[0].tracker.pad().buttons & padmap_core::dsu::button::CIRCLE != 0 {
+            held = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(held, "the press never arrived");
+
+    republisher.set_paused(true);
+    assert_eq!(
+        republisher.pads[0].tracker.pad().buttons,
+        0,
+        "pausing left a button held in the DSU picture"
+    );
+
+    // And a press made during the pause is not shown either -- that is the
+    // whole point of the pause.
+    source
+        .emit(&[
+            InputEvent::new(EventType::KEY.0, KeyCode::BTN_SOUTH.code(), 1),
+            InputEvent::new(EventType::SYNCHRONIZATION.0, 0, 0),
+        ])
+        .expect("emit");
+    std::thread::sleep(Duration::from_millis(50));
+    let _ = republisher.forward(0);
+    assert_eq!(republisher.pads[0].tracker.pad().buttons, 0);
+    republisher.set_paused(false);
+    republisher.close();
+}
+
+/// A motion sensor the kernel will publish, declaring its own units.
+fn spawn_imu(counts_per_g: i32, counts_per_dps: i32) -> VirtualDevice {
+    let accel = AbsInfo::new(0, -32768, 32767, 0, 0, counts_per_g);
+    let gyro = AbsInfo::new(0, -32768, 32767, 0, 0, counts_per_dps);
+    let mut builder = VirtualDevice::builder()
+        .expect("open /dev/uinput")
+        .name("padmap test IMU")
+        .input_id(InputId::new(BusType::BUS_USB, VID, PID, 0x0110));
+    for axis in [
+        AbsoluteAxisCode::ABS_X,
+        AbsoluteAxisCode::ABS_Y,
+        AbsoluteAxisCode::ABS_Z,
+    ] {
+        builder = builder
+            .with_absolute_axis(&UinputAbsSetup::new(axis, accel))
+            .expect("accel");
+    }
+    for axis in [
+        AbsoluteAxisCode::ABS_RX,
+        AbsoluteAxisCode::ABS_RY,
+        AbsoluteAxisCode::ABS_RZ,
+    ] {
+        builder = builder
+            .with_absolute_axis(&UinputAbsSetup::new(axis, gyro))
+            .expect("gyro");
+    }
+    let device = builder.build().expect("build imu");
+    std::thread::sleep(Duration::from_millis(300));
+    device
+}
+
+fn node_of(device: &mut VirtualDevice) -> std::path::PathBuf {
+    device
+        .enumerate_dev_nodes_blocking()
+        .expect("nodes")
+        .filter_map(|node| node.ok())
+        .next()
+        .expect("a node")
+}
+
+#[test]
+fn a_kernel_imu_is_scaled_by_the_resolution_it_declares() {
+    // 8192 counts per g and 1024 per degree per second: a DualShock 4's.
+    // The frame conversion is on top: the kernel's +Y (up) is DSU's -Y.
+    needs_uinput!();
+    let mut imu = spawn_imu(8192, 1024);
+    let node = node_of(&mut imu);
+    let mut sensor = padmap_input::motion::Sensor::open(&node).expect("open the imu");
+    assert!(
+        sensor.motion().is_none(),
+        "nothing read yet is nothing to publish"
+    );
+
+    imu.emit(&[
+        InputEvent::new(EventType::ABSOLUTE.0, AbsoluteAxisCode::ABS_X.0, 0),
+        InputEvent::new(EventType::ABSOLUTE.0, AbsoluteAxisCode::ABS_Y.0, 8192),
+        InputEvent::new(EventType::ABSOLUTE.0, AbsoluteAxisCode::ABS_Z.0, 0),
+        InputEvent::new(EventType::ABSOLUTE.0, AbsoluteAxisCode::ABS_RX.0, 1024),
+        InputEvent::new(EventType::ABSOLUTE.0, AbsoluteAxisCode::ABS_RY.0, 2048),
+        InputEvent::new(EventType::ABSOLUTE.0, AbsoluteAxisCode::ABS_RZ.0, -512),
+        InputEvent::new(EventType::SYNCHRONIZATION.0, 0, 0),
+    ])
+    .expect("emit a sample");
+    let mut sample = None;
+    for _ in 0..50 {
+        assert!(sensor.read().expect("read"), "the imu vanished");
+        if let Some(motion) = sensor.motion() {
+            sample = Some(motion);
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let sample = sample.expect("a sample within a second");
+    assert_eq!(sample.accel, [0.0, -1.0, 0.0], "one g up, in DSU's frame");
+    assert_eq!(
+        sample.gyro,
+        [1.0, -2.0, 0.5],
+        "pitch kept, yaw and roll flipped"
+    );
+    assert!(sample.timestamp_us > 0, "stamped from the event, not zero");
+}
+
+#[test]
+fn an_imu_that_vanishes_is_reported_gone_not_an_error() {
+    needs_uinput!();
+    let mut imu = spawn_imu(1, 1);
+    let node = node_of(&mut imu);
+    let mut sensor = padmap_input::motion::Sensor::open(&node).expect("open the imu");
+    drop(imu);
+    std::thread::sleep(Duration::from_millis(300));
+    let mut gone = false;
+    for _ in 0..50 {
+        match sensor.read() {
+            Ok(true) => std::thread::sleep(Duration::from_millis(20)),
+            Ok(false) => {
+                gone = true;
+                break;
+            }
+            Err(error) => panic!("an error rather than a clean 'gone': {error}"),
+        }
+    }
+    assert!(gone, "the sensor never noticed its device had gone");
+}

@@ -312,7 +312,11 @@ pub fn profile(player: u32, guid: &str, display_name: &str) -> String {
         ));
     }
     out.push_str("\t\t</mappings>\n\t</controller>\n");
-    out.push_str(&motion_controller(player, display_name));
+    // DSU has four slots. DSUController's constructor throws for an index
+    // past them, and Cemu skips the whole node with a log line on every load.
+    if (1..=crate::dsu::MAX_SLOTS as u32).contains(&player) {
+        out.push_str(&motion_controller(player, display_name));
+    }
     out.push_str("</emulated_controller>\n");
     out
 }

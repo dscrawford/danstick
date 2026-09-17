@@ -591,10 +591,7 @@ pub fn create(
             .map(|(code, declared)| {
                 (
                     *code,
-                    dsupad::Range {
-                        min: declared.minimum,
-                        max: declared.maximum,
-                    },
+                    dsupad::Range::declared(declared.minimum, declared.maximum, declared.value),
                 )
             })
             .collect(),

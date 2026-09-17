@@ -501,8 +501,8 @@ fn cmd_run() -> Result<()> {
 
     let mut republisher = republish::Republisher::new(vpads);
     let mut reactor = reactor::Reactor::new(TICK).context("creating the event loop")?;
+    use std::os::fd::AsFd;
     for (index, vpad) in republisher.pads.iter().enumerate() {
-        use std::os::fd::AsFd;
         reactor
             .watch(vpad.source.as_fd(), reactor::Watched::Source(index))
             .context("watching a pad")?;
@@ -559,8 +559,18 @@ fn cmd_run() -> Result<()> {
                     }
                 }
                 reactor::Watched::Motion(index) => {
-                    republisher.read_motion(index);
-                    serve_motion(motion.as_mut(), &republisher, false);
+                    if republisher.read_motion(index).gone {
+                        if let Some(sensor) = republisher
+                            .pads
+                            .get(index)
+                            .and_then(|vpad| vpad.sensor.as_ref())
+                        {
+                            let _ = reactor.unwatch(sensor.as_fd());
+                        }
+                        republisher.drop_sensor(index);
+                    } else {
+                        serve_motion(motion.as_mut(), &republisher, false);
+                    }
                 }
                 reactor::Watched::Dsu => serve_motion(motion.as_mut(), &republisher, true),
                 reactor::Watched::Clone(index) => republisher.feedback(index),
