@@ -93,3 +93,7 @@ controller, measured.
 
 `FINDINGS.md` is the incident record: every guard in this codebase has a
 wound behind it, and that is where they are written down.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
