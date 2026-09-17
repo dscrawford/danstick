@@ -87,6 +87,44 @@ and Ryujinx, padmap *will* create them: neither is the whole of Dolphin's
 settings, and Dolphin reads them at startup whether or not it has run before,
 so bindings are worth having on the first run too.
 
+## Motion
+
+padmap serves every seated player's gyro and accelerometer over **DSU**, the
+cemuhook UDP protocol, on `127.0.0.1:26760`. Slot N-1 is player N. Every config
+padmap writes points at it:
+
+| | how |
+|---|---|
+| Cemu | a second `<controller>` with `<api>DSUController</api>` and `<motion>true</motion>` on each profile |
+| Ryujinx | `motion_backend: CemuHook`, `slot` = player − 1 |
+| Dolphin | a `padmap` entry in `DSUClient.ini`; nothing is bound, because a GameCube pad has no gyro |
+
+**Why not pass the sensor through the clone.** SDL pairs a joystick with its
+motion sensor by comparing `EVIOCGUNIQ`, and uinput cannot set it. Every clone
+reports an empty uniq, so with two players SDL hands out the gyros in
+enumeration order. DSU addresses controllers by slot, which is exactly padmap's
+player number.
+
+**Where the samples come from.** A pad whose kernel driver publishes an IMU
+node beside it (DualShock, DualSense, Switch Pro) is read through that node,
+scaled by the resolution the driver declares. The Steam Controller has no such
+node, so padmap decodes the IMU block from the reports it already reads.
+Buttons and sticks ride along in each packet, taken from the calibrated stream
+the clone sees.
+
+**Player one is a Wii U GamePad in Cemu.** Cemu's Pro Controller has no motion
+code, and a Wii U game that uses a gyro reads the GamePad. Cemu emulates one,
+so players two and up stay Pro Controllers. The GamePad numbers its controls
+differently from the d-pad on, and padmap writes the matching table.
+
+**The frame.** DSU's accelerometer axes point left, down and away from the
+player, and its gyro reports pitch up, yaw right and roll right. SDL's frame is
+the mirror image. The conversion comes from Dolphin, which names both sets of
+axes with the same English words in two neighbouring files.
+
+**Turning it off.** `PADMAP_DSU_PORT=0`. A port already taken by another DSU
+server is not fatal: padmap logs it, and the controllers work without motion.
+
 ## Why the button tables are constant
 
 They look like they should be per-controller and they are not. For Cemu and
@@ -111,7 +149,8 @@ name — A right, B bottom, X top, Y left, L/R, ZL/ZR, Plus/Minus — so the
 `wiiu` layout is the `switch` layout's controls under its own id. It exists so
 "my pad, when playing Wii U games" is a scope a user can map to, and so the
 wizard says Wii U when that is what is being set up. Cemu's profile does not
-depend on which of the two was used: its table maps by SDL position.
+depend on which of the two was used: its table maps by SDL position. Player
+one is written as a Wii U GamePad rather than a Pro Controller; see Motion.
 
 ## What these files are checked against
 
