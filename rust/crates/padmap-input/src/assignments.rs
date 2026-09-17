@@ -1,8 +1,5 @@
-//! Which physical pad is which player, as written to disk.
-//!
-//! The format is the Python's, field for field, because both daemons will be
-//! installed for the whole of this port and a rollback has to keep the user's
-//! controller order.
+//! Which physical pad is which player, as written to disk. The format is the
+//! Python's, field for field, so a rollback keeps the user's controller order.
 
 use std::path::{Path, PathBuf};
 
@@ -34,17 +31,14 @@ pub enum AssignmentsError {
     Parse(PathBuf, #[source] serde_json::Error),
 }
 
-/// Read the saved order, or an empty list if nothing has been assigned.
-///
-/// A missing file is not an error: it is what "nobody has run setup yet" looks
-/// like, and the caller says so in words the user can act on.
+/// A missing file is an empty order, not an error.
 pub fn load(path: &Path) -> Result<Vec<Assignment>, AssignmentsError> {
-    let text = match std::fs::read_to_string(path) {
-        Ok(text) => text,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(error) => return Err(AssignmentsError::Read(path.to_path_buf(), error)),
-    };
-    serde_json::from_str(&text).map_err(|error| AssignmentsError::Parse(path.to_path_buf(), error))
+    match std::fs::read_to_string(path) {
+        Ok(text) => serde_json::from_str(&text)
+            .map_err(|error| AssignmentsError::Parse(path.to_path_buf(), error)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(error) => Err(AssignmentsError::Read(path.to_path_buf(), error)),
+    }
 }
 
 pub fn save(path: &Path, assignments: &[Assignment]) -> Result<(), AssignmentsError> {
@@ -58,11 +52,7 @@ pub fn save(path: &Path, assignments: &[Assignment]) -> Result<(), AssignmentsEr
         .map_err(|error| AssignmentsError::Read(path.to_path_buf(), error))
 }
 
-/// Pair each assignment with the pad currently at its node.
-///
-/// A pad that has gone is reported by name rather than skipped silently: from
-/// the user's side an absent controller and a controller padmap declined to
-/// republish look identical, and only one of them is their fault.
+/// Pair each assignment with its pad; the second list is the assignments whose pad is gone.
 pub fn resolve<'a>(
     assignments: &'a [Assignment],
     pads: &'a [Pad],
@@ -71,8 +61,7 @@ pub fn resolve<'a>(
     let mut missing = Vec::new();
     let mut taken: Vec<&Path> = Vec::new();
 
-    // By node first: nothing has moved in the ordinary case, and the path is
-    // the only thing that can tell four identical adapter ports apart.
+    // By node first: the path is the only thing that tells four identical adapter ports apart.
     for assignment in assignments {
         if let Some(pad) = pads.iter().find(|pad| pad.path == assignment.path) {
             taken.push(pad.path.as_path());
@@ -82,15 +71,8 @@ pub fn resolve<'a>(
         }
     }
 
-    // Then by identity, for a pad that came back on a different node -- which
-    // a wireless controller does every time it wakes up. An event number is
-    // not stable across a reconnect, and a person turning their pad back on
-    // expects their seat, not a re-seat.
-    //
-    // Only where exactly one unclaimed pad matches. Four ports of one adapter
-    // agree on name, ids and phys -- that indistinguishability is the reason
-    // padmap exists -- so a second candidate means this cannot be decided, and
-    // guessing would hand somebody else's controller a seat.
+    // Then by identity, for a wireless pad that woke on a new node -- but only when the
+    // match is unique, or somebody else's controller would be handed a seat.
     let mut still_missing = Vec::new();
     for assignment in missing {
         let mut candidates = pads.iter().filter(|pad| {
@@ -146,7 +128,6 @@ mod tests {
 
     #[test]
     fn a_record_missing_everything_but_the_essentials_still_reads() {
-        // A file written by an older version, or by hand.
         let parsed: Vec<Assignment> =
             serde_json::from_str(r#"[{"player": 2, "path": "/dev/input/event0"}]"#).expect("parse");
         assert_eq!(parsed[0].player, 2);
@@ -190,8 +171,6 @@ mod tests {
 
     #[test]
     fn player_numbers_survive_a_gap_in_the_middle() {
-        // Player 2 unplugged does not renumber player 3 into its slot -- the
-        // whole point of the assignment is that the order is fixed.
         let assignments: Vec<Assignment> = (1..=3)
             .map(|player| Assignment {
                 player,
@@ -229,8 +208,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// A wireless pad that slept and woke comes back on a different event
-    /// number. Its owner turned it back on; they did not ask to be re-seated.
     #[test]
     fn a_pad_that_came_back_on_a_different_node_keeps_its_seat() {
         let mut moved = pad("event42");
@@ -241,7 +218,6 @@ mod tests {
 
         let assignment = Assignment {
             player: 1,
-            // Where it was last time, and where it is not now.
             path: PathBuf::from("/dev/input/event256"),
             name: moved.name.clone(),
             phys: moved.phys.clone(),
@@ -257,10 +233,6 @@ mod tests {
         assert!(missing.is_empty());
     }
 
-    /// Four ports of one adapter agree on name, ids and phys -- that
-    /// indistinguishability is the reason padmap exists. A second candidate
-    /// means this cannot be decided, and guessing would hand somebody else's
-    /// controller a seat.
     #[test]
     fn an_ambiguous_match_is_refused_rather_than_guessed() {
         let mut one = pad("event10");
@@ -286,8 +258,6 @@ mod tests {
         assert_eq!(missing.len(), 1);
     }
 
-    /// The node still wins where it matches: it is the only thing that can
-    /// tell two otherwise identical ports apart.
     #[test]
     fn the_node_decides_when_it_is_there() {
         let mut one = pad("event10");
@@ -314,8 +284,6 @@ mod tests {
         assert_eq!(found[1].1.path, PathBuf::from("/dev/input/event10"));
     }
 
-    /// A pad that is genuinely absent stays absent -- it must not be matched
-    /// to some other controller that happens to be unclaimed.
     #[test]
     fn a_pad_that_is_not_there_is_still_missing() {
         let other = pad("event10");

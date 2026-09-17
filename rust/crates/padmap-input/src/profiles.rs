@@ -1,9 +1,5 @@
-//! Reading and writing the profile store.
-//!
-//! The decisions are all in `padmap_core::profile`; this is the two file
-//! operations and the directory they happen in. Same paths and same filenames
-//! as the Python, because the store is the user's data and both
-//! implementations will be installed for the whole of this port.
+//! Reading and writing the profile store. Same paths and filenames as the
+//! Python, because the store is the user's data.
 
 use std::path::{Path, PathBuf};
 
@@ -11,27 +7,21 @@ use log::warn;
 use padmap_core::profile::{self, Profile};
 
 use crate::pad::Pad;
+use crate::runtime::{env_path, home};
 
 pub const ENV_DIR: &str = "PADMAP_PROFILE_DIR";
 
-/// Where profiles live.
 pub fn dir() -> PathBuf {
-    if let Ok(override_path) = std::env::var(ENV_DIR) {
-        if !override_path.is_empty() {
-            return PathBuf::from(override_path);
-        }
-    }
-    let base = match std::env::var("XDG_DATA_HOME") {
-        Ok(value) if !value.is_empty() => PathBuf::from(value),
-        _ => home().join(".local").join("share"),
-    };
-    base.join("padmap").join("devices")
+    env_path(ENV_DIR).unwrap_or_else(|| {
+        env_path("XDG_DATA_HOME")
+            .unwrap_or_else(|| home().join(".local").join("share"))
+            .join("padmap")
+            .join("devices")
+    })
 }
 
-fn home() -> PathBuf {
-    std::env::var("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("/"))
+fn base(directory: Option<&Path>) -> PathBuf {
+    directory.map(Path::to_path_buf).unwrap_or_else(dir)
 }
 
 pub fn signature_of(pad: &Pad) -> String {
@@ -39,23 +29,16 @@ pub fn signature_of(pad: &Pad) -> String {
 }
 
 pub fn path_for(pad: &Pad, directory: Option<&Path>) -> PathBuf {
-    let base = directory.map(Path::to_path_buf).unwrap_or_else(dir);
-    base.join(profile::filename(&signature_of(pad)))
+    base(directory).join(profile::filename(&signature_of(pad)))
 }
 
-/// The stored profile for a pad, or `None` if it has never been configured.
-///
-/// Never fails. A damaged file is "no profile", not an error: this is called
-/// for every pad during discovery, and one corrupt file must cost that
-/// controller its settings rather than its existence.
+/// Never fails: a damaged file costs the pad its settings, not its existence.
 pub fn load(pad: &Pad, directory: Option<&Path>) -> Option<Profile> {
     let path = path_for(pad, directory);
     let text = std::fs::read_to_string(&path).ok()?;
     let value = serde_json::from_str(&text).ok()?;
     let (profile, rejected) = Profile::from_value(&value);
     for axis in rejected {
-        // Named, so it can be re-calibrated. The axis is forwarded
-        // uncorrected, which is what an uncalibrated pad already does.
         warn!(
             "axis {} of {} has a calibration no evdev value can carry ({}); \
              ignoring it, so the axis is forwarded uncorrected -- re-run \
@@ -69,7 +52,7 @@ pub fn load(pad: &Pad, directory: Option<&Path>) -> Option<Profile> {
 }
 
 pub fn save(profile: &Profile, directory: Option<&Path>) -> std::io::Result<PathBuf> {
-    let base = directory.map(Path::to_path_buf).unwrap_or_else(dir);
+    let base = base(directory);
     std::fs::create_dir_all(&base)?;
     let path = base.join(profile::filename(&profile.signature));
     let text = serde_json::to_string_pretty(&profile.to_value())?;
@@ -77,12 +60,11 @@ pub fn save(profile: &Profile, directory: Option<&Path>) -> std::io::Result<Path
     Ok(path)
 }
 
-/// Throw away everything stored for a pad. True if there was anything.
+/// True if there was anything to forget.
 pub fn forget(pad: &Pad, directory: Option<&Path>) -> bool {
     std::fs::remove_file(path_for(pad, directory)).is_ok()
 }
 
-/// Whether this controller has been configured before.
 pub fn is_known(pad: &Pad, directory: Option<&Path>) -> bool {
     load(pad, directory).is_some()
 }
@@ -150,14 +132,12 @@ mod tests {
 
     #[test]
     fn a_damaged_file_costs_the_settings_and_not_the_controller() {
-        // load() is what is_known() asks, and discovery asks it for every pad.
         let dir = scratch("damaged");
         std::fs::create_dir_all(&dir).expect("mkdir");
         let path = path_for(&pad("N64 Adapter"), Some(&dir));
         std::fs::write(&path, "{ this is not json").expect("write");
         assert!(load(&pad("N64 Adapter"), Some(&dir)).is_none());
 
-        // Valid JSON that is not a profile still loads, empty.
         std::fs::write(&path, "[1, 2, 3]").expect("write");
         let profile = load(&pad("N64 Adapter"), Some(&dir)).expect("an empty profile");
         assert!(!profile.has_bindings());
@@ -172,9 +152,6 @@ mod tests {
 
     #[test]
     fn two_identical_controllers_share_one_profile() {
-        // Coarser than a physical pad on purpose: nothing padmap can read
-        // distinguishes two of a model, and they should not need configuring
-        // twice.
         let one = pad("MAYFLASH GameCube Adapter");
         let two = pad("MAYFLASH GameCube Adapter");
         assert_eq!(
@@ -185,7 +162,6 @@ mod tests {
 
     #[test]
     fn the_override_wins_over_the_xdg_path() {
-        // The escape hatch every check script uses to keep off the real store.
         let previous = std::env::var(ENV_DIR).ok();
         std::env::set_var(ENV_DIR, "/tmp/padmap-override");
         assert_eq!(dir(), PathBuf::from("/tmp/padmap-override"));
