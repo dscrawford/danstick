@@ -211,6 +211,63 @@ pub fn set_ini(existing: &str, section_name: &str, key: &str, value: &str) -> St
     out
 }
 
+/// What padmap calls itself in Dolphin's DSU server list.
+///
+/// Dolphin names every device a server offers after this description, so
+/// padmap's motion appears as `DSUClient/<n>/padmap`, `n` counting connected
+/// slots from zero. padmap seats the lowest free seat, so for players who
+/// joined in order `n` is the player number less one.
+pub const DSU_DESCRIPTION: &str = "padmap";
+
+/// `DSUClient.ini`, with padmap's server enabled and listed.
+///
+/// Keys from `DualShockUDPClient.cpp`: `[Server]` holds `Enabled` and
+/// `Entries`, the latter `description:address:port;` repeated. Other servers
+/// the user added are kept -- padmap owns its own entry, not the list -- and
+/// any earlier padmap entry, or anything else already pointing at padmap's
+/// address, is replaced rather than duplicated. Two entries on one address is
+/// every motion device appearing twice.
+pub fn dsu_client_ini(existing: &str) -> String {
+    let ours_at = format!("{}:{}", crate::dsu::HOST, crate::dsu::PORT);
+    let mut entries = String::new();
+    for entry in get_ini(existing, "Server", "Entries")
+        .unwrap_or_default()
+        .split(';')
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+    {
+        let is_ours = entry.split_once(':').is_some_and(|(description, address)| {
+            description == DSU_DESCRIPTION || address == ours_at
+        });
+        if !is_ours {
+            entries.push_str(entry);
+            entries.push(';');
+        }
+    }
+    entries.push_str(&format!("{DSU_DESCRIPTION}:{ours_at};"));
+    let text = set_ini(existing, "Server", "Enabled", "True");
+    set_ini(&text, "Server", "Entries", &entries)
+}
+
+/// One key of one section, if it is set.
+pub fn get_ini(existing: &str, section_name: &str, key: &str) -> Option<String> {
+    let header = format!("[{section_name}]");
+    let mut in_section = false;
+    for raw in existing.lines() {
+        let bare = raw.trim_end_matches('\r');
+        if bare.starts_with('[') {
+            in_section = bare == header;
+            continue;
+        }
+        if in_section && key_of(bare) == Some(key) {
+            return bare
+                .split_once('=')
+                .map(|(_, value)| value.trim().to_owned());
+        }
+    }
+    None
+}
+
 /// The key an ini line sets, or `None` if it sets nothing.
 fn key_of(line: &str) -> Option<&str> {
     let (key, _) = line.split_once('=')?;
@@ -359,5 +416,50 @@ mod tests {
         assert!(text.contains("[GCPad1]") && text.contains("[GCPad2]"));
         assert!(!text.contains("[GCPad5]"), "Dolphin has four ports");
         assert!(!text.contains("[GCPad0]"));
+    }
+
+    #[test]
+    fn a_fresh_dsu_client_ini_enables_padmap() {
+        let text = dsu_client_ini("");
+        assert_eq!(get_ini(&text, "Server", "Enabled").as_deref(), Some("True"));
+        assert_eq!(
+            get_ini(&text, "Server", "Entries").as_deref(),
+            Some("padmap:127.0.0.1:26760;")
+        );
+    }
+
+    #[test]
+    fn a_users_other_dsu_servers_are_kept() {
+        // padmap owns its entry, not the list. A phone app the user added by
+        // hand must survive every republish.
+        let existing = "[Server]\nEnabled = False\nEntries = phone:192.168.1.5:26760;\n";
+        let text = dsu_client_ini(existing);
+        assert_eq!(
+            get_ini(&text, "Server", "Entries").as_deref(),
+            Some("phone:192.168.1.5:26760;padmap:127.0.0.1:26760;")
+        );
+        assert_eq!(get_ini(&text, "Server", "Enabled").as_deref(), Some("True"));
+    }
+
+    #[test]
+    fn writing_twice_does_not_list_padmap_twice() {
+        // Two entries on one address is every motion device appearing twice
+        // in Dolphin, with nothing saying which is which.
+        let once = dsu_client_ini("");
+        let twice = dsu_client_ini(&once);
+        assert_eq!(once, twice);
+        // Nor does an entry somebody else named that already points at us.
+        let renamed = "[Server]\nEntries = mine:127.0.0.1:26760;\n";
+        assert_eq!(
+            get_ini(&dsu_client_ini(renamed), "Server", "Entries").as_deref(),
+            Some("padmap:127.0.0.1:26760;")
+        );
+    }
+
+    #[test]
+    fn other_sections_of_the_dsu_file_are_left_alone() {
+        let existing = "[Other]\nKey = 1\n";
+        let text = dsu_client_ini(existing);
+        assert_eq!(get_ini(&text, "Other", "Key").as_deref(), Some("1"));
     }
 }

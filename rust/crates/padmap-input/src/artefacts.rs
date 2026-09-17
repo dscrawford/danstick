@@ -240,7 +240,17 @@ pub fn write_dolphin_config(
     }
     std::fs::write(&core, text).map_err(|error| WriteError::Io(core.clone(), error))?;
 
-    Ok(vec![bindings, core])
+    // Motion. A GameCube pad has no gyro, so nothing in GCPadNew.ini binds
+    // one; this makes padmap's server a device any Dolphin controller -- an
+    // emulated Wii Remote, say -- can be pointed at.
+    let dsu = target.join("DSUClient.ini");
+    let existing = std::fs::read(&dsu)
+        .map(|raw| String::from_utf8_lossy(&raw).into_owned())
+        .unwrap_or_default();
+    std::fs::write(&dsu, dolphin::dsu_client_ini(&existing))
+        .map_err(|error| WriteError::Io(dsu.clone(), error))?;
+
+    Ok(vec![bindings, core, dsu])
 }
 
 /// Where ares keeps its settings.

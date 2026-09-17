@@ -291,6 +291,7 @@ mod tests {
         assert!(!skipped.contains(&"dolphin"), "{written:?}");
         assert!(dir.join("dolphin-emu/GCPadNew.ini").exists());
         assert!(dir.join("dolphin-emu/Dolphin.ini").exists());
+        assert!(dir.join("dolphin-emu/DSUClient.ini").exists());
         assert!(!dir.join("ares.bml").exists());
         assert!(!dir.join("Config.json").exists());
 
