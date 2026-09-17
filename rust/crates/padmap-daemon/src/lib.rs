@@ -24,6 +24,7 @@
 
 pub mod calibration;
 pub mod confirm;
+pub mod dsu;
 pub mod events;
 pub mod hotplug;
 pub mod publish;

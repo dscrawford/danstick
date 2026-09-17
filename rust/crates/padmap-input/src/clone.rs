@@ -17,8 +17,10 @@ use evdev::{
 };
 use log::{info, warn};
 use padmap_core::calibration::AxisCalibration;
+use padmap_core::dsupad;
 use padmap_core::emit::version_for;
 
+use crate::motion;
 use crate::pad::{Pad, VIRTUAL_PHYS_PREFIX};
 use crate::triton;
 
@@ -204,6 +206,18 @@ impl Source {
                 Ok(())
             }
             Source::Triton(source) => source.fetch_events(out),
+        }
+    }
+
+    /// Motion this source decoded itself, if it decodes any.
+    ///
+    /// Only the Steam Controller does: its gyro arrives in the same reports as
+    /// its buttons. An evdev pad's motion is a separate node, held in
+    /// [`VirtualPad::sensor`].
+    pub fn motion(&self) -> Option<padmap_core::motion::Motion> {
+        match self {
+            Source::Evdev(_) => None,
+            Source::Triton(source) => source.motion(),
         }
     }
 
@@ -454,6 +468,18 @@ pub struct VirtualPad {
     /// rather than in a front-end means every consumer benefits, and a worn
     /// stick stops reading as permanently deflected everywhere at once.
     pub axes: BTreeMap<u16, AxisCalibration>,
+    /// A DSU-shaped picture of the same events, for the motion server.
+    ///
+    /// Fed from the *corrected* stream rather than the raw one, so a consumer
+    /// reading padmap over UDP sees the same calibrated sticks as one reading
+    /// the clone. Two pictures of one pad that disagree is worse than one.
+    pub tracker: dsupad::Tracker,
+    /// The controller's motion sensor, open, when the kernel publishes one.
+    ///
+    /// `None` covers three cases that behave identically: a pad with no gyro,
+    /// a Steam Controller (whose motion arrives in the same reports as its
+    /// buttons, so there is no second node), and a node that would not open.
+    pub sensor: Option<motion::Sensor>,
     /// Events the clone refused. Counted rather than logged one for one: this
     /// is the hot path, a pad emits at about 8ms, and a fault that repeats
     /// would otherwise write a log line per event for as long as the game runs.
@@ -558,6 +584,39 @@ pub fn create(
         }
     }
 
+    let tracker = dsupad::Tracker::new(
+        source
+            .declared_axes()
+            .iter()
+            .map(|(code, declared)| {
+                (
+                    *code,
+                    dsupad::Range {
+                        min: declared.minimum,
+                        max: declared.maximum,
+                    },
+                )
+            })
+            .collect(),
+    );
+    // Opened here rather than on demand: a gyro node that appears and
+    // disappears with a subscription would be a second thing to get wrong
+    // about hotplug, and an unread evdev node costs nothing until it is read.
+    let sensor = pad
+        .motion
+        .as_deref()
+        .and_then(|path| match motion::Sensor::open(path) {
+            Ok(sensor) => Some(sensor),
+            Err(error) => {
+                warn!(
+                    "player {player}: motion sensor {} would not open ({error}); \
+                 the pad works, its gyro does not",
+                    path.display()
+                );
+                None
+            }
+        });
+
     let mut vpad = VirtualPad {
         player,
         pad: pad.clone(),
@@ -565,6 +624,8 @@ pub fn create(
         source,
         clone,
         axes,
+        tracker,
+        sensor,
         dropped: 0,
         gone: false,
         effects: BTreeMap::new(),

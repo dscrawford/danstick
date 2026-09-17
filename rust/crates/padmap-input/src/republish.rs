@@ -158,7 +158,16 @@ impl Republisher {
             if !forwarded(event.event_type()) {
                 continue;
             }
-            self.frame.push(vpad.correct(event));
+            let corrected = vpad.correct(event);
+            // The DSU picture is fed the corrected event, not the raw one, so
+            // a consumer reading padmap over UDP sees the same calibrated
+            // stick as one reading the clone.
+            vpad.tracker.apply(
+                corrected.event_type().0,
+                corrected.code(),
+                corrected.value(),
+            );
+            self.frame.push(corrected);
             if event.event_type() == EventType::SYNCHRONIZATION {
                 // A whole packet, and never less than one. Writing a partial
                 // frame publishes a torn reading -- a diagonal as an
@@ -179,6 +188,50 @@ impl Republisher {
         self.pending.append(&mut self.frame);
         if emitted_any {
             vpad.note_forwarding();
+        }
+        // A Steam Controller's gyro rides in the reports just drained, so it
+        // is folded in here rather than on a descriptor of its own.
+        if let Some(sample) = vpad.source.motion() {
+            vpad.tracker.set_motion(sample);
+        }
+        out
+    }
+
+    /// Service a motion sensor reported readable.
+    ///
+    /// Separate from `forward` because it is a separate descriptor: a gyro
+    /// node emits at its own rate, faster than the buttons and independently
+    /// of them, and a pad held perfectly still still reports gravity.
+    pub fn read_motion(&mut self, index: usize) -> Pumped {
+        let mut out = Pumped::default();
+        let Some(vpad) = self.pads.get_mut(index) else {
+            return out;
+        };
+        let Some(sensor) = vpad.sensor.as_mut() else {
+            return out;
+        };
+        match sensor.read() {
+            Ok(true) => {}
+            Ok(false) => {
+                // The sensor is gone. Not fatal to the pad: the buttons live
+                // on a different node and may well still be there, and a
+                // controller that works without its gyro beats one that
+                // disappears.
+                warn!(
+                    "player {}: motion sensor disappeared, dropping it",
+                    vpad.player
+                );
+                vpad.sensor = None;
+                return out;
+            }
+            Err(error) => {
+                warn!("player {}: motion sensor: {error}", vpad.player);
+                return out;
+            }
+        }
+        if let Some(sample) = vpad.sensor.as_ref().and_then(crate::motion::Sensor::motion) {
+            vpad.tracker.set_motion(sample);
+            out.frames = 1;
         }
         out
     }

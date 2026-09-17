@@ -38,27 +38,41 @@ pub enum Watched {
     /// An unseated pad being watched for someone holding a button on it, by
     /// index into the seating list. Read but never grabbed.
     Seating(usize),
+    /// A pad's motion sensor, by the same index as its source.
+    Motion(usize),
+    /// The DSU socket emulators ask for motion on.
+    Dsu,
 }
 
-/// Low three bits of a token say which kind; the rest is the index.
+/// Low four bits of a token say which kind; the rest is the index.
+///
+/// Four rather than three: the sixth and seventh kinds arrived with motion,
+/// and a tag field that is exactly full is one that silently aliases the next
+/// time somebody adds a descriptor.
+const TAG_BITS: u32 = 4;
+const TAG_MASK: u64 = (1 << TAG_BITS) - 1;
 const TAG_SOURCE: u64 = 0;
 const TAG_CLONE: u64 = 1;
 const TAG_LISTENER: u64 = 2;
 const TAG_CLIENT: u64 = 3;
 const TAG_SESSION: u64 = 4;
 const TAG_SEATING: u64 = 5;
+const TAG_MOTION: u64 = 6;
+const TAG_DSU: u64 = 7;
 
 impl Watched {
     fn token(self) -> u64 {
         match self {
-            Watched::Source(index) => ((index as u64) << 3) | TAG_SOURCE,
-            Watched::Clone(index) => ((index as u64) << 3) | TAG_CLONE,
+            Watched::Source(index) => ((index as u64) << TAG_BITS) | TAG_SOURCE,
+            Watched::Clone(index) => ((index as u64) << TAG_BITS) | TAG_CLONE,
             Watched::Tick => u64::MAX,
             Watched::Listener => TAG_LISTENER,
             // A descriptor is non-negative; the cast is lossless.
-            Watched::Client(fd) => ((fd as u64) << 3) | TAG_CLIENT,
-            Watched::Session(index) => ((index as u64) << 3) | TAG_SESSION,
-            Watched::Seating(index) => ((index as u64) << 3) | TAG_SEATING,
+            Watched::Client(fd) => ((fd as u64) << TAG_BITS) | TAG_CLIENT,
+            Watched::Session(index) => ((index as u64) << TAG_BITS) | TAG_SESSION,
+            Watched::Seating(index) => ((index as u64) << TAG_BITS) | TAG_SEATING,
+            Watched::Motion(index) => ((index as u64) << TAG_BITS) | TAG_MOTION,
+            Watched::Dsu => TAG_DSU,
         }
     }
 
@@ -66,13 +80,15 @@ impl Watched {
         if token == u64::MAX {
             return Watched::Tick;
         }
-        let index = (token >> 3) as usize;
-        match token & 0b111 {
+        let index = (token >> TAG_BITS) as usize;
+        match token & TAG_MASK {
             TAG_CLONE => Watched::Clone(index),
             TAG_LISTENER => Watched::Listener,
             TAG_CLIENT => Watched::Client(index as i32),
             TAG_SESSION => Watched::Session(index),
             TAG_SEATING => Watched::Seating(index),
+            TAG_MOTION => Watched::Motion(index),
+            TAG_DSU => Watched::Dsu,
             _ => Watched::Source(index),
         }
     }

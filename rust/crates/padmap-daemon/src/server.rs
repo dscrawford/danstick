@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use log::{info, warn};
+use log::{debug, info, warn};
 use padmap_core::announce;
 use padmap_core::capture::{self, Chooser, MappingRun};
 use padmap_core::command::{Command, Refused};
@@ -32,6 +32,7 @@ use serde_json::Value;
 
 use crate::calibration::{CalibrationRun, Phase, Step};
 use crate::confirm::ConfirmHold;
+use crate::dsu::Motion as DsuMotion;
 use crate::hotplug::{self, Attached};
 use crate::publish::{self, Slot};
 use crate::seating::Seating;
@@ -114,6 +115,9 @@ pub struct Server {
     /// front-end as `published: false`.
     away: Vec<assignments::Assignment>,
     republisher: Option<Republisher>,
+    /// The DSU server, when the port was free. `None` is a daemon that works
+    /// and has no motion, which is what padmap did before it had any.
+    motion: Option<DsuMotion>,
     confirm: ConfirmHold,
     last_progress: f64,
     last_confirm: f64,
@@ -230,6 +234,7 @@ impl Server {
             slots_assigned: Vec::new(),
             away: Vec::new(),
             republisher: None,
+            motion: None,
             confirm: ConfirmHold::default(),
             last_progress: 0.0,
             last_confirm: 0.0,
@@ -285,7 +290,45 @@ impl Server {
         }
         self.listener = Some(listener);
         info!("listening on {}", self.socket_path.display());
+        self.start_motion();
         Ok(())
+    }
+
+    /// Bind the motion server, or carry on without one.
+    ///
+    /// Never fatal. The ordinary failure is another DSU server already on the
+    /// port, and a daemon that refuses to start because something else owns a
+    /// gyro socket is worse than four controllers that work without motion.
+    /// `PADMAP_DSU_PORT=0` turns it off, which is what the tests use so a
+    /// suite running in parallel does not fight itself for one port.
+    fn start_motion(&mut self) {
+        let port = match std::env::var("PADMAP_DSU_PORT") {
+            Ok(value) => match value.trim().parse::<u16>() {
+                Ok(port) => port,
+                Err(_) => {
+                    warn!("PADMAP_DSU_PORT={value:?} is not a port number; using the default");
+                    padmap_core::dsu::PORT
+                }
+            },
+            Err(_) => padmap_core::dsu::PORT,
+        };
+        if port == 0 {
+            debug!("motion server disabled by PADMAP_DSU_PORT=0");
+            return;
+        }
+        match DsuMotion::bind(port) {
+            Ok(motion) => {
+                if let Err(error) = self.reactor.watch(motion.as_fd(), Watched::Dsu) {
+                    warn!("could not watch the motion socket: {error}");
+                    return;
+                }
+                self.motion = Some(motion);
+            }
+            Err(error) => warn!(
+                "no motion server on port {port} ({error}); controllers still work, \
+                 their gyros do not"
+            ),
+        }
     }
 
     /// Republish the saved assignments, making a restart invisible.
@@ -372,6 +415,8 @@ impl Server {
                     Watched::Session(index) => self.on_session_read(index),
                     Watched::Seating(index) => self.on_seating_read(index),
                     Watched::Source(index) => self.on_source_read(index),
+                    Watched::Motion(index) => self.on_motion_read(index),
+                    Watched::Dsu => self.on_dsu_read(),
                     Watched::Clone(index) => {
                         if let Some(republisher) = self.republisher.as_mut() {
                             republisher.feedback(index);
@@ -1546,13 +1591,87 @@ impl Server {
             return;
         };
         let pumped = republisher.forward(index);
-        if pumped.gone {
+        let gone = pumped.gone;
+        if gone {
             // A dead node reports readable forever; left registered, the loop
             // spins on it for as long as the daemon runs.
             if let Some(vpad) = republisher.pads.get(index) {
                 let _ = self.reactor.unwatch(vpad.source.as_fd());
             }
         }
+        if !gone {
+            self.publish_motion();
+        }
+    }
+
+    fn on_motion_read(&mut self, index: usize) {
+        let Some(republisher) = self.republisher.as_mut() else {
+            return;
+        };
+        let before = republisher
+            .pads
+            .get(index)
+            .and_then(|vpad| vpad.sensor.as_ref())
+            .map(|sensor| sensor.as_fd().try_clone_to_owned());
+        republisher.read_motion(index);
+        // A sensor that went away is dropped by `read_motion`; a dead node
+        // stays readable for ever, so it has to leave the epoll set too or the
+        // loop spins on it for as long as the daemon runs.
+        let still_there = republisher
+            .pads
+            .get(index)
+            .is_some_and(|vpad| vpad.sensor.is_some());
+        if !still_there {
+            if let Some(Ok(fd)) = before {
+                let _ = self.reactor.unwatch(fd.as_fd());
+            }
+        }
+        self.publish_motion();
+    }
+
+    fn on_dsu_read(&mut self) {
+        let ports = self.motion_ports();
+        if let Some(motion) = self.motion.as_mut() {
+            motion.serve(&ports);
+        }
+        self.publish_motion();
+    }
+
+    /// What padmap would tell a consumer about each slot right now.
+    fn motion_ports(&self) -> Vec<padmap_core::dsu::Port> {
+        let Some(republisher) = self.republisher.as_ref() else {
+            return Vec::new();
+        };
+        republisher
+            .pads
+            .iter()
+            .filter(|vpad| !vpad.gone)
+            .map(|vpad| {
+                let has_motion = vpad.sensor.is_some() || vpad.source.motion().is_some();
+                crate::dsu::port_for(vpad.player, has_motion)
+            })
+            .collect()
+    }
+
+    /// Send whatever has changed to whoever asked for it.
+    fn publish_motion(&mut self) {
+        let Some(motion) = self.motion.as_mut() else {
+            return;
+        };
+        if !motion.has_clients() {
+            return;
+        }
+        let Some(republisher) = self.republisher.as_ref() else {
+            return;
+        };
+        let mut ports = Vec::new();
+        let mut pads = Vec::new();
+        for vpad in republisher.pads.iter().filter(|vpad| !vpad.gone) {
+            let has_motion = vpad.sensor.is_some() || vpad.source.motion().is_some();
+            ports.push(crate::dsu::port_for(vpad.player, has_motion));
+            pads.push(*vpad.tracker.pad());
+        }
+        motion.publish(&ports, &pads);
     }
 
     // -- the tick ---------------------------------------------------------
@@ -1738,6 +1857,14 @@ impl Server {
             {
                 warn!("player {}: could not watch its clone: {error}", vpad.player);
             }
+            if let Some(sensor) = vpad.sensor.as_ref() {
+                if let Err(error) = self.reactor.watch(sensor.as_fd(), Watched::Motion(index)) {
+                    warn!(
+                        "player {}: could not watch its motion sensor: {error}",
+                        vpad.player
+                    );
+                }
+            }
         }
         info!(
             "republisher watching {:?}",
@@ -1786,6 +1913,9 @@ impl Server {
         for vpad in &republisher.pads {
             let _ = self.reactor.unwatch(vpad.source.as_fd());
             let _ = self.reactor.unwatch(vpad.clone.as_fd());
+            if let Some(sensor) = vpad.sensor.as_ref() {
+                let _ = self.reactor.unwatch(sensor.as_fd());
+            }
         }
         republisher.close();
     }

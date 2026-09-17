@@ -509,7 +509,29 @@ fn cmd_run() -> Result<()> {
         reactor
             .watch(vpad.clone.as_fd(), reactor::Watched::Clone(index))
             .context("watching a clone")?;
+        if let Some(sensor) = vpad.sensor.as_ref() {
+            reactor
+                .watch(sensor.as_fd(), reactor::Watched::Motion(index))
+                .context("watching a motion sensor")?;
+        }
     }
+
+    // `run` serves motion too. It is the mode a game is launched under, which
+    // is exactly when an emulator asks -- a gyro that works under the daemon
+    // and not under `padmap run` would be the kind of difference nobody finds
+    // until they are holding a controller.
+    let mut motion = match padmap_daemon::dsu::Motion::bind(padmap_core::dsu::PORT) {
+        Ok(motion) => {
+            reactor
+                .watch(motion.as_fd(), reactor::Watched::Dsu)
+                .context("watching the motion socket")?;
+            Some(motion)
+        }
+        Err(error) => {
+            warn!("no motion server ({error}); the pads still work, their gyros do not");
+            None
+        }
+    };
 
     println!(
         "\nRepublishing {} pad(s). Ctrl-C to stop.\n",
@@ -532,8 +554,15 @@ fn cmd_run() -> Result<()> {
                     let pumped = republisher.forward(index);
                     if pumped.gone {
                         drop_pad(&reactor, &republisher, index);
+                    } else {
+                        serve_motion(motion.as_mut(), &republisher, false);
                     }
                 }
+                reactor::Watched::Motion(index) => {
+                    republisher.read_motion(index);
+                    serve_motion(motion.as_mut(), &republisher, false);
+                }
+                reactor::Watched::Dsu => serve_motion(motion.as_mut(), &republisher, true),
                 reactor::Watched::Clone(index) => republisher.feedback(index),
                 reactor::Watched::Tick => {
                     let expiries = reactor.take_tick();
@@ -675,6 +704,34 @@ fn publish_artefacts(vpads: &[padmap_input::VirtualPad]) -> Result<()> {
         info!("{target}: not written ({why})");
     }
     Ok(())
+}
+
+/// Answer the socket if asked, then send whatever changed.
+///
+/// `asked` says a datagram is waiting. Reading it first matters: a consumer's
+/// very first subscription should be answered with the sample that prompted
+/// this wake-up rather than with the next one.
+fn serve_motion(
+    motion: Option<&mut padmap_daemon::dsu::Motion>,
+    republisher: &republish::Republisher,
+    asked: bool,
+) {
+    let Some(motion) = motion else {
+        return;
+    };
+    let mut ports = Vec::new();
+    let mut pads = Vec::new();
+    for vpad in republisher.pads.iter().filter(|vpad| !vpad.gone) {
+        let has_motion = vpad.sensor.is_some() || vpad.source.motion().is_some();
+        ports.push(padmap_daemon::dsu::port_for(vpad.player, has_motion));
+        pads.push(*vpad.tracker.pad());
+    }
+    if asked {
+        motion.serve(&ports);
+    }
+    if motion.has_clients() {
+        motion.publish(&ports, &pads);
+    }
 }
 
 fn drop_pad(reactor: &reactor::Reactor, republisher: &republish::Republisher, index: usize) {

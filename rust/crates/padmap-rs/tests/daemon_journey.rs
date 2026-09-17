@@ -204,6 +204,9 @@ impl Daemon {
             .env("PADMAP_SDL_DB", root.join("sdl_controllers.txt"))
             .env("PADMAP_ONLY_DEVICE", id.only)
             .env("PADMAP_NO_AUTOSETUP", "1")
+            // No motion server. Five of these run at once and there is one
+            // DSU port on the machine -- which a real daemon may already hold.
+            .env("PADMAP_DSU_PORT", "0")
             .env("PADMAP_CEMU_DIR", root.join("cemu"))
             .env("PADMAP_ARES_SETTINGS", root.join("nowhere/ares.bml"))
             .env("PADMAP_RYUJINX_CONFIG", root.join("nowhere/Config.json"))
