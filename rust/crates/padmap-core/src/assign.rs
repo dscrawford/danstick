@@ -63,7 +63,7 @@ impl Assigner {
         self.claimed.contains(&pad)
     }
 
-    /// Offer one event.
+    /// Offer one event. Only EV_KEY codes above BTN_FIRST count.
     pub fn feed(&mut self, pad: usize, kind: u16, code: u16, value: i32, now: f64) {
         if kind != crate::capture::EV_KEY || code < BTN_FIRST {
             return;
@@ -79,7 +79,7 @@ impl Assigner {
         }
     }
 
-    /// Advance the hold timers.
+    /// Advance the hold timers. Must be called on a timer (events alone cannot detect completion).
     pub fn tick(&mut self, now: f64) -> Tick {
         let mut out = Tick {
             progress: Vec::new(),
@@ -115,7 +115,7 @@ impl Assigner {
         out
     }
 
-    /// Drop every claim.
+    /// Drop every claim. Caller must discard queued pad events.
     pub fn reset(&mut self) {
         self.assignments.clear();
         self.claimed.clear();
