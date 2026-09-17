@@ -1,10 +1,4 @@
-//! Which picture stands for a controller.
-//!
-//! Every answer here is a *guess*, and the ordering says how much each source
-//! is trusted. A vendor id names a model, not a controller: 0x0079 is
-//! DragonRise, resold in a great many unrelated adapters, so any entry under it
-//! is wrong for somebody. A learned profile always wins, because it is the only
-//! source that reflects the controller actually in the user's hands.
+//! Map controller vendor/model, name, or profile to an icon.
 
 use std::collections::BTreeMap;
 use std::sync::OnceLock;
@@ -39,13 +33,7 @@ pub const ICON_NAMES: [&str; 11] = [
     GAMEPAD,
 ];
 
-/// Steam's virtual gamepad: the one device whose *name* must not be believed.
-///
-/// With Steam running it takes the controller over hidraw and publishes this
-/// in its place -- a uinput pad on Valve's vendor id, called "Microsoft X-Box
-/// 360 pad". The name is a deliberate impersonation, which is what makes games
-/// treat it as XInput, so the rule that a name beats a vendor id is exactly
-/// backwards here and this is checked first.
+/// Steam's virtual gamepad: checked by id before name (it impersonates Xbox).
 pub const STEAM_VIRTUAL_ID: (u16, u16) = (0x28DE, 0x11FF);
 
 /// Fallback only, and treated as a guess: these ids are not reliable identity.
@@ -60,13 +48,9 @@ const BY_ID: [((u16, u16), &str); 13] = [
     ((0x045E, 0x028E), XBOX),        // Xbox 360 pad
     ((0x045E, 0x02FD), XBOX),        // Xbox One S pad
     ((0x057E, 0x2009), SWITCH),      // Switch Pro
-    // Nintendo's reissued pads for Switch Online really are those controllers,
-    // button for button, so they get the layout of the console they came from
-    // rather than the Switch one. A user handed the Switch wizard for an N64
-    // pad would be asked to press an X and a Y it does not have.
-    ((0x057E, 0x2017), SNES),  // SNES pad for Switch Online
-    ((0x057E, 0x2019), N64),   // N64 pad for Switch Online
-    ((0x28DE, 0x1304), STEAM), // Steam Controller Puck
+    ((0x057E, 0x2017), SNES),        // SNES pad for Switch Online (layout of original console)
+    ((0x057E, 0x2019), N64),         // N64 pad for Switch Online
+    ((0x28DE, 0x1304), STEAM),       // Steam Controller Puck
 ];
 
 /// Ordered: first match wins, against the lowercased name.
@@ -78,22 +62,13 @@ const BY_NAME: [(&str, &str); 9] = [
     (r"\bn64\b|nintendo 64|retrolink.*64", N64),
     (r"gamecube|\bgc\b|wii ?u? ?gc", GAMECUBE),
     (r"\bsnes\b|super nintendo|\bsfc\b", SNES),
-    // After SNES and N64 on purpose: Nintendo's Switch Online reissues carry
-    // both words ("Nintendo Co., Ltd. N64 Controller"), and the console they
-    // copy is the more useful answer than the console they plug into.
     (r"pro controller|switch pro|joy-?con|\bnso\b", SWITCH),
     (r"genesis|mega ?drive|\bm30\b|retro-?bit|saturn", GENESIS),
     (r"dualshock|dualsense|playstation|\bps[3-5]\b", PLAYSTATION),
     (r"steam ?(controller|deck|puck)|\bvalve\b", STEAM),
-    // "x-box", with the hyphen, because that is what the kernel's own xpad
-    // driver calls every 360 pad. Matching only "xbox" meant the most common
-    // controller on Linux fell through to the generic icon.
     (r"x-? ?box|xinput", XBOX),
 ];
 
-// `wheel` is matched separately only because the array above is sized; keeping
-// it in one table would be tidier and is the next thing to do if a tenth rule
-// arrives.
 const WHEEL_PATTERN: &str = r"wheel|racing|g29|g27|driving";
 
 fn compiled() -> &'static Vec<(Regex, &'static str)> {
@@ -118,20 +93,7 @@ pub fn known(name: &str) -> bool {
     ICON_NAMES.contains(&name)
 }
 
-/// The icon for a pad, given everything already looked up for it.
-///
-/// Pure: the profile and the override file are read by the caller, because
-/// this is the part that has to be the same answer everywhere and the I/O is
-/// the part that differs between the daemon and a one-shot command.
-///
-/// Order of authority, most trusted first:
-///
-///   1. the learned per-device profile, set when the pad was first configured
-///   2. the user's override file
-///   3. Steam's virtual pad, by id, because its name is somebody else's
-///   4. the device name
-///   5. the built-in vid/pid table
-///   6. a generic pad
+/// The icon for a pad (profile > override > Steam id > name > id table > fallback).
 pub fn for_pad(
     vid: u16,
     pid: u16,
@@ -153,8 +115,6 @@ pub fn for_pad(
     if (vid, pid) == STEAM_VIRTUAL_ID {
         return STEAM;
     }
-    // Name patterns before the id table: a device that says "Fightstick" in
-    // its name is better evidence than a resold vendor id.
     let lowered = name.to_lowercase();
     for (pattern, icon) in compiled() {
         if pattern.is_match(&lowered) {
@@ -169,11 +129,7 @@ pub fn for_pad(
     GAMEPAD
 }
 
-/// Parse the user's override file: `{"0079:1879": "n64"}`.
-///
-/// Generic adapter ids are genuinely ambiguous, so this is the documented fix
-/// rather than a workaround. An entry naming an icon padmap cannot draw is
-/// dropped, because a blank square is worse than the guess it replaced.
+/// Parse the user's override file (JSON).
 pub fn parse_overrides(text: &str) -> BTreeMap<String, String> {
     let Ok(serde_json::Value::Object(raw)) = serde_json::from_str(text) else {
         return BTreeMap::new();
@@ -196,7 +152,6 @@ mod tests {
 
     #[test]
     fn every_rule_names_an_icon_that_exists() {
-        // A pattern naming an icon with no artwork draws a blank square.
         for (_, name) in BY_NAME
             .iter()
             .chain(std::iter::once(&(WHEEL_PATTERN, WHEEL)))
@@ -215,8 +170,6 @@ mod tests {
 
     #[test]
     fn the_kernels_own_name_for_an_xbox_pad_is_recognised() {
-        // xpad calls every one of them "Microsoft X-Box 360 pad", with the
-        // hyphen, and a pattern of "xbox" alone matches none of them.
         assert_eq!(icon("Microsoft X-Box 360 pad 0"), XBOX);
         assert_eq!(icon("Microsoft X-Box One pad"), XBOX);
         assert_eq!(icon("Xbox Wireless Controller"), XBOX);
@@ -236,7 +189,6 @@ mod tests {
             ),
             STEAM
         );
-        // ...and a genuine 360 pad still is one.
         assert_eq!(
             for_pad(
                 0x045E,
@@ -262,15 +214,12 @@ mod tests {
 
     #[test]
     fn a_more_specific_rule_wins_over_a_vaguer_one() {
-        // First match wins, and an arcade stick that mentions Steam is still
-        // an arcade stick.
         assert_eq!(icon("Steampunk Arcade Fightstick"), ARCADE);
         assert_eq!(icon("Nintendo Co., Ltd. N64 Controller"), N64);
     }
 
     #[test]
     fn a_profile_beats_everything_below_it() {
-        // The only source that reflects the controller in the user's hands.
         let icon = for_pad(
             0x045E,
             0x028E,
@@ -283,7 +232,6 @@ mod tests {
 
     #[test]
     fn a_profile_naming_an_icon_that_does_not_exist_is_ignored() {
-        // Otherwise a hand-edited profile leaves the pad with a blank square.
         let icon = for_pad(
             0x045E,
             0x028E,

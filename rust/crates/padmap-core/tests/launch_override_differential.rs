@@ -75,7 +75,6 @@ fn vacant_indices_are_distinct_and_never_past_the_last_slot() {
 
 #[test]
 fn indices_run_out_gracefully_rather_than_colliding_silently() {
-    // Spares repeat at the ceiling: unmanaged slots are RETRO_DEVICE_NONE, so no core port is reached.
     assert_eq!(retroarch::empty_indices(16, 4), vec![15, 15, 15, 15]);
     assert_eq!(retroarch::empty_indices(2, 3), vec![2, 3, 4]);
 }
@@ -137,7 +136,6 @@ fn every_reservation_config_is_written_the_same() {
 
 #[test]
 fn an_unmanaged_slot_is_cleared_rather_than_left_alone() {
-    // A stale reservation still holds the slot for a clone that no longer exists.
     let text = retroarch::reservation_lines(&[1], virtual_name);
     assert!(text.contains("input_player1_reserved_device = \"padmap Player 1\""));
     assert!(text.contains("input_player1_device_reservation_type = \"2\""));

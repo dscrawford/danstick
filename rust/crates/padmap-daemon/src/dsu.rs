@@ -1,5 +1,4 @@
 //! padmap as a DSU server: motion on a stable port, by player number.
-//! UDP socket on loopback only, to avoid putting button presses on the network.
 
 use std::collections::HashMap;
 use std::io;
@@ -19,16 +18,13 @@ const SERVER_ID: u32 = 0x7061_646D; // "padm"
 struct Client {
     subscribe: Subscribe,
     last_asked: Instant,
-    // Per-client tracking prevents resending unchanged samples.
     sent: [Option<Pad>; MAX_SLOTS],
 }
 
 #[derive(Debug)]
 pub struct Motion {
     socket: UdpSocket,
-    // Renewed about once per second per client.
     clients: HashMap<SocketAddr, Client>,
-    // Per-slot counters so consumers can detect dropped datagrams.
     counters: [u32; MAX_SLOTS],
 }
 
@@ -173,7 +169,6 @@ impl Motion {
 
 pub fn port_for(player: u32, has_motion: bool) -> Port {
     Port {
-        // Slot is player - 1: client's DSU semantics.
         slot: player.saturating_sub(1) as u8,
         connected: Connected::Yes,
         model: if has_motion {

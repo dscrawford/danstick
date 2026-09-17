@@ -1,5 +1,4 @@
 //! Everything written to disk when the roster changes.
-//! Regenerated whole on each accept/republish to keep in step.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -115,7 +114,7 @@ pub fn sdl_line_for(
     emit::sdl_line_for(player, identity, bindings, Some(&sticks))
 }
 
-/// The stored mapping's line, or empty. Empty is better than a line from no bindings.
+/// The stored mapping's line, or empty.
 pub fn stored_sdl_line(player: u32, pad: &Pad, identity: Identity, facts: &PadFacts) -> String {
     let bindings = resolved(pad, "", "").1.resolved();
     if bindings.is_empty() {
@@ -124,7 +123,7 @@ pub fn stored_sdl_line(player: u32, pad: &Pad, identity: Identity, facts: &PadFa
     sdl_line_for(player, identity, &bindings, facts)
 }
 
-/// A usable SDL line for unmapped pads. None if the pad reports no buttons.
+/// A usable SDL line for unmapped pads.
 pub fn fallback_line_for(
     player: u32,
     identity: Identity,
@@ -158,7 +157,6 @@ fn carried(guid: Option<&str>) -> Option<(Fields, String)> {
     if let Some(found) = artefacts::carried_fields(guid) {
         return Some(found);
     }
-    // Skip virtual pads named by padmap itself.
     let line = sdlprobe::isolated(guid)?;
     let (_, name, fields) = sdl::parse_line(&line)?;
     if name.starts_with(emit::VIRTUAL_PREFIX) {
@@ -205,7 +203,7 @@ pub fn profile_text(
     )
 }
 
-/// Log layout controls a mapping doesn't bind. User must remap to use them.
+/// Log layout controls a mapping doesn't bind.
 fn log_unmapped(pad: &Pad, scope: &str, layout_id: &str, bindings: &BTreeMap<Control, Binding>) {
     let layout = padmap_core::layout::get(layout_id);
     let missing: Vec<&str> = layout
@@ -247,7 +245,7 @@ pub struct Written {
     pub sdl_lines: Vec<String>,
 }
 
-/// Write every file the roster implies. Resolves configs for the last-launched game.
+/// Write every file the roster implies.
 pub fn write_all(
     slots: &[Slot],
     virtual_paths: &BTreeMap<u32, String>,
@@ -365,7 +363,7 @@ fn profile_for(pad: &Pad) -> Profile {
     profile
 }
 
-/// Save a mapping capture under a scope. Returns controls it didn't bind.
+/// Save a mapping capture under a scope.
 pub fn store_mapping(
     pad: &Pad,
     layout_id: &str,
@@ -373,7 +371,6 @@ pub fn store_mapping(
     scope: &str,
 ) -> Vec<String> {
     let mut profile = profile_for(pad);
-    // Only set icon from default-scope captures with layout id matching an icon.
     if profile.icon.is_empty() && scope.is_empty() && padmap_core::icons::known(layout_id) {
         profile.icon = layout_id.to_owned();
     }

@@ -1,10 +1,4 @@
 //! padmap's motion server, spoken to the way Cemu speaks to it.
-//!
-//! The protocol module proves the bytes are right. This proves the socket is:
-//! that a request arriving from somewhere answers to *that* somewhere, that a
-//! subscription is remembered, and that a client who stops asking stops being
-//! written to. Those are the parts that fail as "the emulator sees the server
-//! and never a sample", which looks nothing like a decode bug.
 
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket};
 use std::time::Duration;
@@ -14,9 +8,6 @@ use padmap_core::motion::Motion;
 use padmap_daemon::dsu::Motion as Server;
 
 /// A client socket, and a server bound to a port the kernel chose.
-///
-/// An ephemeral port rather than 26760, so the suite does not fight a real
-/// daemon on the machine running it -- or another copy of itself.
 fn pair() -> (Server, UdpSocket, SocketAddr) {
     let probe = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0)).expect("a free port");
     let port = probe.local_addr().expect("an address").port();
@@ -30,7 +21,6 @@ fn pair() -> (Server, UdpSocket, SocketAddr) {
     (server, client, to)
 }
 
-/// One client request, framed the way `udp_protocol.h` frames it.
 fn ask(client: &UdpSocket, to: SocketAddr, kind: Kind, body: &[u8]) {
     let mut out = Vec::new();
     out.extend_from_slice(b"DSUC");
@@ -86,8 +76,6 @@ fn a_version_request_is_answered_to_whoever_asked() {
 
 #[test]
 fn asking_about_four_slots_is_answered_four_times() {
-    // Cemu asks about all four and waits. Answering only the seated ones
-    // leaves it waiting for the rest, with no error anywhere.
     let (mut server, client, to) = pair();
     ask(&client, to, Kind::PortInfo, &[4, 0, 0, 0, 0, 1, 2, 3]);
     server.serve(&[seated(0)]);
@@ -115,8 +103,6 @@ fn a_slot_padmap_does_not_have_is_answered_as_empty() {
 
 #[test]
 fn nothing_is_sent_until_somebody_subscribes() {
-    // A server that broadcasts unasked is a server writing into a socket
-    // buffer nobody drains, and eventually blocking on it.
     let (mut server, client, _to) = pair();
     assert!(!server.has_clients());
     server.publish(&[seated(0)], &[moving(1)]);
@@ -145,9 +131,6 @@ fn a_subscriber_gets_a_sample_with_the_motion_in_it() {
 
 #[test]
 fn a_sample_that_has_not_advanced_is_not_sent_twice() {
-    // Cemu discards a sample whose timestamp did not move, and anything that
-    // does not discard it integrates the same rotation twice. Either way the
-    // packet is worse than useless, so it is not sent.
     let (mut server, client, to) = pair();
     ask(&client, to, Kind::PadData, &[0, 0, 0, 0, 0, 0, 0, 0]);
     server.serve(&[seated(0)]);
@@ -162,8 +145,6 @@ fn a_sample_that_has_not_advanced_is_not_sent_twice() {
 
 #[test]
 fn the_packet_counter_advances_so_a_lost_datagram_can_be_seen() {
-    // UDP drops packets and nothing here retransmits. The counter is how a
-    // consumer tells a dropped sample from a pad nobody is moving.
     let (mut server, client, to) = pair();
     ask(&client, to, Kind::PadData, &[0, 0, 0, 0, 0, 0, 0, 0]);
     server.serve(&[seated(0)]);
@@ -191,8 +172,6 @@ fn a_subscription_to_one_slot_does_not_receive_another() {
 
 #[test]
 fn a_subscription_by_address_follows_the_player_and_not_the_slot() {
-    // A consumer that subscribed by MAC keeps receiving across a reconnect,
-    // which is the point of the address being derived from the player number.
     let (mut server, client, to) = pair();
     let mac = dsu::mac_for_player(2);
     let mut body = vec![2, 0];
@@ -206,8 +185,6 @@ fn a_subscription_by_address_follows_the_player_and_not_the_slot() {
 
 #[test]
 fn a_datagram_that_is_not_dsu_is_ignored_rather_than_answered() {
-    // The socket is unauthenticated and anything on the machine can write to
-    // it. Nothing here may crash, and nothing may be answered.
     let (mut server, client, to) = pair();
     for rubbish in [vec![0u8; 1], vec![0xFFu8; 64], b"hello there".to_vec()] {
         client.send_to(&rubbish, to).expect("send rubbish");
@@ -216,7 +193,6 @@ fn a_datagram_that_is_not_dsu_is_ignored_rather_than_answered() {
     assert!(hear(&client).is_none());
     assert!(!server.has_clients());
 
-    // And the server still works afterwards.
     ask(&client, to, Kind::Version, &[]);
     server.serve(&[]);
     assert!(hear(&client).is_some());
@@ -224,8 +200,6 @@ fn a_datagram_that_is_not_dsu_is_ignored_rather_than_answered() {
 
 #[test]
 fn two_servers_cannot_hold_one_port() {
-    // The ordinary failure: another DSU server is already running. It has to
-    // be an error the daemon can carry on from rather than a panic.
     let (server, _client, to) = pair();
     let second = Server::bind(to.port());
     assert!(second.is_err(), "the port is taken");
@@ -234,9 +208,6 @@ fn two_servers_cannot_hold_one_port() {
 
 #[test]
 fn a_client_that_subscribes_late_gets_the_current_sample() {
-    // The first client was sent the sample. A second emulator started later
-    // must get it too, without waiting for the pad to move: a controller
-    // lying still on the table is the ordinary state of a gyro pad.
     let (mut server, first, to) = pair();
     ask(&first, to, Kind::PadData, &[0, 0, 0, 0, 0, 0, 0, 0]);
     server.serve(&[seated(0)]);
@@ -286,9 +257,6 @@ fn a_renewed_subscription_outlives_the_timeout() {
 
 #[test]
 fn a_pad_without_motion_is_not_streamed_on_every_wakeup() {
-    // Its timestamp never moves. Deduplicating on the timestamp alone streams
-    // it on every source event of every other pad; the buttons are what
-    // change, so that is what has to be compared.
     let (mut server, client, to) = pair();
     ask(&client, to, Kind::PadData, &[0, 0, 0, 0, 0, 0, 0, 0]);
     let port = padmap_daemon::dsu::port_for(1, false);

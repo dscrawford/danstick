@@ -1,9 +1,4 @@
 //! SDL's side of a mapping, held to the byte.
-//!
-//! SDL never reports a mapping it failed to match: no log line, no warning,
-//! and the pad behaves as though nobody had written one. So everything here is
-//! pinned exactly -- an assertion for "roughly the right shape" would pass for
-//! a line SDL silently ignores.
 
 use std::collections::BTreeMap;
 
@@ -15,44 +10,28 @@ use padmap_core::sdl::{
     STICK_REST_TOLERANCE,
 };
 
-// Written by SDL itself, via Pegasus's gamepad editor, for one of padmap's
-// virtual pads: bus 6 (BUS_VIRTUAL, since the pad is uinput), vendor 0x0079,
-// product 0x1879, version 1.
 const REAL_GUID: &str = "0600c9a7790000007918000001000000";
 const REAL_NAME: &str = "padmap Player 1";
 const BUS_VIRTUAL: u16 = 0x06;
 const BUS_USB: u16 = 0x03;
 
-/// Every character a device name may not carry into a database line.
-///
-/// The comma is the field separator; the other ten each end a line for one
-/// reader or the other.
 const FORBIDDEN: [char; 11] = [
     ',', '\n', '\r', '\x0b', '\x0c', '\u{1c}', '\u{1d}', '\u{1e}', '\u{85}', '\u{2028}', '\u{2029}',
 ];
 
 /// The ten of those that break a line rather than a field.
-///
-/// This is exactly the set Python's `str.splitlines` breaks on, which is what
-/// `controllercfg.write_sdl_mappings` uses to re-read the file it must not
-/// destroy. SDL itself only breaks on `\n`, so a name carrying any of the
-/// others splits the file for padmap's own rewriter and not for SDL -- the two
-/// then disagree about which lines exist.
 const LINE_BREAKERS: [char; 10] = [
     '\n', '\r', '\x0b', '\x0c', '\u{1c}', '\u{1d}', '\u{1e}', '\u{85}', '\u{2028}', '\u{2029}',
 ];
 
-/// How many physical lines a reader that splits the way Python does will see.
 fn physical_lines(text: &str) -> usize {
     text.split(|c| LINE_BREAKERS.contains(&c)).count()
 }
 
-/// The four hex digits one 16-bit word of a GUID occupies.
 fn word(raw: &str, index: usize) -> &str {
     &raw[index * 4..index * 4 + 4]
 }
 
-/// Which of the eight words two GUIDs disagree about.
 fn differing_words(left: &str, right: &str) -> Vec<usize> {
     (0..8)
         .filter(|i| word(left, *i) != word(right, *i))
@@ -71,29 +50,21 @@ fn field_names(fields: &Fields) -> Vec<&str> {
 }
 
 // ---------------------------------------------------------------------------
-// crc16
-// ---------------------------------------------------------------------------
 
 #[test]
 fn crc16_matches_the_standard_arc_check_vector() {
-    // The published check value for CRC-16/ARC. If this moves, every GUID
-    // padmap writes is keyed on a checksum SDL will not compute, and not one
-    // mapping is ever matched.
+    // The published check value for CRC-16/ARC. If this moves, every GUID.
     assert_eq!(crc16(b"123456789"), 0xBB3D);
 }
 
 #[test]
 fn crc16_of_no_bytes_is_zero() {
-    // A device with an empty name is not hypothetical: a USB string descriptor
-    // can be absent, and the GUID still has to come out well formed.
     assert_eq!(crc16(b""), 0x0000);
 }
 
 #[test]
 fn crc16_of_nul_bytes_is_indistinguishable_from_nothing() {
-    // Zero initial value and a zero byte leave the register alone, so a name
-    // of NULs collides with the empty name. Worth knowing rather than worth
-    // fixing: SDL computes the same collision, so padmap agrees with it.
+    // Zero initial value and a zero byte leave the register alone, so a name.
     assert_eq!(crc16(b"\x00"), 0x0000);
     assert_eq!(crc16(b"\x00\x00\x00"), 0x0000);
 }
@@ -107,8 +78,7 @@ fn crc16_of_a_single_byte_is_pinned() {
 
 #[test]
 fn crc16_is_byte_order_sensitive() {
-    // A checksum that ignored order would give two differently-named pads the
-    // same GUID, and SDL would hand one pad's mapping to the other.
+    // A checksum that ignored order would give two differently-named pads the.
     assert_eq!(crc16(b"AB"), 0x61B0);
     assert_eq!(crc16(b"BA"), 0x90F0);
     assert_ne!(crc16(b"AB"), crc16(b"BA"));
@@ -116,9 +86,7 @@ fn crc16_is_byte_order_sensitive() {
 
 #[test]
 fn crc16_hashes_utf8_bytes_and_not_characters() {
-    // "Pokémon" is seven characters and eight bytes. Hashing characters would
-    // produce a GUID SDL -- which hashes the bytes of the descriptor -- never
-    // computes, so the mapping would never be matched.
+    // "Pokémon" is seven characters and eight bytes.
     assert_eq!("Pokémon".chars().count(), 7);
     assert_eq!(
         "Pokémon".len(),
@@ -132,8 +100,6 @@ fn crc16_hashes_utf8_bytes_and_not_characters() {
 #[test]
 fn a_trailing_nul_still_changes_the_checksum_of_a_non_empty_name() {
     // The NUL is transparent from a zero register, not transparent in general.
-    // A descriptor that includes its terminator hashes differently from one
-    // that does not, which is why the caller must pass the exact name SDL sees.
     assert_eq!(crc16(b"A\x00"), 0x5030);
     assert_ne!(crc16(b"A\x00"), crc16(b"A"));
 }
@@ -145,15 +111,8 @@ fn crc16_is_deterministic_for_a_long_input() {
     assert_ne!(crc16(long.as_bytes()), crc16(b""));
 }
 
-// ---------------------------------------------------------------------------
-// guid
-// ---------------------------------------------------------------------------
-
 #[test]
 fn the_guid_matches_one_sdl_wrote_itself() {
-    // Not derived from reading SDL's source: this string came out of SDL for a
-    // real padmap virtual pad. Every digit is load-bearing, and a wrong one
-    // costs the whole mapping with no diagnostic anywhere.
     assert_eq!(
         guid(BUS_VIRTUAL, 0x0079, 0x1879, 0x0001, REAL_NAME),
         REAL_GUID
@@ -162,7 +121,6 @@ fn the_guid_matches_one_sdl_wrote_itself() {
 
 #[test]
 fn a_second_guid_sdl_wrote_also_matches() {
-    // The same pad identity on the USB bus rather than the virtual one.
     assert_eq!(
         guid(BUS_USB, 0x0079, 0x1830, 0x0110, "Arcade Fightstick F300"),
         "03006cc5790000003018000010010000"
@@ -171,8 +129,7 @@ fn a_second_guid_sdl_wrote_also_matches() {
 
 #[test]
 fn the_same_inputs_always_give_the_same_guid() {
-    // Regenerating a mapping must key on the same row, or the previous line
-    // stops being found and the file grows a duplicate that shadows nothing.
+    // Regenerating a mapping must key on the same row, or the previous line.
     let once = guid(BUS_VIRTUAL, 0x0079, 0x1879, 1, REAL_NAME);
     let twice = guid(BUS_VIRTUAL, 0x0079, 0x1879, 1, REAL_NAME);
     assert_eq!(once, twice);
@@ -180,9 +137,7 @@ fn the_same_inputs_always_give_the_same_guid() {
 
 #[test]
 fn every_word_is_stored_little_endian() {
-    // SDL writes the bytes of each 16-bit field low byte first. Writing them
-    // the other way round produces a plausible-looking GUID that matches
-    // nothing at all.
+    // SDL writes the bytes of each 16-bit field low byte first.
     assert_eq!(
         guid(0x1234, 0x5678, 0x9abc, 0xdef0, ""),
         "3412000078560000bc9a0000f0de0000"
@@ -191,9 +146,6 @@ fn every_word_is_stored_little_endian() {
 
 #[test]
 fn the_bus_occupies_the_first_four_digits_and_nothing_else() {
-    // The field that decides whether SDL's database matches at all: measured
-    // against real SDL, bus 3 with ids 0079:1830 matches its built-in entry
-    // and bus 6 with the identical ids matches nothing.
     let usb = guid(BUS_USB, 0x0079, 0x1830, 0x0110, "Arcade Fightstick F300");
     let virt = guid(
         BUS_VIRTUAL,
@@ -244,8 +196,6 @@ fn the_product_occupies_digits_sixteen_to_nineteen_and_nothing_else() {
 
 #[test]
 fn the_version_occupies_digits_twenty_four_to_twenty_seven_and_nothing_else() {
-    // A firmware revision bump changes the version and nothing else, and it
-    // does change the GUID: the previous line stops matching.
     let one = guid(BUS_VIRTUAL, 0x0079, 0x1879, 0x0001, REAL_NAME);
     let two = guid(BUS_VIRTUAL, 0x0079, 0x1879, 0x0110, REAL_NAME);
     assert_eq!(word(&one, 6), "0100");
@@ -255,8 +205,7 @@ fn the_version_occupies_digits_twenty_four_to_twenty_seven_and_nothing_else() {
 
 #[test]
 fn the_padding_words_are_always_zero() {
-    // SDL's GUID is sixteen bytes with three 16-bit holes in it. Anything but
-    // zero there is a byte SDL will compare against zero and reject.
+    // SDL's GUID is sixteen bytes with three 16-bit holes in it.
     let cases = [
         guid(0x0000, 0x0000, 0x0000, 0x0000, ""),
         guid(0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, "anything at all"),
@@ -280,11 +229,7 @@ fn an_all_zero_device_gives_an_all_zero_guid() {
 
 #[test]
 fn a_guid_is_always_thirty_two_lowercase_hex_characters() {
-    // A short or upper-case GUID does not match, and a caller comparing it
-    // against a line already in the file would not find its own previous
-    // output either.
-    // A name of only NUL-adjacent control characters, which a descriptor can
-    // legitimately carry and which must not derail the formatting.
+    // A short or upper-case GUID does not match, and a caller comparing it.
     let control_chars = "\u{0}\u{1}\u{2}\u{1f}\u{7f}";
     let very_long = "x".repeat(10_000);
     let names: [&str; 5] = ["", REAL_NAME, &very_long, control_chars, "Pokémon"];
@@ -313,10 +258,6 @@ fn a_name_that_differs_only_beyond_the_ascii_range_gets_a_different_guid() {
     assert_ne!(plain, accented);
 }
 
-// ---------------------------------------------------------------------------
-// clean_name and line
-// ---------------------------------------------------------------------------
-
 #[test]
 fn an_ordinary_name_passes_through_clean_name_untouched() {
     assert_eq!(clean_name(REAL_NAME), REAL_NAME);
@@ -333,7 +274,6 @@ fn every_forbidden_character_is_removed_from_a_name() {
 
 #[test]
 fn every_forbidden_character_leaves_exactly_one_physical_line_with_the_right_field_count() {
-    // guid, name, two bindings, platform, and the trailing comma's empty tail.
     let fields: Fields = [("a", "b1"), ("b", "b2")].into_iter().collect();
     for bad in FORBIDDEN {
         let name = format!("Pad{bad}Two");
@@ -356,8 +296,6 @@ fn every_forbidden_character_leaves_exactly_one_physical_line_with_the_right_fie
 
 #[test]
 fn a_comma_in_a_name_cannot_shift_every_field_after_it() {
-    // The failure this guards: SDL reads field n+1 where field n was meant, so
-    // "a" is bound to what "b" should have been, all the way to the end.
     let fields: Fields = [("a", "b1"), ("b", "b2")].into_iter().collect();
     let built = line(REAL_GUID, "Evil, Pad", &fields, "Linux");
     let parts: Vec<&str> = built.split(',').collect();
@@ -372,9 +310,6 @@ fn a_comma_in_a_name_cannot_shift_every_field_after_it() {
 
 #[test]
 fn a_newline_in_a_name_cannot_produce_two_physical_lines() {
-    // Worse than a comma: SDL reads the first line as a device with no
-    // bindings and drops the second as junk, so the pad gets no mapping at all
-    // rather than a damaged one -- and nothing anywhere says so.
     for bad in LINE_BREAKERS {
         let built = line(REAL_GUID, &format!("Pad{bad}Two"), &Fields::new(), "Linux");
         assert_eq!(physical_lines(&built), 1, "{bad:?} split the line");
@@ -384,8 +319,7 @@ fn a_newline_in_a_name_cannot_produce_two_physical_lines() {
 
 #[test]
 fn a_carriage_return_is_stripped_rather_than_riding_along_inside_the_name() {
-    // SDL trims CR when it splits lines, so a stray one inside the name would
-    // be matched against a name that does not contain it.
+    // SDL trims CR when it splits lines, so a stray one inside the name would.
     let built = line(REAL_GUID, "Pad\r", &Fields::new(), "Linux");
     assert!(!built.contains('\r'));
     assert!(built.contains(",Pad,"));
@@ -402,8 +336,6 @@ fn a_name_of_nothing_but_forbidden_characters_becomes_empty() {
 
 #[test]
 fn an_empty_name_still_produces_a_well_formed_line() {
-    // A USB string descriptor can be absent. An empty name field is readable;
-    // a missing one would shift the fields.
     let built = line(REAL_GUID, "", &Fields::new(), "Linux");
     assert_eq!(built, format!("{REAL_GUID},,platform:Linux,"));
     let (_, name, _) = parse_line(&built).expect("an empty-named line still parses");
@@ -412,8 +344,6 @@ fn an_empty_name_still_produces_a_well_formed_line() {
 
 #[test]
 fn a_colon_in_a_name_survives_and_does_not_become_a_field_separator() {
-    // Real descriptors carry colons -- "Mayflash Arcade Stick: 2 player". The
-    // colon only separates within a field, and the name is not one.
     let built = line(
         REAL_GUID,
         "Mayflash Stick: 2 player",
@@ -432,9 +362,7 @@ fn a_colon_in_a_name_survives_and_does_not_become_a_field_separator() {
 
 #[test]
 fn characters_outside_the_forbidden_set_survive_a_name() {
-    // The set is deliberately the framing characters and nothing else. Silently
-    // stripping anything else would change the name SDL hashes and so the GUID,
-    // which is the same failure as getting the checksum wrong.
+    // The set is deliberately the framing characters and nothing else.
     for keep in [
         '\t', '\u{0}', '\u{1f}', '\u{7f}', '🎮', '\u{200f}', '\u{202e}', '\u{a0}',
     ] {
@@ -448,8 +376,7 @@ fn characters_outside_the_forbidden_set_survive_a_name() {
 
 #[test]
 fn the_fields_are_written_in_the_order_they_were_set() {
-    // Not sorted: regenerating a mapping must not reshuffle the file, or every
-    // diff looks like a change and a real one is invisible inside it.
+    // Not sorted: regenerating a mapping must not reshuffle the file, or every.
     let fields: Fields = [("dpup", "h0.1"), ("a", "b1"), ("start", "b7")]
         .into_iter()
         .collect();
@@ -468,21 +395,13 @@ fn the_platform_is_written_last_and_is_whatever_the_caller_said() {
 
 #[test]
 fn the_guid_is_written_verbatim_rather_than_reformatted() {
-    // `line` is also used for a line carried over from another database, whose
-    // GUID must be reproduced exactly or the carry-over keys on nothing.
     let odd = "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF";
     let built = line(odd, REAL_NAME, &Fields::new(), "Linux");
     assert!(built.starts_with(odd));
 }
 
-// ---------------------------------------------------------------------------
-// parse_line
-// ---------------------------------------------------------------------------
-
 #[test]
 fn the_parser_ignores_blank_lines_and_comments() {
-    // Every one of these is ordinary in a file a user or another program wrote,
-    // and treating one as a mapping would key a binding on garbage.
     for raw in [
         "",
         "   ",
@@ -498,9 +417,6 @@ fn the_parser_ignores_blank_lines_and_comments() {
 
 #[test]
 fn a_first_field_that_is_not_exactly_thirty_two_characters_is_refused() {
-    // A GUID is exactly 32 hex digits. A 31- or 33-character first field is a
-    // line from some other format, and accepting it would store a binding under
-    // a key nothing will ever look up.
     let short = "0".repeat(31);
     let long = "0".repeat(33);
     assert_eq!(
@@ -522,9 +438,6 @@ fn a_first_field_that_is_not_exactly_thirty_two_characters_is_refused() {
 #[test]
 fn a_thirty_two_character_first_field_of_non_ascii_is_refused() {
     // The length test is over bytes here, where the Python counted characters.
-    // A GUID is hex, so no real line reaches this -- but a 32-character
-    // multi-byte first field is accepted by the Python and refused here, and
-    // refusing is the safer of the two answers.
     let accented = "é".repeat(32);
     assert_eq!(parse_line(&format!("{accented},Pad,a:b0,")), None);
 }
@@ -555,9 +468,6 @@ fn a_guid_and_a_name_with_nothing_after_them_parse_to_no_fields() {
 
 #[test]
 fn the_parser_lowercases_the_guid_so_two_spellings_are_one_key() {
-    // A database written by hand or by another tool may spell the GUID in
-    // upper case. Two spellings of one key means a carried-over mapping is not
-    // found and padmap writes a second line for the same device.
     let upper = REAL_GUID.to_uppercase();
     let (parsed, _, _) = parse_line(&format!("{upper},Pad,a:b0,")).expect("parse");
     assert_eq!(parsed, REAL_GUID);
@@ -568,9 +478,6 @@ fn the_parser_lowercases_the_guid_so_two_spellings_are_one_key() {
 
 #[test]
 fn the_name_is_returned_verbatim_and_is_not_lowercased_or_trimmed() {
-    // `controllercfg.write_sdl_mappings` decides which lines are padmap's own
-    // by testing the name against a prefix, so changing it here would make
-    // padmap fail to recognise its own previous output and stack duplicates.
     let (_, name, _) = parse_line(&format!("{REAL_GUID}, padmap Player 1 ,a:b0,")).expect("parse");
     assert_eq!(name, " padmap Player 1 ");
 }
@@ -584,8 +491,7 @@ fn a_field_with_no_colon_is_skipped_without_losing_the_rest() {
 
 #[test]
 fn a_field_with_an_empty_name_or_an_empty_target_is_dropped() {
-    // An empty target stored as a binding would be written straight back out as
-    // `b:` on the next rewrite, and SDL reads that as a malformed line.
+    // An empty target stored as a binding would be written straight back out as.
     let (_, _, fields) = parse_line(&format!("{REAL_GUID},Pad,a:b0,:b1,b:,")).expect("parse");
     assert_eq!(entries(&fields), [("a", "b0")]);
     assert_eq!(fields.get("b"), None);
@@ -594,8 +500,6 @@ fn a_field_with_an_empty_name_or_an_empty_target_is_dropped() {
 
 #[test]
 fn a_field_whose_name_or_target_is_only_whitespace_is_dropped() {
-    // A divergence from the Python, which trimmed *after* testing for emptiness
-    // and so stored `{"": "b0"}` and `{"a": ""}`. Both are unusable downstream.
     let (_, _, fields) = parse_line(&format!("{REAL_GUID},Pad, :b0,a:   ,x:b3,")).expect("parse");
     assert_eq!(entries(&fields), [("x", "b3")]);
 }
@@ -615,8 +519,6 @@ fn only_the_first_colon_separates_a_field_from_its_target() {
 
 #[test]
 fn a_trailing_comma_does_not_create_an_empty_field() {
-    // Every line padmap writes ends with one, so this is the common case rather
-    // than the edge case.
     let (_, _, fields) =
         parse_line(&format!("{REAL_GUID},Pad,a:b0,platform:Linux,")).expect("parse");
     assert_eq!(entries(&fields), [("a", "b0"), ("platform", "Linux")]);
@@ -624,9 +526,6 @@ fn a_trailing_comma_does_not_create_an_empty_field() {
 
 #[test]
 fn a_duplicate_field_keeps_its_first_position_and_its_last_value() {
-    // Python `dict` semantics, and the reason it matters is the file: the
-    // rewritten line must come out in the order the original had, or a diff of
-    // a no-op rewrite looks like a change.
     let (_, _, fields) =
         parse_line(&format!("{REAL_GUID},Pad,a:b0,start:b7,a:b5,")).expect("parse");
     assert_eq!(entries(&fields), [("a", "b5"), ("start", "b7")]);
@@ -634,7 +533,6 @@ fn a_duplicate_field_keeps_its_first_position_and_its_last_value() {
 
 #[test]
 fn field_order_is_preserved_exactly_as_written() {
-    // Asserted as an ordered list and not as a set, on purpose.
     let raw = format!("{REAL_GUID},Pad,dpup:h0.1,a:b1,leftx:a0,back:b6,platform:Linux,");
     let (_, _, fields) = parse_line(&raw).expect("parse");
     assert_eq!(
@@ -646,8 +544,6 @@ fn field_order_is_preserved_exactly_as_written() {
 
 #[test]
 fn platform_is_an_ordinary_field_and_not_special_cased() {
-    // `carried_fields` reads the platform back out of the parsed fields, so it
-    // has to be there rather than consumed by the parser.
     let (_, _, fields) =
         parse_line(&format!("{REAL_GUID},Pad,a:b0,platform:Linux,")).expect("parse");
     assert_eq!(fields.get("platform"), Some("Linux"));
@@ -662,10 +558,6 @@ fn a_line_with_leading_and_trailing_whitespace_still_parses() {
     assert_eq!(name, "Pad");
     assert_eq!(fields.get("a"), Some("b0"));
 }
-
-// ---------------------------------------------------------------------------
-// round trip
-// ---------------------------------------------------------------------------
 
 #[test]
 fn a_line_round_trips_through_the_parser() {
@@ -687,8 +579,6 @@ fn a_line_round_trips_through_the_parser() {
 
 #[test]
 fn a_name_that_gets_cleaned_round_trips_as_the_cleaned_name() {
-    // The cleaned name is the one SDL will hash, so it is also the one the GUID
-    // has to be computed from -- see the caller in controllercfg.
     for bad in FORBIDDEN {
         let dirty = format!("Pad{bad}Two");
         let built = line(REAL_GUID, &dirty, &Fields::new(), "Linux");
@@ -748,22 +638,15 @@ fn a_wide_range_of_names_and_fields_round_trips() {
 
 #[test]
 fn a_computed_guid_round_trips_through_a_line_unchanged() {
-    // `guid` produces lowercase and `parse_line` lowercases, so the key padmap
-    // writes is the key padmap later looks up.
     let computed = guid(BUS_VIRTUAL, 0x0079, 0x1879, 1, REAL_NAME);
     let built = line(&computed, REAL_NAME, &Fields::new(), "Linux");
     let (parsed, _, _) = parse_line(&built).expect("parse");
     assert_eq!(parsed, computed);
 }
 
-// ---------------------------------------------------------------------------
-// mapping_line
-// ---------------------------------------------------------------------------
-
 #[test]
 fn an_empty_capture_still_writes_a_well_formed_line() {
-    // A pad with no bindings yet must not produce a malformed line that breaks
-    // the parse of the file it sits in.
+    // A pad with no bindings yet must not produce a malformed line that breaks.
     let built = mapping_line(REAL_GUID, REAL_NAME, &BTreeMap::new(), "Linux", None);
     assert_eq!(built, format!("{REAL_GUID},{REAL_NAME},platform:Linux,"));
     assert!(parse_line(&built).is_some());
@@ -771,8 +654,6 @@ fn an_empty_capture_still_writes_a_well_formed_line() {
 
 #[test]
 fn controls_supplied_out_of_order_come_out_in_canonical_order() {
-    // The capture arrives in whatever order the user pressed buttons. Stable
-    // output order is what keeps a regenerated file diff-free.
     let bindings: BTreeMap<Control, Binding> = [
         (Control::RightStickRight, Binding::button(14)),
         (Control::DpadUp, Binding::hat(0, 1)),
@@ -794,7 +675,6 @@ fn controls_supplied_out_of_order_come_out_in_canonical_order() {
 
 #[test]
 fn a_capture_of_all_eighteen_controls_writes_all_eighteen_fields() {
-    // Pinned against what the Python wrote for the same capture.
     let bindings: BTreeMap<Control, Binding> = [
         (Control::A, Binding::button(1)),
         (Control::B, Binding::button(2)),
@@ -838,10 +718,6 @@ fn a_capture_of_all_eighteen_controls_writes_all_eighteen_fields() {
 
 #[test]
 fn a_binding_sdl_cannot_express_is_left_out_rather_than_failing_the_whole_line() {
-    // A hat value of 3 is "up and right", off a hand-edited profile or a write
-    // that was cut short. Refusing the line would be every control lost to save
-    // one; left out, the direction reads as unmapped and the wizard can be run
-    // again.
     let bindings: BTreeMap<Control, Binding> = [
         (Control::A, Binding::button(1)),
         (Control::DpadUp, Binding::hat(0, 3)),
@@ -880,8 +756,6 @@ fn every_inexpressible_hat_value_is_left_out_and_the_rest_survive() {
 
 #[test]
 fn stick_fields_are_appended_after_the_captured_controls() {
-    // Sticks are not captured, so they are added last. A front-end with no
-    // leftx/lefty has no navigation but the d-pad.
     let bindings: BTreeMap<Control, Binding> = [
         (Control::A, Binding::button(1)),
         (Control::Start, Binding::button(7)),
@@ -898,9 +772,6 @@ fn stick_fields_are_appended_after_the_captured_controls() {
 
 #[test]
 fn a_stick_field_does_not_collide_with_the_half_axis_spelling_of_a_c_button() {
-    // `-righty` and `righty` are different SDL fields. If a right stick entry
-    // overwrote the C-button halves, an N64 pad would lose all four C-buttons;
-    // if the halves suppressed the stick, it would lose the stick.
     let bindings: BTreeMap<Control, Binding> = [
         (Control::RightStickUp, Binding::button(11)),
         (Control::RightStickDown, Binding::button(12)),
@@ -949,14 +820,9 @@ fn a_mapping_line_cleans_the_name_the_same_way_a_plain_line_does() {
     assert!(built.contains(",EvilPad,"));
 }
 
-// ---------------------------------------------------------------------------
-// AxisSpan::rests_centred
-// ---------------------------------------------------------------------------
-
 #[test]
 fn a_degenerate_span_is_refused_rather_than_dividing_by_zero() {
-    // absinfo off a driver that reports nothing useful. A NaN here would
-    // compare false anyway, but only by accident; this says so on purpose.
+    // absinfo off a driver that reports nothing useful.
     assert!(!AxisSpan::new(0, 0, 0).rests_centred());
     assert!(!AxisSpan::new(5, 5, 5).rests_centred());
     assert!(
@@ -968,8 +834,6 @@ fn a_degenerate_span_is_refused_rather_than_dividing_by_zero() {
 
 #[test]
 fn the_tolerance_boundary_is_inclusive() {
-    // 0..200 has its middle at 100 and a half-range of 100, so 150 is exactly
-    // 0.5 away and 50 is exactly -0.5.
     assert_eq!(STICK_REST_TOLERANCE, 0.5);
     assert!(
         AxisSpan::new(0, 200, 150).rests_centred(),
@@ -989,17 +853,13 @@ fn just_past_the_tolerance_is_not_a_stick() {
 
 #[test]
 fn a_worn_n64_stick_resting_well_off_centre_is_still_a_stick() {
-    // 174 on 0..255 is 36% deflected -- a stick whose spring has aged, not a
-    // trigger. Calling it a trigger would cost the pad its left stick.
+    // 174 on 0..255 is 36% deflected -- a stick whose spring has aged, not a.
     assert!(AxisSpan::new(0, 255, 174).rests_centred());
     assert!(AxisSpan::new(0, 255, 81).rests_centred());
 }
 
 #[test]
 fn an_axis_resting_at_either_end_is_a_trigger_and_not_a_stick() {
-    // The Mayflash GameCube adapter reports its analogue triggers as ABS_RX and
-    // ABS_RY. Trusting the evdev code told SDL the right stick was jammed 80%
-    // to the upper-left, which the user saw as the pad being "stuck left".
     assert!(!AxisSpan::new(0, 255, 0).rests_centred());
     assert!(!AxisSpan::new(0, 255, 255).rests_centred());
     assert!(!AxisSpan::new(0, 255, 20).rests_centred());
@@ -1008,8 +868,6 @@ fn an_axis_resting_at_either_end_is_a_trigger_and_not_a_stick() {
 
 #[test]
 fn a_centred_axis_on_a_signed_range_is_a_stick() {
-    // Most sticks report -32768..32767 with rest at 0, where the arithmetic
-    // middle is -0.5 rather than 0.
     assert!(AxisSpan::new(-32768, 32767, 0).rests_centred());
     assert!(AxisSpan::new(-32768, 32767, -1).rests_centred());
     assert!(!AxisSpan::new(-32768, 32767, 32767).rests_centred());
@@ -1017,23 +875,16 @@ fn a_centred_axis_on_a_signed_range_is_a_stick() {
 
 #[test]
 fn a_rest_outside_the_declared_range_is_not_a_stick() {
-    // A driver that lies about either bound should not have its axis promoted
-    // to a stick on the strength of the lie.
+    // A driver that lies about either bound should not have its axis promoted.
     assert!(!AxisSpan::new(0, 255, 1000).rests_centred());
     assert!(!AxisSpan::new(0, 255, -1000).rests_centred());
 }
 
 #[test]
 fn a_one_step_range_is_decided_rather_than_crashing() {
-    // maximum == minimum + 1: the half-range is 0.5 and rest is at one end or
-    // the other, so it is not a stick either way.
     assert!(!AxisSpan::new(0, 1, 0).rests_centred());
     assert!(!AxisSpan::new(0, 1, 1).rests_centred());
 }
-
-// ---------------------------------------------------------------------------
-// stick_fields
-// ---------------------------------------------------------------------------
 
 #[test]
 fn a_pad_with_no_axes_gets_no_stick_fields() {
@@ -1052,9 +903,6 @@ fn a_pad_with_only_a_left_stick_gets_only_the_left_stick() {
 
 #[test]
 fn a_pad_with_only_a_right_stick_numbers_it_from_zero() {
-    // The index is the axis's position among the axes the pad reports, not its
-    // evdev code. Storing the code and hoping it is the index breaks on the
-    // first pad whose axes are not 0,1,2,...
     let fields = stick_fields(&[0x03, 0x04], &BTreeMap::new(), None);
     assert_eq!(entries(&fields), [("rightx", "a0"), ("righty", "a1")]);
 }
@@ -1087,9 +935,6 @@ fn the_output_order_does_not_follow_the_order_the_codes_arrive_in() {
 
 #[test]
 fn hat_codes_among_the_axes_do_not_shift_the_stick_indices() {
-    // Hats are absolute axes too, but neither consumer counts them as axes. If
-    // they were counted, every stick index past the hat would be wrong and the
-    // sticks would drive the wrong axes.
     let fields = stick_fields(
         &[0x00, 0x01, 0x03, 0x04, 0x10, 0x11],
         &BTreeMap::new(),
@@ -1108,8 +953,7 @@ fn hat_codes_among_the_axes_do_not_shift_the_stick_indices() {
 
 #[test]
 fn an_unclaimed_code_between_the_sticks_shifts_the_ones_after_it() {
-    // ABS_Z (0x02) is a common analogue trigger. It is not a stick, but it is
-    // an axis, so it takes index 2 and pushes ABS_RX to 3.
+    // ABS_Z (0x02) is a common analogue trigger.
     let fields = stick_fields(&[0x00, 0x01, 0x02, 0x03, 0x04], &BTreeMap::new(), None);
     assert_eq!(
         entries(&fields),
@@ -1124,9 +968,6 @@ fn an_unclaimed_code_between_the_sticks_shifts_the_ones_after_it() {
 
 #[test]
 fn an_axis_a_capture_already_claims_is_not_also_a_stick() {
-    // Nothing good comes of an axis being both a stick and a button: the two
-    // disagree about what is pressed and the front-end believes whichever it
-    // reads first.
     let bindings: BTreeMap<Control, Binding> = [(Control::LeftTrigger, Binding::axis(2, 1))]
         .into_iter()
         .collect();
@@ -1139,9 +980,6 @@ fn an_axis_a_capture_already_claims_is_not_also_a_stick() {
 
 #[test]
 fn a_button_or_hat_binding_does_not_claim_an_axis_of_the_same_number() {
-    // Only an axis binding claims an axis. Button 0 and axis 0 are unrelated,
-    // and treating them as the same would cost the pad its left stick on any
-    // capture that starts at button 0.
     let bindings: BTreeMap<Control, Binding> = [
         (Control::A, Binding::button(0)),
         (Control::DpadUp, Binding::hat(1, 1)),
@@ -1168,8 +1006,6 @@ fn a_capture_claiming_every_axis_leaves_no_sticks() {
 
 #[test]
 fn an_axis_that_rests_at_one_end_is_refused_as_a_stick() {
-    // The Mayflash GameCube adapter, in full: left stick centred, "right stick"
-    // actually the two analogue triggers.
     let axes: BTreeMap<u16, AxisSpan> = [
         (0x00, AxisSpan::new(0, 255, 128)),
         (0x01, AxisSpan::new(0, 255, 127)),
@@ -1184,17 +1020,12 @@ fn an_axis_that_rests_at_one_end_is_refused_as_a_stick() {
 
 #[test]
 fn no_absinfo_at_all_leaves_the_evdev_guess_standing() {
-    // A caller with no absinfo is no worse off than before the rest test
-    // existed, so the guess by code number is kept rather than everything being
-    // refused for want of evidence.
     let fields = stick_fields(&[0x00, 0x01, 0x03, 0x04], &BTreeMap::new(), None);
     assert_eq!(field_names(&fields), ["leftx", "lefty", "rightx", "righty"]);
 }
 
 #[test]
 fn an_axis_missing_from_the_absinfo_keeps_the_guess_for_that_axis_alone() {
-    // Partial absinfo is partial evidence: the axes it covers are judged, the
-    // rest fall back to the code-number guess.
     let axes: BTreeMap<u16, AxisSpan> = [(0x03, AxisSpan::new(0, 255, 0))].into_iter().collect();
     let fields = stick_fields(&[0x00, 0x01, 0x03, 0x04], &BTreeMap::new(), Some(&axes));
     assert_eq!(
@@ -1225,8 +1056,6 @@ fn a_degenerate_span_costs_that_axis_its_stick() {
 
 #[test]
 fn stick_fields_feed_straight_into_a_mapping_line() {
-    // The whole point of the function: what it returns is appended verbatim to
-    // the line, so its order and spelling are the file's order and spelling.
     let bindings: BTreeMap<Control, Binding> =
         [(Control::A, Binding::button(1))].into_iter().collect();
     let sticks = stick_fields(&[0x00, 0x01, 0x03, 0x04], &bindings, None);
@@ -1240,10 +1069,6 @@ fn stick_fields_feed_straight_into_a_mapping_line() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Fields
-// ---------------------------------------------------------------------------
-
 #[test]
 fn fields_iterate_in_insertion_order_and_are_never_sorted() {
     let fields: Fields = [("z", "1"), ("a", "2"), ("m", "3")].into_iter().collect();
@@ -1256,8 +1081,6 @@ fn fields_iterate_in_insertion_order_and_are_never_sorted() {
 
 #[test]
 fn re_setting_a_field_keeps_its_original_position() {
-    // Python `dict.__setitem__`. A field that jumped to the end on every edit
-    // would make a one-binding change look like a rewritten line.
     let mut fields: Fields = [("a", "1"), ("b", "2"), ("c", "3")].into_iter().collect();
     fields.insert("a", "9");
     assert_eq!(entries(&fields), [("a", "9"), ("b", "2"), ("c", "3")]);
@@ -1266,8 +1089,6 @@ fn re_setting_a_field_keeps_its_original_position() {
 
 #[test]
 fn extend_overwrites_shared_keys_in_place_and_appends_new_ones_at_the_end() {
-    // `dict.update`. This is what puts the stick fields after the captured
-    // controls in a mapping line.
     let mut fields: Fields = [("a", "1"), ("b", "2")].into_iter().collect();
     let other: Fields = [("b", "9"), ("c", "3"), ("d", "4")].into_iter().collect();
     fields.extend(&other);
@@ -1294,8 +1115,7 @@ fn extending_with_nothing_changes_nothing() {
 
 #[test]
 fn an_absent_field_reads_as_absent_rather_than_as_empty() {
-    // `get` answering `Some("")` for a missing field would be written back out
-    // as a binding to nothing.
+    // `get` answering `Some("")` for a missing field would be written back out.
     let fields: Fields = [("a", "1")].into_iter().collect();
     assert_eq!(fields.get("b"), None);
     assert!(!fields.contains_key("b"));
@@ -1321,8 +1141,7 @@ fn an_empty_field_set_is_empty_and_iterates_over_nothing() {
 
 #[test]
 fn field_lookup_is_case_sensitive_and_exact() {
-    // SDL's field names are lower case and exact; a near-miss match would bind
-    // a control the user never pressed.
+    // SDL's field names are lower case and exact; a near-miss match would bind.
     let fields: Fields = [("dpup", "h0.1"), ("-righty", "b11")].into_iter().collect();
     assert_eq!(fields.get("dpup"), Some("h0.1"));
     assert_eq!(fields.get("DPUP"), None);

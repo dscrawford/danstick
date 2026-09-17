@@ -1,5 +1,4 @@
 //! Motion sample conversion: SDL frame (device-native) to DSU frame (emulator-native).
-//! Accelerometer negates all axes; gyroscope negates two (pseudo-vector behavior).
 
 /// One reading in DSU's frame and units (g and degrees per second).
 #[derive(Debug, Clone, Copy, PartialEq, Default)]

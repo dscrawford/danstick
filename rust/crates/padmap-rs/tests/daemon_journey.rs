@@ -191,8 +191,6 @@ impl Daemon {
             .env("PADMAP_SDL_DB", root.join("sdl_controllers.txt"))
             .env("PADMAP_ONLY_DEVICE", id.only)
             .env("PADMAP_NO_AUTOSETUP", "1")
-            // No motion server. Five of these run at once and there is one
-            // DSU port on the machine -- which a real daemon may already hold.
             .env("PADMAP_DSU_PORT", "0")
             .env("PADMAP_CEMU_DIR", root.join("cemu"))
             .env("PADMAP_ARES_SETTINGS", root.join("nowhere/ares.bml"))
@@ -282,7 +280,6 @@ impl Daemon {
 
 impl Drop for Daemon {
     fn drop(&mut self) {
-        // SIGTERM so teardown path runs and grabs are released.
         let _ = Command::new("kill")
             .args(["-TERM", &self.child.id().to_string()])
             .status();
@@ -310,7 +307,6 @@ fn a_session_claims_confirms_and_writes_what_a_launch_reads() {
     let mut pad = TestPad::new(JOURNEY);
     let mut daemon = Daemon::start(&root, JOURNEY);
 
-    // The greeting.
     let state = daemon
         .last("state")
         .expect("a state event on connect")
@@ -355,7 +351,6 @@ fn a_session_claims_confirms_and_writes_what_a_launch_reads() {
     assert_eq!(assignments[0]["player"], 1);
     assert_eq!(assignments[0]["name"], JOURNEY.name);
     let launch = std::fs::read_to_string(state_dir.join("launch.cfg")).expect("launch.cfg");
-    // Override is written for all sixteen slots, even unoccupied ones.
     assert!(launch.contains("input_player16_joypad_index"), "{launch}");
     assert!(launch.contains("config_save_on_exit = \"false\""));
     assert!(state_dir.join("launch.args").is_file(), "no launch.args");
@@ -404,10 +399,8 @@ fn a_session_claims_confirms_and_writes_what_a_launch_reads() {
         "list says {guid}, the SDL line says {}",
         mapping["lines"][0]
     );
-    // This pad has no gyro, and says so rather than leaving the field out.
     assert_eq!(seated["controller"]["motion"], false);
     assert!(seated["controller"]["motion_node"].is_null());
-    // A clone exists and is named for the player.
     let clones: BTreeSet<String> = std::fs::read_dir("/sys/class/input")
         .expect("sysfs")
         .flatten()
@@ -419,7 +412,6 @@ fn a_session_claims_confirms_and_writes_what_a_launch_reads() {
         "no clone among {clones:?}"
     );
 
-    // Choosing a console, then walking the wizard, from the pad.
     daemon.events.clear();
     daemon.send(serde_json::json!({"cmd": "begin", "players": 2}));
     daemon
@@ -452,7 +444,6 @@ fn a_session_claims_confirms_and_writes_what_a_launch_reads() {
         daemon.last("layout_choice").expect("moved")["chosen"],
         "snes"
     );
-    // Holding accepts and opens the wizard on that layout.
     pad.hold(FIRST_KEY + 2, 1.1);
     let walking = daemon
         .wait_for("mapping", |e| e["done"] == false, 5.0)
@@ -484,13 +475,11 @@ fn a_session_claims_confirms_and_writes_what_a_launch_reads() {
     assert!(buttons.get("a").is_some(), "{stored}");
     assert_eq!(stored["mappings"][""]["layout"], "snes");
 
-    // Now the pad is configured, and the state says so.
     daemon.send(serde_json::json!({"cmd": "status"}));
     let state = daemon.last("state").expect("state").clone();
     assert_eq!(state["players"][0]["configured"], true, "{state}");
     assert_eq!(state["players"][0]["mappings"], serde_json::json!([""]));
 
-    // Cancel releases the pads and republishing resumes.
     daemon.send(serde_json::json!({"cmd": "cancel"}));
     let state = daemon
         .wait_for("state", |e| e["state"] == "ready", 5.0)
@@ -541,8 +530,6 @@ fn a_malformed_command_is_answered_not_fatal() {
             3.0,
         )
         .expect("unknown command refused");
-    // Not JSON at all, then deeply nested, then a real command: the framing
-    // resynchronises and the daemon is still there.
     daemon.sock.write_all(b"this is not json\n").expect("send");
     let poison = format!("{}{}\n", "[".repeat(100_000), "]".repeat(100_000));
     daemon.sock.write_all(poison.as_bytes()).expect("send");
@@ -575,13 +562,6 @@ fn a_malformed_command_is_answered_not_fatal() {
 }
 
 /// One controller that is switched off must not cost the others theirs.
-///
-/// The reported failure: player 1 was a Steam Controller that was present the
-/// whole time, player 2 a Bluetooth pad that had gone to sleep. Opening
-/// player 2 failed, the error aborted the whole restore, and *nothing* was
-/// republished -- a four-player machine left with no virtual pads at all
-/// because one pad idled. The only way back was editing the state file by
-/// hand.
 #[test]
 fn a_sleeping_pad_does_not_unpublish_the_others() {
     if !uinput_writable() {
@@ -604,7 +584,6 @@ fn a_sleeping_pad_does_not_unpublish_the_others() {
         .map(|entry| format!("/dev/input/{}", entry.file_name().to_string_lossy()))
         .expect("the test pad has a node");
 
-    // Two seats: one live, one whose controller is asleep and has no node.
     let assignments = serde_json::json!([
         {"player": 1, "path": present, "name": SLEEPER.name,
          "phys": "", "vid": PAD_VID, "pid": SLEEPER.pid},
@@ -627,9 +606,7 @@ fn a_sleeping_pad_does_not_unpublish_the_others() {
             )
         });
 
-    // The sleeping pad's seat survives a save. Writing only the pads that are
-    // here would erase a seat because its controller happened to be asleep --
-    // the same loss as never keeping it.
+    // The sleeping pad's seat survives a save.
     daemon.send(serde_json::json!({"cmd": "status"}));
     daemon.pump(0.5);
     let saved: Value = serde_json::from_str(
@@ -651,7 +628,6 @@ fn a_sleeping_pad_does_not_unpublish_the_others() {
         .collect();
     assert_eq!(seats, vec![1], "only live seats are drawn from claims");
 
-    // Player 1's clone is on the air, which is the whole point.
     assert_eq!(players[0]["published"], true, "{state}");
     let clones: BTreeSet<String> = std::fs::read_dir("/sys/class/input")
         .expect("sysfs")
@@ -669,13 +645,6 @@ fn a_sleeping_pad_does_not_unpublish_the_others() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
-/// A controller takes a seat with no session open and nothing grabbed.
-///
-/// The moments a pad needs to join are the moments a modal screen is most
-/// expensive -- somebody arrives mid-game, a pad is swapped for a charged one,
-/// a controller is switched on after the picker started. Opening a session for
-/// any of those grabs every pad, so one person joining costs everybody else
-/// the thing they were doing.
 #[test]
 fn a_pad_can_take_a_free_seat_without_a_session() {
     if !uinput_writable() {
@@ -689,13 +658,10 @@ fn a_pad_can_take_a_free_seat_without_a_session() {
     let mut pad = TestPad::new(JOINER);
     let mut daemon = Daemon::start(&root, JOINER);
 
-    // Nothing seated, and no session anywhere.
     let state = daemon.last("state").expect("a greeting").clone();
     assert_eq!(state["state"], "idle");
     assert_eq!(state["players"].as_array().map(Vec::len), Some(0));
 
-    // Holding before seating is open does nothing at all: this is a mode, and
-    // a pad on a table must not wander into a seat.
     pad.hold(FIRST_KEY, 0.6);
     daemon.pump(0.8);
     assert!(
@@ -712,8 +678,6 @@ fn a_pad_can_take_a_free_seat_without_a_session() {
     assert_eq!(claim["player"], 1);
     assert_eq!(claim["name"], JOINER.name);
 
-    // The state never passed through `assigning`: no session was opened, so
-    // nothing was grabbed and nobody else's controller stopped working.
     assert!(
         !daemon
             .events
@@ -722,8 +686,6 @@ fn a_pad_can_take_a_free_seat_without_a_session() {
         "a session was opened behind the scenes"
     );
 
-    // And the pad works now, rather than merely being written down: a clone is
-    // on the air and the files a launch reads are there.
     let ready = daemon
         .wait_for("state", |e| e["state"] == "ready", 5.0)
         .expect("ready after the seat was taken");
@@ -742,8 +704,7 @@ fn a_pad_can_take_a_free_seat_without_a_session() {
         .join("autoconfig/udev/padmap Player 1.cfg")
         .is_file());
 
-    // A seated pad is being *played with*. Holding a button on it again must
-    // not reseat anybody -- blocking in a fighting game is a held button.
+    // A seated pad is being *played with*.
     daemon.events.clear();
     pad.hold(FIRST_KEY + 1, 0.8);
     daemon.pump(1.0);
@@ -752,7 +713,6 @@ fn a_pad_can_take_a_free_seat_without_a_session() {
         "a pad that already held a seat claimed another"
     );
 
-    // Closing stops it.
     daemon.send(serde_json::json!({"cmd": "seating", "open": false}));
     daemon.events.clear();
     pad.hold(FIRST_KEY, 0.6);
@@ -764,7 +724,6 @@ fn a_pad_can_take_a_free_seat_without_a_session() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
-/// With every seat taken, a held pad does nothing until somebody leaves.
 #[test]
 fn a_pad_cannot_take_a_seat_that_does_not_exist() {
     if !uinput_writable() {
@@ -777,8 +736,6 @@ fn a_pad_cannot_take_a_seat_that_does_not_exist() {
     std::fs::create_dir_all(root.join("run/padmap")).expect("mkdir");
     let mut pad = TestPad::new(JOINER);
 
-    // One seat, and somebody already in it -- a pad that is not here, so the
-    // seat is held but unpublished.
     let assignments = serde_json::json!([
         {"player": 1, "path": "/dev/input/event9998", "name": "Someone Else",
          "phys": "elsewhere", "vid": 1, "pid": 2}
@@ -804,7 +761,6 @@ fn a_pad_cannot_take_a_seat_that_does_not_exist() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
-/// A `tune` command lands in the profile and on the running clone.
 #[test]
 fn a_tune_command_is_saved_and_applied_live() {
     if !uinput_writable() {
@@ -818,8 +774,6 @@ fn a_tune_command_is_saved_and_applied_live() {
     let mut pad = TestPad::new(TUNER);
     let mut daemon = Daemon::start(&root, TUNER);
 
-    // Before it has a seat, by signature: a drifting stick is usually noticed
-    // on the setup screen, before anybody has pressed anything.
     daemon.events.clear();
     daemon.send(serde_json::json!({
         "cmd": "tune", "signature": signature(TUNER), "deadzone": 0.25, "debounce_ms": 30
@@ -829,14 +783,11 @@ fn a_tune_command_is_saved_and_applied_live() {
         .expect("a tuned event");
     assert_eq!(tuned["player"], 0, "not seated yet");
     assert_eq!(tuned["signature"], signature(TUNER));
-    // A blanket deadzone lands on the sticks the pad declares and not on
-    // the hat.
     assert_eq!(tuned["tuning"]["deadzone"]["0"], 0.25);
     assert_eq!(tuned["tuning"]["deadzone"]["1"], 0.25);
     assert!(tuned["tuning"]["deadzone"].get("16").is_none(), "{tuned}");
     assert_eq!(tuned["tuning"]["debounce_ms"], 30);
 
-    // It is in the profile store, where the next republish reads it.
     let profiles = root.join("devices");
     let stored: Vec<Value> = std::fs::read_dir(&profiles)
         .expect("profiles dir")
@@ -850,7 +801,6 @@ fn a_tune_command_is_saved_and_applied_live() {
         .expect("a profile for the tuned pad");
     assert_eq!(mine["tuning"]["debounce_ms"], 30, "{mine}");
 
-    // Seat it, and tune it again by player: reset, then a smaller debounce.
     daemon.send(serde_json::json!({"cmd": "seating", "open": true, "players": 4}));
     pad.hold(FIRST_KEY, 0.6);
     daemon
@@ -867,8 +817,6 @@ fn a_tune_command_is_saved_and_applied_live() {
         "reset dropped it: {tuned}"
     );
     assert_eq!(tuned["tuning"]["debounce_ms"], 10);
-    // Applied in place: the clone is still on the air, and no `state` said
-    // otherwise -- a rebuilt clone would have been a disconnect mid-game.
     assert!(
         !daemon
             .events
@@ -882,7 +830,6 @@ fn a_tune_command_is_saved_and_applied_live() {
     assert_eq!(state["state"], "ready");
     assert_eq!(state["players"][0]["published"], true);
 
-    // What is not what it claims to be is refused, and the daemon lives.
     daemon.events.clear();
     daemon.send(serde_json::json!({"cmd": "tune", "player": 1, "deadzone": "lots"}));
     let error = daemon.wait_for("error", |_| true, 3.0).expect("a refusal");

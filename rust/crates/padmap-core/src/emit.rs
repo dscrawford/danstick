@@ -1,5 +1,4 @@
 //! Output formats: SDL gamecontroller database and RetroArch autoconfig profiles.
-//! Both built from one capture, pinned against real software artefacts.
 
 use std::collections::BTreeMap;
 
@@ -87,15 +86,12 @@ pub fn retroarch_profile(
     out.push("input_driver = \"udev\"".to_owned());
     out.push(format!("input_device = \"{name}\""));
     out.push(format!("input_device_display_name = \"{name}\""));
-    // The ids the virtual pad actually advertises, not padmap's own: by default
-    // it mirrors the source controller, and a profile claiming different ids
-    // scores against itself in RetroArch's autoconfig match.
+    // The ids the virtual pad actually advertises, not padmap's own: by default it mirrors the source controller, and a profile claiming different ids scores against itself in RetroArch's autoconfig match.
     out.push(format!("input_vendor_id = \"{}\"", identity.vendor));
     out.push(format!("input_product_id = \"{}\"", identity.product));
 
     out.extend(retroarch::lines(bindings, &resolved.retroarch_keys()));
 
-    // Sticks from calibration, identical on every padmap pad.
     out.push("input_l_x_plus_axis = \"+0\"".to_owned());
     out.push("input_l_x_minus_axis = \"-0\"".to_owned());
     out.push("input_l_y_plus_axis = \"+1\"".to_owned());
@@ -131,7 +127,6 @@ pub fn rewrite_sdl_database(
     notes: &BTreeMap<u32, String>,
     identity_for: impl Fn(u32) -> Identity,
 ) -> String {
-    // Include every slot padmap could name to clean up moved controllers.
     let ours: Vec<String> = (1..=MAX_PLAYERS)
         .map(|player| virtual_guid(player, identity_for(player)))
         .collect();
@@ -146,7 +141,6 @@ pub fn rewrite_sdl_database(
         if ours.iter().any(|guid| guid == fields[0]) {
             continue;
         }
-        // Drop our names under unrecognizable GUIDs (mirrored, since unplugged).
         if fields.len() > 1 && fields[1].starts_with(VIRTUAL_PREFIX) {
             continue;
         }
@@ -159,7 +153,6 @@ pub fn rewrite_sdl_database(
     ));
     for (player, line) in lines {
         if let Some(note) = notes.get(player) {
-            // All padmap comments start with MARKER to prevent accumulation.
             body.push(format!("{MARKER}: player {player} -- {note}"));
         }
         body.push(line.clone());
@@ -263,7 +256,6 @@ mod tests {
 
     #[test]
     fn a_console_override_reaches_the_emitted_keys() {
-        // mupen64plus-next reads N64 B from RetroPad Y.
         let text = retroarch_profile(1, MIRRORED, &capture(), "", "n64", "", "");
         assert!(text.contains("input_y_btn = \"2\""), "{text}");
     }

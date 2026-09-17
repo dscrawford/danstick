@@ -1,51 +1,19 @@
-//! The `controller` event: everything needed to bind a pad, in one message.
-//!
-//! padmap's premise is that a program attaches to it and gets stable virtual
-//! gamepads instead of configuring controllers itself. That works at launch,
-//! when the launcher reads the files padmap wrote. It did not work *during* a
-//! game: a controller plugged in mid-session produced no event a running
-//! program could act on, so the only way to pick it up was to quit.
-//!
-//! This builds the message that closes that gap. A consumer receiving one has
-//! enough to bind the new pad live -- the virtual node, the SDL GUID and
-//! mapping line, the RetroArch port index and its bind lines -- without
-//! reading a file, asking padmap anything further, or knowing how padmap
-//! works.
-//!
-//! **Self-sufficient on purpose.** Every event carries the whole roster, not
-//! just the controller that changed. A consumer that connected a moment ago,
-//! or missed an event while it was busy, can apply the latest message it holds
-//! and be correct; there is no log to replay and no way to be subtly out of
-//! step. The cost is a bigger message on a socket that carries a few per hour.
-//!
-//! Pure: the daemon gathers the facts, this decides what the announcement
-//! says, and a test can check the second without standing up the first.
+//! Controller event message: self-sufficient roster for live binding.
 
 use std::collections::BTreeMap;
 
 use serde_json::{json, Map, Value};
 
-/// A controller arrived and is live.
 pub const ACTION_ADDED: &str = "added";
-/// A controller that was live has gone. Its slot is deliberately *not* reused
-/// -- see [`next_player`] -- so a consumer may keep the port bound and expect
-/// the same controller back.
-pub const ACTION_REMOVED: &str = "removed";
-/// A controller arrived that padmap cannot bind. Announced anyway: "a
-/// controller appeared and does nothing" is the exact situation a user needs
-/// told, and silence is what makes it baffling.
+pub const ACTION_REMOVED: &str = "removed"; // Slot deliberately not reused
 pub const ACTION_UNCONFIGURED: &str = "unconfigured";
 
 pub const EVENT: &str = "controller";
 
-/// Nobody has ever mapped this model.
 pub const REASON_UNMAPPED: &str = "unmapped";
-/// It has a mapping, but its device node could not be opened -- usually a
-/// permission that never arrived.
 pub const REASON_UNREADABLE: &str = "unreadable";
 
-/// The physical controller, as a consumer matching against lsusb or a udev
-/// rule needs it.
+/// Physical controller (lsusb/udev matching).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Controller {
     pub name: String,
@@ -54,66 +22,42 @@ pub struct Controller {
     pub path: String,
     pub phys: String,
     pub uniq: String,
-    /// The key padmap stores a profile under. Not the name, which two
-    /// identical pads share.
     pub signature: String,
-    /// False once `padmap hide` has cleared ID_INPUT_JOYSTICK.
     pub retroarch_visible: bool,
 }
 
-/// The clone, as it advertises itself. In mirror mode the pad's own identity;
-/// in padmap mode 1209:0001. Either way it is what a consumer matching on
-/// vid/pid has to be told, because the two differ exactly when it matters.
+/// Clone identity (mirror mode: pad itself; padmap mode: 1209:0001).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Virtual {
     pub name: String,
-    /// `/dev/input/eventN` of the clone, or empty if it does not exist.
     pub node: String,
     pub phys: String,
     pub vid: u16,
     pub pid: u16,
     pub bustype: u16,
-    /// Computed from the identity above, never re-derived from the pad: the
-    /// two can disagree, and did, and a consumer keying on the GUID would
-    /// register its mapping under one SDL never looks up.
     pub guid: String,
     pub identity_mode: String,
 }
 
-/// The RetroArch side: port, index and the actual bind lines.
-///
-/// The binds are included rather than only the profile path because a
-/// consumer may not be RetroArch, and a path is only useful to something
-/// willing to parse RetroArch's config format.
+/// RetroArch side: port, index, binds.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Retroarch {
-    /// 0-based joypad index, or `None` for a player whose clone RetroArch
-    /// cannot see -- reported as -1, the honest answer rather than a number
-    /// that would point at someone else's pad.
     pub index: Option<usize>,
     pub profile: String,
     pub binds: BTreeMap<String, String>,
 }
 
-/// One controller padmap is republishing, and the clone it publishes.
+/// Controller and its clone.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Attached {
     pub player: u32,
     pub controller: Controller,
-    /// `None` for an unconfigured controller, which has no clone.
     pub virtual_pad: Option<Virtual>,
     pub retroarch: Option<Retroarch>,
-    /// The SDL database line, or empty when the controller has no capture --
-    /// a line built from no bindings claims a pad with no buttons.
     pub sdl_mapping: String,
 }
 
-/// The lowest free 1-based slot.
-///
-/// Lowest free rather than highest-plus-one, so a controller arriving after
-/// another was unplugged takes the empty slot instead of opening a fifth one
-/// beyond three live pads. RetroArch ports are positional; leaving a hole
-/// means a four-player game with a gap at player 2.
+/// Lowest free 1-based slot (no gaps for positional ports).
 pub fn next_player(taken: &[u32]) -> u32 {
     let mut player = 1;
     while taken.contains(&player) {
@@ -125,9 +69,7 @@ pub fn next_player(taken: &[u32]) -> u32 {
 fn controller_fields(controller: &Controller, configured: bool) -> Value {
     json!({
         "name": controller.name,
-        // Hex strings rather than ints: this is how every other tool on the
-        // machine writes a USB id.
-        "vid": format!("{:04x}", controller.vid),
+        "vid": format!("{:04x}", controller.vid), // Hex strings (USB id standard)
         "pid": format!("{:04x}", controller.pid),
         "path": controller.path,
         "phys": controller.phys,
@@ -153,15 +95,13 @@ fn virtual_fields(virtual_pad: &Virtual) -> Value {
 
 fn retroarch_fields(player: u32, retroarch: &Retroarch) -> Value {
     json!({
-        // 1-based, as RetroArch's own `input_playerN_*` settings count.
-        "port": player,
+        "port": player, // 1-based, matches input_playerN_*
         "index": retroarch.index.map(|index| index as i64).unwrap_or(-1),
         "profile": retroarch.profile,
         "binds": retroarch.binds,
     })
 }
 
-/// One controller, complete.
 pub fn entry_fields(entry: &Attached, configured: bool) -> Value {
     let mut fields = Map::new();
     fields.insert("player".to_owned(), json!(entry.player));
@@ -192,11 +132,7 @@ pub fn entry_fields(entry: &Attached, configured: bool) -> Value {
     Value::Object(fields)
 }
 
-/// The whole message.
-///
-/// `subject` is what changed; `roster` is everything live afterwards. For a
-/// removal the subject is not in the roster, which is the only way a consumer
-/// can tell which port to release.
+/// Complete message: subject (change), roster (after).
 #[allow(clippy::too_many_arguments)]
 pub fn controller_event(
     action: &str,
@@ -213,8 +149,6 @@ pub fn controller_event(
     let mut event = Map::new();
     event.insert("event".to_owned(), json!(EVENT));
     event.insert("action".to_owned(), json!(action));
-    // Repeated at the top level so the common case -- "which port do I
-    // rebind?" -- is one lookup rather than a nested one.
     event.insert("player".to_owned(), json!(subject.player));
     event.insert("changed".to_owned(), entry_fields(subject, configured));
     event.insert(
@@ -226,15 +160,10 @@ pub fn controller_event(
                 .collect(),
         ),
     );
-    // Which game the mappings were resolved for: a scoped mapping differs per
-    // console and per game, so a consumer caching binds needs to know what
-    // they were scoped to.
     event.insert(
         "scope".to_owned(),
         json!({ "console": console, "game": game }),
     );
-    // Same reason `ensure-daemon` compares it: a consumer that reconnects to
-    // a daemon it did not start can tell whether the code changed under it.
     event.insert("build".to_owned(), json!(build));
     if !reason.is_empty() {
         event.insert("reason".to_owned(), json!(reason));

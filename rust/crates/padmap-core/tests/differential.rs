@@ -1,5 +1,4 @@
 //! Replay what the Python actually answered (`tools/gen_corpus.py` -> `tests/corpus/`).
-//! A failure is a divergence; where the Python was judged wrong, an explicit test says so.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -376,7 +375,6 @@ fn every_core_resolves_to_the_same_console() {
 
 #[test]
 fn every_layout_carries_the_same_coordinates_labels_and_overrides() {
-    // Field by field: the Rust omits empty optionals the Python always wrote.
     for case in corpus("layouts") {
         let id = str_at(&case, "in");
         let wanted = &case["out"];
@@ -453,7 +451,6 @@ fn the_corpus_covers_every_layout_the_port_ships() {
 
 #[test]
 fn every_codepoint_is_printable_to_the_same_answer_as_python() {
-    // Decides a profile's filename; one disagreement orphans every profile carrying that codepoint.
     let cases = corpus("printable");
     assert!(cases.len() > 2000, "the sweep is meant to be broad");
     for case in &cases {
@@ -633,7 +630,6 @@ fn an_unmapped_pad_is_guessed_at_identically() {
     for case in corpus("guessed_fields") {
         let input = &case["in"];
         let keys = u16s(&input["keys"]);
-        // A standard-convention pad is read off its codes now; the Python's by-index guess was wrong there.
         if standard::is_standard(&keys) {
             continue;
         }
@@ -644,12 +640,10 @@ fn an_unmapped_pad_is_guessed_at_identically() {
 
 #[test]
 fn the_python_guessed_a_standard_pad_wrongly_and_padmap_does_not() {
-    // A wired Xbox 360 pad's buttons, in the order xpad declares them.
     let keys: Vec<u16> = vec![
         0x130, 0x131, 0x133, 0x134, 0x136, 0x137, 0x13A, 0x13B, 0x13C, 0x13D, 0x13E,
     ];
     let ours = guess::guessed_fields(&keys, &[], None);
-    // What the Python said, by index, for exactly these eleven buttons.
     let theirs = [
         ("a", "b0"),
         ("b", "b1"),

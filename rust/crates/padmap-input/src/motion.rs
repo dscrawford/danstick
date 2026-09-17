@@ -39,7 +39,6 @@ impl Sensor {
     /// Open a motion node, non-blocking and ungrabbed.
     pub fn open(path: &Path) -> io::Result<Sensor> {
         let device = Device::open(path)?;
-        // Reactor guarantees only first read won't block; second can wedge the thread.
         device.set_nonblocking(true)?;
         let scale = scale_of(&device);
         debug!(
@@ -75,7 +74,7 @@ impl Sensor {
         Some(self.scale.sample(self.accel, self.gyro, self.timestamp_us))
     }
 
-    /// Take everything waiting. `Ok(false)` when the device is gone. `WouldBlock` is success (level-triggered).
+    /// Take everything waiting.
     pub fn read(&mut self) -> io::Result<bool> {
         let events = match self.device.fetch_events() {
             Ok(events) => events,
@@ -110,7 +109,6 @@ fn stamp_us(event: &evdev::InputEvent) -> u64 {
     let stamp = event.timestamp();
     match stamp.duration_since(std::time::UNIX_EPOCH) {
         Ok(since) => since.as_micros() as u64,
-        // Clock before epoch: sample is good, only the label is wrong.
         Err(_) => 0,
     }
 }
@@ -142,7 +140,6 @@ mod tests {
 
     #[test]
     fn the_axis_order_is_the_one_the_packet_wants() {
-        // Swapping accel/gyro families sends rotation where gravity is expected.
         assert_eq!(ACCEL_AXES[0], AbsoluteAxisCode::ABS_X);
         assert_eq!(ACCEL_AXES[2], AbsoluteAxisCode::ABS_Z);
         assert_eq!(GYRO_AXES[0], AbsoluteAxisCode::ABS_RX);

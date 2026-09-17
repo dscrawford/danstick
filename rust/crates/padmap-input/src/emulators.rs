@@ -49,8 +49,7 @@ impl Written {
     }
 }
 
-/// The environment variable Cemu -- and any other SDL program -- is told
-/// through.
+/// The environment variable Cemu -- and any other SDL program -- is told through.
 pub const CONFIG_ENV: &str = emit::SDL_CONFIG_ENV;
 
 /// Where the sourceable environment file is written.
@@ -97,7 +96,6 @@ pub fn publish(pads: &[Published], dirs: &Destinations) -> Written {
     let by_player: BTreeMap<u32, &Published> = pads.iter().map(|pad| (pad.player, pad)).collect();
     let players: Vec<u32> = by_player.keys().copied().collect();
 
-    // Cemu: one profile per player, addressed by GUID.
     match artefacts::write_cemu_profiles(
         &players,
         |player| by_player[&player].guid.clone(),
@@ -108,8 +106,6 @@ pub fn publish(pads: &[Published], dirs: &Destinations) -> Written {
         Err(error) => written.skipped.push(("cemu", error.to_string())),
     }
 
-    // Dolphin: a section per port, plus the SIDevice lines that say the port
-    // holds a controller at all.
     match artefacts::write_dolphin_config(
         &players,
         |player| by_player[&player].name.clone(),
@@ -119,7 +115,6 @@ pub fn publish(pads: &[Published], dirs: &Destinations) -> Written {
         Err(error) => written.skipped.push(("dolphin", error.to_string())),
     }
 
-    // ares: one VirtualPad block per player, bound by raw SDL index.
     let blocks: BTreeMap<u32, String> = by_player
         .values()
         .filter(|pad| pad.player <= ares::MAX_PLAYERS)
@@ -136,9 +131,6 @@ pub fn publish(pads: &[Published], dirs: &Destinations) -> Written {
         artefacts::write_ares_settings(&blocks, dirs.ares_settings.as_deref()),
     );
 
-    // Ryujinx: one input_config entry per player. The ordinal is always 0 --
-    // each padmap pad's id is unique now that the player number rides in the
-    // GUID's version field.
     let entries: Vec<serde_json::Value> = by_player
         .values()
         .filter_map(|pad| ryujinx::input_config(pad.player, &pad.guid, &pad.name, 0))
@@ -148,8 +140,7 @@ pub fn publish(pads: &[Published], dirs: &Destinations) -> Written {
         artefacts::write_ryujinx_config(entries, dirs.ryujinx_config.as_deref()),
     );
 
-    // The environment file, which is the only way into Cemu and works for any
-    // other SDL program that loads its database once and never again.
+    // The environment file, which is the only way into Cemu and works for any other SDL program that loads its database once and never again.
     let lines: BTreeMap<u32, String> = by_player
         .values()
         .filter(|pad| !pad.sdl_line.is_empty())
@@ -220,7 +211,6 @@ mod tests {
         assert!(!dir.join("ares.bml").exists());
         assert!(!dir.join("Config.json").exists());
 
-        // And the two that need nothing pre-existing still happened.
         assert!(dir.join("cemu").join("controller0.xml").exists());
         assert!(dir.join("env.sh").exists());
         let _ = std::fs::remove_dir_all(&dir);

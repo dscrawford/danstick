@@ -1,5 +1,4 @@
 //! The 2026 Steam Controller, driven directly via HID protocol.
-//! Needed on kernels before Linux 7.3 where hid-steam doesn't know these IDs.
 
 use std::collections::BTreeMap;
 use std::io;
@@ -17,7 +16,7 @@ use crate::pad::Pad;
 
 pub const VENDOR: u16 = 0x28DE;
 pub const NAME: &str = "Steam Controller";
-/// 0x1302: wired, 0x1303: BLE, 0x1304: four-slot receiver, 0x1305: Steam Machine receiver
+/// 0x1302: wired, 0x1303: BLE, 0x1304: four-slot receiver, 0x1305: Steam Machine receiver.
 pub const PRODUCTS: [u16; 4] = [0x1302, 0x1303, 0x1304, 0x1305];
 
 const FEATURE_REPORT_BYTES: usize = 64;
@@ -48,7 +47,6 @@ const REPORT_WIRELESS_X: u8 = 0x46;
 const STATE_REPORTS: [u8; 3] = [REPORT_STATE, REPORT_STATE_BLE, REPORT_STATE_TIMESTAMP];
 
 const WIRELESS_CONNECT: u8 = 2;
-/// Lizard mode needs re-sending every 3 seconds.
 const LIZARD_RESEND: Duration = Duration::from_secs(3);
 
 const BTN_A: u32 = 0x0000_0001;
@@ -76,7 +74,6 @@ const RIGHT_TRIGGER_CLICK: u32 = 0x0080_0000;
 const LEFT_PAD_CLICK: u32 = 0x0400_0000;
 const LEFT_TRIGGER_CLICK: u32 = 0x0800_0000;
 
-/// Triton bit -> evdev code. Face buttons use SDL mapping (A->SOUTH, B->EAST, X->WEST, Y->NORTH).
 const BUTTONS: [(u32, KeyCode); 20] = [
     (BTN_A, KeyCode::BTN_SOUTH),
     (BTN_B, KeyCode::BTN_EAST),
@@ -109,10 +106,8 @@ const OFF_BUTTONS: usize = 1;
 const STATE_PREFIX_BYTES: usize = 17;
 /// Accelerometer starts at byte 33 in state reports.
 const OFF_IMU_ACCEL: usize = 33;
-/// 6 shorts: accel X,Y,Z then gyro X,Y,Z.
 const IMU_BYTES: usize = 12;
 const STATE_IMU_BYTES: usize = OFF_IMU_ACCEL + IMU_BYTES;
-/// Raw value / 32768 is fraction of +/-2000 dps and +/-2g.
 const GYRO_FULL_SCALE_DPS: f32 = 2000.0;
 const ACCEL_FULL_SCALE_G: f32 = 2.0;
 const IMU_HALF_RANGE: f32 = 32768.0;
@@ -121,7 +116,6 @@ const OFF_IMU_CLOCK_WIDE: usize = 29;
 const OFF_IMU_CLOCK_SHORT: usize = 31;
 const IMU_CLOCK_SHORT_US: u64 = 32;
 
-/// The gamepad fields of one state report.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct State {
     pub buttons: u32,
@@ -152,7 +146,6 @@ pub fn decode_state(payload: &[u8]) -> Option<State> {
     })
 }
 
-/// Decode motion from state report. `wide` selects IMU timestamp format (32-bit vs 16-bit).
 pub fn decode_motion(payload: &[u8], wide: bool) -> Option<Motion> {
     if payload.len() < STATE_IMU_BYTES {
         return None;
@@ -181,7 +174,6 @@ pub fn decode_motion(payload: &[u8], wide: bool) -> Option<Motion> {
     ))
 }
 
-/// D-pad as (ABS_HAT0X, ABS_HAT0Y); opposites cancel.
 pub fn hat_for(buttons: u32) -> (i32, i32) {
     let bit = |mask: u32| i32::from(buttons & mask != 0);
     (
@@ -200,7 +192,7 @@ pub fn lizard_off_packet() -> [u8; FEATURE_REPORT_BYTES] {
     packet
 }
 
-/// Feature report to disable lizard mode. Must use ioctl, not write().
+/// Feature report to disable lizard mode.
 #[allow(unsafe_code)]
 fn send_lizard_off(fd: impl AsFd) -> io::Result<()> {
     let packet = lizard_off_packet();
@@ -210,11 +202,8 @@ fn send_lizard_off(fd: impl AsFd) -> io::Result<()> {
     unsafe { rustix::ioctl::ioctl(fd, setter) }.map_err(io::Error::from)
 }
 
-/// Puck's pogo-pin dock collection ID.
 const DOCK_USAGE: u32 = 0xFF00_0002;
 
-/// Is a controller paired into this slot? Tests by sending lizard-mode request.
-/// Empty slots stall with EPIPE; others succeed or fail for real reasons.
 pub fn slot_is_live(node: &Path) -> bool {
     let Ok(fd) = open_hidraw(node) else {
         return false;
@@ -240,12 +229,10 @@ fn open_hidraw(node: &Path) -> io::Result<OwnedFd> {
     Ok(fd)
 }
 
-/// Every Triton slot on the machine. `probe=true` filters for live slots.
 pub fn slots(probe: bool) -> Vec<Pad> {
     slots_where(probe, crate::pad::wanted_by_name)
 }
 
-/// Same, with custom filter function.
 pub fn slots_where(probe: bool, wanted: impl Fn(&str) -> bool) -> Vec<Pad> {
     let mut found = Vec::new();
     let Ok(entries) = std::fs::read_dir("/sys/bus/hid/devices") else {
@@ -304,12 +291,11 @@ pub fn slots_where(probe: bool, wanted: impl Fn(&str) -> bool) -> Vec<Pad> {
     found
 }
 
-/// Live slot paths (expensive: one ioctl per slot). Caller must ration calls.
+/// Live slot paths (expensive: one ioctl per slot).
 pub fn live_signature() -> Vec<PathBuf> {
     slots(true).into_iter().map(|pad| pad.path).collect()
 }
 
-/// Is this pad one of ours? Cheap, and asked before anything opens anything.
 pub fn owns(pad: &Pad) -> bool {
     pad.vid == VENDOR
         && PRODUCTS.contains(&pad.pid)
@@ -338,7 +324,6 @@ fn first_hidraw(dir: &Path) -> Option<PathBuf> {
     names.first().map(|name| PathBuf::from("/dev").join(name))
 }
 
-/// One slot, read as a stream of evdev events. Reports are diffed.
 #[derive(Debug)]
 pub struct Source {
     fd: OwnedFd,
@@ -348,7 +333,6 @@ pub struct Source {
     hat: (i32, i32),
     last_lizard: Option<Instant>,
     motion: Option<Motion>,
-    /// Device tick (microseconds), from last sample.
     imu_tick: Option<u64>,
     /// Accumulated microseconds since reading started (wraps handled).
     imu_clock: u64,
@@ -381,7 +365,6 @@ impl Source {
         self.connected
     }
 
-    /// The latest motion sample, or `None` if the controller has not sent one.
     pub fn motion(&self) -> Option<Motion> {
         self.motion
     }
@@ -427,7 +410,6 @@ impl Source {
         }
     }
 
-    /// Every change since the last call. Returns WouldBlock if nothing.
     pub fn fetch_events(&mut self, out: &mut Vec<InputEvent>) -> io::Result<()> {
         self.keepalive();
         let before = out.len();

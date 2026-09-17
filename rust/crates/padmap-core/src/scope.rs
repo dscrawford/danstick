@@ -1,14 +1,4 @@
-//! What a mapping is *for*.
-//!
-//! One controller can need more than one mapping. The case that forced this: a
-//! GameCube controller used to play N64 games. The console decides which
-//! controls exist and which RetroArch key each one is emitted under, so "where
-//! is A on this pad" is not a single answer -- it is one answer per console,
-//! and occasionally one per game.
-//!
-//! Scopes are stored as flat strings keyed in one map rather than as three
-//! fields, so resolution is "walk a list of candidate keys and take the first
-//! hit": one loop, with no precedence logic to get wrong.
+//! Scope: a mapping is per-game or per-console or universal.
 
 use std::fmt;
 
@@ -16,12 +6,7 @@ pub const UNIVERSAL: &str = "";
 const CONSOLE_PREFIX: &str = "console:";
 const GAME_PREFIX: &str = "game:";
 
-/// Scope covering every game on one console.
-///
-/// Console identity is a layout id. Not an accident of reuse: the console is
-/// exactly what decides the control set and the RetroArch key table, and that
-/// is what a layout already is. A separate console enum would be a second list
-/// to keep in step, with nothing to notice when it fell behind.
+/// Scope covering every game on one console (console = layout id).
 pub fn console(layout_id: &str) -> String {
     format!("{CONSOLE_PREFIX}{layout_id}")
 }
@@ -40,30 +25,9 @@ pub fn game_of(scope: &str) -> &str {
     scope.strip_prefix(GAME_PREFIX).unwrap_or("")
 }
 
-/// A stable identity for one game, from the path a launcher was handed.
-///
-/// Deliberately **not** the absolute path: that changes when a library moves, a
-/// drive is remounted elsewhere, or a collection is regenerated, and a per-game
-/// mapping that silently stops applying because a directory moved is worse than
-/// one that was never made, because nothing reports it.
-///
-/// Deliberately not a content hash either -- that means reading a file that can
-/// be hundreds of megabytes at launch, and a patched or re-dumped ROM would
-/// then be a different game to padmap while being the same game to the person
-/// holding the controller.
-///
-/// So: the filename stem, normalised, under the console. Returns `""` when the
-/// stem normalises to nothing.
+/// Stable game identity: filename stem (not path, not hash), normalised under the console.
 pub fn game_key(console_id: &str, rom: &str) -> String {
-    // Trailing separators first, as `pathlib.Path(...).name` does. A
-    // directory-shaped "ROM" is normal -- a PlayStation disc folder, a MAME
-    // set -- and a front-end that hands one over with a trailing slash would
-    // otherwise get an empty basename, no key, and a per-game mapping that
-    // silently never applies.
     let name = rom.trim_end_matches('/').rsplit('/').next().unwrap_or("");
-    // Only the *last* suffix: "Legend of Zelda, The (v1.2).z64" must not lose
-    // everything after the first dot, and a name with no dot at all is normal
-    // for a directory-shaped "ROM".
     let stem = match name.rfind('.') {
         Some(dot) => &name[..dot],
         None => name,
@@ -93,11 +57,7 @@ pub fn game_key(console_id: &str, rom: &str) -> String {
     format!("{owner}/{slug}")
 }
 
-/// Scopes to try, most specific first.
-///
-/// The entire precedence rule lives here, so everything that needs to know
-/// which mapping applies agrees with everything else by construction rather
-/// than by two implementations happening to match.
+/// Scopes to try, most specific first (game > console > universal).
 pub fn order(console_id: &str, game_id: &str) -> Vec<String> {
     let mut out = Vec::with_capacity(3);
     if !game_id.is_empty() {
@@ -110,8 +70,7 @@ pub fn order(console_id: &str, game_id: &str) -> Vec<String> {
     out
 }
 
-/// A scope, parsed. Only for describing one to a user -- storage and lookup
-/// both stay on the flat string, which is the thing that must not drift.
+/// A scope, parsed (only for display; storage uses flat strings).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Scope<'a> {
     Universal,
@@ -193,8 +152,7 @@ mod tests {
 
     #[test]
     fn only_the_last_suffix_is_stripped() {
-        // "Legend of Zelda, The (v1.2).z64" must not lose everything after the
-        // first dot.
+        // "Legend of Zelda, The (v1.2).z64" must not lose everything after the first dot.
         assert_eq!(
             game_key("n64", "Legend of Zelda, The (v1.2).z64"),
             "n64/legend-of-zelda-the-v1-2"
@@ -203,8 +161,6 @@ mod tests {
 
     #[test]
     fn a_directory_shaped_rom_keys_off_its_directory_name() {
-        // Caught by the differential corpus: `Path(...).name` strips trailing
-        // separators and a bare `rsplit('/')` does not.
         assert_eq!(
             game_key("ps2", "/roms/ps2/Final Fantasy X/"),
             "ps2/final-fantasy-x"
@@ -224,7 +180,6 @@ mod tests {
 
     #[test]
     fn the_key_ignores_the_directory_the_rom_sits_in() {
-        // A per-game mapping must not stop applying because a library moved.
         let a = game_key("n64", "/mnt/old/roms/Mario 64.z64");
         let b = game_key("n64", "/home/x/games/n64/Mario 64.z64");
         assert_eq!(a, b);
@@ -242,15 +197,12 @@ mod tests {
 
     #[test]
     fn a_console_that_was_not_identified_still_gets_a_usable_key() {
-        // The console prefix is what stops `sonic` on an arcade board sharing a
-        // mapping with `sonic` on a console, so it must never be empty.
         assert_eq!(game_key("", "Sonic.bin"), "unknown/sonic");
         assert_ne!(game_key("arcade", "sonic"), game_key("genesis", "sonic"));
     }
 
     #[test]
     fn a_stem_that_normalises_to_nothing_gets_no_key_rather_than_a_bare_console() {
-        // "unknown/" would be a scope every unnameable ROM shared.
         assert_eq!(game_key("n64", "...z64"), "");
         assert_eq!(game_key("n64", "!!!.rom"), "");
         assert_eq!(game_key("n64", ""), "");
@@ -267,8 +219,6 @@ mod tests {
         assert_eq!(Scope::parse(""), Scope::Universal);
         assert_eq!(Scope::parse("console:snes"), Scope::Console("snes"));
         assert_eq!(Scope::parse("game:snes/mario"), Scope::Game("snes/mario"));
-        // Anything else is the universal scope, not an error: these strings
-        // come off disk and a file that was hand-edited must still resolve.
         assert_eq!(Scope::parse("nonsense"), Scope::Universal);
     }
 

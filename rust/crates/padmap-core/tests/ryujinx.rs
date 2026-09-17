@@ -1,5 +1,4 @@
-//! Ryujinx input entries. Ryujinx blanks the name CRC out of the SDL GUID, so
-//! padmap's player number rides in the version field to keep the ids distinct.
+//! Ryujinx input entries.
 
 use padmap_core::ryujinx;
 use serde_json::{json, Value};
@@ -18,7 +17,6 @@ fn config(player: u32, guid: &str) -> Value {
 
 #[test]
 fn the_id_is_the_guid_rearranged_with_the_crc_blanked() {
-    // Worked through by hand from Ryujinx's GenerateGamepadId.
     let guid = "03002854de2800000413000002006800";
     assert_eq!(
         ryujinx::device_id(guid, 0).as_deref(),
@@ -71,7 +69,6 @@ fn a_guid_that_is_not_one_is_refused_rather_than_sliced() {
 
 #[test]
 fn a_and_b_are_mirrored_the_way_nintendo_labels_them() {
-    // Switch A is SDL's East, which SDL calls "B".
     let right = &config(1, PADMAP_GUIDS[0])["right_joycon"];
     assert_eq!(right["button_a"], "B");
     assert_eq!(right["button_b"], "A");
@@ -135,7 +132,6 @@ fn merging_into_nothing_is_just_our_entries() {
 
 #[test]
 fn motion_is_asked_of_padmap_rather_than_of_sdl() {
-    // SDL pairs a joystick with its sensor by EVIOCGUNIQ, which a uinput clone cannot set.
     let motion = &config(2, PADMAP_GUIDS[1])["motion"];
     assert_eq!(motion["motion_backend"], "CemuHook");
     assert_eq!(motion["enable_motion"], true);
@@ -154,7 +150,6 @@ fn player_one_takes_slot_zero() {
 
 #[test]
 fn the_backend_name_is_one_ryujinx_will_accept() {
-    // Its JSON converter throws on an unrecognised `motion_backend`.
     let backend = config(1, PADMAP_GUIDS[0])["motion"]["motion_backend"]
         .as_str()
         .expect("a string")

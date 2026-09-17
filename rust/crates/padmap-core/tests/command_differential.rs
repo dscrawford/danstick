@@ -72,7 +72,6 @@ fn the_two_agree_on_which_names_are_commands() {
         .iter()
         .map(|n| n.as_str().expect("a name"))
         .collect();
-    // Same order (a client may show them in it); extra commands at the end are allowed.
     let ours = COMMANDS.to_vec();
     assert!(
         ours.len() >= want.len(),
@@ -92,7 +91,6 @@ fn every_recorded_message_parses_the_same_way() {
         let got = Command::parse(message);
         if case["ok"].as_bool().expect("ok") {
             match &case["value"] {
-                // The Python answers None for an unknown name; both refuse to act.
                 Value::Null => assert!(
                     matches!(got, Err(Refused::Unknown(_))),
                     "{message} should be refused, got {got:?}"

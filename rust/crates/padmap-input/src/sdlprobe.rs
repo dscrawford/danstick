@@ -1,6 +1,4 @@
 //! SDL's controller database lookup (last resort before guessing from capabilities).
-//! Run in throwaway process: SDL_Init starts threads and opens udev monitor.
-//! Linked, not dlopen'd; builtin_mapping is in-process; isolated() re-execs as subprocess.
 
 use std::ffi::{c_char, c_void, CStr, CString};
 
@@ -13,7 +11,6 @@ struct SdlGuid {
 
 const SDL_INIT_GAMEPAD: u32 = 0x0000_2000;
 
-// Signatures copied from SDL3 headers; SdlGuid is repr(C) matching SDL_GUID.
 #[allow(unsafe_code)]
 #[link(name = "SDL3")]
 extern "C" {
@@ -29,7 +26,6 @@ extern "C" {
 const IGNORE_ALL_DEVICES: (&str, &str) =
     ("SDL_GAMECONTROLLER_IGNORE_DEVICES_EXCEPT", "0xffff/0xffff");
 
-// Unset mappings padmap wrote (file scan skips padmap's own lines; SDL cannot).
 const UNSET: [&str; 2] = ["SDL_GAMECONTROLLERCONFIG", "SDL_GAMECONTROLLERCONFIG_FILE"];
 
 /// Why the probe could not answer.
@@ -41,7 +37,7 @@ pub enum ProbeError {
     Nul,
 }
 
-/// SDL's mapping line for this GUID, or None if unknown. Inits/quits SDL around call.
+/// SDL's mapping line for this GUID, or None if unknown.
 #[allow(unsafe_code)]
 pub fn builtin_mapping(guid: &str) -> Result<Option<String>, ProbeError> {
     for name in UNSET {
@@ -92,8 +88,7 @@ pub fn isolated(guid: &str) -> Option<String> {
 mod tests {
     use super::*;
 
-    /// One test, sequential: `SDL_Init`/`SDL_Quit` are process-global and the
-    /// harness runs tests on threads.
+    /// One test, sequential: `SDL_Init`/`SDL_Quit` are process-global and the harness runs tests on threads.
     #[test]
     fn the_built_in_database_is_reachable() {
         let ds4 = builtin_mapping("030000004c050000c405000011810000");

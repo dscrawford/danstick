@@ -51,7 +51,6 @@ fn every_launch_override_is_written_the_same() {
         let paths = paths(&case["paths"]);
         let order: BTreeMap<usize, String> = strs(&case["order"]).into_iter().enumerate().collect();
         let calibrated = u32s(&case["calibrated"]);
-        // The Python pins the gain when every *managed* pad is calibrated.
         let managed = retroarch::managed_players(&players, &paths, &order);
         let all_calibrated = managed
             .keys()
@@ -89,7 +88,6 @@ fn every_derived_profile_is_written_the_same() {
             .as_str()
             .map(|name| (name, values.as_slice()));
         let player = case["player"].as_i64().expect("player") as u32;
-        // The Python takes None to mean "padmap's own id".
         let vid = case["vid"].as_i64().map(|v| v as u16).unwrap_or(0x1209);
         let pid = case["pid"].as_i64().map(|v| v as u16).unwrap_or(0x0001);
         let ours = retroarch::derive_profile(source, player, vid, pid, virtual_name);

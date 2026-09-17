@@ -1,14 +1,4 @@
-//! Stripping padmap's settings back out of the user's `retroarch.cfg`.
-//!
-//! The only code in padmap that writes to a file RetroArch owns, and the
-//! contract is narrow: **the lines it reports are the only lines that may
-//! differ.** A CRLF ending, a latin-1 ROM path in `system_directory`, an
-//! unquoted value, a file with no trailing newline -- all of it comes back out
-//! exactly as it went in.
-//!
-//! Only needed for configs written before the launch override started
-//! disabling `config_save_on_exit`; after that no new leakage occurs. It stays
-//! a command the user asks for rather than something a launch does.
+//! Clean padmap's leaked settings out of the user's `retroarch.cfg`.
 
 use std::collections::BTreeMap;
 use std::sync::LazyLock;
@@ -18,8 +8,7 @@ use regex::Regex;
 /// The virtual pads' name prefix, which is how a leaked value is recognised.
 pub const VIRTUAL_PREFIX: &str = "padmap Player ";
 
-/// `input_playerN_*` binds RetroArch saves itself. "nul" is how it spells
-/// unbound.
+/// `input_playerN_*` binds that RetroArch saves.
 pub const PLAYER_BINDS: [&str; 24] = [
     "b",
     "y",
@@ -71,17 +60,7 @@ static PLAYER_BIND: LazyLock<Regex> = LazyLock::new(|| {
     .expect("a valid regex")
 });
 
-/// `(content, line ending)` pairs, splitting only where RetroArch splits.
-///
-/// On `\n` alone. Any `\r` stays as the last character of the content, which
-/// is where RetroArch leaves it too: a quoted value stops at its closing quote
-/// and the unquoted tokeniser counts `\r` as whitespace.
-///
-/// Reading through a universal-newline translation instead turned every
-/// `\r\n` into `\n` before the cleaner saw the file, so a config carrying
-/// Windows endings -- one off a dual-boot install, or hand-edited there -- was
-/// rewritten end to end by a command reporting one changed line, and the
-/// backup could not put the endings back.
+/// `(content, line ending)` pairs, splitting on `\n` to preserve CRLF in content.
 pub fn split_lines(text: &str) -> Vec<(&str, &str)> {
     let parts: Vec<&str> = text.split('\n').collect();
     let mut lines: Vec<(&str, &str)> = parts[..parts.len() - 1]
@@ -96,13 +75,7 @@ pub fn split_lines(text: &str) -> Vec<(&str, &str)> {
     lines
 }
 
-/// Write a value back in the form the line already used.
-///
-/// An unquoted line stays unquoted: RetroArch reads it identically either way,
-/// and adding quotes would edit a line the user can see beyond the change that
-/// was reported. The exceptions are values that stop meaning the same thing
-/// unquoted -- an empty one is no token at all to `strtok_r` and the setting
-/// vanishes, and one holding whitespace or a quote is truncated.
+/// Write a value preserving its original quoting, unless the value requires quotes.
 pub fn render_value(value: &str, quoted: bool) -> String {
     if quoted || value.is_empty() || value.chars().any(|c| c.is_whitespace() || c == '"') {
         format!("\"{value}\"")
@@ -111,18 +84,12 @@ pub fn render_value(value: &str, quoted: bool) -> String {
     }
 }
 
-/// The stock value for a key padmap may have leaked into, or `None` to leave
-/// the line alone.
-///
-/// Only keys already present are rewritten; nothing is added. A key padmap
-/// never wrote is left exactly as the user had it.
+/// The reset value for a leaked key, or `None` to leave it alone.
 pub fn cleaned_value(key: &str, value: &str, reserved: &BTreeMap<u32, String>) -> Option<String> {
     if RESERVED_DEVICE.is_match(key) {
         return value.starts_with(VIRTUAL_PREFIX).then(String::new);
     }
     if let Some(found) = RESERVATION_TYPE.captures(key) {
-        // Paired with the rule above: a type left at RESERVED while its device
-        // name is empty holds the slot for nothing at all.
         let player: u32 = found[1].parse().ok()?;
         let name = reserved.get(&player).map_or("", String::as_str);
         let stale = name.starts_with(VIRTUAL_PREFIX);
@@ -132,20 +99,12 @@ pub fn cleaned_value(key: &str, value: &str, reserved: &BTreeMap<u32, String>) -
         return None;
     }
     if PLAYER_BIND.is_match(key) {
-        // These outrank autoconfig, and RetroArch saved them here itself.
         return (value != "nul").then(|| "nul".to_owned());
     }
     if let Some(found) = JOYPAD_INDEX.captures(key) {
-        // RetroArch's own default is N-1, one pad per player in order. Any
-        // other value is padmap's, or a hand-edit padmap overrides at every
-        // launch anyway, so N-1 is the honest reset.
         let player: i64 = found[1].parse().ok()?;
         return Some((player - 1).to_string());
     }
-    // Deliberately no rule for input_libretro_device_pN. RetroArch neither
-    // loads nor saves that key in retroarch.cfg -- it lives only in `.rmp`
-    // remap files -- so it cannot have leaked here, and a rule for it could
-    // only damage a remap file someone pointed --config at.
     None
 }
 
@@ -157,13 +116,9 @@ pub struct Cleaned {
     pub text: String,
 }
 
-/// Clean a config's text. Pure: the caller decides whether to write it.
+/// Clean a config's text.
 pub fn clean(text: &str) -> Cleaned {
     let lines = split_lines(text);
-
-    // Reservation type and device name are judged together, and the file is
-    // sorted alphabetically so the type comes first. Collect names up front
-    // rather than relying on the order.
     let mut reserved: BTreeMap<u32, String> = BTreeMap::new();
     for (content, _) in &lines {
         let Some(found) = SETTING.captures(content) else {
@@ -220,11 +175,7 @@ pub fn parse_profile_text(text: &str) -> BTreeMap<String, String> {
         .collect()
 }
 
-/// The same parse, keeping the file's order and every repeated key.
-///
-/// For copying a profile: [`parse_profile_text`] answers "what does this key
-/// say", and a `BTreeMap` is right for that; a copy has to come out in the
-/// order it went in, or a diff against the original is noise.
+/// The same parse, keeping order and repeated keys (for copying profiles).
 pub fn parse_profile_pairs(text: &str) -> Vec<(String, String)> {
     static LINE: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r#"^\s*([A-Za-z0-9_]+)\s*=\s*"?([^"]*)"?\s*$"#).expect("a valid regex")
@@ -235,17 +186,7 @@ pub fn parse_profile_pairs(text: &str) -> Vec<(String, String)> {
         .collect()
 }
 
-/// The same, on the bytes of a file rather than a `str`.
-///
-/// A `retroarch.cfg` is not guaranteed to be UTF-8 -- a latin-1 ROM path in
-/// `system_directory` is the case that turns up -- and the contract here is
-/// that an untouched line comes back byte for byte. The Python reads bytes and
-/// decodes with `surrogateescape` for exactly this reason.
-///
-/// Per line rather than per file: a line that is not UTF-8 is passed through
-/// unexamined. Nothing is lost by that, because every rule keys on an ASCII
-/// setting name and compares against an ASCII value, so a line whose bytes
-/// cannot be read is a line no rule would have changed.
+/// The same, on raw bytes to preserve non-UTF-8 content byte-for-byte.
 pub fn clean_bytes(raw: &[u8]) -> (Vec<String>, Vec<u8>) {
     let mut changes = Vec::new();
     let mut out: Vec<u8> = Vec::with_capacity(raw.len());

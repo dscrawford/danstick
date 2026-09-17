@@ -516,7 +516,6 @@ fn assemble(
         builder = builder.with_msc(misc)?;
     }
     builder = builder.with_properties(source.properties())?;
-    // Full absinfo: min=max=0 causes SIGFPE in RetroArch's udev_compute_axis.
     if let Ok(absinfo) = source.get_absinfo() {
         for (code, info) in absinfo {
             builder = builder.with_absolute_axis(&UinputAbsSetup::new(code, info))?;

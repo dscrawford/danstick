@@ -1,16 +1,4 @@
 //! What padmap writes into a RetroArch autoconfig, and what it refuses to.
-//!
-//! The one fact behind every test here: **RetroArch will happily bind a button
-//! that does not exist and still report the pad as configured.** There is no
-//! error, no log line, and the front-end keeps working -- the control is simply
-//! dead in every game. So the module under test has no way to fail loudly, and
-//! a plausible-looking wrong answer is indistinguishable from a right one until
-//! someone tries to play something. These tests are the only place that
-//! difference is visible.
-//!
-//! The expectations were taken from the Python original (`retroarch_lines`,
-//! `drop_shadowed_axis_halves` in `src/padmap/mapping.py`) by running it, not by
-//! reading it.
 
 use std::collections::BTreeMap;
 
@@ -40,15 +28,8 @@ fn key_of(line: &str) -> &str {
         .expect("split always yields one part")
 }
 
-// ---------------------------------------------------------------------------
-// lines(): what gets written at all
-// ---------------------------------------------------------------------------
-
 #[test]
 fn an_empty_capture_writes_no_lines_at_all() {
-    // Not even a skeleton of empty keys. A key bound to nothing is worse than
-    // an absent one: RetroArch binds the non-existent button, calls the pad
-    // configured, and the user is told the mapping took when it did not.
     assert!(lines(&BTreeMap::new(), &BTreeMap::new()).is_empty());
 }
 
@@ -63,8 +44,7 @@ fn a_single_captured_control_writes_exactly_one_line() {
 
 #[test]
 fn a_control_that_was_not_captured_leaves_no_trace_in_the_output() {
-    // The capture holds A only; every other key must be missing rather than
-    // present-and-empty.
+    // The capture holds A only; every other key must be missing rather than.
     let out = lines(
         &bindings(&[(Control::A, Binding::button(1))]),
         &BTreeMap::new(),
@@ -101,8 +81,6 @@ fn all_eighteen_controls_each_write_one_line() {
 
 #[test]
 fn output_order_is_canonical_whatever_order_the_capture_was_built_in() {
-    // Stable output order is what keeps a regenerated mapping from producing a
-    // diff that looks like a change. The capture must not get a vote.
     let mut reversed: BTreeMap<Control, Binding> = BTreeMap::new();
     for (index, control) in CANONICAL_ORDER.iter().rev().enumerate() {
         reversed.insert(*control, Binding::button(index as i32));
@@ -118,8 +96,7 @@ fn output_order_is_canonical_whatever_order_the_capture_was_built_in() {
 
 #[test]
 fn a_capture_of_nothing_but_unwritable_bindings_produces_an_empty_file() {
-    // Two separate refusals, and between them they must not leave a half-file:
-    // an autoconfig with a header and no binds still reports as configured.
+    // Two separate refusals, and between them they must not leave a half-file:.
     let out = lines(
         &bindings(&[
             (
@@ -133,16 +110,8 @@ fn a_capture_of_nothing_but_unwritable_bindings_produces_an_empty_file() {
     assert!(out.is_empty());
 }
 
-// ---------------------------------------------------------------------------
-// The a/b inversion
-// ---------------------------------------------------------------------------
-
 #[test]
 fn canonical_a_and_b_swap_because_retroarch_uses_the_nintendo_positions() {
-    // RetroArch's input_b_btn is the *bottom* face button and input_a_btn the
-    // right one; SDL's a and b are the other way round. Getting this backwards
-    // swaps confirm and cancel in every game and nothing reports an error --
-    // it reads to the user as "the mapping did not take".
     let out = lines(
         &bindings(&[
             (Control::A, Binding::button(1)),
@@ -188,21 +157,11 @@ fn the_four_face_buttons_come_out_crossed_in_pairs_and_never_collide() {
     let mut keys: Vec<&str> = out.iter().map(|line| key_of(line)).collect();
     keys.sort_unstable();
     keys.dedup();
-    // Two controls under one key means the later one silently wins and the
-    // earlier button is dead, with the pad still reporting as configured.
     assert_eq!(keys.len(), 4, "two face buttons landed on one key");
 }
 
-// ---------------------------------------------------------------------------
-// Console overrides
-// ---------------------------------------------------------------------------
-
 #[test]
 fn a_console_override_replaces_the_canonical_key() {
-    // Cores map the abstract RetroPad onto real console buttons themselves, and
-    // not identically: mupen64plus-next reads N64 B from RetroPad Y, so the
-    // canonical key would bind the physical B to something the core never asks
-    // about -- a dead button on a pad that reports as configured.
     let out = lines(
         &bindings(&[(Control::B, Binding::button(2))]),
         &overrides(&[(Control::B, "input_y_btn")]),
@@ -212,10 +171,6 @@ fn a_console_override_replaces_the_canonical_key() {
 
 #[test]
 fn an_empty_override_falls_back_to_the_canonical_key() {
-    // The Python was `overrides.get(control) or RETROARCH_KEYS.get(control)`,
-    // so a falsy override means fall back. In Rust `Some("")` is perfectly
-    // truthy, and taking it at its word writes ` = "2"` -- a nameless key that
-    // RetroArch parses as nothing and complains about not at all.
     let out = lines(
         &bindings(&[(Control::B, Binding::button(2))]),
         &overrides(&[(Control::B, "")]),
@@ -240,8 +195,7 @@ fn an_empty_override_falls_back_for_every_control_not_just_the_face_buttons() {
 
 #[test]
 fn an_override_for_a_control_that_was_not_captured_changes_nothing() {
-    // A layout carries overrides for controls the user never pressed. Those
-    // must not conjure a line: see the whole file's premise.
+    // A layout carries overrides for controls the user never pressed.
     let out = lines(
         &bindings(&[(Control::A, Binding::button(1))]),
         &overrides(&[
@@ -282,10 +236,6 @@ fn an_override_equal_to_the_canonical_key_is_indistinguishable_from_none() {
 
 #[test]
 fn an_override_ending_in_btn_is_rewritten_to_axis_when_the_binding_is_an_axis() {
-    // GameCube L is an analogue trigger and the dolphin core reads it from
-    // RetroPad L2, so both rules fire at once: the override picks the key and
-    // the axis rewrite renames it. Applying only the first writes
-    // `input_l2_btn = "+4"`, which strtoull reads as button 4.
     let out = lines(
         &bindings(&[(Control::LeftShoulder, Binding::axis(4, 1))]),
         &overrides(&[(Control::LeftShoulder, "input_l2_btn")]),
@@ -304,10 +254,6 @@ fn an_override_that_does_not_mention_btn_is_written_exactly_as_given() {
 
 #[test]
 fn the_axis_rewrite_replaces_every_btn_in_the_key_as_pythons_replace_did() {
-    // `str.replace` is replace-all in both languages. Nothing in the real key
-    // tables contains `_btn` twice, so this pins parity rather than a
-    // requirement -- if the Rust ever switched to a suffix strip, this is where
-    // the two implementations would start disagreeing.
     let out = lines(
         &bindings(&[(Control::A, Binding::axis(1, 1))]),
         &overrides(&[(Control::A, "input_btn_btn")]),
@@ -326,9 +272,6 @@ fn the_real_n64_layout_override_moves_b_onto_retropad_y() {
 
 #[test]
 fn the_real_gamecube_layout_overrides_uncross_the_face_buttons() {
-    // The dolphin core binds GC A to RetroPad A, an identity mapping -- which
-    // is exactly what the global table does not do. Without these four the
-    // GameCube pad's A and B come out swapped.
     let out = lines(
         &bindings(&[
             (Control::A, Binding::button(0)),
@@ -351,7 +294,6 @@ fn the_real_gamecube_layout_overrides_uncross_the_face_buttons() {
 
 #[test]
 fn a_layout_with_no_overrides_writes_the_canonical_keys() {
-    // SNES was read against snes9x's own source and needs none.
     let snes = layout::get("snes").retroarch_keys();
     assert!(
         snes.is_empty(),
@@ -361,14 +303,8 @@ fn a_layout_with_no_overrides_writes_the_canonical_keys() {
     assert_eq!(out, ["input_b_btn = \"1\""]);
 }
 
-// ---------------------------------------------------------------------------
-// Axis bindings move to the _axis key
-// ---------------------------------------------------------------------------
-
 #[test]
 fn an_axis_moves_to_the_axis_key_because_btn_misparses_the_sign() {
-    // RetroArch parses a _btn value with strtoull. "-2" under a _btn key is
-    // button 2, silently.
     let out = lines(
         &bindings(&[(Control::LeftTrigger, Binding::axis(2, -1))]),
         &BTreeMap::new(),
@@ -378,8 +314,6 @@ fn an_axis_moves_to_the_axis_key_because_btn_misparses_the_sign() {
 
 #[test]
 fn axis_zero_is_where_the_strtoull_misparse_actually_bites() {
-    // "-0" and "+0" both come out as button 0, so the two directions of one
-    // stick collapse onto the same button and pressing either activates both.
     let out = lines(
         &bindings(&[
             (Control::RightStickLeft, Binding::axis(0, -1)),
@@ -401,8 +335,6 @@ fn axis_zero_is_where_the_strtoull_misparse_actually_bites() {
 
 #[test]
 fn every_control_puts_an_axis_binding_under_an_axis_key() {
-    // Any control can be an axis on some pad: triggers usually, a d-pad on an
-    // adapter that reports it as a hat-shaped pair of axes, C-buttons always.
     for control in CANONICAL_ORDER {
         let out = lines(
             &bindings(&[(control, Binding::axis(1, -1))]),
@@ -441,8 +373,6 @@ fn a_button_binding_stays_on_the_btn_key() {
 
 #[test]
 fn a_hat_binding_stays_on_the_btn_key_with_a_direction_word() {
-    // A hat is not an axis to either consumer; `h0up` under the _btn key is
-    // what RetroArch expects.
     let out = lines(
         &bindings(&[
             (Control::DpadUp, Binding::hat(0, 1)),
@@ -465,8 +395,6 @@ fn a_hat_binding_stays_on_the_btn_key_with_a_direction_word() {
 
 #[test]
 fn an_axis_writes_the_retroarch_index_not_the_sdl_one() {
-    // The two consumers number differently; writing SDL's number names a
-    // different axis, which moves but is the wrong stick.
     let out = lines(
         &bindings(&[(
             Control::RightStickDown,
@@ -479,11 +407,7 @@ fn an_axis_writes_the_retroarch_index_not_the_sdl_one() {
 
 #[test]
 fn an_axis_with_a_negative_ra_index_is_written_as_the_python_wrote_it() {
-    // A quirk, pinned deliberately: retroarch_visible only screens buttons, so
-    // an axis carrying a negative index falls through and the sign is prefixed
-    // to a negative number. The Python answers `input_l2_axis = "--1"` for this
-    // input too, so the port is faithful -- but nothing produces this shape
-    // today and the output is nonsense if anything ever does.
+    // A quirk, pinned deliberately: retroarch_visible only screens buttons, so.
     let out = lines(
         &bindings(&[(
             Control::LeftTrigger,
@@ -494,15 +418,9 @@ fn an_axis_with_a_negative_ra_index_is_written_as_the_python_wrote_it() {
     assert_eq!(out, ["input_l2_axis = \"--1\""]);
 }
 
-// ---------------------------------------------------------------------------
-// Bindings RetroArch cannot name are dropped, not guessed at
-// ---------------------------------------------------------------------------
-
 #[test]
 fn a_button_retroarch_cannot_see_writes_no_line() {
-    // RA_INVISIBLE: the pad reports the code, RetroArch's udev driver never
-    // enumerates it, so any number written here names a different button or
-    // none -- and the pad still reports as configured either way.
+    // RA_INVISIBLE: the pad reports the code, RetroArch's udev driver never.
     let out = lines(
         &bindings(&[
             (Control::A, Binding::button(1)),
@@ -518,8 +436,6 @@ fn a_button_retroarch_cannot_see_writes_no_line() {
 
 #[test]
 fn any_negative_ra_index_is_dropped_not_only_the_sentinel() {
-    // A profile off disk can hold whatever it likes, and no real button is
-    // negative.
     for index in [-1, -2, -99, i32::MIN] {
         let out = lines(
             &bindings(&[
@@ -534,10 +450,6 @@ fn any_negative_ra_index_is_dropped_not_only_the_sentinel() {
 
 #[test]
 fn a_diagonal_hat_writes_no_line_instead_of_aborting_the_whole_file() {
-    // A hat reads 3 on a diagonal, which is not a control anyone can press.
-    // This used to raise from the middle of writing a launch profile and leave
-    // the game to start with no controller config at all -- one unpressable
-    // direction cost the user every other binding.
     let out = lines(
         &bindings(&[
             (Control::A, Binding::button(1)),
@@ -592,23 +504,6 @@ fn a_dropped_control_does_not_disturb_the_order_of_the_ones_around_it() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// drop_shadowed_axis_halves: the reason this module exists
-// ---------------------------------------------------------------------------
-//
-// The incident, from FINDINGS.md: "Y mapped to C-up did nothing, and the
-// C-stick looked fine". Everything padmap owned was right -- the capture, the
-// button number, the autoconfig, the log line saying the profile was applied.
-// One layer below, `input_joypad_analog_axis` only consults the button binds
-// when abs(plus) - abs(minus) is exactly zero, and on the 0..255 range these
-// adapters report there is no value that normalises to zero. A C-stick resting
-// at 131 comes out at +900: 2.7% of full scale, inside the core's deadzone, so
-// the stick behaved perfectly while the button on the other half was dead.
-//
-// The rule below is the fix: the captured button is the deliberate instruction,
-// so the opposing axis is dropped. It costs that stick's other direction, which
-// RetroArch gives no way to keep.
-
 #[test]
 fn the_four_analog_stems_are_both_sticks_on_both_axes() {
     assert_eq!(
@@ -634,9 +529,7 @@ fn a_minus_button_kills_the_plus_axis_on_every_stem() {
 
 #[test]
 fn a_plus_button_kills_the_minus_axis_on_every_stem() {
-    // The rule is symmetric even though the hardware is not: FINDINGS notes a
-    // button on the plus half cannot be rescued by calibration the way a minus
-    // one can, which makes dropping the opposing axis the only option here.
+    // The rule is symmetric even though the hardware is not: FINDINGS notes a.
     for stem in ANALOG_STEMS {
         let out = drop_shadowed_axis_halves(vec![
             format!("{stem}_plus_btn = \"12\""),
@@ -648,8 +541,6 @@ fn a_plus_button_kills_the_minus_axis_on_every_stem() {
 
 #[test]
 fn a_stick_with_axes_on_both_halves_is_left_alone_on_every_stem() {
-    // An ordinary analogue stick. There is no button to protect, and dropping
-    // half of it would cost the user a working direction for nothing.
     for stem in ANALOG_STEMS {
         let input = vec![
             format!("{stem}_minus_axis = \"-3\""),
@@ -661,7 +552,6 @@ fn a_stick_with_axes_on_both_halves_is_left_alone_on_every_stem() {
 
 #[test]
 fn a_stick_with_buttons_on_both_halves_is_left_alone_on_every_stem() {
-    // The healthy N64 C-cluster shape: nothing to shadow, so both survive.
     for stem in ANALOG_STEMS {
         let input = vec![
             format!("{stem}_minus_btn = \"11\""),
@@ -727,8 +617,7 @@ fn a_button_on_one_stem_leaves_another_stems_axis_alone() {
 
 #[test]
 fn a_line_with_no_separator_is_not_mistaken_for_a_key_and_is_preserved() {
-    // Autoconfigs carry comments and a header. Reading one as a key name would
-    // at best do nothing and at worst drop the line.
+    // Autoconfigs carry comments and a header.
     let input = owned(&[
         "# padmap Player 1",
         "input_r_y_minus_btn = \"11\"",
@@ -744,8 +633,6 @@ fn a_line_with_no_separator_is_not_mistaken_for_a_key_and_is_preserved() {
 
 #[test]
 fn line_order_is_otherwise_preserved_exactly() {
-    // The output is a file. Reordering it makes every regeneration look like a
-    // change in review, which is how real changes stop being noticed.
     let input = owned(&[
         "input_start_btn = \"9\"",
         "input_b_btn = \"1\"",
@@ -774,9 +661,7 @@ fn an_empty_list_comes_back_empty() {
 
 #[test]
 fn a_key_that_merely_starts_with_a_stem_does_not_trigger_the_rule() {
-    // Matching on a prefix rather than on the eight exact key names would drop
-    // binds nobody asked about, and the user would see a control vanish with no
-    // explanation anywhere.
+    // Matching on a prefix rather than on the eight exact key names would drop.
     let input = owned(&[
         "input_l_x_minus_btn_extra = \"5\"",
         "input_l_x_plus_axis = \"+0\"",
@@ -824,8 +709,6 @@ fn an_unrelated_axis_survives_beside_a_shadowed_one() {
 
 #[test]
 fn the_rule_is_idempotent() {
-    // It runs at the end of `lines`, and a caller that post-processes and
-    // re-runs it must not get a second bite at a different answer.
     let input = owned(&[
         "input_r_y_minus_btn = \"11\"",
         "input_r_y_plus_axis = \"+3\"",
@@ -838,8 +721,7 @@ fn the_rule_is_idempotent() {
 
 #[test]
 fn only_the_text_before_the_first_separator_counts_as_the_key() {
-    // A value containing " = " must not shift what the key is read as. Python
-    // split with maxsplit=1; the Rust takes the first element of the split.
+    // A value containing " = " must not shift what the key is read as.
     let out = drop_shadowed_axis_halves(owned(&[
         "input_r_y_minus_btn = \"11\"",
         "input_r_y_plus_axis = \"+3 = spare\"",
@@ -847,16 +729,8 @@ fn only_the_text_before_the_first_separator_counts_as_the_key() {
     assert_eq!(out, ["input_r_y_minus_btn = \"11\""]);
 }
 
-// ---------------------------------------------------------------------------
-// End to end through lines()
-// ---------------------------------------------------------------------------
-
 #[test]
 fn the_c_up_button_kills_the_c_down_axis_end_to_end() {
-    // The reported capture: Y pressed for C-up (a button on the right stick's
-    // minus half) while C-down was still captured as the stick's own axis. The
-    // axis then decided the answer and Y was never consulted -- in Smash Bros,
-    // with a C-stick that behaved and no error anywhere.
     let out = lines(
         &bindings(&[
             (Control::A, Binding::button(1)),
@@ -923,9 +797,6 @@ fn a_whole_c_stick_captured_as_axes_survives_end_to_end() {
 
 #[test]
 fn the_shadow_rule_reaches_keys_that_only_an_override_could_produce() {
-    // Nothing canonical names the *left* stick's halves, so the only way
-    // input_l_y_* appears is through a console override. The rule has to see it
-    // there too -- it runs on the finished lines, not on the controls.
     let out = lines(
         &bindings(&[
             (Control::DpadUp, Binding::button(7)),
@@ -939,18 +810,8 @@ fn the_shadow_rule_reaches_keys_that_only_an_override_could_produce() {
     assert_eq!(out, ["input_l_y_minus_btn = \"7\""]);
 }
 
-// ---------------------------------------------------------------------------
-// Whole-capture regression anchors
-//
-// Three plausible pads, written out in full. These exist so that a change to a
-// key table moves exactly one of them: if all three move, something global
-// changed; if none does, the change was inert.
-// ---------------------------------------------------------------------------
-
 #[test]
 fn a_plausible_snes_capture_writes_the_whole_expected_autoconfig() {
-    // No analogue anything, d-pad on a hat, two shoulders. Nothing overridden:
-    // snes9x reads the plain RetroPad.
     let out = lines(
         &bindings(&[
             (Control::A, Binding::button(1)),
@@ -989,9 +850,6 @@ fn a_plausible_snes_capture_writes_the_whole_expected_autoconfig() {
 
 #[test]
 fn a_plausible_gamecube_capture_writes_the_whole_expected_autoconfig() {
-    // Analogue triggers on axes (so L/R land on _axis under an overridden key),
-    // Z on RetroPad R, face buttons uncrossed by the layout, and the C-stick as
-    // a real stick -- both halves axes, so nothing is shadowed.
     let out = lines(
         &bindings(&[
             (Control::A, Binding::button(0)),
@@ -1038,8 +896,6 @@ fn a_plausible_gamecube_capture_writes_the_whole_expected_autoconfig() {
 
 #[test]
 fn a_plausible_n64_capture_writes_the_whole_expected_autoconfig() {
-    // B moves to RetroPad Y for mupen64plus-next, Z is the left trigger, and
-    // the C-cluster is four buttons on the right stick's halves.
     let out = lines(
         &bindings(&[
             (Control::A, Binding::button(1)),

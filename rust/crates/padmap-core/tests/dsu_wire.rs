@@ -1,5 +1,4 @@
-//! The DSU wire format, attacked: the socket is unauthenticated, so the parser
-//! must never read past what it measured. Offsets are pinned against `udp_protocol.h`.
+//! The DSU wire format, attacked: the socket is unauthenticated, so the parser must never read past what it measured.
 
 use padmap_core::dsu::{self, analog, button, Kind, Pad, Port, Request, Subscribe, Touch};
 use padmap_core::dsupad::Range;
@@ -242,7 +241,6 @@ fn every_field_of_a_pad_sample_sits_at_its_struct_offset() {
 
 #[test]
 fn the_analog_block_is_in_the_structs_order_not_the_bitfields() {
-    // AnalogButton runs dpad_left..triangle, then r1, l1, r2, l2: r before l, both times.
     assert_eq!(dsu::ANALOG_ORDER[analog::DPAD_LEFT], "dpad_left");
     assert_eq!(dsu::ANALOG_ORDER[analog::CROSS], "cross");
     assert_eq!(dsu::ANALOG_ORDER[analog::R1], "r1");
@@ -257,7 +255,6 @@ fn the_analog_block_is_in_the_structs_order_not_the_bitfields() {
 
 #[test]
 fn the_button_bits_are_the_dualshocks() {
-    // From the union in udp_protocol.h: Share is bit 0, Cross is 14, Square is 15.
     for (name, bit, want) in [
         ("SHARE", button::SHARE, 1),
         ("L3", button::L3, 2),

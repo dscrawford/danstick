@@ -1,5 +1,4 @@
 //! An assignment session: the pads, held open and grabbed, and who has claimed what.
-//! Republishing grabs these pads, so it must stop before a session opens them.
 
 use std::collections::BTreeMap;
 

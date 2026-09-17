@@ -1,5 +1,4 @@
 //! The padmap daemon.
-//! CRITICAL INVARIANT: must not be killable by the things it exists to serve.
 
 pub mod calibration;
 pub mod confirm;
@@ -17,7 +16,6 @@ pub fn clean(name: &str) -> String {
     padmap_core::sdl::clean_name(name)
 }
 
-// Tests can inject any time they like.
 pub fn now() -> f64 {
     static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
     START

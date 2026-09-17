@@ -66,7 +66,6 @@ fn the_event_is_named_state_whatever_the_state_is() {
     let value = serde_json::to_value(&event).expect("serialises");
     assert_eq!(value["event"], "state");
     assert_eq!(value["state"], "idle");
-    // A missing key and a zero are different answers to a front-end.
     for field in ["slots", "players", "build", "pid", "identity"] {
         assert!(value.get(field).is_some(), "{field} is missing");
     }

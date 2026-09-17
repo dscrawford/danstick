@@ -1,35 +1,6 @@
-//! Dolphin's GameCube controller bindings.
-//!
-//! The easiest of the four emulator targets, and worth saying why, because it
-//! looks like it should be the hardest: **Dolphin's SDL backend names inputs by
-//! standard gamepad element** -- `Button S`, `Left Y+`, `Pad N` -- and does the
-//! per-model lookup itself. So there is no capture to translate and no table
-//! per controller, which is the opposite of ares.
-//!
-//! That works because by the time Dolphin sees a padmap pad, the mapping
-//! padmap wrote has already made it a standard SDL gamepad. `Button S` is
-//! whichever physical button the user pressed when the wizard asked for A.
-//!
-//! Two things have to be right, and neither is the bindings:
-//!
-//! * **The device line.** `SDL/<n>/<name>`, where `n` counts devices already
-//!   sharing that *name*. Each padmap pad's name is unique per player, so `n`
-//!   is always 0 -- simpler than counting devices that share a GUID, which is
-//!   what a caller binding physical pads has to do. A binding naming a device
-//!   Dolphin cannot see is silently inert.
-//! * **The port's device type.** A port with no controller declared in it is
-//!   ignored however well its pad is bound, so `SIDevice0..3` in `Dolphin.ini`
-//!   is as load-bearing as the bindings themselves.
-//!
-//! The strings below were copied from a `GCPadNew.ini` Dolphin itself wrote
-//! for a real pad -- the same ground-truth rule padmap uses for Cemu and ares.
+//! Dolphin GameCube pad bindings via SDL backend.
 
-/// Dolphin's `SIDevices` enum, `Core/HW/SI/SI_Device.h`.
-///
-/// A managed port holds a standard controller; an unmanaged one is emptied
-/// rather than left alone, for the same reason padmap clears an unused
-/// RetroArch reservation -- a port left declared from a session with more
-/// players is a phantom controller in the next game.
+/// Unmanaged ports emptied to avoid phantom controllers from prior sessions.
 pub const SI_GC_CONTROLLER: u32 = 6;
 pub const SI_NONE: u32 = 0;
 
@@ -37,18 +8,12 @@ pub const SI_NONE: u32 = 0;
 pub const MAX_PLAYERS: u32 = 4;
 
 /// One `[GCPadN]` binding, as `key = value`.
-///
-/// The main stick answers to the d-pad as well -- `|` is Dolphin's "or" -- so
-/// the two are interchangeable. A game reading both gets both, which is the
-/// price of the d-pad working in a game that only reads the stick.
 pub const BINDINGS: [(&str, &str); 22] = [
     ("Buttons/A", "`Button S`"),
     ("Buttons/B", "`Button E`"),
     ("Buttons/X", "`Button N`"),
     ("Buttons/Y", "`Button W`"),
-    // GameCube Z, on the left bumper: the analogue triggers are L and R, so
-    // Z has nowhere else to sit on a standard pad.
-    ("Buttons/Z", "`Shoulder L`"),
+    ("Buttons/Z", "`Shoulder L`"), // Z on left bumper (triggers are L/R)
     ("Buttons/Start", "`Start`"),
     ("Main Stick/Up", "`Left Y+`|`Pad N`"),
     ("Main Stick/Down", "`Left Y-`|`Pad S`"),
@@ -74,16 +39,9 @@ pub const BINDINGS: [(&str, &str); 22] = [
     ("D-Pad/Down", "`Pad S`"),
 ];
 
-/// The d-pad bindings the table above runs out of room for.
-///
-/// Split only because a fixed-size array reads better than a growing one; they
-/// are written together and mean nothing apart.
 pub const DPAD_REST: [(&str, &str); 2] = [("D-Pad/Left", "`Pad W`"), ("D-Pad/Right", "`Pad E`")];
 
-/// How Dolphin addresses one of padmap's pads.
-///
-/// The slot is always 0: it counts devices already sharing the *name*, and
-/// every padmap pad is named for its player.
+/// Slot always 0: padmap pads unique per player.
 pub fn device(name: &str) -> String {
     format!("SDL/0/{name}")
 }
@@ -112,11 +70,7 @@ pub fn sections(players: &[u32], name_for: impl Fn(u32) -> String) -> String {
         .collect()
 }
 
-/// Replace the `[GCPad1..4]` sections, leaving everything else exactly as it
-/// was.
-///
-/// All four are dropped rather than only the ones being written: a controller
-/// unplugged since the last run would otherwise keep its port.
+/// Replace all `[GCPad1..4]` sections to clear unplugged controller ports.
 pub fn rewrite_bindings(existing: &str, body: &str) -> String {
     let mut out = String::with_capacity(existing.len() + body.len());
     let mut dropping = false;
@@ -148,10 +102,7 @@ fn is_pad_section(header: &str) -> bool {
         .is_ok_and(|port| (1..=MAX_PLAYERS).contains(&port))
 }
 
-/// What each `SIDevice` key should say, ports 1..=4 in order.
-///
-/// `SIDeviceN` is **zero-based** where `GCPadN` is one-based, which is the
-/// kind of off-by-one that binds player one's pad and then ignores it.
+/// `SIDeviceN` zero-based; `GCPadN` one-based.
 pub fn si_devices(players: &[u32]) -> Vec<(String, u32)> {
     (1..=MAX_PLAYERS)
         .map(|port| {
@@ -165,11 +116,7 @@ pub fn si_devices(players: &[u32]) -> Vec<(String, u32)> {
         .collect()
 }
 
-/// Set one key of one section of an ini, adding either if it is missing.
-///
-/// `Dolphin.ini` holds every setting Dolphin has, so this edits rather than
-/// rewrites -- the same rule as ares' `settings.bml` and Ryujinx's
-/// `Config.json`.
+/// Edit ini in place, adding section or key if missing.
 pub fn set_ini(existing: &str, section_name: &str, key: &str, value: &str) -> String {
     let header = format!("[{section_name}]");
     let line = format!("{key} = {value}\n");
@@ -180,8 +127,6 @@ pub fn set_ini(existing: &str, section_name: &str, key: &str, value: &str) -> St
     for raw in existing.split_inclusive('\n') {
         let bare = raw.trim_end_matches(['\n', '\r']);
         if bare.starts_with('[') {
-            // Leaving the section without having written the key: write it
-            // now, before the header that ends the section.
             if in_section && !written {
                 out.push_str(&line);
                 written = true;
@@ -211,22 +156,10 @@ pub fn set_ini(existing: &str, section_name: &str, key: &str, value: &str) -> St
     out
 }
 
-/// What padmap calls itself in Dolphin's DSU server list.
-///
-/// Dolphin names every device a server offers after this description, so
-/// padmap's motion appears as `DSUClient/<n>/padmap`, `n` counting connected
-/// slots from zero. padmap seats the lowest free seat, so for players who
-/// joined in order `n` is the player number less one.
+/// Appears as `DSUClient/<n>/padmap` in Dolphin.
 pub const DSU_DESCRIPTION: &str = "padmap";
 
-/// `DSUClient.ini`, with padmap's server enabled and listed.
-///
-/// Keys from `DualShockUDPClient.cpp`: `[Server]` holds `Enabled` and
-/// `Entries`, the latter `description:address:port;` repeated. Other servers
-/// the user added are kept -- padmap owns its own entry, not the list -- and
-/// any earlier padmap entry, or anything else already pointing at padmap's
-/// address, is replaced rather than duplicated. Two entries on one address is
-/// every motion device appearing twice.
+/// DSU server entry: `[Server]` with `Enabled` and `Entries`.
 pub fn dsu_client_ini(existing: &str) -> String {
     let ours_at = format!("{}:{}", crate::dsu::HOST, crate::dsu::PORT);
     let mut entries = String::new();
@@ -268,7 +201,6 @@ pub fn get_ini(existing: &str, section_name: &str, key: &str) -> Option<String> 
     None
 }
 
-/// The key an ini line sets, or `None` if it sets nothing.
 fn key_of(line: &str) -> Option<&str> {
     let (key, _) = line.split_once('=')?;
     Some(key.trim())
@@ -278,9 +210,6 @@ fn key_of(line: &str) -> Option<&str> {
 mod tests {
     use super::*;
 
-    /// Byte for byte what GOTG's implementation writes, which was itself
-    /// copied from a `GCPadNew.ini` Dolphin wrote for a real pad. If these
-    /// drift, a GameCube game binds the wrong buttons and nothing says so.
     #[test]
     fn a_section_is_what_dolphin_itself_wrote() {
         let text = section(1, "SDL/0/padmap Player 1");
@@ -308,14 +237,11 @@ mod tests {
                 "missing {expected:?} from:\n{text}"
             );
         }
-        // The stick answers to the d-pad as well, so a game that only reads
-        // the stick still works from the d-pad.
         assert!(text.contains("`Left Y+`|`Pad N`"));
     }
 
     #[test]
     fn a_padmap_pad_is_always_slot_zero() {
-        // Each pad's name is unique per player, so nothing ever shares one.
         assert_eq!(device("padmap Player 3"), "SDL/0/padmap Player 3");
     }
 
@@ -327,8 +253,6 @@ mod tests {
         let out = rewrite_bindings(existing, &body);
         assert!(out.contains("[Core]\nSIDevice0 = 6\n"), "{out}");
         assert!(out.contains("[DSUClient]\nServer = 127.0.0.1"), "{out}");
-        // The stale port went, not just the one being rewritten: a controller
-        // unplugged since last time would otherwise keep its port.
         assert!(!out.contains("SDL/0/gone"), "{out}");
         assert!(!out.contains("SDL/0/old"), "{out}");
         assert!(out.contains("Device = SDL/0/padmap Player 1"), "{out}");
@@ -336,8 +260,6 @@ mod tests {
 
     #[test]
     fn a_section_that_is_not_a_pad_is_left_alone() {
-        // `[GCPad5]` is not a port Dolphin has, and `[GCPadWii]` is somebody
-        // else's section entirely.
         assert!(is_pad_section("[GCPad1]"));
         assert!(is_pad_section("[GCPad4]"));
         assert!(!is_pad_section("[GCPad5]"));
@@ -354,8 +276,6 @@ mod tests {
 
     #[test]
     fn an_unmanaged_port_is_emptied_rather_than_left_alone() {
-        // Ports are zero-based here and one-based in the section names, which
-        // is exactly the off-by-one that binds a pad and then ignores it.
         let devices = si_devices(&[1, 2]);
         assert_eq!(
             devices,
@@ -430,8 +350,7 @@ mod tests {
 
     #[test]
     fn a_users_other_dsu_servers_are_kept() {
-        // padmap owns its entry, not the list. A phone app the user added by
-        // hand must survive every republish.
+        // padmap owns its entry, not the list.
         let existing = "[Server]\nEnabled = False\nEntries = phone:192.168.1.5:26760;\n";
         let text = dsu_client_ini(existing);
         assert_eq!(
@@ -443,12 +362,9 @@ mod tests {
 
     #[test]
     fn writing_twice_does_not_list_padmap_twice() {
-        // Two entries on one address is every motion device appearing twice
-        // in Dolphin, with nothing saying which is which.
         let once = dsu_client_ini("");
         let twice = dsu_client_ini(&once);
         assert_eq!(once, twice);
-        // Nor does an entry somebody else named that already points at us.
         let renamed = "[Server]\nEntries = mine:127.0.0.1:26760;\n";
         assert_eq!(
             get_ini(&dsu_client_ini(renamed), "Server", "Entries").as_deref(),

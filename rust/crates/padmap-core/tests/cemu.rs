@@ -40,7 +40,6 @@ fn cemus_own() -> String {
 #[test]
 fn every_binding_matches_the_one_cemu_wrote_itself() {
     let theirs = pairs(&cemus_own());
-    // Player 2: the reference file is a Pro Controller, and player 1 is now a GamePad.
     let ours = pairs(&cemu::profile(2, GUID, "padmap Player 1"));
     assert!(!theirs.is_empty(), "the reference profile has no mappings");
     for (mapping, button) in &theirs {
@@ -126,7 +125,6 @@ fn the_profile_is_well_formed_enough_for_cemu_to_read() {
 
 #[test]
 fn player_one_is_a_gamepad_because_that_is_the_one_with_motion() {
-    // Only VPADController reads a gyro, and Cemu emulates exactly one GamePad.
     assert_eq!(cemu::emulated_for(1), cemu::Emulated::GamePad);
     for player in 2..=8u32 {
         assert_eq!(cemu::emulated_for(player), cemu::Emulated::Pro);
@@ -135,7 +133,6 @@ fn player_one_is_a_gamepad_because_that_is_the_one_with_motion() {
 
 #[test]
 fn the_gamepad_numbers_its_controls_one_lower_from_the_dpad_on() {
-    // VPADController::ButtonId has Up at 11 where ProController::ButtonId skips to 12.
     assert_eq!(cemu::GamePad::Minus as u8, cemu::WiiU::Minus as u8);
     assert_eq!(cemu::GamePad::Up as u8, cemu::WiiU::Up as u8 - 1);
     assert_eq!(
@@ -153,7 +150,6 @@ fn both_tables_bind_the_same_controls_to_the_same_sdl_ids() {
 
 #[test]
 fn motion_arrives_as_a_second_controller_on_the_same_profile() {
-    // get_motion_data returns the first <controller> with <motion> true.
     let xml = cemu::profile(1, GUID, "padmap Player 1");
     assert_eq!(xml.matches("<controller>").count(), 2, "{xml}");
     assert!(xml.contains("<api>DSUController</api>"), "{xml}");
@@ -165,7 +161,6 @@ fn motion_arrives_as_a_second_controller_on_the_same_profile() {
 
 #[test]
 fn the_motion_uuid_is_a_bare_slot_number() {
-    // ControllerFactory parses a DSU uuid with ConvertString<uint32>; a `0_` prefix throws.
     for player in 1..=4u32 {
         let xml = cemu::profile(player, "0", "padmap");
         assert!(
@@ -188,7 +183,6 @@ fn the_motion_entry_binds_no_buttons() {
 
 #[test]
 fn a_player_beyond_the_four_dsu_slots_gets_no_motion_entry() {
-    // DSUController's constructor throws past the provider's limit and Cemu drops the entry.
     for player in 5..=8u32 {
         let xml = cemu::profile(player, "0", "padmap");
         assert!(!xml.contains("DSUController"), "player {player}: {xml}");

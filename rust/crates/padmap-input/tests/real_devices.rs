@@ -1,19 +1,4 @@
 //! The parts of padmap that only exist when there is a device.
-//!
-//! `clone.rs`, `republish.rs` and `pad.rs` were the three least-covered files
-//! in the workspace -- 12%, 15% and 56% -- and all for the same reason: every
-//! interesting line needs an `evdev::Device`, and the unit tests beside them
-//! can only reach the pure helpers. The forwarding path is the whole point of
-//! the Rust port, and it was the least tested thing in it.
-//!
-//! So these make one. A uinput device is a real device: the kernel publishes
-//! it, udev tags it, `discover()` finds it, and a clone of it can be created,
-//! written to and read back. The identity used is a Microsoft X-Box 360 pad,
-//! matching `fakepad.Xbox360` on the Python side, so both halves of the
-//! project are testing against the same controller.
-//!
-//! Skipped, not failed, where `/dev/uinput` is not writable -- a sandboxed
-//! build has no business failing over a device node it was never given.
 
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -24,15 +9,12 @@ use evdev::{
 };
 use padmap_input::{clone, pad, republish};
 
-/// What `fakepad.Xbox360` declares, from `xpad.c`.
 const NAME: &str = "padmap test X-Box 360 pad";
 const VID: u16 = 0x045E;
 const PID: u16 = 0x028E;
 
 fn uinput_available() -> bool {
-    // Writable, not merely present: in a Nix build /dev/uinput may exist and
-    // be unopenable, and a test that failed there would fail for everyone
-    // building the package rather than for anyone who broke something.
+    // Writable, not merely present: in a Nix build /dev/uinput may exist and.
     std::fs::OpenOptions::new()
         .write(true)
         .open("/dev/uinput")
@@ -66,9 +48,6 @@ fn spawn_source() -> VirtualDevice {
     ] {
         keys.insert(key);
     }
-    // The ranges xpad_set_up_abs declares: sticks -32768..32767 fuzz 16 flat
-    // 128, triggers 0..255. A clone built from axes with no range at all gets
-    // min == max, and RetroArch divides by that on its first poll.
     let stick = AbsInfo::new(0, -32768, 32767, 16, 128, 0);
     let trigger = AbsInfo::new(0, 0, 255, 0, 0, 0);
     let mut builder = VirtualDevice::builder()
@@ -93,23 +72,12 @@ fn spawn_source() -> VirtualDevice {
             .expect("trigger");
     }
     let device = builder.build().expect("build source");
-    // udev has to tag it ID_INPUT_JOYSTICK before discover() will report it.
     std::thread::sleep(Duration::from_millis(500));
     device
 }
 
-/// A clone of `found`, with its source set non-blocking.
-///
-/// `Republisher::forward` calls `fetch_events` and handles `WouldBlock`, but
-/// the daemon only ever calls it when epoll has already said the descriptor is
-/// readable -- so in production the source stays blocking and never waits.
-/// A test drives the pump directly, with nothing gating it, and a blocking
-/// source turns the first call into a wait for an event that only arrives
-/// after the call returns. It hangs for ever rather than failing.
 fn clone_of(found: &pad::Pad, player: u32) -> clone::VirtualPad {
     let axes: BTreeMap<u16, padmap_core::calibration::AxisCalibration> = BTreeMap::new();
-    // grab=false: something else on this machine may hold the pad, and a test
-    // that took exclusive access would take it from a running daemon.
     let tuning = padmap_core::tuning::Tuning::default();
     let mut virtual_pad = clone::create(
         found,
@@ -152,8 +120,7 @@ fn a_spawned_pad_is_discovered_with_the_identity_it_declared() {
     assert_eq!(found.name, NAME);
     assert_eq!((found.vid, found.pid), (VID, PID));
     assert!(!found.event().is_empty());
-    // It is a real pad, not one of padmap's own clones -- which discover()
-    // has to tell apart, because republishing a clone would be a loop.
+    // It is a real pad, not one of padmap's own clones -- which discover().
     assert!(!pad::is_padmap_clone(&found.name, &found.phys));
 }
 
@@ -183,8 +150,6 @@ fn a_clone_mirrors_the_source_and_carries_padmaps_own_name() {
     assert_eq!(virtual_pad.name(), clone::virtual_name(3));
     assert!(virtual_pad.name().contains('3'), "{}", virtual_pad.name());
 
-    // In mirror mode the clone wears the source's ids, which is what makes
-    // SDL's database match it as the controller it actually is.
     let identity = clone::Identity::for_source(
         clone::IdentityMode::Mirror,
         &Device::open(&found.path).expect("open"),
@@ -211,8 +176,7 @@ fn a_press_on_the_source_arrives_on_the_clone() {
     let found = find(&mut source).expect("discover");
     let mut republisher = republish::Republisher::new(vec![clone_of(&found, 1)]);
 
-    // Drain whatever the kernel queued while the clone was being built, so
-    // the assertion below is about the press and not about startup.
+    // Drain whatever the kernel queued while the clone was being built, so.
     let _ = republisher.forward(0);
 
     source
@@ -256,8 +220,6 @@ fn a_paused_republisher_forwards_nothing_but_still_drains() {
         .expect("emit");
     std::thread::sleep(Duration::from_millis(50));
 
-    // Still read, so the backlog cannot arrive in a burst when the wizard
-    // closes -- an unread evdev node does not go quiet, it fills.
     let pumped = republisher.forward(0);
     assert!(!pumped.gone);
 
@@ -275,8 +237,6 @@ fn a_source_that_goes_away_is_reported_dead_rather_than_spinning() {
     let mut republisher = republish::Republisher::new(vec![clone_of(&found, 1)]);
     let _ = republisher.forward(0);
 
-    // Unplugged. A vanished node reports readable for ever, so the loop spins
-    // at full speed unless the clone is marked gone and unregistered.
     drop(source);
     std::thread::sleep(Duration::from_millis(300));
 
@@ -295,8 +255,6 @@ fn a_source_that_goes_away_is_reported_dead_rather_than_spinning() {
 
 #[test]
 fn discovery_survives_a_machine_with_no_pads_at_all() {
-    // No uinput needed: the point is that discover() answers rather than
-    // failing when there is nothing to find.
     let pads = pad::discover(pad::Filter::default()).expect("discover must not error");
     for found in &pads {
         assert!(!found.name.is_empty() || !found.event().is_empty());
@@ -306,9 +264,7 @@ fn discovery_survives_a_machine_with_no_pads_at_all() {
 
 #[test]
 fn undriven_controllers_are_included_by_default_but_never_for_retroarch() {
-    // `Filter`'s Default is written out rather than derived because one field
-    // is not false; this is what would catch a future `#[derive(Default)]`
-    // silently reverting it.
+    // `Filter`'s Default is written out rather than derived because one field.
     let default = pad::Filter::default();
     assert!(!default.include_virtual);
     assert!(!default.retroarch_only);
@@ -317,9 +273,7 @@ fn undriven_controllers_are_included_by_default_but_never_for_retroarch() {
         "a controller padmap drives itself must be findable without an env var"
     );
 
-    // RetroArch cannot see a device with no evdev node, and counting one would
-    // shift every real pad's index by one. Holds whether or not a Steam
-    // Controller is attached: the combination is what is under test.
+    // RetroArch cannot see a device with no evdev node, and counting one would.
     let filtered = pad::discover(pad::Filter {
         include_virtual: false,
         retroarch_only: true,
@@ -341,9 +295,7 @@ fn cemu_profiles_are_written_per_player_and_stop_at_cemus_limit() {
 
     let dir = std::env::temp_dir().join(format!("padmap-cemu-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
-    // Nine players: Cemu has eight slots, and a ninth must get no profile
-    // rather than one wrapped round to controller0.xml -- which would take
-    // player one's pad away.
+    // Nine players: Cemu has eight slots, and a ninth must get no profile.
     let players: Vec<u32> = (1..=9).collect();
     let written = artefacts::write_cemu_profiles(
         &players,
@@ -365,7 +317,6 @@ fn cemu_profiles_are_written_per_player_and_stop_at_cemus_limit() {
     );
     assert!(first.contains("<display_name>padmap Player 1</display_name>"));
 
-    // A player padmap is not managing keeps whatever profile the user had.
     std::fs::write(dir.join("controller5.xml"), "mine").expect("write");
     artefacts::write_cemu_profiles(&[1], |_| "g".to_owned(), |_| "n".to_owned(), Some(&dir))
         .expect("writes");
@@ -382,9 +333,6 @@ fn rewriting_ares_settings_touches_only_the_ports_padmap_manages() {
     use padmap_input::artefacts;
     use std::collections::BTreeMap;
 
-    // settings.bml holds every setting ares has -- video, audio, per-system
-    // paths, hotkeys -- so anything but a surgical edit throws away what the
-    // user configured.
     let existing = "Video\n  Driver: OpenGL 3.2\n  Shader: None\n\
                     VirtualPad1\n  A..South: ;;\n  Start: ;;\n\
                     VirtualPad2\n  A..South: old;;\n\
@@ -439,7 +387,6 @@ fn rewriting_ryujinx_config_keeps_every_other_setting() {
 
     let back: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&path).expect("read")).expect("json");
-    // Everything that was not input_config is untouched.
     assert_eq!(back["version"], 70);
     assert_eq!(back["res_scale"], 2);
     let entries = back["input_config"].as_array().expect("an array");
@@ -454,15 +401,11 @@ fn neither_writer_invents_a_config_that_was_never_there() {
     use padmap_input::artefacts;
     use std::collections::BTreeMap;
 
-    // Writing one from nothing would leave the emulator with padmap's ports
-    // and defaults for everything else -- worse than doing nothing, because
-    // it looks configured.
+    // Writing one from nothing would leave the emulator with padmap's ports.
     let missing = std::path::Path::new("/nonexistent-padmap-emulator/settings.bml");
     assert!(artefacts::write_ares_settings(&BTreeMap::new(), Some(missing)).is_err());
     assert!(artefacts::write_ryujinx_config(Vec::new(), Some(missing)).is_err());
 }
-
-// --- the DSU picture, from a real device ------------------------------------
 
 #[test]
 fn a_press_on_the_source_shows_in_the_dsu_picture() {
@@ -496,10 +439,6 @@ fn a_press_on_the_source_shows_in_the_dsu_picture() {
 
 #[test]
 fn pausing_releases_the_dsu_picture_as_well_as_the_clone() {
-    // A wizard opens while B is held: the clone gets a release, so the game
-    // does not see a stuck button. The DSU picture has to get one too, or an
-    // emulator reading padmap over UDP holds the button for the whole wizard
-    // and after it.
     needs_uinput!();
     let mut source = spawn_source();
     let found = find(&mut source).expect("discover");
@@ -530,8 +469,6 @@ fn pausing_releases_the_dsu_picture_as_well_as_the_clone() {
         "pausing left a button held in the DSU picture"
     );
 
-    // And a press made during the pause is not shown either -- that is the
-    // whole point of the pause.
     source
         .emit(&[
             InputEvent::new(EventType::KEY.0, KeyCode::BTN_SOUTH.code(), 1),
@@ -587,8 +524,6 @@ fn node_of(device: &mut VirtualDevice) -> std::path::PathBuf {
 
 #[test]
 fn a_kernel_imu_is_scaled_by_the_resolution_it_declares() {
-    // 8192 counts per g and 1024 per degree per second: a DualShock 4's.
-    // The frame conversion is on top: the kernel's +Y (up) is DSU's -Y.
     needs_uinput!();
     let mut imu = spawn_imu(8192, 1024);
     let node = node_of(&mut imu);
@@ -649,10 +584,7 @@ fn an_imu_that_vanishes_is_reported_gone_not_an_error() {
     assert!(gone, "the sensor never noticed its device had gone");
 }
 
-// --- tuning, through a real clone ---------------------------------------------
-
-/// A clone of `found` built with `tuning`, and its own node opened for
-/// reading, so a test sees exactly what a game would.
+/// A clone of `found` built with `tuning`, and its own node opened for.
 fn tuned_clone_of(
     found: &pad::Pad,
     tuning: padmap_core::tuning::Tuning,
@@ -666,8 +598,6 @@ fn tuned_clone_of(
         .set_nonblocking(true)
         .expect("set the source non-blocking");
     let node = virtual_pad.node().expect("the clone's node");
-    // A node exists before it is readable: udev applies the uaccess ACL a
-    // moment after the kernel creates it (see EVENTS.md). Wait for it.
     let deadline = std::time::Instant::now() + Duration::from_secs(3);
     let reader = loop {
         match Device::open(&node) {
@@ -683,8 +613,6 @@ fn tuned_clone_of(
     (virtual_pad, reader)
 }
 
-/// Every key and axis event the clone has emitted so far, as `(type, code,
-/// value)`.
 fn drain_clone(reader: &mut Device) -> Vec<(u16, u16, i32)> {
     let mut out = Vec::new();
     for _ in 0..20 {
@@ -724,7 +652,6 @@ fn a_bouncing_button_reaches_the_clone_as_one_press() {
             ])
             .expect("emit");
     };
-    // Press, then a bounce: release and press again five milliseconds apart.
     press(&mut source, 1);
     std::thread::sleep(Duration::from_millis(20));
     let _ = republisher.forward(0);
@@ -741,12 +668,10 @@ fn a_bouncing_button_reaches_the_clone_as_one_press() {
         "one press, no bounce"
     );
 
-    // Well past the window, still nothing: the bounce cancelled the release.
     std::thread::sleep(Duration::from_millis(80));
     republisher.flush_debounce();
     assert!(drain_clone(&mut reader).is_empty());
 
-    // A real release arrives after the window, from the tick.
     press(&mut source, 0);
     std::thread::sleep(Duration::from_millis(20));
     let _ = republisher.forward(0);
@@ -786,14 +711,10 @@ fn a_deadzone_flattens_drift_and_keeps_the_ends() {
         let _ = republisher.forward(0);
         drain_clone(&mut reader)
     };
-    // Slammed reads as slammed, so a character can still run.
     assert_eq!(send(32767), vec![(EventType::ABSOLUTE.0, 0, 32767)]);
-    // Drift inside the band reads as centred. (After the slam, so the kernel
-    // sees a change: it drops a write of the value an axis already holds.)
+    // Drift inside the band reads as centred.
     assert_eq!(send(3000), vec![(EventType::ABSOLUTE.0, 0, 0)]);
-    // And stays there as the drift wanders, with nothing emitted at all.
     assert!(send(-5000).is_empty(), "drift inside the band is silence");
-    // And the untuned axis is untouched.
     source
         .emit(&[
             InputEvent::new(EventType::ABSOLUTE.0, AbsoluteAxisCode::ABS_Y.0, 3000),

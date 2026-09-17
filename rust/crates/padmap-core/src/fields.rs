@@ -1,10 +1,4 @@
 //! An insertion-ordered string map, which is what a Python `dict` is.
-//!
-//! Mapping output order is load-bearing: regenerating a mapping must not
-//! reshuffle the file, or every diff looks like a change and a real one is
-//! invisible in it. A `BTreeMap` would sort, a `HashMap` would randomise, and
-//! neither reproduces what the Python wrote. Small enough (at most a couple of
-//! dozen entries) that the linear scan is cheaper than hashing.
 
 use std::fmt;
 
@@ -17,8 +11,7 @@ impl Fields {
         Fields(Vec::new())
     }
 
-    /// Set a field, keeping its original position if it is already present --
-    /// exactly what `dict.__setitem__` and `dict.update` do.
+    /// Set a field, keeping its original position if it is already present -- exactly what `dict.__setitem__` and `dict.update` do.
     pub fn insert(&mut self, field: impl Into<String>, target: impl Into<String>) {
         let field = field.into();
         let target = target.into();

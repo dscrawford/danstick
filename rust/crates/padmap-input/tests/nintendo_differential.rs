@@ -1,10 +1,4 @@
 //! Hold the Switch Pro decode to what the Python decodes.
-//!
-//! The table was established against the hardware with `tools/switchprobe.py`
-//! -- pressing A set byte 3 to 0x08 -- so what is at risk in a port is not the
-//! protocol but the arithmetic around it: which bit means which evdev code,
-//! the twelve-bit stick unpacking, the Y inversion, and the fuzz that decides
-//! whether a reading is a movement or a pad sitting on a table.
 
 use std::path::Path;
 
@@ -22,17 +16,10 @@ fn corpus(name: &str) -> Vec<Value> {
 }
 
 /// A 0x30 report, built as the corpus generator builds one.
-///
-/// The stick arguments are in **evdev** units -- the values the decode should
-/// hand out -- and the inversion back to what the controller would have sent
-/// happens here. That makes the common case readable; a test about the
-/// inversion itself has to use [`report_raw`], or it inverts twice and
-/// asserts nothing.
 fn report(right: u8, shared: u8, left: u8, lx: i32, ly: i32, rx: i32, ry: i32) -> Vec<u8> {
     report_raw(right, shared, left, lx, 4095 - ly, rx, 4095 - ry)
 }
 
-/// The same, with the sticks exactly as they go on the wire.
 fn report_raw(right: u8, shared: u8, left: u8, lx: i32, ly: i32, rx: i32, ry: i32) -> Vec<u8> {
     let mut data = vec![0u8; 64];
     data[0] = 0x30;
@@ -51,12 +38,10 @@ fn neutral() -> Vec<u8> {
     report(0, 0, 0, 2048, 2048, 2048, 2048)
 }
 
-/// A source with no device behind it, for decoding alone.
 struct Decoder(Source);
 
 impl Decoder {
     fn new() -> Option<Decoder> {
-        // A pty is a real character device, which is what `open` requires.
         use rustix::pty::{grantpt, openpt, ptsname, unlockpt, OpenptFlags};
         let master = openpt(OpenptFlags::RDWR | OpenptFlags::NOCTTY).ok()?;
         grantpt(&master).ok()?;
@@ -115,7 +100,6 @@ fn want(case: &Value) -> Vec<[i32; 3]> {
 fn every_recorded_report_decodes_to_the_same_events() {
     for case in corpus("switch_decode") {
         let mut decoder = decoder!();
-        // Settle first, so each case is the change and not the opening frame.
         let mut settle = Vec::new();
         decoder.0.decode_for_test(&neutral(), &mut settle);
 
@@ -143,9 +127,6 @@ fn every_recorded_report_decodes_to_the_same_events() {
 
 #[test]
 fn the_opening_frame_says_where_the_sticks_are_and_nothing_else() {
-    // Buttons default to up, so a neutral first report presses nothing -- but
-    // the axes do report, because a stick can rest anywhere and the clone has
-    // to be told where before anything reads it.
     let mut decoder = decoder!();
     let mut got = Vec::new();
     decoder.0.decode_for_test(&neutral(), &mut got);
@@ -155,12 +136,6 @@ fn the_opening_frame_says_where_the_sticks_are_and_nothing_else() {
 
 #[test]
 fn y_is_inverted_and_x_is_not() {
-    // The controller counts Y upwards and evdev counts it down, like screen
-    // coordinates. hid-nintendo flips it too, which is the other reason to:
-    // a profile captured over USB through the kernel driver has to mean the
-    // same thing when the pad comes back over Bluetooth.
-    // Wire units, deliberately: `report` would invert them on the way in and
-    // the assertion would hold however the decode behaved.
     let state = nintendo::decode_state(&report_raw(0, 0, 0, 3000, 4095, 1000, 0)).expect("decodes");
     assert_eq!(state.left_x, 3000, "X passes through");
     assert_eq!(state.left_y, 0, "full up on the wire is zero in evdev");
@@ -205,7 +180,6 @@ fn the_mode_request_is_the_packet_the_python_writes() {
     assert_eq!(packet[10], 0x03, "set input report mode");
     assert_eq!(packet[11], 0x30, "to the full report");
     assert!(packet[12..].iter().all(|byte| *byte == 0));
-    // The counter is four bits and rolls.
     assert_eq!(nintendo::full_mode_packet(0x0F)[1], 0x0F);
     assert_eq!(nintendo::full_mode_packet(0x10)[1], 0x00);
 }
@@ -225,12 +199,9 @@ fn every_override_file_parses_the_same() {
 
 #[test]
 fn an_override_that_is_not_a_boolean_is_ignored() {
-    // A `1` or a `"yes"` is someone guessing at the format, and guessing
-    // wrong should not silently switch a controller's whole input path.
     assert!(nintendo::parse_overrides(r#"{"057e:2009": 1}"#).is_empty());
     assert!(nintendo::parse_overrides(r#"{"057e:2009": "yes"}"#).is_empty());
     assert!(nintendo::parse_overrides(r#"{"057e:2009": null}"#).is_empty());
-    // And the key is lowercased, so a file written by hand still matches.
     assert_eq!(
         nintendo::parse_overrides(r#"{"057E:2009": true}"#).get("057e:2009"),
         Some(&true)

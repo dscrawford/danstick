@@ -1,20 +1,9 @@
 //! Parse RetroArch command line: core path and ROM path.
-//! ROM identified as existing file, not by position (allows prepended/appended flags).
 
-/// RetroArch's own spellings for "use this core".
-///
-/// `-L` is what every front-end emits; the long form is accepted because a
-/// hand-written launch command is a perfectly ordinary thing to point
-/// `padmap-play` at.
+/// RetroArch's spellings for "use this core" (-L or --libretro).
 pub const CORE_FLAGS: [&str; 2] = ["-L", "--libretro"];
 
-/// Flags that take a value, so the value is never mistaken for the ROM.
-///
-/// Deliberately a short list of the ones padmap or a front-end actually emits
-/// rather than an attempt at RetroArch's whole grammar: an unlisted flag's
-/// value can only be misread as a ROM if it also happens to be an existing
-/// file, and the fallback for "no ROM identified" is the console mapping,
-/// which is still better than the default.
+/// Flags that take a value (short list of actual flags, not complete RetroArch grammar).
 pub const VALUE_FLAGS: [&str; 26] = [
     "-L",
     "--libretro",
@@ -44,13 +33,7 @@ pub const VALUE_FLAGS: [&str; 26] = [
     "--max-frames",
 ];
 
-/// `(core path, ROM path)` out of a RetroArch command line.
-///
-/// The ROM is identified by *being a file that exists* rather than by
-/// position. RetroArch takes it as a positional argument, but `padmap-play`
-/// prepends its own flags and a front-end may append more, so counting from
-/// either end is wrong sooner or later -- and a ROM that does not exist is not
-/// a game whose mapping is worth resolving.
+/// Extract (core path, ROM path) from a RetroArch command line.
 pub fn split_args(argv: &[String], exists: impl Fn(&str) -> bool) -> (String, String) {
     let mut core = String::new();
     let mut rom = String::new();
@@ -70,9 +53,6 @@ pub fn split_args(argv: &[String], exists: impl Fn(&str) -> bool) -> (String, St
             index += 1;
             continue;
         }
-        // Last one wins: a launch naming several files is a subsystem load,
-        // where the last is still a game and any of them identifies it about
-        // equally well.
         if exists(item) {
             rom = item.to_owned();
         }
@@ -81,18 +61,8 @@ pub fn split_args(argv: &[String], exists: impl Fn(&str) -> bool) -> (String, St
     (core, rom)
 }
 
-/// A human-readable name for the scope picker's entry.
-///
-/// Derived from the filename rather than looked up. The daemon shows this on a
-/// strip beside four console names, where "close enough to recognise" is the
-/// whole requirement, and a lookup would make the picker depend on a metadata
-/// table that may not have this game in it.
+/// Human-readable title for scope picker: filename stem with underscores as spaces.
 pub fn title_for(rom: &str) -> String {
-    // Trailing separators first, as `pathlib.Path(...).name` does and as
-    // `scope::game_key` and `layout::for_core` already do. A directory-shaped
-    // "ROM" is normal -- a PlayStation disc folder, a MAME set -- and the
-    // three have to read a path the same way or they disagree about which
-    // game a launch is.
     let name = rom.trim_end_matches('/').rsplit('/').next().unwrap_or("");
     let stem = match name.rfind('.') {
         Some(dot) => &name[..dot],
@@ -123,9 +93,6 @@ mod tests {
 
     #[test]
     fn a_flags_value_is_never_mistaken_for_the_rom() {
-        // --appendconfig's value is a real file. Counting positionally, or
-        // taking the first path that exists, would launch the *config* as the
-        // game and resolve a mapping for it.
         let (_, rom) = split_args(
             &argv(["--appendconfig", "launch.cfg", "-L", "n64.so", "mario.z64"].as_slice()),
             all,
@@ -163,10 +130,8 @@ mod tests {
     fn a_title_is_the_stem_with_underscores_opened_up() {
         assert_eq!(title_for("/roms/n64/Super_Mario_64.z64"), "Super Mario 64");
         assert_eq!(title_for("GoldenEye 007 (USA).z64"), "GoldenEye 007 (USA)");
-        // Only the last suffix, so a name full of dots keeps them.
         assert_eq!(title_for("Zelda, The (v1.2).z64"), "Zelda, The (v1.2)");
         assert_eq!(title_for("/roms/mame/10yard"), "10yard");
-        // A directory-shaped ROM keeps its name, as Path(...).name does.
         assert_eq!(
             title_for("/roms/psx/Final Fantasy VII/"),
             "Final Fantasy VII"

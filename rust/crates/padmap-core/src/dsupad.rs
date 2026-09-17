@@ -1,12 +1,4 @@
-//! evdev events in, a [`dsu::Pad`] out.
-//!
-//! padmap already forwards every event from a physical pad to its clone. This
-//! watches the same stream go past and keeps a DSU-shaped picture of it, so a
-//! consumer that reads padmap over UDP sees the buttons as well as the gyro.
-//!
-//! The names on the wire are a DualShock's, because the format is one. The
-//! translation is by *position*, the same rule padmap uses everywhere else:
-//! `BTN_SOUTH` is the bottom face button, and on a DualShock that is Cross.
+//! evdev events to [`dsu::Pad`] with DSU naming (DualShock button positions).
 
 use std::collections::BTreeMap;
 
@@ -19,10 +11,7 @@ pub const EV_KEY: u16 = 0x01;
 /// `EV_ABS`.
 pub const EV_ABS: u16 = 0x03;
 
-/// Kernel button code -> the bit it sets in `digital_button`.
-///
-/// `BTN_MODE` is deliberately absent: the guide button has a byte of its own
-/// in the packet rather than a bit in the field.
+/// Kernel button codes (BTN_MODE handled separately as a byte).
 pub const BUTTON_BITS: [(u16, u16); 12] = [
     (0x130, button::CROSS),    // BTN_SOUTH
     (0x131, button::CIRCLE),   // BTN_EAST
@@ -41,10 +30,7 @@ pub const BUTTON_BITS: [(u16, u16); 12] = [
 /// `BTN_MODE`, which the packet carries as a byte of its own.
 pub const BTN_MODE: u16 = 0x13C;
 
-/// `BTN_DPAD_UP..BTN_DPAD_RIGHT`: a d-pad reported as keys rather than a hat.
-///
-/// hid-nintendo does this for a Switch Pro; xpad uses a hat. Both land on the
-/// same four bits, or a Switch Pro has no d-pad over DSU.
+/// D-pad as keys (not hat): hid-nintendo on Switch Pro vs xpad hat.
 const DPAD_KEYS: [(u16, u16, usize); 4] = [
     (0x220, button::UP, analog::DPAD_UP),
     (0x221, button::DOWN, analog::DPAD_DOWN),
@@ -52,10 +38,7 @@ const DPAD_KEYS: [(u16, u16, usize); 4] = [
     (0x223, button::RIGHT, analog::DPAD_RIGHT),
 ];
 
-/// Kernel button code -> the byte it fills in `AnalogButton`.
-///
-/// A digital button reports 0 or 255 here. The field exists for pads with
-/// pressure-sensitive faces, which none of padmap's are.
+/// Kernel codes to `AnalogButton` byte (0 or 255).
 const BUTTON_ANALOG: [(u16, usize); 8] = [
     (0x130, analog::CROSS),
     (0x131, analog::CIRCLE),
@@ -76,14 +59,11 @@ const ABS_RZ: u16 = 0x05;
 const ABS_HAT0X: u16 = 0x10;
 const ABS_HAT0Y: u16 = 0x11;
 
-/// An axis's declared range, for scaling into DSU's `u8`.
+/// Axis range scaled to DSU `u8`; rest position varies (trigger vs stick).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Range {
     pub min: i32,
     pub max: i32,
-    /// Where the driver says it sits untouched. Not always the middle: a
-    /// trigger rests at its minimum, and the Mayflash GameCube adapter's
-    /// triggers rest 81% deflected on axes whose *codes* say "right stick".
     pub rest: i32,
 }
 
@@ -93,9 +73,7 @@ impl Range {
         Range { min, max, rest }
     }
 
-    /// Whether this axis rests in the middle -- a stick -- rather than at an
-    /// end, which is a trigger. The same judgement `standard::standard_fields`
-    /// makes, because the same adapters defeat the same code-only reading.
+    /// Stick (centred) vs trigger (at end).
     pub fn rests_centred(&self) -> bool {
         AxisSpan {
             minimum: self.min,
@@ -105,11 +83,7 @@ impl Range {
         .rests_centred()
     }
 
-    /// `value` mapped onto 0..=255, clamped.
-    ///
-    /// A degenerate range -- a driver that declares min == max -- yields the
-    /// centre rather than a division by zero, because the alternative reaches
-    /// an emulator as a stick jammed in a corner.
+    /// Map to 0..=255; degenerate range yields centre.
     pub fn to_u8(&self, value: i32) -> u8 {
         if self.max <= self.min {
             return CENTRE;
@@ -119,21 +93,12 @@ impl Range {
         ((offset * 255 + span / 2) / span) as u8
     }
 
-    /// `value` mapped onto 0..=255 with the minimum at the top.
-    ///
-    /// evdev's vertical axes grow downwards and DSU's grow upwards. Missing
-    /// this inverts every stick, which reads as a controller that works and is
-    /// fighting you.
+    /// Map to 0..=255, inverted (evdev Y down, DSU Y up).
     pub fn to_u8_inverted(&self, value: i32) -> u8 {
         255 - self.to_u8(value)
     }
 
-    /// A trigger's travel, from where it rests to its maximum.
-    ///
-    /// From the *rest* rather than the minimum. The Mayflash adapter's
-    /// triggers rest at 24 of 0..255; scaled from zero they read 9% pressed
-    /// untouched, and a consumer with a small deadzone sees a phantom
-    /// half-press for as long as the adapter is plugged in.
+    /// Trigger travel from rest (not min); Mayflash adapters rest offset.
     pub fn to_trigger(&self, value: i32) -> u8 {
         let released = Range {
             min: self.rest.min(self.max),
@@ -144,11 +109,7 @@ impl Range {
     }
 }
 
-/// What one ABS code means on this pad.
-///
-/// Decided once from the declared rest position rather than from the code
-/// alone, because the codes lie: the Mayflash GameCube adapter has its
-/// C-stick on `ABS_Z`/`ABS_RZ` and its triggers on `ABS_RX`/`ABS_RY`.
+/// ABS code role: determined by rest position (codes lie on some adapters).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Role {
     LeftX,
@@ -159,12 +120,7 @@ enum Role {
     R2,
 }
 
-/// Roles for a pad's declared axes.
-///
-/// `ABS_X`/`ABS_Y` are always the left stick. Of the other four, an axis that
-/// rests centred is a stick and one that rests at an end is a trigger --
-/// `RX`/`RY` first, then `Z`/`RZ` take whatever is left. A pad with two
-/// centred pairs keeps the conventional one.
+/// Axes roles: left stick, right stick, or triggers (rest-based).
 fn roles(ranges: &BTreeMap<u16, Range>) -> BTreeMap<u16, Role> {
     let mut out = BTreeMap::new();
     let centred = |code: u16| ranges.get(&code).is_some_and(Range::rests_centred);
@@ -195,13 +151,10 @@ fn roles(ranges: &BTreeMap<u16, Range>) -> BTreeMap<u16, Role> {
     out
 }
 
-/// A DSU picture of one controller, updated event by event.
+/// DSU pad state tracker, updated event-by-event.
 #[derive(Debug, Clone, Default)]
 pub struct Tracker {
     pad: Pad,
-    /// Declared ranges, by ABS code. An axis with no entry is ignored rather
-    /// than guessed: a pad that does not have it will never send it, and one
-    /// that does always declares it.
     ranges: BTreeMap<u16, Range>,
     roles: BTreeMap<u16, Role>,
 }
@@ -216,12 +169,7 @@ impl Tracker {
         }
     }
 
-    /// Lift every button, as the clone does when forwarding pauses.
-    ///
-    /// The clone gets a release for each held key so a game is not left with
-    /// a button down; the DSU picture is the same pad seen by a different
-    /// consumer and needs the same release, or an emulator reading padmap over
-    /// UDP holds the button for the whole wizard and after it.
+    /// Release all buttons when clone pauses.
     pub fn release_all(&mut self) {
         self.pad.buttons = 0;
         self.pad.home = 0;
@@ -233,16 +181,12 @@ impl Tracker {
         &self.pad
     }
 
-    /// Replace the motion sample without disturbing the buttons.
-    ///
-    /// Motion arrives on a different descriptor from the buttons -- a separate
-    /// IMU node, or a hidraw report -- so the two are folded together here
-    /// rather than at the source.
+    /// Set motion sample independently of buttons.
     pub fn set_motion(&mut self, motion: Motion) {
         self.pad.motion = motion;
     }
 
-    /// Fold one event in. Anything unrecognised is ignored.
+    /// Fold one event in.
     pub fn apply(&mut self, event_type: u16, code: u16, value: i32) {
         match event_type {
             EV_KEY => self.apply_key(code, value),
@@ -252,7 +196,6 @@ impl Tracker {
     }
 
     fn apply_key(&mut self, code: u16, value: i32) {
-        // Key autorepeat sends 2, which is still held.
         let down = value != 0;
         if code == BTN_MODE {
             self.pad.home = u8::from(down);
@@ -287,7 +230,6 @@ impl Tracker {
                 return;
             }
             ABS_HAT0Y => {
-                // A hat's Y grows downwards too.
                 self.set_dpad(button::UP, analog::DPAD_UP, value < 0);
                 self.set_dpad(button::DOWN, analog::DPAD_DOWN, value > 0);
                 return;
@@ -308,9 +250,6 @@ impl Tracker {
             Role::L2 => {
                 let pressed = range.to_trigger(value);
                 self.pad.analog[analog::L2] = pressed;
-                // A pad with an analog trigger usually has no BTN_TL2 to go
-                // with it, so the bit is derived. Half way is the threshold
-                // every emulator uses for a digital read of an analog trigger.
                 self.set_bit(button::L2, pressed >= CENTRE);
             }
             Role::R2 => {
@@ -362,9 +301,6 @@ mod tests {
 
     #[test]
     fn the_bottom_face_button_is_cross() {
-        // By position, not by the letter printed on it -- the rule padmap uses
-        // everywhere. BTN_SOUTH on a Nintendo pad says B, and it is still the
-        // bottom one, and on a DualShock that is Cross.
         let mut tracker = Tracker::new(stick_ranges());
         tracker.apply(EV_KEY, 0x130, 1);
         assert_eq!(tracker.pad().buttons, button::CROSS);
@@ -376,9 +312,6 @@ mod tests {
 
     #[test]
     fn north_is_triangle_and_west_is_square() {
-        // BTN_NORTH is 0x133 and BTN_WEST is 0x134, which is the pair whose
-        // numbering does not follow their names. Swapping them binds the top
-        // face button to the left one in every DSU consumer at once.
         let mut tracker = Tracker::new(stick_ranges());
         tracker.apply(EV_KEY, 0x133, 1);
         tracker.apply(EV_KEY, 0x134, 1);
@@ -402,9 +335,6 @@ mod tests {
 
     #[test]
     fn a_stick_pushed_up_reads_high() {
-        // evdev's Y grows downwards and DSU's grows upwards. This is the test
-        // that catches the inversion, which otherwise reads as a controller
-        // that works and fights you.
         let mut tracker = Tracker::new(stick_ranges());
         tracker.apply(EV_ABS, ABS_Y, -32768);
         assert_eq!(tracker.pad().left_y, 255);
@@ -419,8 +349,6 @@ mod tests {
         let mut tracker = Tracker::new(stick_ranges());
         tracker.apply(EV_ABS, ABS_X, 0);
         tracker.apply(EV_ABS, ABS_Y, 0);
-        // -32768..32767 has no exact midpoint in 0..255; either neighbour of
-        // the centre is correct and a corner is not.
         assert!((127..=128).contains(&tracker.pad().left_x));
         assert!((127..=128).contains(&tracker.pad().left_y));
     }
@@ -451,8 +379,6 @@ mod tests {
 
     #[test]
     fn an_axis_the_pad_never_declared_is_ignored() {
-        // Rather than scaled against a guessed range. An arcade stick declares
-        // no ABS_Z and never sends one; a pad that does always declares it.
         let mut tracker = Tracker::new(BTreeMap::new());
         tracker.apply(EV_ABS, ABS_X, 32767);
         assert_eq!(tracker.pad().left_x, CENTRE);
@@ -468,8 +394,6 @@ mod tests {
 
     #[test]
     fn a_value_outside_the_declared_range_is_clamped() {
-        // A worn stick over-travels. Wrapping would read as the opposite
-        // direction at full deflection.
         let mut tracker = Tracker::new(stick_ranges());
         tracker.apply(EV_ABS, ABS_X, 99_999);
         assert_eq!(tracker.pad().left_x, 255);

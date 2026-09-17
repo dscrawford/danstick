@@ -1,5 +1,4 @@
-//! What the daemon says to a client, as JSON.
-//! One place to avoid multiple out-of-sync definitions.
+//! What the daemon says to a client, as JSON. One place to avoid multiple out-of-sync definitions.
 
 use std::collections::BTreeMap;
 

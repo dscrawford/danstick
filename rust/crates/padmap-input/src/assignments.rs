@@ -1,5 +1,4 @@
-//! Which physical pad is which player, as written to disk. The format is the
-//! Python's, field for field, so a rollback keeps the user's controller order.
+//! Which physical pad is which player, as written to disk.
 
 use std::path::{Path, PathBuf};
 
@@ -61,7 +60,6 @@ pub fn resolve<'a>(
     let mut missing = Vec::new();
     let mut taken: Vec<&Path> = Vec::new();
 
-    // By node first: the path is the only thing that tells four identical adapter ports apart.
     for assignment in assignments {
         if let Some(pad) = pads.iter().find(|pad| pad.path == assignment.path) {
             taken.push(pad.path.as_path());
@@ -71,8 +69,7 @@ pub fn resolve<'a>(
         }
     }
 
-    // Then by identity, for a wireless pad that woke on a new node -- but only when the
-    // match is unique, or somebody else's controller would be handed a seat.
+    // Then by identity, for a wireless pad that woke on a new node -- but only when the match is unique, or somebody else's controller would be handed a seat.
     let mut still_missing = Vec::new();
     for assignment in missing {
         let mut candidates = pads.iter().filter(|pad| {

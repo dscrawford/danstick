@@ -157,7 +157,7 @@ pub fn application_collections(descriptor: &[u8]) -> Vec<u32> {
         match prefix & 0xFC {
             0x04 => page = data & 0xFFFF, // Usage Page
             0x08 => {
-                // Usage: 4-byte form carries its own page
+                // Usage: 4-byte form carries its own page.
                 usage = Some(if size == 4 {
                     data
                 } else {
@@ -165,7 +165,7 @@ pub fn application_collections(descriptor: &[u8]) -> Vec<u32> {
                 })
             }
             0xA0 => {
-                // Collection; 0x01 is Application
+                // Collection; 0x01 is Application.
                 if depth == 0 && data == 0x01 {
                     if let Some(found_usage) = usage {
                         found.push(found_usage);
@@ -175,7 +175,6 @@ pub fn application_collections(descriptor: &[u8]) -> Vec<u32> {
                 usage = None;
             }
             0xC0 => {
-                // End Collection
                 depth = depth.saturating_sub(1);
                 usage = None;
             }
@@ -227,7 +226,6 @@ pub fn dormant() -> Vec<Dormant> {
             .map(|value| value.to_string_lossy().into_owned())
             .unwrap_or_default();
         if driver != "hid-generic" {
-            // Only hid-generic devices are dormant
             continue;
         }
         let Some((vid, pid)) = hid_ids(&device) else {
@@ -247,7 +245,6 @@ pub fn dormant() -> Vec<Dormant> {
         }
 
         let channel = first_hidraw(&syspath);
-        // One device may have multiple interfaces; fold them together.
         if let Some(seen) = found
             .iter_mut()
             .find(|seen| (seen.vid, seen.pid) == (vid, pid))
@@ -289,7 +286,6 @@ fn hid_ids(device: &udev::Device) -> Option<(u16, u16)> {
 pub fn ids_from_hid_id(raw: &str) -> Option<(u16, u16)> {
     let mut parts = raw.trim().split(':');
     let _bus = parts.next()?;
-    // trim_start_matches('0') on "00000000" gives "", parsing as error (correct).
     let vid = u16::from_str_radix(parts.next()?.trim_start_matches('0'), 16).ok()?;
     let pid = u16::from_str_radix(parts.next()?.trim_start_matches('0'), 16).ok()?;
     Some((vid, pid))
@@ -377,9 +373,7 @@ fn first_hidraw(syspath: &Path) -> Option<PathBuf> {
 mod tests {
     use super::*;
 
-    /// Interface 2 of a real Steam Controller Puck (28de:1304), captured
-    /// from sysfs on kernel 6.18.44. One of the four wireless slots: an
-    /// emulated mouse, an emulated keyboard, and the Valve protocol.
+    /// Interface 2 of a real Steam Controller Puck (28de:1304), captured from sysfs on kernel 6.18.44. One of the four wireless slots: an emulated mouse, an emulated keyboard, and the Valve protocol.
     const PUCK_SLOT: [u8; 372] = [
         0x05, 0x01, 0x09, 0x02, 0xA1, 0x01, 0x85, 0x40, 0x09, 0x01, 0xA1, 0x00, 0x05, 0x09, 0x19,
         0x01, 0x29, 0x02, 0x15, 0x00, 0x25, 0x01, 0x75, 0x01, 0x95, 0x02, 0x81, 0x02, 0x75, 0x06,
@@ -408,8 +402,7 @@ mod tests {
         0x01, 0xB1, 0x02, 0x85, 0x02, 0x95, 0x3F, 0x09, 0x01, 0xB1, 0x02, 0xC0,
     ];
 
-    /// Interface 6 of the same device: the pogo-pin dock. Same vendor page,
-    /// usage 2 rather than 1, and stripped down to two input reports.
+    /// Interface 6 of the same device: the pogo-pin dock.
     const PUCK_POGO: [u8; 54] = [
         0x06, 0x00, 0xFF, 0x09, 0x02, 0xA1, 0x01, 0x85, 0x42, 0x15, 0x00, 0x26, 0xFF, 0x00, 0x75,
         0x08, 0x95, 0x35, 0x09, 0x42, 0x81, 0x02, 0x85, 0x79, 0x15, 0x00, 0x26, 0xFF, 0x00, 0x75,

@@ -1,63 +1,23 @@
-//! Framing for the daemon's unix socket: newline-delimited JSON.
-//!
-//! Chosen over D-Bus or a custom binary framing so that writing a client is a
-//! few dozen lines in any language, with no extra dependency and nothing to
-//! generate. That is the whole point of padmap: a program attaches to the
-//! socket, drives the controllers, and needs no library from here to do it.
-//!
-//! It is also a hard compatibility boundary while the port is in progress --
-//! the Rust daemon has to be a drop-in for the Python one on the same socket.
+//! Newline-delimited JSON socket framing: minimal client burden.
 
 use serde_json::{Map, Value};
 
-/// Most one unterminated line may accumulate before it is thrown away.
-///
-/// The socket lives in `XDG_RUNTIME_DIR` and any process running as this user
-/// may connect to it, so without a bound `yes | nc -U .../padmap.sock` grows
-/// the daemon until the OOM killer takes it -- and every virtual pad on the
-/// machine goes with the daemon, mid-game.
-///
-/// Generous rather than tight, because the cost of guessing low is a front-end
-/// whose console picker silently never opens: the largest thing padmap puts on
-/// this socket is a layout choice carrying whole layouts (~8 KiB for five
-/// consoles). Anything within an order of magnitude of this limit is not
-/// padmap traffic.
+/// Max unterminated line before throw-away (8 MiB: layout choices ~8 KiB).
 pub const MAX_LINE_BYTES: usize = 8 * 1024 * 1024;
 
-/// One message, newline-terminated.
-///
-/// Compact separators, so a message never contains a stray newline from
-/// pretty-printing, which would desynchronise the framing.
+/// Newline-terminated message (compact JSON).
 pub fn encode(message: &Value) -> Vec<u8> {
     let mut out = serde_json::to_vec(message).unwrap_or_else(|_| b"{}".to_vec());
     out.push(b'\n');
     out
 }
 
-/// Accumulates socket reads and yields whole JSON messages.
-///
-/// A stream socket splits messages anywhere, so a client that assumes one
-/// `recv` is one message works until it doesn't.
-///
-/// `feed` never fails. Everything it is handed came off a socket any local
-/// process may connect to, and its caller is the event loop itself -- an error
-/// escaping here ends the process rather than the connection, and every
-/// player's controller goes with it.
+/// Yields whole JSON messages from socket reads.
 #[derive(Debug, Default)]
 pub struct LineReader {
-    /// A buffer with two offsets into it rather than a `Vec` that is re-sliced.
-    ///
-    /// `buffer = buffer.split(b"\n", 1)[1]` copies everything still pending on
-    /// every read and `b"\n" in buffer` rescans it, which makes reassembling
-    /// one message quadratic in its length. Measured at 27 seconds for a 1 MiB
-    /// message arriving a byte at a time -- 27 seconds during which the daemon
-    /// forwards no pad events at all.
     buffer: Vec<u8>,
-    /// First byte of the line being accumulated.
     start: usize,
-    /// How far we have already looked for its newline.
     scanned: usize,
-    /// True while discarding the tail of a line that blew [`MAX_LINE_BYTES`].
     dropping: bool,
 }
 
@@ -66,11 +26,7 @@ impl LineReader {
         Self::default()
     }
 
-    /// Whole messages completed by this read, in arrival order.
-    ///
-    /// Only JSON objects are returned. A line that is valid JSON but not an
-    /// object -- a bare number, a list -- is dropped: the protocol is objects,
-    /// and a caller indexing into anything else is a caller that crashes.
+    /// Yields whole messages (JSON objects only).
     pub fn feed(&mut self, data: &[u8]) -> Vec<Map<String, Value>> {
         self.buffer.extend_from_slice(data);
         let mut messages = Vec::new();
@@ -78,27 +34,17 @@ impl LineReader {
         while let Some(offset) = memchr(b'\n', &self.buffer[self.scanned..]) {
             let end = self.scanned + offset;
             let line = &self.buffer[self.start..end];
-            // Consume the line *before* parsing it. Whatever happens next, the
-            // framing has already resynchronised on this newline.
             let line = trim(line).to_vec();
             self.start = end + 1;
             self.scanned = end + 1;
 
             if self.dropping {
-                // The tail of an over-long line, and the newline that finally
-                // ended it. Nothing to parse; normal framing resumes here.
                 self.dropping = false;
                 continue;
             }
             if line.is_empty() {
                 continue;
             }
-            // A malformed line is worth skipping rather than killing the
-            // connection: the framing is still intact after the newline. This
-            // includes a line nested past serde_json's recursion limit, which
-            // is the shape that used to end the Python daemon outright -- any
-            // process that could open the socket could kill it, and a good
-            // message earlier in the same read was lost with it.
             if let Ok(Value::Object(object)) = serde_json::from_slice::<Value>(&line) {
                 messages.push(object);
             }
@@ -115,10 +61,6 @@ impl LineReader {
         }
 
         if self.buffer.len() > MAX_LINE_BYTES {
-            // A peer that sends and sends without ever sending a newline. Drop
-            // what it has sent and keep dropping until one arrives: refusing to
-            // grow is the whole point, and the next newline is the only place
-            // this connection can be trusted to make sense again.
             self.buffer.clear();
             self.scanned = 0;
             self.dropping = true;
@@ -127,7 +69,7 @@ impl LineReader {
         messages
     }
 
-    /// Bytes held for a line that has not ended yet. For diagnostics.
+    /// Bytes held for a line that has not ended yet.
     pub fn pending(&self) -> usize {
         self.buffer.len()
     }
@@ -137,11 +79,7 @@ fn memchr(needle: u8, haystack: &[u8]) -> Option<usize> {
     haystack.iter().position(|byte| *byte == needle)
 }
 
-/// `bytes.strip()`: ASCII whitespace from both ends.
-///
-/// The Python stripped the line before parsing, and `serde_json` would accept
-/// the untrimmed bytes anyway -- but an all-whitespace line has to come out
-/// empty here, or it is parsed and rejected once per keepalive.
+/// Strip ASCII whitespace from both ends.
 fn trim(mut line: &[u8]) -> &[u8] {
     while let Some((first, rest)) = line.split_first() {
         if first.is_ascii_whitespace() {
@@ -212,8 +150,6 @@ mod tests {
 
     #[test]
     fn a_malformed_line_costs_that_line_and_nothing_else() {
-        // The framing is still intact after the newline, so the connection
-        // survives and the next message is read normally.
         let mut reader = LineReader::new();
         let messages = feed_str(&mut reader, "not json\n{\"cmd\":\"status\"}\n");
         assert_eq!(messages.len(), 1);
@@ -222,9 +158,6 @@ mod tests {
 
     #[test]
     fn a_deeply_nested_line_does_not_end_the_process() {
-        // Any process that can open the socket could send this. In the Python
-        // it raised RecursionError -- not a ValueError -- out of the selector
-        // loop, and every virtual pad went with the daemon, mid-game.
         let mut reader = LineReader::new();
         let mut hostile = "[".repeat(200_000);
         hostile.push('\n');
@@ -270,7 +203,6 @@ mod tests {
         for _ in 0..12 {
             reader.feed(&chunk);
         }
-        // The tail of the over-long line, its terminator, then a real message.
         let messages = reader.feed(b"more rubbish\n{\"cmd\":\"status\"}\n");
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0]["cmd"], "status");
@@ -278,8 +210,6 @@ mod tests {
 
     #[test]
     fn reassembling_a_large_message_byte_by_byte_is_not_quadratic() {
-        // 27 seconds for 1 MiB was the measured cost of the re-slicing version,
-        // and the daemon forwards nothing while it happens.
         let mut reader = LineReader::new();
         let payload = json!({"cmd": "map", "blob": "y".repeat(400_000)});
         let encoded = encode(&payload);
@@ -316,7 +246,6 @@ mod tests {
 
     #[test]
     fn a_split_multibyte_character_survives_the_boundary() {
-        // The framing is over bytes; a UTF-8 sequence can be cut anywhere.
         let mut reader = LineReader::new();
         let encoded = encode(&json!({"name": "Pokémon pad"}));
         let (head, tail) = encoded.split_at(encoded.len() / 2);

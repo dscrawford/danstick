@@ -1,5 +1,4 @@
 //! Layouts for mapping wizard: positions, labels, canonical controls.
-//! Controls differ by console (N64 has no X/Y; SNES no analogue).
 
 use std::collections::BTreeMap;
 use std::sync::OnceLock;
@@ -8,7 +7,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::control::Control;
 
-/// Normalized coordinates (0..1 on 2:1 canvas); radii as height fractions.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Shape {
     pub kind: String,
@@ -25,10 +23,8 @@ fn default_kind() -> String {
     "button".to_owned()
 }
 
-/// One control in the wizard; canonical name shared across consoles.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LayoutControl {
-    /// SDL/RetroArch canonical button (shared across consoles).
     pub canonical: Control,
     /// Hardware label (user-facing).
     pub label: String,
@@ -38,7 +34,6 @@ pub struct LayoutControl {
     pub kind: String,
     #[serde(default = "default_radius")]
     pub radius: f64,
-    /// RetroArch key override (when canonical key is wrong for this console).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub retroarch: String,
 }
@@ -47,10 +42,8 @@ pub struct LayoutControl {
 pub struct Layout {
     pub id: String,
     pub label: String,
-    /// Grammatically correct console name (e.g. "Arcade games" not "Arcade stick games").
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub console_label: String,
-    /// Optional artwork; shapes required as fallback if image missing.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub image: String,
     #[serde(default)]
@@ -59,7 +52,6 @@ pub struct Layout {
 }
 
 impl Layout {
-    /// RetroArch key overrides (canonical -> key).
     pub fn retroarch_keys(&self) -> BTreeMap<Control, String> {
         self.controls
             .iter()
@@ -68,7 +60,6 @@ impl Layout {
             .collect()
     }
 
-    /// Controls in wizard order.
     pub fn order(&self) -> Vec<Control> {
         self.controls
             .iter()
@@ -77,7 +68,6 @@ impl Layout {
     }
 }
 
-/// Manifest: order, default, core -> layout mappings.
 #[derive(Debug, Clone, Deserialize)]
 struct Manifest {
     order: Vec<String>,
@@ -87,7 +77,6 @@ struct Manifest {
 
 const MANIFEST_JSON: &str = include_str!("../data/layouts.json");
 
-/// Embedded layout files; checked against manifest in tests.
 const LAYOUT_FILES: &[(&str, &str)] = &[
     ("generic", include_str!("../data/layouts/generic.json")),
     ("snes", include_str!("../data/layouts/snes.json")),
@@ -126,22 +115,18 @@ fn catalogue() -> &'static Catalogue {
     })
 }
 
-/// All layouts in stable order (sent to front-end, not hardcoded there).
 pub fn all() -> &'static [Layout] {
     &catalogue().layouts
 }
 
-/// Default layout id.
 pub fn default_id() -> &'static str {
     &catalogue().manifest.default
 }
 
-/// Default layout.
 pub fn default_layout() -> &'static Layout {
     get(default_id())
 }
 
-/// Actual console layouts in catalogue order (excludes generic).
 pub fn consoles() -> Vec<&'static str> {
     all()
         .iter()
@@ -150,7 +135,6 @@ pub fn consoles() -> Vec<&'static str> {
         .collect()
 }
 
-/// Layout by id; falls back to default (never fails).
 pub fn get(layout_id: &str) -> &'static Layout {
     let catalogue = catalogue();
     catalogue
@@ -166,12 +150,10 @@ pub fn get(layout_id: &str) -> &'static Layout {
         .expect("the default layout must exist")
 }
 
-/// Whether layout id is shipped.
 pub fn exists(layout_id: &str) -> bool {
     all().iter().any(|layout| layout.id == layout_id)
 }
 
-/// Layout index in catalogue, or 0 if not found.
 pub fn index_of(layout_id: &str) -> usize {
     all()
         .iter()
@@ -179,23 +161,15 @@ pub fn index_of(layout_id: &str) -> usize {
         .unwrap_or(0)
 }
 
-/// Layout matching chosen controller icon.
 pub fn for_icon(icon: &str) -> &'static Layout {
     get(icon)
 }
 
-/// Layout for libretro core, or "" if unknown (not "generic").
 pub fn for_core(core: &str) -> &'static str {
     if core.is_empty() {
         return "";
     }
-    // Trailing separators first, as `pathlib.Path(...).name` does and as
-    // scope::game_key already did. The two read a path the same way or they
-    // disagree about which console a launch is, which is a mapping resolved
-    // against the wrong control set.
     let mut name = core.trim_end_matches('/').rsplit('/').next().unwrap_or("");
-    // Strip the platform's library suffix, however it is spelled, then the
-    // libretro marker: `mupen64plus_next_libretro.so` -> `mupen64plus_next`.
     for suffix in [".so", ".dll", ".dylib"] {
         if let Some(stripped) = name.strip_suffix(suffix) {
             name = stripped;
@@ -404,9 +378,6 @@ mod tests {
 
     #[test]
     fn every_layout_can_produce_a_mapping_for_both_consumers() {
-        // Every canonical name in every layout has to be spellable by both, or
-        // the wizard asks for a press it can then do nothing with. The Control
-        // enum makes this true by construction; this pins that it stays so.
         for layout in all() {
             for control in layout.order() {
                 assert!(!control.sdl_field().is_empty());

@@ -1,5 +1,4 @@
 //! Per-device profiles: measured and stored per-controller calibration, icons, and button mappings.
-//! Vendor IDs alone cannot identify hardware (0x0079 resold in many unrelated adapters) or wear (N64 stick centers vary).
 
 use std::collections::BTreeMap;
 
@@ -152,11 +151,9 @@ impl Profile {
             "icon": self.icon,
             "axes": axes,
             "mappings": mappings,
-            // Rollback compatibility: universal mapping written where it has always been.
             "layout": universal.layout,
             "buttons": universal.buttons,
         });
-        // Only when tuned: rollback sees no tuning key if profile is unmodified.
         if !self.tuning.is_default() {
             if let Ok(tuning) = serde_json::to_value(&self.tuning) {
                 out["tuning"] = tuning;
@@ -181,7 +178,6 @@ impl Profile {
                     continue;
                 };
                 if !cal.fits() {
-                    // Out-of-range: drop rather than clamp, fall back to verbatim.
                     rejected.push(RejectedAxis {
                         code: code.clone(),
                         why: format!(
@@ -204,7 +200,6 @@ impl Profile {
             }
         }
 
-        // Migrate pre-scope profiles: flat buttons/layout → universal scope.
         if !mappings.contains_key(scope::UNIVERSAL) {
             let legacy = Mapping::from_value(&serde_json::json!({
                 "buttons": object.get("buttons").cloned().unwrap_or(Value::Null),

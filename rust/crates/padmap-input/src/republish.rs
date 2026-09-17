@@ -1,5 +1,4 @@
 //! Pump events between physical pads and their clones (presses source->clone, force feedback reverse).
-//! Forwarding is done a frame at a time (SYN_REPORT is the terminator; one write(2) per frame).
 
 use std::io::ErrorKind;
 use std::time::Instant;
@@ -50,7 +49,7 @@ impl Republisher {
         self.paused
     }
 
-    /// Stop or resume forwarding presses. Pause (not stop) to keep uinput nodes intact.
+    /// Stop or resume forwarding presses.
     pub fn set_paused(&mut self, paused: bool) {
         if paused == self.paused {
             return;
@@ -118,7 +117,6 @@ impl Republisher {
         self.frame.clear();
         let mut emitted_any = false;
         let now_ms = self.started.elapsed().as_millis() as u64;
-        // Only whole frames; trailing partial stays raw for next read.
         let complete = self
             .pending
             .iter()

@@ -1,16 +1,4 @@
 //! The vocabulary and the numbering, held still.
-//!
-//! Everything in `control` and `binding` is a name or a small integer, and
-//! every one of them ends up in a file some other program reads without ever
-//! saying it disagreed. RetroArch binds a button that does not exist and still
-//! reports the pad as configured; SDL skips a mapping line it cannot parse and
-//! leaves the control dead. So the tests here are less about arithmetic than
-//! about pinning the exact spellings and the exact off-by-ones, because the
-//! failure mode for all of them is "the mapping did not take" with nothing
-//! logged anywhere.
-//!
-//! The Python this was ported from is `src/padmap/mapping.py`; where a rule
-//! looks arbitrary, its comment there says which real controller caused it.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -20,15 +8,6 @@ use padmap_core::binding::{
 };
 use padmap_core::control::{Control, UnknownControl, CANONICAL_ORDER};
 
-// ---------------------------------------------------------------------------
-// Control: the eighteen names
-// ---------------------------------------------------------------------------
-
-/// The Python's `list(SDL_FIELDS)`, copied by hand from `mapping.py`.
-///
-/// Pinned as a literal rather than derived from the enum: these strings sit in
-/// every stored profile on every user's disk, so a rename is a silent data
-/// migration, not a refactor.
 const PYTHON_NAMES: [&str; 18] = [
     "a",
     "b",
@@ -64,9 +43,6 @@ fn every_control_round_trips_through_its_name_display_and_parse() {
     for control in Control::ALL {
         let name = control.as_str();
         assert_eq!(name.parse::<Control>(), Ok(control));
-        // Display is what interpolates into log lines and into the wire
-        // protocol; if it ever diverges from as_str the daemon and the CLI
-        // start naming the same button two different things.
         assert_eq!(control.to_string(), name);
     }
 }
@@ -93,10 +69,6 @@ fn canonical_order_is_a_permutation_of_every_control() {
 
 #[test]
 fn the_derived_ordering_matches_the_canonical_order() {
-    // `sdl::lines` walks CANONICAL_ORDER but the bindings arrive in a
-    // BTreeMap, and elsewhere the map's own iteration order is what gets
-    // written. If the enum is reordered without the array, the two disagree
-    // and a regenerated mapping looks like a change in every diff.
     let sorted: Vec<Control> = Control::ALL
         .into_iter()
         .collect::<BTreeSet<_>>()
@@ -107,8 +79,6 @@ fn the_derived_ordering_matches_the_canonical_order() {
 
 #[test]
 fn a_name_that_differs_only_in_case_or_whitespace_is_refused() {
-    // Refused rather than trimmed: a profile holding " a" was written by
-    // something that is not padmap, and guessing at it hides the real fault.
     for name in [
         "A",
         "B",
@@ -130,10 +100,7 @@ fn a_name_that_differs_only_in_case_or_whitespace_is_refused() {
 
 #[test]
 fn a_name_from_a_neighbouring_vocabulary_is_refused() {
-    // SDL field names, RetroArch keys and SDL controls padmap does not model
-    // all look like control names and are not. Accepting one would store a
-    // binding under a name no consumer ever looks up: the button captures
-    // fine and does nothing in the game.
+    // SDL field names, RetroArch keys and SDL controls padmap does not model.
     for name in [
         "guide",
         "leftstick",
@@ -162,8 +129,6 @@ fn the_refusal_names_the_string_it_refused() {
         .parse::<Control>()
         .expect_err("guide is not a control");
     assert_eq!(error, UnknownControl("guide".to_owned()));
-    // Quoted, so a name that is whitespace or empty is still visible in the
-    // message rather than vanishing into the sentence.
     assert_eq!(error.to_string(), "\"guide\" is not a canonical control");
     let padded = " a"
         .parse::<Control>()
@@ -173,16 +138,8 @@ fn the_refusal_names_the_string_it_refused() {
     assert!(error.source().is_none());
 }
 
-// ---------------------------------------------------------------------------
-// Control: the two consumers' spellings
-// ---------------------------------------------------------------------------
-
 #[test]
 fn sdl_field_is_total_and_injective() {
-    // Totality is the compiler's job -- the match has no wildcard -- so what
-    // is left to check is that two controls never claim one field. They would
-    // not collide loudly: the second line overwrites the first in SDL's
-    // parser and the pad reads as mapped.
     let mut seen: BTreeMap<&str, Control> = BTreeMap::new();
     for control in Control::ALL {
         let field = control.sdl_field();
@@ -216,15 +173,10 @@ fn retroarch_key_is_total_and_injective() {
 
 #[test]
 fn retroarch_and_sdl_disagree_about_a_and_b_deliberately() {
-    // RetroArch's a/b are the Nintendo positions: b is the bottom face
-    // button, a is the right one. SDL's a/b are bottom and right. Crossing
-    // them swaps confirm and cancel in every game, and nothing reports an
-    // error -- it reads as "the mapping did not take".
     assert_eq!(Control::A.retroarch_key(), "input_b_btn");
     assert_eq!(Control::B.retroarch_key(), "input_a_btn");
     assert_eq!(Control::X.retroarch_key(), "input_y_btn");
     assert_eq!(Control::Y.retroarch_key(), "input_x_btn");
-    // ...while SDL calls each of the four by its own letter.
     assert_eq!(Control::A.sdl_field(), "a");
     assert_eq!(Control::B.sdl_field(), "b");
     assert_eq!(Control::X.sdl_field(), "x");
@@ -233,8 +185,6 @@ fn retroarch_and_sdl_disagree_about_a_and_b_deliberately() {
 
 #[test]
 fn the_face_buttons_are_the_only_controls_whose_two_spellings_cross() {
-    // Everything else maps letter-for-letter, so a future control added by
-    // copying its neighbour is right by default. Only these four are not.
     let crossed = [Control::A, Control::B, Control::X, Control::Y];
     for control in Control::ALL {
         let key_stem = control
@@ -259,11 +209,6 @@ fn the_face_buttons_are_the_only_controls_whose_two_spellings_cross() {
 
 #[test]
 fn the_four_right_stick_halves_spell_the_same_direction_to_both_consumers() {
-    // An N64 pad's C-buttons are these. SDL has no "C-up", so the button is
-    // written as a half-axis target; RetroArch drives the stick axis from a
-    // button instead. Y is positive downwards in both, which is the part that
-    // is easy to invert: getting it wrong points the C-stick the wrong way
-    // and every camera control in the game fights the player.
     let halves = [
         (Control::RightStickUp, "-righty", "input_r_y_minus_btn"),
         (Control::RightStickDown, "+righty", "input_r_y_plus_btn"),
@@ -278,9 +223,6 @@ fn the_four_right_stick_halves_spell_the_same_direction_to_both_consumers() {
 
 #[test]
 fn only_the_stick_halves_have_an_sdl_field_unlike_their_own_name() {
-    // The invariant that makes the table above readable: every other control
-    // is spelled to SDL exactly as padmap spells it internally, so a mismatch
-    // anywhere else is a typo rather than a deliberate translation.
     let halves = [
         Control::RightStickUp,
         Control::RightStickDown,
@@ -302,19 +244,12 @@ fn an_sdl_half_axis_target_carries_a_sign_and_nothing_else_does() {
     for control in Control::ALL {
         let field = control.sdl_field();
         let signed = field.starts_with('+') || field.starts_with('-');
-        // SDL reads a leading sign as "only this half of the axis". A stray
-        // one on a face button makes the whole line unparseable and SDL drops
-        // it without a word.
         assert_eq!(
             signed,
             field.contains("right") && field.ends_with(['x', 'y'])
         );
     }
 }
-
-// ---------------------------------------------------------------------------
-// Control: serde
-// ---------------------------------------------------------------------------
 
 #[test]
 fn every_control_serialises_as_its_own_on_disk_name() {
@@ -328,9 +263,7 @@ fn every_control_serialises_as_its_own_on_disk_name() {
 
 #[test]
 fn deserialising_an_unknown_name_fails_rather_than_defaulting_to_a_button() {
-    // Defaulting would bind the user's press to whichever control sorted
-    // first, which is a working button in the front-end and the wrong one in
-    // the game.
+    // Defaulting would bind the user's press to whichever control sorted.
     for raw in ["\"guide\"", "\"A\"", "\"\"", "\"dpUp\""] {
         let parsed: Result<Control, _> = serde_json::from_str(raw);
         assert!(parsed.is_err(), "{raw} deserialized");
@@ -341,8 +274,6 @@ fn deserialising_an_unknown_name_fails_rather_than_defaulting_to_a_button() {
 
 #[test]
 fn a_profile_keyed_by_control_round_trips_through_json() {
-    // A stored capture is an object keyed by control name, so Control has to
-    // work as a serde map key and not only as a value.
     let profile: BTreeMap<Control, Binding> = Control::ALL
         .into_iter()
         .enumerate()
@@ -357,10 +288,6 @@ fn a_profile_keyed_by_control_round_trips_through_json() {
     assert_eq!(back, profile);
 }
 
-// ---------------------------------------------------------------------------
-// Binding: hats
-// ---------------------------------------------------------------------------
-
 #[test]
 fn hat_direction_names_the_four_single_bits_and_nothing_else() {
     assert_eq!(hat_direction(1), Some("up"));
@@ -374,9 +301,6 @@ fn hat_direction_names_the_four_single_bits_and_nothing_else() {
 
 #[test]
 fn only_the_four_single_hat_bits_are_spellable_and_both_consumers_agree() {
-    // The asymmetry is the bug being guarded against: if one consumer renders
-    // a diagonal and the other refuses it, the d-pad exists in the front-end
-    // and not in the game, or the reverse, and neither says so.
     for value in -8_i32..=16 {
         let binding = Binding::hat(0, value);
         let spellable = matches!(value, 1 | 2 | 4 | 8);
@@ -428,8 +352,6 @@ fn a_hat_ra_index_renumbers_retroarch_only() {
 
 #[test]
 fn a_hat_value_that_names_nothing_reports_the_value_it_was_given() {
-    // The message is the only thing a user editing a profile by hand has to
-    // go on, so it has to carry the offending number rather than say "bad".
     let error = Binding::hat(0, 3)
         .sdl()
         .expect_err("a diagonal is not a control");
@@ -442,10 +364,6 @@ fn a_hat_value_that_names_nothing_reports_the_value_it_was_given() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Binding: buttons and axes
-// ---------------------------------------------------------------------------
-
 #[test]
 fn a_button_spells_a_bare_number_to_retroarch_and_a_prefixed_one_to_sdl() {
     for index in [0, 1, 7, 13, 127, i32::MAX] {
@@ -457,8 +375,6 @@ fn a_button_spells_a_bare_number_to_retroarch_and_a_prefixed_one_to_sdl() {
 
 #[test]
 fn a_split_index_spells_differently_to_each_consumer() {
-    // The whole reason ra_index exists: a combo adapter's twelve buttons are
-    // 0..11 to RetroArch and the thirteenth code shifts SDL's count.
     let binding = Binding::button(13).with_ra_index(Some(11));
     assert_eq!(binding.sdl().expect("sdl"), "b13");
     assert_eq!(binding.retroarch().expect("retroarch"), "11");
@@ -466,9 +382,7 @@ fn a_split_index_spells_differently_to_each_consumer() {
 
 #[test]
 fn an_ra_index_of_zero_is_not_the_same_as_an_absent_one() {
-    // Zero is a real button. Treating Some(0) as "no override" would send
-    // RetroArch the SDL number, which on the pad that needs the override is
-    // always the wrong button.
+    // Zero is a real button.
     let overridden = Binding::button(5).with_ra_index(Some(0));
     assert_eq!(overridden.retroarch().expect("retroarch"), "0");
     let absent = Binding::button(5);
@@ -490,9 +404,6 @@ fn a_button_retroarch_cannot_see_is_refused_rather_than_numbered() {
 
 #[test]
 fn any_negative_ra_index_is_refused_not_only_the_sentinel() {
-    // A profile off disk can hold whatever it likes, and no real button index
-    // is negative. -13 formatted as a button number is what RetroArch would
-    // otherwise bind, silently, to nothing.
     for index in [-1, -2, -13, -99, i32::MIN, i32::MIN + 1] {
         let binding = Binding::button(4).with_ra_index(Some(index));
         assert!(
@@ -500,26 +411,18 @@ fn any_negative_ra_index_is_refused_not_only_the_sentinel() {
             "ra_index {index} was accepted"
         );
         assert_eq!(binding.retroarch(), Err(Unspellable::InvisibleToRetroarch));
-        // SDL is unaffected -- it never reads ra_index at all.
         assert_eq!(binding.sdl().expect("sdl"), "b4");
     }
 }
 
 #[test]
 fn the_invisible_sentinel_is_still_minus_one() {
-    // Stored in profiles on disk. Changing it reinterprets every existing
-    // "RetroArch cannot see this" as an ordinary button number.
     assert_eq!(RA_INVISIBLE, -1);
 }
 
 #[test]
 fn a_button_with_a_negative_index_and_no_ra_index_is_visible_but_unspellable() {
-    // Documented, not endorsed. `retroarch_visible` only inspects ra_index,
-    // so a button whose *own* index is negative passes the visibility check
-    // and then fails to spell. Ported faithfully from mapping.py, which has
-    // the same gap; a caller that trusts retroarch_visible and then unwraps
-    // would panic on a hand-edited profile. Every caller in this crate
-    // handles the Err, so today it costs a dropped line rather than a crash.
+    // Documented, not endorsed.
     let binding = Binding::button(-3);
     assert!(binding.retroarch_visible(), "the gap: visibility says yes");
     assert_eq!(
@@ -549,10 +452,6 @@ fn an_axis_carries_its_sign_and_zero_counts_as_positive() {
 
 #[test]
 fn axis_zero_keeps_its_sign_even_though_retroarch_will_misparse_it() {
-    // RetroArch parses a _btn value with strtoull, so "-0" and "+0" both come
-    // out as button 0: the two halves of one stick collapse and pressing
-    // either activates both. `retroarch::lines` moves an axis onto the _axis
-    // key to dodge that, which only works if the sign survives to here.
     assert_eq!(Binding::axis(0, -1).retroarch().expect("retroarch"), "-0");
     assert_eq!(Binding::axis(0, 1).retroarch().expect("retroarch"), "+0");
     assert_eq!(Binding::axis(0, 0).retroarch().expect("retroarch"), "+0");
@@ -569,9 +468,7 @@ fn an_axis_ra_index_wins_over_the_sdl_one() {
 
 #[test]
 fn an_axis_is_never_refused_for_a_negative_ra_index_the_way_a_button_is() {
-    // Deliberate, and worth pinning because it looks like an oversight: the
-    // sub-BTN_MISC problem is about evdev *key* codes, so an axis has no
-    // equivalent and the guard would only ever reject a real binding.
+    // Deliberate, and worth pinning because it looks like an oversight: the.
     let binding = Binding::axis(3, -1).with_ra_index(Some(RA_INVISIBLE));
     assert!(binding.retroarch_visible());
     assert_eq!(binding.retroarch().expect("retroarch"), "--1");
@@ -579,9 +476,7 @@ fn an_axis_is_never_refused_for_a_negative_ra_index_the_way_a_button_is() {
 
 #[test]
 fn an_extreme_index_neither_panics_nor_wraps() {
-    // A hand-edited or corrupt profile is the source. Formatting must not
-    // overflow, and the number that comes out must still be the one that went
-    // in rather than a wrapped positive that names a real button.
+    // A hand-edited or corrupt profile is the source.
     for index in [i32::MIN, i32::MIN + 1, -1, 0, 1, i32::MAX - 1, i32::MAX] {
         assert_eq!(
             Binding::axis(index, 1).sdl().expect("sdl"),
@@ -620,9 +515,6 @@ fn an_extreme_index_neither_panics_nor_wraps() {
 
 #[test]
 fn the_constructors_leave_the_second_numbering_absent() {
-    // Absent means "the two consumers agree", which is the case on most pads
-    // and the only safe default: inventing a number here is exactly what
-    // RA_INVISIBLE exists to stop.
     assert_eq!(Binding::button(3).ra_index, None);
     assert_eq!(Binding::hat(0, 1).ra_index, None);
     assert_eq!(Binding::axis(2, -1).ra_index, None);
@@ -663,16 +555,7 @@ fn binding_kind_spells_itself_the_way_the_python_stored_it() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Binding: visibility agrees with spellability, over every shape
-// ---------------------------------------------------------------------------
-
 /// Every interesting `Binding` shape: kind x index x value x ra_index.
-///
-/// Built as a cross-product rather than case by case because the property
-/// being checked is about *all* of them -- one shape where visibility and
-/// spelling disagree is one control that either crashes a caller or goes
-/// missing from a file with nothing said.
 fn every_shape() -> Vec<Binding> {
     let kinds = [BindingKind::Button, BindingKind::Hat, BindingKind::Axis];
     let indices = [i32::MIN, -7, -1, 0, 1, 2, 13, i32::MAX];
@@ -706,8 +589,6 @@ fn every_shape() -> Vec<Binding> {
 
 #[test]
 fn the_cross_product_is_the_size_it_claims_to_be() {
-    // A generator that quietly produces nothing turns the invariant below
-    // into a test that passes by doing nothing at all.
     assert_eq!(every_shape().len(), 3 * 8 * 12 * 7);
 }
 
@@ -724,8 +605,6 @@ fn sdl_visibility_answers_exactly_whether_sdl_can_spell_it() {
 
 #[test]
 fn retroarch_visibility_answers_whether_retroarch_can_spell_it_except_for_one_gap() {
-    // The exception is carved out rather than papered over: see
-    // `a_button_with_a_negative_index_and_no_ra_index_is_visible_but_unspellable`.
     for binding in every_shape() {
         let gap = binding.kind == BindingKind::Button
             && binding.ra_index.is_none()
@@ -762,8 +641,6 @@ fn a_binding_one_consumer_refuses_for_its_hat_value_is_refused_by_the_other_too(
 
 #[test]
 fn no_negative_number_ever_reaches_a_retroarch_button_value() {
-    // The wound: RetroArch binds a button that does not exist without
-    // complaining and still reports the pad as configured.
     for binding in every_shape() {
         if binding.kind != BindingKind::Button {
             continue;
@@ -776,11 +653,6 @@ fn no_negative_number_ever_reaches_a_retroarch_button_value() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// sdl_button_index / retroarch_button_index
-// ---------------------------------------------------------------------------
-
-/// The ordinary pad: twelve buttons running from BTN_JOYSTICK.
 fn plain_pad() -> Vec<u16> {
     (BTN_JOYSTICK..BTN_JOYSTICK + 12).collect()
 }
@@ -789,13 +661,11 @@ fn plain_pad() -> Vec<u16> {
 fn the_two_numberings_are_defined_to_start_where_they_say_they_do() {
     assert_eq!(BTN_MISC, 0x100);
     assert_eq!(BTN_JOYSTICK, 0x120);
-    // SDL starts counting later than RetroArch, which is the whole problem.
     assert_eq!(BTN_MISC.min(BTN_JOYSTICK), BTN_MISC);
 }
 
 #[test]
 fn a_pad_whose_codes_all_start_at_btn_joystick_numbers_the_same_for_both() {
-    // Most pads. This is why the difference below can go unnoticed for years.
     let keys = plain_pad();
     for (expected, code) in keys.iter().copied().enumerate() {
         let expected = expected as i32;
@@ -810,17 +680,13 @@ fn a_pad_whose_codes_all_start_at_btn_joystick_numbers_the_same_for_both() {
             "retroarch for {code:#x}"
         );
     }
-    // Pinned against a mapping SDL itself wrote on the measured pad.
     assert_eq!(sdl_button_index(&keys, 0x121), Some(1));
     assert_eq!(sdl_button_index(&keys, 0x128), Some(8));
 }
 
 #[test]
 fn a_pad_carrying_btn_misc_codes_makes_the_two_numberings_disagree() {
-    // BTN_0..BTN_2 are 0x100..0x102 -- arcade encoders report them. SDL walks
-    // BTN_JOYSTICK..KEY_MAX first and only then 0..BTN_JOYSTICK, so those
-    // three sort last for SDL and first for RetroArch. Storing one numbering
-    // and recomputing the other shifts every binding on such a pad.
+    // BTN_0..BTN_2 are 0x100..0x102 -- arcade encoders report them.
     let keys = [0x100_u16, 0x101, 0x102, 0x120, 0x121, 0x122];
     assert_eq!(retroarch_button_index(&keys, 0x100), Some(0));
     assert_eq!(retroarch_button_index(&keys, 0x101), Some(1));
@@ -842,8 +708,7 @@ fn a_pad_carrying_btn_misc_codes_makes_the_two_numberings_disagree() {
 
 #[test]
 fn a_keyboard_code_sorts_after_every_joystick_button_for_sdl() {
-    // KEY_A (0x1e) from a combo adapter. SDL puts it last; it is still a real
-    // SDL button and a mapping may legitimately use it.
+    // KEY_A (0x1e) from a combo adapter.
     let keys = [0x1e_u16, 0x120, 0x121, 0x122];
     assert_eq!(sdl_button_index(&keys, 0x120), Some(0));
     assert_eq!(sdl_button_index(&keys, 0x122), Some(2));
@@ -852,11 +717,6 @@ fn a_keyboard_code_sorts_after_every_joystick_button_for_sdl() {
 
 #[test]
 fn retroarch_answers_invisible_not_absent_for_a_reported_keyboard_code() {
-    // The distinction RA_INVISIBLE exists for. None means "the two consumers
-    // agree", so answering None here stored index 3 for a pad RetroArch
-    // numbers 0..2: RetroArch binds a button that does not exist without
-    // complaining and still reports the pad as configured, and the control
-    // works in the front-end and is dead in every game.
     let keys = [0x1e_u16, 0x120, 0x121, 0x122];
     assert_eq!(retroarch_button_index(&keys, 0x1e), Some(RA_INVISIBLE));
     assert_ne!(retroarch_button_index(&keys, 0x1e), None);
@@ -867,7 +727,6 @@ fn retroarch_answers_invisible_not_absent_for_a_reported_keyboard_code() {
         Err(Unspellable::InvisibleToRetroarch),
         "the sentinel has to survive all the way into the spelled line"
     );
-    // Every KEY_* code below BTN_MISC, not just the one.
     for code in [0x01_u16, 0x1e, 0x2c, 0x9e, 0xff] {
         let keys = [code, 0x120, 0x121];
         assert_eq!(
@@ -876,7 +735,6 @@ fn retroarch_answers_invisible_not_absent_for_a_reported_keyboard_code() {
             "{code:#x}"
         );
     }
-    // ...and the boundary itself is visible: BTN_MISC is enumerated.
     let at_boundary = [BTN_MISC, 0x120];
     assert_eq!(retroarch_button_index(&at_boundary, BTN_MISC), Some(0));
     let below_boundary = [BTN_MISC - 1, 0x120];
@@ -905,10 +763,6 @@ fn a_code_the_pad_does_not_report_is_absent_from_both() {
 
 #[test]
 fn an_empty_key_list_numbers_nothing_not_even_an_invisible_code() {
-    // A pad that reports no keys at all is a pad still enumerating, or one
-    // that is really an accelerometer. Answering RA_INVISIBLE here would say
-    // "the code exists but RetroArch cannot see it", which is a different and
-    // wrong claim.
     assert_eq!(sdl_button_index(&[], 0x120), None);
     assert_eq!(retroarch_button_index(&[], 0x120), None);
     assert_eq!(sdl_button_index(&[], 0x1e), None);
@@ -921,8 +775,6 @@ fn an_empty_key_list_numbers_nothing_not_even_an_invisible_code() {
 
 #[test]
 fn indices_do_not_depend_on_the_order_the_codes_arrive_in() {
-    // evdev's EVIOCGBIT walk happens to be ascending, but nothing in the API
-    // promises it, and the capture path passes the list straight through.
     let sorted = [0x1e_u16, 0x100, 0x101, 0x120, 0x121, 0x122, 0x2c0];
     let shuffled = [0x2c0_u16, 0x121, 0x1e, 0x122, 0x100, 0x120, 0x101];
     let reversed: Vec<u16> = sorted.iter().rev().copied().collect();
@@ -944,11 +796,6 @@ fn indices_do_not_depend_on_the_order_the_codes_arrive_in() {
 
 #[test]
 fn a_duplicated_code_shifts_every_later_button_for_both_consumers() {
-    // Documented, not endorsed. A pad reported twice -- the same code twice
-    // in one key list -- is counted twice by both numberings, so everything
-    // after it is off by one. Both are wrong the same way, which is the least
-    // bad outcome: the two consumers still agree with each other, and the
-    // fault stays upstream in whatever built the list.
     let once = [0x120_u16, 0x121, 0x122];
     let twice = [0x120_u16, 0x120, 0x121, 0x122];
     assert_eq!(
@@ -971,9 +818,7 @@ fn a_duplicated_code_shifts_every_later_button_for_both_consumers() {
 
 #[test]
 fn trigger_happy_codes_are_ordinary_buttons_to_both_consumers() {
-    // BTN_TRIGGER_HAPPY1 is 0x2c0; arcade encoders with more than sixteen
-    // buttons run up there. They are above BTN_JOYSTICK, so both numberings
-    // treat them plainly and the pad is one of the easy ones.
+    // BTN_TRIGGER_HAPPY1 is 0x2c0; arcade encoders with more than sixteen.
     let mut keys: Vec<u16> = (BTN_JOYSTICK..BTN_JOYSTICK + 4).collect();
     keys.extend(0x2c0_u16..0x2c8);
     for (expected, code) in keys.iter().copied().enumerate() {
@@ -995,8 +840,6 @@ fn trigger_happy_codes_are_ordinary_buttons_to_both_consumers() {
 
 #[test]
 fn sdl_numbers_every_reported_code_exactly_once_from_zero() {
-    // A gap or a repeat in the numbering means two controls share a button
-    // number, and the second binding written wins for both.
     let keys = [0x1e_u16, 0x2c, 0x100, 0x110, 0x120, 0x13f, 0x2c0];
     let numbers: BTreeSet<i32> = keys
         .iter()
@@ -1015,7 +858,6 @@ fn retroarch_numbers_the_visible_codes_densely_and_skips_the_rest() {
         .map(|code| retroarch_button_index(&keys, *code).expect("a visible code has a number"))
         .collect();
     assert_eq!(numbers, (0..visible.len() as i32).collect::<Vec<_>>());
-    // The invisible ones do not consume a number -- that is the correction.
     for code in keys.iter().copied().filter(|c| *c < BTN_MISC) {
         assert_eq!(
             retroarch_button_index(&keys, code),
@@ -1027,8 +869,6 @@ fn retroarch_numbers_the_visible_codes_densely_and_skips_the_rest() {
 
 #[test]
 fn a_pad_of_nothing_but_keyboard_codes_is_invisible_to_retroarch_end_to_end() {
-    // The pure-keyboard case an arcade encoder in keyboard mode produces:
-    // SDL numbers all of them, RetroArch none.
     let keys = [0x1e_u16, 0x1f, 0x20];
     for (expected, code) in keys.iter().copied().enumerate() {
         assert_eq!(sdl_button_index(&keys, code), Some(expected as i32));
@@ -1039,15 +879,8 @@ fn a_pad_of_nothing_but_keyboard_codes_is_invisible_to_retroarch_end_to_end() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// axis_index
-// ---------------------------------------------------------------------------
-
 #[test]
 fn hats_are_skipped_so_abs_rz_is_not_axis_five() {
-    // ABS_X, ABS_Y, ABS_Z, ABS_RX, ABS_RY, ABS_RZ and a hat pair. Storing the
-    // raw evdev code and hoping it is the index works right up to the first
-    // pad whose axes are not 0,1,2,...
     let codes = [0x00_u16, 0x01, 0x02, 0x03, 0x04, 0x05, 0x10, 0x11];
     assert_eq!(axis_index(&codes, 0x00), Some(0));
     assert_eq!(
@@ -1068,8 +901,6 @@ fn hats_are_skipped_so_abs_rz_is_not_axis_five() {
 
 #[test]
 fn a_hat_in_the_middle_of_the_axis_list_does_not_consume_a_number() {
-    // The interleaved pad: the hat codes sit between the sticks and the
-    // triggers, so counting them would shift every axis after the d-pad.
     let codes = [
         0x00_u16, 0x01, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x28, 0x29,
     ];
@@ -1092,8 +923,7 @@ fn a_hat_in_the_middle_of_the_axis_list_does_not_consume_a_number() {
 
 #[test]
 fn the_hat_range_is_half_open_so_the_code_just_past_it_is_an_axis() {
-    // ABS_HAT3Y is 0x17 and ABS_PRESSURE is 0x18. An off-by-one at this edge
-    // renumbers every axis on any pad that reports pressure.
+    // ABS_HAT3Y is 0x17 and ABS_PRESSURE is 0x18. An off-by-one at this edge.
     assert_eq!(HAT_CODES, 0x10..0x18);
     let codes = [0x0f_u16, 0x10, 0x17, 0x18];
     assert_eq!(axis_index(&codes, 0x0f), Some(0), "0x0f is below the hats");
@@ -1141,18 +971,12 @@ fn axis_numbering_ignores_the_order_the_codes_arrive_in() {
 
 #[test]
 fn a_duplicated_axis_code_shifts_every_later_axis() {
-    // Documented, as for the button numberings: the first copy keeps its
-    // number and everything after it moves up one.
     let once = [0x00_u16, 0x01, 0x03];
     let twice = [0x00_u16, 0x01, 0x01, 0x03];
     assert_eq!(axis_index(&once, 0x03), Some(2));
     assert_eq!(axis_index(&twice, 0x01), Some(1), "the first copy wins");
     assert_eq!(axis_index(&twice, 0x03), Some(3));
 }
-
-// ---------------------------------------------------------------------------
-// JSON: the shape the Python's to_json/from_json used
-// ---------------------------------------------------------------------------
 
 #[test]
 fn a_binding_writes_the_python_field_names() {
@@ -1174,8 +998,7 @@ fn a_binding_writes_the_python_field_names() {
 
 #[test]
 fn an_absent_ra_index_reads_back_as_absent_not_as_zero() {
-    // Zero is button zero. Reading an absent override as 0 would point every
-    // binding in an old profile at the first button on the pad.
+    // Zero is button zero.
     let raw = serde_json::json!({"kind": "button", "index": 7});
     let binding: Binding = serde_json::from_value(raw).expect("deserialize");
     assert_eq!(binding.ra_index, None);
@@ -1184,8 +1007,6 @@ fn an_absent_ra_index_reads_back_as_absent_not_as_zero() {
 
 #[test]
 fn an_explicit_null_ra_index_reads_the_same_as_an_absent_one() {
-    // The Python's to_json always wrote the key, with None for "they agree",
-    // so every profile written before this port has an explicit null in it.
     let raw = serde_json::json!({"kind": "button", "index": 7, "value": 0, "ra_index": null});
     let binding: Binding = serde_json::from_value(raw).expect("deserialize");
     assert_eq!(binding.ra_index, None);
@@ -1233,9 +1054,6 @@ fn every_kind_round_trips_under_its_lowercase_name() {
 
 #[test]
 fn an_unknown_kind_is_refused_rather_than_read_as_a_button() {
-    // The Python stored `kind` as a bare string and only noticed at spelling
-    // time; here a profile naming a kind nobody implements fails to load,
-    // which is the difference between a message and a missing control.
     for name in ["Button", "BUTTON", "trigger", "", "buttons"] {
         let raw = serde_json::json!({"kind": name, "index": 1});
         let parsed: Result<Binding, _> = serde_json::from_value(raw);
@@ -1245,9 +1063,6 @@ fn an_unknown_kind_is_refused_rather_than_read_as_a_button() {
 
 #[test]
 fn a_binding_with_no_index_is_refused_rather_than_defaulted_to_button_zero() {
-    // A divergence from the Python, kept deliberately: `from_json` used
-    // `raw.get("index", 0)`, so a truncated profile silently bound the
-    // control to button 0 -- a real button, usually A.
     let raw = serde_json::json!({"kind": "button"});
     let parsed: Result<Binding, _> = serde_json::from_value(raw);
     assert!(parsed.is_err(), "a binding with no index was accepted");
@@ -1258,8 +1073,6 @@ fn a_binding_with_no_index_is_refused_rather_than_defaulted_to_button_zero() {
 
 #[test]
 fn every_shape_survives_a_json_round_trip_unchanged() {
-    // Including the ones no consumer can spell: a profile has to be able to
-    // hold a binding, be rewritten, and still refuse it for the same reason.
     for binding in every_shape() {
         let json = serde_json::to_value(binding).expect("serialize");
         let back: Binding = serde_json::from_value(json).expect("deserialize");

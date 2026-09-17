@@ -1,10 +1,4 @@
-//! SDL's side of a mapping: the GUID it keys its database on, and the line it
-//! stores under that key.
-//!
-//! SDL never reports a mapping it failed to match. A GUID computed one way and
-//! a device created another simply does nothing, and says nothing, so both the
-//! checksum and the field order are pinned in tests against a line SDL itself
-//! wrote.
+//! SDL GUID and controller database format.
 
 use std::collections::BTreeMap;
 
@@ -12,11 +6,7 @@ use crate::binding::{axis_index, Binding};
 use crate::control::{Control, CANONICAL_ORDER};
 use crate::fields::Fields;
 
-/// SDL's CRC-16, needed to reproduce a joystick GUID.
-///
-/// SDL 2.26 onwards stores a checksum of the device name in bytes 2-3 of the
-/// GUID, so a mapping written for the wrong checksum is never matched. This is
-/// CRC-16/ARC -- reflected, polynomial 0xA001, zero initial value.
+/// CRC-16/ARC in GUID bytes 2-3; unmatched GUID never loads.
 pub fn crc16(data: &[u8]) -> u16 {
     let mut crc: u16 = 0;
     for byte in data {
@@ -32,11 +22,7 @@ pub fn crc16(data: &[u8]) -> u16 {
     crc
 }
 
-/// The GUID SDL will compute for a device, as it appears in its database.
-///
-/// Sixteen little-endian 16-bit fields with padding between them; the name
-/// checksum sits second. padmap creates the virtual pads, so it knows every
-/// input here and can write a mapping before SDL has ever seen the device.
+/// GUID as SDL computes it: 16 LE 16-bit fields, name checksum second.
 pub fn guid(bus: u16, vendor: u16, product: u16, version: u16, name: &str) -> String {
     let words = [
         bus,
@@ -55,13 +41,7 @@ pub fn guid(bus: u16, vendor: u16, product: u16, version: u16, name: &str) -> St
     out
 }
 
-/// evdev ABS code -> the SDL stick field it feeds.
-///
-/// Sticks are not captured: the wizard asks about buttons, and asking someone
-/// to "press left stick X" is both awkward and unnecessary, since a stick is
-/// already unambiguous from the device's own axes. They still have to be in the
-/// mapping -- without leftx/lefty SDL reports no stick at all and a front-end
-/// loses every form of navigation except the d-pad.
+/// evdev ABS code to SDL stick field.
 pub const STICK_AXES: [(u16, &str); 4] = [
     (0x00, "leftx"),  // ABS_X
     (0x01, "lefty"),  // ABS_Y
@@ -86,13 +66,7 @@ impl AxisSpan {
         }
     }
 
-    /// Whether the axis sits near the middle of its travel when untouched.
-    ///
-    /// A real stick centres and a trigger does not, which is the difference the
-    /// evdev code number cannot express. The Mayflash GameCube adapter reports
-    /// its analogue triggers as ABS_RX and ABS_RY, so trusting the code told
-    /// SDL the right stick was jammed 80% to the upper-left and held there --
-    /// reported as the pad being "stuck to the left".
+    /// Stick (centred) vs trigger (at end): codes cannot express this alone.
     pub fn rests_centred(&self) -> bool {
         if self.maximum <= self.minimum {
             return false;
@@ -104,21 +78,10 @@ impl AxisSpan {
     }
 }
 
-/// How far from the middle of its range an axis may rest and still be called a
-/// stick, as a fraction of half that range. A real stick centres within a few
-/// percent; the pads measured here sit inside 4%. Anything near an end is a
-/// trigger, and this is a wide berth around that distinction.
+/// Stick tolerance from centre: 0.5 is wide berth around trigger threshold.
 pub const STICK_REST_TOLERANCE: f64 = 0.5;
 
-/// SDL stick entries for the axes a pad actually reports.
-///
-/// Two axes are refused: one that does not rest near the middle of its range
-/// (a trigger, see [`AxisSpan::rests_centred`]), and one a capture already
-/// claims -- nothing good comes of an axis being both a stick and a button, as
-/// the front-end believes whichever it reads first.
-///
-/// Without `axes` the old guess by evdev code stands, since a caller with no
-/// absinfo is no worse off than before.
+/// Stick fields: refuse triggers and captured axes.
 pub fn stick_fields(
     axis_codes: &[u16],
     bindings: &BTreeMap<Control, Binding>,
@@ -151,13 +114,7 @@ pub fn stick_fields(
     fields
 }
 
-/// Characters a device name may not carry into a database line.
-///
-/// The comma is the field separator. The rest all end a line for one reader or
-/// the other: SDL splits the file on newline, and padmap's own rewriter uses a
-/// line split that additionally breaks on \v, \f, \x1c-\x1e, NEL and the
-/// Unicode line/paragraph separators. A name is a USB string descriptor written
-/// by somebody else, so none of these is hypothetical.
+/// Chars that break SDL database parsing or line framing.
 const NAME_FORBIDDEN: [char; 11] = [
     ',', '\n', '\r', '\x0b', '\x0c', '\u{1c}', '\u{1d}', '\u{1e}', '\u{85}', '\u{2028}', '\u{2029}',
 ];
@@ -169,12 +126,7 @@ pub fn clean_name(name: &str) -> String {
         .collect()
 }
 
-/// One line for SDL's controller database, from plain field:target pairs.
-///
-/// Separate from [`mapping_line`] because not every line padmap writes comes
-/// from a capture: one carried over from another database has fields padmap
-/// never asks about (`guide`, `leftstick`), and dropping them on the way
-/// through would quietly cost the user bindings they already had.
+/// Database line from plain field:target pairs; preserves unknown fields.
 pub fn line(guid: &str, name: &str, fields: &Fields, platform: &str) -> String {
     let mut parts: Vec<String> = vec![guid.to_owned(), clean_name(name)];
     for (field, target) in fields.iter() {
@@ -184,10 +136,7 @@ pub fn line(guid: &str, name: &str, fields: &Fields, platform: &str) -> String {
     parts.join(",") + ","
 }
 
-/// A database line split into guid, name and fields, or `None` if it is not one.
-///
-/// Tolerant on purpose: this reads files the user and other programs write,
-/// where a comment, a blank line or a trailing comma are all normal.
+/// Parse database line, tolerating user comments and blank lines.
 pub fn parse_line(raw: &str) -> Option<(String, String, Fields)> {
     let stripped = raw.trim();
     if stripped.is_empty() || stripped.starts_with('#') {
@@ -209,13 +158,7 @@ pub fn parse_line(raw: &str) -> Option<(String, String, Fields)> {
     Some((parts[0].to_lowercase(), parts[1].to_owned(), fields))
 }
 
-/// One line for SDL's controller database, from a capture.
-///
-/// A binding SDL cannot express is left out rather than refused: the shape that
-/// arrives here is a hat value that is not a single direction, off a profile
-/// somebody edited or a write that was cut short, and failing halfway through
-/// means the pad gets no line at all -- every control lost to save one. Left
-/// out, the direction reads as unmapped and the wizard can be run again.
+/// Database line from bindings; unexpressible bindings left out, not fatal.
 pub fn mapping_line(
     guid: &str,
     name: &str,
@@ -242,9 +185,6 @@ mod tests {
     use super::*;
     use crate::binding::Binding;
 
-    // Written by SDL itself, via Pegasus's gamepad editor, for one of padmap's
-    // virtual pads. bus 6 (BUS_VIRTUAL, since the pad is uinput), vendor
-    // 0x0079, product 0x1879, version 1.
     const REAL_GUID: &str = "0600c9a7790000007918000001000000";
     const REAL_NAME: &str = "padmap Player 1";
     const BUS_VIRTUAL: u16 = 0x06;
@@ -264,7 +204,6 @@ mod tests {
         let one = guid(BUS_VIRTUAL, 0x0079, 0x1879, 1, "padmap Player 1");
         let two = guid(BUS_VIRTUAL, 0x0079, 0x1879, 1, "padmap Player 2");
         assert_ne!(one, two);
-        // ...and only in the checksum field, bytes 2-3.
         assert_eq!(&one[..4], &two[..4], "the bus moved");
         assert_eq!(
             &one[8..],
@@ -275,8 +214,6 @@ mod tests {
 
     #[test]
     fn the_bus_is_the_first_field_and_changing_it_changes_the_guid() {
-        // Measured against SDL: bus 3 with ids 0079:1830 matches its database
-        // entry, bus 6 with the same ids matches nothing.
         let usb = guid(0x03, 0x0079, 0x1830, 0x0110, "Arcade Fightstick F300");
         let virt = guid(0x06, 0x0079, 0x1830, 0x0110, "Arcade Fightstick F300");
         assert_eq!(&usb[..4], "0300");
@@ -295,7 +232,6 @@ mod tests {
 
     #[test]
     fn crc16_is_the_arc_variant() {
-        // The standard check vector for CRC-16/ARC.
         assert_eq!(crc16(b"123456789"), 0xBB3D);
         assert_eq!(crc16(b""), 0x0000);
     }
@@ -309,9 +245,6 @@ mod tests {
 
     #[test]
     fn a_newline_in_a_name_cannot_produce_two_physical_lines() {
-        // Worse than a comma: SDL reads the first line as a device with no
-        // bindings and drops the second as junk, so the pad gets no mapping at
-        // all rather than a damaged one.
         for bad in ['\n', '\r', '\x0b', '\x0c', '\u{85}', '\u{2028}', '\u{2029}'] {
             let name = format!("Pad{bad}Two");
             let built = line(REAL_GUID, &name, &Fields::new(), "Linux");
@@ -383,8 +316,7 @@ mod tests {
 
     #[test]
     fn a_binding_sdl_cannot_express_is_left_out_not_fatal() {
-        // A half-written profile holds a hat value naming two directions. The
-        // pad must still get a line for everything else.
+        // A half-written profile holds a hat value naming two directions.
         let bindings: BTreeMap<Control, Binding> = [
             (Control::A, Binding::button(1)),
             (Control::DpadUp, Binding::hat(0, 3)),
@@ -426,8 +358,6 @@ mod tests {
 
     #[test]
     fn an_axis_that_rests_at_one_end_is_a_trigger_not_a_stick() {
-        // The Mayflash GameCube adapter: its analogue triggers are ABS_RX and
-        // ABS_RY, and calling them the right stick jams that stick to a corner.
         let codes = [0x00_u16, 0x01, 0x03, 0x04];
         let axes: BTreeMap<u16, AxisSpan> = [
             (0x00, AxisSpan::new(0, 255, 128)),
@@ -447,7 +377,6 @@ mod tests {
     #[test]
     fn an_axis_a_capture_already_claims_is_not_also_a_stick() {
         let codes = [0x00_u16, 0x01, 0x03, 0x04];
-        // The user bound a trigger to axis 2 (ABS_RX).
         let bindings: BTreeMap<Control, Binding> = [(Control::LeftTrigger, Binding::axis(2, 1))]
             .into_iter()
             .collect();
@@ -464,9 +393,7 @@ mod tests {
 
     #[test]
     fn the_stick_tolerance_is_a_wide_berth_around_the_distinction() {
-        // Inside: a worn N64 stick resting at 174 on 0..255 is 36% deflected.
         assert!(AxisSpan::new(0, 255, 174).rests_centred());
-        // Outside: exactly at the boundary is still a stick, past it is not.
         assert!(
             AxisSpan::new(0, 200, 150).rests_centred(),
             "0.5 is inclusive"

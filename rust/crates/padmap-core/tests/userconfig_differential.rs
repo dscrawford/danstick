@@ -66,7 +66,6 @@ fn a_config_with_nothing_to_clean_comes_back_identical() {
 
 #[test]
 fn line_endings_and_spacing_survive_a_change() {
-    // A universal-newline read once rewrote a dual-boot config end to end while reporting one change.
     let cleaned = userconfig::clean(
         "keep_me = \"yes\"\r\ninput_player1_reserved_device = \"padmap Player 1\"\r\nalso = \"kept\"\r\n",
     );
@@ -111,7 +110,6 @@ fn an_unquoted_line_stays_unquoted_unless_it_cannot() {
 
 #[test]
 fn a_reservation_type_is_judged_with_its_device_name() {
-    // Alphabetical order puts the type before the name it depends on.
     let cleaned = userconfig::clean(
         "input_player1_device_reservation_type = \"2\"\n\
          input_player1_reserved_device = \"padmap Player 1\"\n",
@@ -136,7 +134,6 @@ fn a_joypad_index_resets_to_what_retroarch_would_default_to() {
 
 #[test]
 fn the_libretro_device_key_is_deliberately_left_alone() {
-    // It lives only in .rmp remap files, so a rule could only damage one pointed at by --config.
     let cleaned = userconfig::clean("input_libretro_device_p1 = \"1\"\n");
     assert!(cleaned.changes.is_empty());
     assert_eq!(cleaned.text, "input_libretro_device_p1 = \"1\"\n");

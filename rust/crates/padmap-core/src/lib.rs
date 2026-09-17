@@ -1,5 +1,4 @@
 //! Device-independent logic: pure functions over plain data, testable without hardware.
-//! I/O supplied by padmap-hid, padmap-input, padmap-daemon.
 
 #![forbid(unsafe_code)]
 

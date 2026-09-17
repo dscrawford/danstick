@@ -1,18 +1,4 @@
-//! A mapping for a pad nothing knows anything about.
-//!
-//! Two very different halves, and the split is the point.
-//!
-//! The face buttons are a genuine guess -- which physical button is A is
-//! exactly what the wizard exists to find out, and pads disagree (SDL's own
-//! database has the measured Fightstick as `a:b1,x:b0`). The order used here is
-//! the one SDL assumes when it has nothing better, so this can only be as wrong
-//! as doing nothing, and no more.
-//!
-//! Everything below the face buttons is *not* a guess, and is where the value
-//! is: a hat is a hat and ABS_X is the left stick's X on every pad ever made.
-//! Those are the bindings that decide whether a menu can be navigated at all,
-//! which is what a user needs before they can reach the wizard that fixes the
-//! rest.
+//! Guess a mapping for unknown pads: SDL's default button order, but measured axes/hat.
 
 use std::collections::BTreeMap;
 
@@ -55,14 +41,11 @@ pub fn stick_and_dpad_fields(
 ) -> Fields {
     let mut fields = Fields::new();
     if axis_codes.contains(&ABS_HAT0X) && axis_codes.contains(&ABS_HAT0Y) {
-        // Hats are numbered separately from axes; hat 0 is the only one any
-        // measured pad has.
         fields.insert("dpup", "h0.1");
         fields.insert("dpright", "h0.2");
         fields.insert("dpdown", "h0.4");
         fields.insert("dpleft", "h0.8");
     } else {
-        // No hat: some pads report the d-pad as four ordinary keys instead.
         for (code, field) in DPAD_KEYS {
             if let Some(index) = sdl_button_index(keys, code) {
                 fields.insert(field, format!("b{index}"));
@@ -73,13 +56,7 @@ pub fn stick_and_dpad_fields(
     fields
 }
 
-/// A whole mapping for a pad with no capture.
-///
-/// A pad that speaks the kernel's gamepad convention is not guessed at -- see
-/// [`crate::standard`], which reads its controls off the codes exactly. Only a
-/// device that does not (an arcade stick, a wheel, something exotic) reaches
-/// the positional ordering below, which is the one case where the face buttons
-/// really are a guess.
+/// Full mapping for a pad: uses standard detection if available, else guesses buttons.
 pub fn guessed_fields(
     keys: &[u16],
     axis_codes: &[u16],
@@ -91,7 +68,6 @@ pub fn guessed_fields(
     }
     let mut sorted: Vec<u16> = keys.to_vec();
     sorted.sort_unstable();
-    // SDL's own ordering: the joystick range first, then anything below it.
     let ordered = sorted.len();
     let mut fields = Fields::new();
     for (index, field) in GUESS_BUTTON_ORDER.iter().enumerate() {
@@ -122,7 +98,6 @@ mod tests {
 
     #[test]
     fn a_pad_reporting_directions_as_keys_gets_them_as_buttons() {
-        // Some pads have no hat at all; without this they navigate nothing.
         let keys: Vec<u16> = vec![0x130, 0x220, 0x221, 0x222, 0x223];
         let fields = stick_and_dpad_fields(&[0x00, 0x01], &keys, None);
         assert_eq!(fields.get("dpup"), Some("b1"));
@@ -140,7 +115,6 @@ mod tests {
 
     #[test]
     fn a_pad_with_half_a_hat_falls_back_to_keys() {
-        // Both codes or neither: half a hat cannot express four directions.
         let keys: Vec<u16> = vec![0x220];
         let fields = stick_and_dpad_fields(&[ABS_HAT0X], &keys, None);
         assert_eq!(fields.get("dpup"), Some("b0"));
@@ -157,8 +131,6 @@ mod tests {
 
     #[test]
     fn a_trigger_masquerading_as_a_stick_axis_is_refused() {
-        // The Mayflash GameCube adapter reports its analogue triggers as
-        // ABS_RX and ABS_RY; calling them the right stick jams it to a corner.
         let axes: BTreeMap<u16, AxisSpan> = [
             (0x00, AxisSpan::new(0, 255, 128)),
             (0x01, AxisSpan::new(0, 255, 128)),
@@ -173,20 +145,14 @@ mod tests {
         assert_eq!(fields.get("righty"), None);
     }
 
-    /// Joystick-range codes a gamepad never reports: BTN_TRIGGER, BTN_THUMB,
-    /// BTN_THUMB2... This is the device whose face buttons genuinely are a
-    /// guess, and the only one that still reaches the positional ordering.
+    /// Helper: arcade stick buttons (0x120..0x120+count).
     fn arcade(count: u16) -> Vec<u16> {
-        // Capped below BTN_SOUTH: a list that ran into the gamepad range
-        // would *be* a standard pad, and would take the other path.
         assert!(count <= 0x10, "0x120 + {count:#x} reaches BTN_SOUTH");
         (0x120..0x120 + count).collect()
     }
 
     #[test]
     fn a_pad_with_fewer_buttons_than_the_order_gets_only_what_it_has() {
-        // Naming a button the pad does not have is a binding that does
-        // nothing, on a pad reported as configured.
         let fields = guessed_fields(&arcade(3), &[], None);
         assert_eq!(fields.get("a"), Some("b0"));
         assert_eq!(fields.get("x"), Some("b2"));
@@ -212,9 +178,6 @@ mod tests {
 
     #[test]
     fn a_pad_that_speaks_the_convention_is_read_rather_than_guessed() {
-        // The same codes an Xbox pad reports. Positionally, `x` and `y` come
-        // out swapped and `back` lands on BTN_MODE; by code they are exact.
-        // Everything below the face buttons is unchanged either way.
         let keys = vec![0x130, 0x131, 0x133, 0x134, 0x13A, 0x13B, 0x13C];
         let fields = guessed_fields(&keys, &[0x00, 0x01, ABS_HAT0X, ABS_HAT0Y], None);
         assert_eq!(fields.get("y"), Some("b2"), "BTN_NORTH");

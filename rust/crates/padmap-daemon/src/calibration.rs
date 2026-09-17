@@ -1,5 +1,4 @@
 //! A calibration in flight, advanced from the daemon's tick.
-//! Collects samples incrementally to avoid blocking other pads or clients.
 
 use std::collections::BTreeMap;
 

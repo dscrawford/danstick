@@ -66,7 +66,6 @@ fn a_rest_sample_becomes_the_same_centre_and_dead_band() {
 
 #[test]
 fn the_centre_floors_the_way_python_divides() {
-    // Python's `//` floors; Rust's `/` truncates. Both write the same profile file.
     let d = declared(-32768, 32767, 0, 0);
     assert_eq!(d.rest_calibration(Some((-1, 0))).center, -1);
     assert_eq!(d.rest_calibration(Some((-3, 0))).center, -2);
@@ -129,7 +128,6 @@ fn which_axes_are_worth_centring_matches() {
 
 #[test]
 fn the_gamecube_adapters_triggers_are_not_taken_for_sticks() {
-    // That adapter puts analogue triggers on the stick codes ABS_RX/ABS_RY, resting at 24/25 of 0-255.
     for (code, rest) in [(0x03u16, 24), (0x04u16, 25)] {
         assert!(
             !declared(0, 255, rest, 0).calibratable(code),

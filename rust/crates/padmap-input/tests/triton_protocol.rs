@@ -1,18 +1,7 @@
 //! The 2026 Steam Controller protocol, in Rust, against the same numbers.
-//!
-//! Two jobs. The first is that the constants are right: the ioctl opcode, the
-//! feature report's six bytes, the field offsets of a packed C struct. Get one
-//! wrong and the controller stays a keyboard, silently, because the ioctl
-//! still succeeds.
-//!
-//! The second is that this port agrees with the Python one. `triton.py` has a
-//! suite of its own and the two decode the same bytes, so a divergence is a
-//! bug in whichever was changed last -- and until the daemon is ported both
-//! are live, on the same machine, for the same controller.
 
 use padmap_input::triton;
 
-/// A state report payload -- everything after the report id.
 fn state(buttons: u32, tl: i16, tr: i16, lx: i16, ly: i16, rx: i16, ry: i16) -> Vec<u8> {
     let mut out = vec![0u8]; // seq
     out.extend_from_slice(&buttons.to_le_bytes());
@@ -25,11 +14,8 @@ fn state(buttons: u32, tl: i16, tr: i16, lx: i16, ly: i16, rx: i16, ry: i16) -> 
 
 #[test]
 fn the_ioctl_opcode_is_the_one_the_kernel_expects() {
-    // _IOC(_IOC_READ|_IOC_WRITE, 'H', 0x06, 64). A wrong number does not fail
-    // safely -- it is a different ioctl, on a device node, and the return
-    // value looks the same.
+    // _IOC(_IOC_READ|_IOC_WRITE, 'H', 0x06, 64).
     assert_eq!(triton::hidiocsfeature(64), 0xC040_4806);
-    // The size really is the size, and the low half never moves.
     assert_eq!(triton::hidiocsfeature(32), 0xC020_4806);
     assert_eq!(triton::hidiocsfeature(1) & 0xFFFF, 0x4806);
 }
@@ -37,27 +23,15 @@ fn the_ioctl_opcode_is_the_one_the_kernel_expects() {
 #[test]
 #[should_panic(expected = "out of range")]
 fn a_length_that_would_run_into_the_direction_bits_is_refused() {
-    // 0x4000 overflows the fourteen-bit size field into bit 30, which is
-    // already set -- the opcode silently becomes a request for size 0, and an
-    // opcode whose size disagrees with the buffer makes the kernel read past
-    // it. The Python raises here too.
+    // 0x4000 overflows the fourteen-bit size field into bit 30, which is.
     let _ = triton::hidiocsfeature(0x4000);
 }
 
 #[test]
 fn the_probe_is_gated_by_the_switch_that_protects_real_controllers() {
-    // PADMAP_ONLY_DEVICE exists so an isolated test daemon cannot touch the
-    // machine's real pads. `slots` *writes* to hardware -- a feature report
-    // per slot, to find out whether a controller is paired into it -- so
-    // filtering the returned list is not enough; the gate has to come first.
-    //
-    // The predicate is passed in rather than read from the environment, so
-    // this proves the real gating path without `set_var` racing every other
-    // test in the process.
     let refused = triton::slots_where(true, |_| false);
     assert!(refused.is_empty(), "the probe ran anyway: {refused:?}");
 
-    // And the switch's own answer, without touching the environment either.
     assert!(padmap_input::pad::wanted_by("Steam Controller", None));
     assert!(padmap_input::pad::wanted_by("Steam Controller", Some("")));
     assert!(padmap_input::pad::wanted_by(
@@ -88,8 +62,7 @@ fn the_lizard_mode_packet_is_the_six_bytes_sdl_sends() {
 
 #[test]
 fn the_packet_matches_the_python_byte_for_byte() {
-    // Both are ports of the same six bytes. If they ever differ, one of them
-    // is sending something the controller will not act on.
+    // Both are ports of the same six bytes.
     let python = std::process::Command::new("python3")
         .args([
             "-c",
@@ -133,8 +106,6 @@ fn the_state_reports_field_offsets_are_the_packed_struct() {
 
 #[test]
 fn a_short_payload_decodes_to_nothing_rather_than_panicking() {
-    // Sysfs and a device node both hand over whatever they have. A slice index
-    // past the end is a panic, and this runs inside the daemon's loop.
     let full = state(0, 0, 0, 0, 0, 0, 0);
     for cut in 0..full.len() {
         let _ = triton::decode_state(&full[..cut]);
@@ -152,8 +123,6 @@ fn a_short_payload_decodes_to_nothing_rather_than_panicking() {
 
 #[test]
 fn opposite_dpad_directions_cancel() {
-    // A real hat cannot report both, and a pad that reported +1 for
-    // left-and-right would walk in one direction while the user holds neither.
     const UP: u32 = 0x0000_2000;
     const DOWN: u32 = 0x0000_0400;
     const LEFT: u32 = 0x0000_1000;
@@ -170,10 +139,6 @@ fn opposite_dpad_directions_cancel() {
 
 #[test]
 fn the_decode_agrees_with_the_python_port() {
-    // The two implementations are held to each other rather than to a
-    // hand-written expectation, which is the same reason `differential.rs`
-    // exists: a belief about what the other side does is the thing most
-    // likely to be wrong.
     let cases: [(u32, i16, i16, i16, i16, i16, i16); 6] = [
         (0, 0, 0, 0, 0, 0, 0),
         (0x0000_0001, 0, 0, 0, 0, 0, 0),
@@ -256,8 +221,7 @@ fn only_valve_ids_on_a_hidraw_node_are_ours() {
 
 #[test]
 fn scanning_a_real_machine_does_not_fail() {
-    // Whatever is attached, this must answer rather than raise: it runs from
-    // the daemon's tick, where a panic costs every player's clone at once.
+    // Whatever is attached, this must answer rather than raise: it runs from.
     let all = triton::slots(false);
     let live = triton::slots(true);
     assert!(live.len() <= all.len(), "a live slot is one of the slots");
@@ -265,8 +229,7 @@ fn scanning_a_real_machine_does_not_fail() {
         assert!(triton::owns(pad), "{} is not ours", pad.path.display());
         assert!(!pad.retroarch_visible, "nothing else can see a hidraw pad");
     }
-    // Two slots of one receiver must be distinguishable, or assignment cannot
-    // tell them apart -- the failure `ambiguous_groups` exists to explain.
+    // Two slots of one receiver must be distinguishable, or assignment cannot.
     let mut uniqs: Vec<&String> = all.iter().map(|pad| &pad.uniq).collect();
     uniqs.sort();
     uniqs.dedup();
@@ -275,20 +238,6 @@ fn scanning_a_real_machine_does_not_fail() {
 }
 
 // -- the Source, fed real bytes ------------------------------------------
-//
-// Everything above tests pure functions. This tests the state machine: the
-// open, the ioctl, the read loop, the diffing, and the connect/disconnect
-// handling -- none of which a pure test reaches.
-//
-// A pseudo-terminal stands in for the hidraw node. It has to be a *character
-// device*, because `open_hidraw` fstats what it opened and refuses anything
-// else, so a temp file will not do -- and that check existing is the reason
-// this needs a real device rather than a way around one. A /dev/ptmx pair is
-// one, and an unprivileged process can make it.
-//
-// Two things a real node has that this does not: EPIPE for an empty slot
-// (nothing here stalls a transfer, so `slot_is_live`'s stall branch stays
-// untested), and a guarantee that one read returns exactly one report.
 
 use std::io::Write;
 use std::path::PathBuf;
@@ -311,9 +260,7 @@ impl FakeHidraw {
         unlockpt(&master).ok()?;
         let name = ptsname(&master, Vec::new()).ok()?;
         let mut attrs = tcgetattr(&master).ok()?;
-        // Not an optimisation: a cooked tty line-buffers on \n and swallows
-        // control bytes such as 0x03, and a state report's payload contains
-        // both. Without raw mode the bytes never arrive.
+        // Not an optimisation: a cooked tty line-buffers on \n and swallows.
         attrs.make_raw();
         tcsetattr(&master, OptionalActions::Now, &attrs).ok()?;
         Some(FakeHidraw {
@@ -322,8 +269,6 @@ impl FakeHidraw {
         })
     }
 
-    /// One report, as its own write. `fetch_events` treats what one read
-    /// returns as one report, and a real hidraw node never coalesces two.
     fn push(&mut self, id: u8, payload: &[u8]) {
         let mut report = vec![id];
         report.extend_from_slice(payload);
@@ -367,8 +312,6 @@ fn keys(events: &[InputEvent]) -> Vec<(u16, i32)> {
 
 #[test]
 fn a_regular_file_is_refused_as_a_hidraw_node() {
-    // Pins the fstat in `open_hidraw`: without it, anything swapped in for a
-    // device node between discovery and open would be read as the controller.
     let path = std::env::temp_dir().join("padmap-triton-not-a-device");
     let _ = std::fs::remove_file(&path);
     std::fs::File::create(&path).expect("create a plain file");
@@ -411,10 +354,7 @@ fn a_press_becomes_a_key_down_and_a_sync() {
 
 #[test]
 fn an_unchanged_report_is_read_but_emits_nothing() {
-    // Ok with an empty frame, *not* WouldBlock. `Republisher::forward`
-    // branches on WouldBlock to stop early, so returning it here would look
-    // like an idle pad for the wrong reason -- and the caller cannot tell
-    // the two apart from the error alone.
+    // Ok with an empty frame, *not* WouldBlock.
     let mut fake = needs_pty!();
     let mut source = triton::Source::open(fake.slave.as_path()).expect("open");
     fake.push(REPORT_STATE, &state(BIT_A, 0, 0, 0, 0, 0, 0));
@@ -441,10 +381,7 @@ fn releasing_becomes_a_key_up() {
 
 #[test]
 fn a_disconnect_lifts_held_buttons_in_the_same_frame() {
-    // A version that queued these for the next call would pass every other
-    // test here and still leave a button down for a tick after a controller
-    // vanished mid-press -- which is the stuck-input shape that made exiting
-    // a game immediately launch another one.
+    // A version that queued these for the next call would pass every other.
     let mut fake = needs_pty!();
     let mut source = triton::Source::open(fake.slave.as_path()).expect("open");
     fake.push(REPORT_STATE, &state(BIT_A | BIT_B, 0, 0, 0, 0, 0, 0));
@@ -468,9 +405,6 @@ fn only_the_hat_axis_that_moved_is_reported() {
     let mut fake = needs_pty!();
     let mut source = triton::Source::open(fake.slave.as_path()).expect("open");
 
-    // A neutral report first. Axes -- unlike buttons -- do emit on first
-    // sight, because an axis can rest anywhere and the clone has to be told
-    // where; so without this the first frame carries all eight.
     fake.push(REPORT_STATE, &state(0, 0, 0, 0, 0, 0, 0));
     fetch(&mut source).expect("the resting frame");
 
@@ -519,23 +453,10 @@ fn capabilities_never_offer_a_zero_width_axis() {
     assert!(!keys.is_empty());
     assert_eq!(axes.len(), 8, "{axes:?}");
     for (code, info) in &axes {
-        // RetroArch divides by max - min on its first poll.
         assert!(info.maximum() > info.minimum(), "axis {code}: {info:?}");
     }
 }
 
-/// A press on a Puck claims a player slot.
-///
-/// The regression test for a bug that cost a day: on the Python daemon the
-/// controller paired, the session opened, and the descriptor was never read --
-/// so holding a button produced no progress, no claim, and nothing in the log
-/// to say why. The person holding it was told to hold a button, did, and
-/// nothing happened.
-///
-/// This drives the whole chain a seat depends on: a real `triton::Source` over
-/// a pty, its decoded events, and `Assigner` -- the same one the daemon's
-/// session feeds. It needs no Steam Controller, so it protects the path on
-/// every machine rather than only on one with a Puck plugged in.
 #[test]
 fn a_press_on_a_puck_claims_a_seat() {
     use padmap_core::assign::{Assigner, HOLD_SECONDS};
@@ -543,8 +464,7 @@ fn a_press_on_a_puck_claims_a_seat() {
     let mut fake = needs_pty!();
     let mut source = triton::Source::open(&fake.slave).expect("open the pty as a source");
 
-    // Nothing held: the resting report must claim nothing, or a pad sitting on
-    // a table would take a seat.
+    // Nothing held: the resting report must claim nothing, or a pad sitting on.
     fake.push(REPORT_STATE, &state(0, 0, 0, 0, 0, 0, 0));
     let mut assigner = Assigner::default();
     let mut now = 0.0;
@@ -557,9 +477,6 @@ fn a_press_on_a_puck_claims_a_seat() {
         "an untouched pad claimed a seat"
     );
 
-    // A is held down, and stays down -- a real pad sends no further reports
-    // while a button is simply held, which is exactly why the hold is timed
-    // rather than counted.
     fake.push(REPORT_STATE, &state(BIT_A, 0, 0, 0, 0, 0, 0));
     let pressed = fetch(&mut source).expect("read");
     assert!(
@@ -581,13 +498,6 @@ fn a_press_on_a_puck_claims_a_seat() {
     assert_eq!(claimed[0].button, KeyCode::BTN_SOUTH.0);
 }
 
-// --- motion -----------------------------------------------------------------
-
-/// A state report payload carrying an IMU block.
-///
-/// `wide` picks the report shape: `TritonMTUNoQuat_t`, whose IMU timestamp is
-/// a `uint32_t` at 29, or `TritonMTUNoQuat32TS_t`, whose trackpad timestamp
-/// pushes a `uint16_t` one to 31.
 fn state_imu(accel: [i16; 3], gyro: [i16; 3], tick: u32, wide: bool) -> Vec<u8> {
     let mut out = state(0, 0, 0, 0, 0, 0, 0);
     if wide {
@@ -604,10 +514,6 @@ fn state_imu(accel: [i16; 3], gyro: [i16; 3], tick: u32, wide: bool) -> Vec<u8> 
 
 #[test]
 fn the_two_report_shapes_put_the_imu_on_the_same_byte() {
-    // Adding the packed field widths of each struct in controller_structs.h.
-    // They land together by luck rather than by design, and padmap reads both
-    // with one offset -- so a later revision that moves either is a wrong
-    // reading of the touchpad pressure rather than a decode failure.
     let common = 1 + 4 + 2 + 2 + 2 * 4; // seq, buttons, triggers, sticks
     let pads = (2 + 2 + 2) * 2; // x, y, pressure, twice
     let no_quat = common + pads + 4; // uint32_t imu timestamp
@@ -618,8 +524,6 @@ fn the_two_report_shapes_put_the_imu_on_the_same_byte() {
 
 #[test]
 fn a_gyro_at_half_scale_is_a_thousand_degrees_a_second() {
-    // SDL: raw over 32768, times 2000 degrees per second. Then its remap into
-    // SDL's frame (X, Z, -Y), then padmap's into DSU's (pitch, -yaw, -roll).
     let payload = state_imu([0; 3], [16384, 0, 0], 0, true);
     let motion = triton::decode_motion(&payload, true).expect("an IMU block");
     assert!((motion.gyro[0] - 1000.0).abs() < 0.1, "{:?}", motion.gyro);
@@ -629,13 +533,9 @@ fn a_gyro_at_half_scale_is_a_thousand_degrees_a_second() {
 
 #[test]
 fn the_controllers_own_axes_land_where_dsu_expects_them() {
-    // The controller's raw Z is up. DSU's Y is down, so a pad resting face up
-    // has to read negative there. Upside down is the most visible way the
-    // frame conversion can be wrong.
     let flat = state_imu([0, 0, 16384], [0; 3], 0, true);
     let motion = triton::decode_motion(&flat, true).expect("an IMU block");
     assert!((motion.accel[1] + 1.0).abs() < 0.01, "{:?}", motion.accel);
-    // The controller's raw Y becomes DSU's roll, and its Z becomes yaw.
     let turning = state_imu([0; 3], [0, 16384, 0], 0, true);
     let motion = triton::decode_motion(&turning, true).expect("an IMU block");
     assert!((motion.gyro[2] - 1000.0).abs() < 0.1, "{:?}", motion.gyro);
@@ -646,10 +546,6 @@ fn the_controllers_own_axes_land_where_dsu_expects_them() {
 
 #[test]
 fn the_short_timestamp_counts_in_thirty_two_microsecond_steps() {
-    // "The timestamp is in units of 32 microseconds" -- SDL, of this report
-    // only. Reading it as microseconds makes a consumer integrate over a
-    // window 32 times too short, which reads as motion far too twitchy rather
-    // than as motion that is missing.
     let payload = state_imu([0; 3], [0; 3], 100, false);
     let motion = triton::decode_motion(&payload, false).expect("an IMU block");
     assert_eq!(motion.timestamp_us, 3200);
@@ -664,9 +560,7 @@ fn a_report_too_short_for_an_imu_block_is_not_one() {
 
 #[test]
 fn the_published_clock_only_goes_forwards_across_a_wrap() {
-    // The short counter wraps every 2.1 seconds. Cemu discards any sample
-    // whose timestamp did not advance, so a raw counter is motion that dies
-    // every two seconds and comes back.
+    // The short counter wraps every 2.1 seconds.
     let mut fake = needs_pty!();
     let mut source = triton::Source::open(fake.slave.as_path()).expect("open");
     assert_eq!(source.motion(), None, "nothing read yet");
@@ -686,6 +580,5 @@ fn the_published_clock_only_goes_forwards_across_a_wrap() {
     let _ = fetch(&mut source);
     let second = source.motion().expect("a second sample").timestamp_us;
     assert!(second > first, "{second} came after {first}");
-    // (65536 - 65000 + 1000) steps of 32 microseconds.
     assert_eq!(second - first, (65_536 - 65_000 + 1_000) * 32);
 }

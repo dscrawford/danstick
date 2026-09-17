@@ -21,7 +21,6 @@ fn strings(raw: &Value) -> Vec<String> {
 
 #[test]
 fn every_command_line_splits_the_same_way() {
-    // `split_args` asks whether a token is a file; the corpus records which paths existed.
     let cases = corpus("launch_split");
     assert!(!cases.is_empty());
     for case in cases {

@@ -1,24 +1,4 @@
-//! The capture wizard, driven the only way it can be: from the pad.
-//!
-//! The daemon holds EVIOCGRAB for the whole session and republishing is
-//! stopped, so the front-end receives no controller input at all while any of
-//! this runs. Every gesture here therefore has to be recognisable by the daemon
-//! with *nothing mapped yet* -- no prompt may name a button, because no button
-//! has a name until the run that is asking finishes.
-//!
-//! What follows is almost entirely about refusal. A pad streams axis noise
-//! continuously, an analogue trigger reports a resting value that is not zero,
-//! a d-pad wired to an analogue axis springs back through centre far enough to
-//! read as a deliberate push the other way, and the button someone pressed to
-//! reach this screen is usually still travelling when the first prompt appears.
-//! Each of those filled several controls in with one accidental input on real
-//! hardware; each has a guard, and each guard has a test below carrying the
-//! wound it came from.
-//!
-//! `MappingRun::index` is private, so a test that needs to start partway
-//! through a layout gets there by holding a button past the skip threshold --
-//! which is what the user would do, and keeps these tests honest about what is
-//! reachable through the public API.
+//! Integration tests for the capture wizard.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::OnceLock;
@@ -35,26 +15,11 @@ use padmap_core::layout::Layout;
 use padmap_core::sdl::AxisSpan;
 use padmap_core::{layout, scope};
 
-// ---------------------------------------------------------------------------
-// Scripting
-// ---------------------------------------------------------------------------
-
-/// How long an ordinary press lasts. Well under [`SKIP_HOLD_SECONDS`].
 const TAP: f64 = 0.05;
-
-/// Long enough that the gap opened by the previous capture has closed.
 const AFTER_GAP: f64 = CAPTURE_GAP_SECONDS + 0.01;
-
-/// A key code no test puts in a pad's `keys` list, so holding it can only ever
-/// mean "skip" and never accidentally record a binding.
 const SKIP_BUTTON: u16 = 0x13f;
 
-/// Drive a scripted `(event, clock reading)` sequence and return what each one
-/// did, so a test reads as a scenario rather than as a column of calls.
-///
-/// The clock is a parameter rather than a field precisely so this is possible:
-/// the interesting decisions here are all "how long ago", and a test that had
-/// to sleep for them would be both slow and flaky.
+/// Clock is a parameter so tests don't need to sleep; all decisions are "how long ago".
 fn play(run: &mut MappingRun, script: &[(Event, f64)]) -> Vec<Outcome> {
     script
         .iter()
@@ -69,9 +34,6 @@ fn last(outcomes: Vec<Outcome>) -> Outcome {
         .expect("a script does something")
 }
 
-/// Press and release inside the skip threshold: the ordinary answer to a
-/// prompt. Binding happens on the *release*, because how long a button was held
-/// is what separates "this is the button" from "skip this control".
 fn tap(run: &mut MappingRun, code: u16, at: f64) -> Outcome {
     last(play(
         run,
@@ -79,7 +41,6 @@ fn tap(run: &mut MappingRun, code: u16, at: f64) -> Outcome {
     ))
 }
 
-/// Press and hold past the skip threshold.
 fn hold(run: &mut MappingRun, code: u16, at: f64) -> Outcome {
     last(play(
         run,
@@ -90,12 +51,6 @@ fn hold(run: &mut MappingRun, code: u16, at: f64) -> Outcome {
     ))
 }
 
-/// Walk the run forward to `target` by skipping, and answer with the clock
-/// reading at which it is free to accept again.
-///
-/// `index` is private and deliberately so; a skip is the only way in from
-/// outside the crate, and it is also what a user with a pad that lacks the
-/// first few controls actually does.
 fn skip_to(run: &mut MappingRun, target: usize) -> f64 {
     let mut clock = 0.0;
     while run.index() < target {
@@ -116,19 +71,10 @@ fn recorded(outcome: &Outcome) -> (Control, Binding) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Pads
-// ---------------------------------------------------------------------------
-
-/// A stick, scaled so a raw value *is* its deflection in percent: half the
-/// declared range is 100, and rest is the middle.
 fn stick() -> AxisSpan {
     AxisSpan::new(-100, 100, 0)
 }
 
-/// An analogue trigger, which rests at its *minimum* rather than in the middle.
-/// The Mayflash GameCube adapter reports exactly this shape, and measuring from
-/// the midpoint instead made its L and R unusable.
 fn trigger() -> AxisSpan {
     AxisSpan::new(0, 255, 0)
 }
@@ -137,8 +83,6 @@ fn axes(entries: &[(u16, AxisSpan)]) -> BTreeMap<u16, AxisSpan> {
     entries.iter().copied().collect()
 }
 
-/// Twelve ordinary joystick buttons, one per SNES control, all at or above
-/// BTN_JOYSTICK so SDL and RetroArch number them identically.
 fn joystick_keys() -> Vec<u16> {
     (0x130..0x13c).collect()
 }
@@ -147,13 +91,10 @@ fn snes_run(keys: Vec<u16>, axes: BTreeMap<u16, AxisSpan>, held: BTreeSet<u16>) 
     MappingRun::new(1, layout::get("snes"), keys, String::new(), axes, held)
 }
 
-/// A plain run over the shortest shipped layout, answering with buttons.
 fn run() -> MappingRun {
     snes_run(joystick_keys(), BTreeMap::new(), BTreeSet::new())
 }
 
-/// Where the first d-pad control sits. A d-pad prompt is the one that accepts a
-/// hat or an ordinary axis push; a face-button prompt is far stricter.
 fn first_dpad() -> usize {
     layout::get("snes")
         .controls
@@ -162,8 +103,7 @@ fn first_dpad() -> usize {
         .expect("the SNES layout has a d-pad")
 }
 
-/// A layout with nothing to ask about, which no shipped file is -- built here
-/// because "the run is over before it began" still has to not panic.
+/// Edge case: layout with no controls must not panic.
 fn empty_layout() -> &'static Layout {
     static EMPTY: OnceLock<Layout> = OnceLock::new();
     EMPTY.get_or_init(|| Layout {
@@ -176,10 +116,6 @@ fn empty_layout() -> &'static Layout {
     })
 }
 
-// ---------------------------------------------------------------------------
-// MappingRun: the happy path
-// ---------------------------------------------------------------------------
-
 #[test]
 fn a_tap_records_the_current_control_and_moves_on() {
     let mut run = run();
@@ -187,16 +123,12 @@ fn a_tap_records_the_current_control_and_moves_on() {
     assert_eq!(run.index(), 0);
     assert_eq!(run.total(), 12);
 
-    // The press alone does nothing: the release is where the decision is made.
     assert_eq!(run.feed(Event::key(0x130, 1), 0.0), Outcome::Ignored);
     let outcome = run.feed(Event::key(0x130, 0), TAP);
 
     let (control, binding) = recorded(&outcome);
     assert_eq!(control, first);
     assert!(outcome.advanced());
-    // Both numberings are stored at capture time. Recomputing RetroArch's at
-    // emission would need the pad's key list to still be around, and would
-    // silently shift every binding on a pad carrying sub-0x120 codes.
     assert_eq!(binding, Binding::button(0).with_ra_index(Some(0)));
     assert_eq!(run.index(), 1);
     assert_eq!(run.bindings().len(), 1);
@@ -214,8 +146,6 @@ fn a_whole_layout_can_be_walked_to_completion() {
         let (control, binding) = recorded(&outcome);
         assert_eq!(control, expected);
         assert_eq!(control, order[position]);
-        // Buttons are numbered by position among the pad's sorted key codes,
-        // not by the code itself.
         assert_eq!(
             binding,
             Binding::button(position as i32).with_ra_index(Some(position as i32))
@@ -241,8 +171,7 @@ fn a_finished_run_ignores_everything_afterwards() {
     assert!(run.finished());
     let recorded_count = run.bindings().len();
 
-    // A pad does not stop reporting because the wizard is done, and whatever
-    // arrives next must not land on a control that no longer exists.
+    // A pad does not stop reporting because the wizard is done, and whatever.
     for event in [
         Event::key(0x130, 1),
         Event::key(0x130, 0),
@@ -257,15 +186,8 @@ fn a_finished_run_ignores_everything_afterwards() {
     assert_eq!(run.skip(100.0), None, "there is nothing left to skip");
 }
 
-// ---------------------------------------------------------------------------
-// MappingRun: settling
-// ---------------------------------------------------------------------------
-
 #[test]
 fn a_press_held_from_before_the_run_cannot_answer_the_first_prompt() {
-    // The press that opened the wizard is usually still travelling when the
-    // first prompt appears. Its release must clear the hold and nothing else,
-    // or the first control is filled in by the gesture that asked for it.
     let mut run = snes_run(joystick_keys(), BTreeMap::new(), [0x130].into());
     assert!(run.settling());
 
@@ -278,9 +200,6 @@ fn a_press_held_from_before_the_run_cannot_answer_the_first_prompt() {
 
 #[test]
 fn settling_lasts_until_every_opening_button_is_released() {
-    // Two buttons down at the start is ordinary: the slot is claimed with one
-    // hand while the other is already on the pad. Clearing on the first release
-    // would eat one real press.
     let mut run = snes_run(joystick_keys(), BTreeMap::new(), [0x130, 0x131].into());
     assert!(run.settling());
 
@@ -294,8 +213,6 @@ fn settling_lasts_until_every_opening_button_is_released() {
 
 #[test]
 fn a_settling_run_refuses_a_button_that_was_not_held_at_the_start() {
-    // Not only the opening button is suspect. Anything pressed while the pad is
-    // still being let go of is part of the same gesture.
     let mut run = snes_run(joystick_keys(), BTreeMap::new(), [0x130].into());
 
     assert_eq!(tap(&mut run, 0x131, 0.1), Outcome::Ignored);
@@ -306,8 +223,6 @@ fn a_settling_run_refuses_a_button_that_was_not_held_at_the_start() {
 
 #[test]
 fn a_settling_run_refuses_an_axis_too() {
-    // Pushed all the way to the stop, which would otherwise be enough to answer
-    // even a face-button prompt.
     let mut run = snes_run(Vec::new(), axes(&[(0x02, stick())]), [0x130].into());
 
     assert_eq!(run.feed(Event::abs(0x02, 100), 0.1), Outcome::Ignored);
@@ -317,9 +232,6 @@ fn a_settling_run_refuses_an_axis_too() {
 
 #[test]
 fn a_button_pressed_after_the_run_started_is_not_a_settling_button() {
-    // Sharing a code with the button that opened the wizard must not make a
-    // later, deliberate press invisible -- on a pad with few buttons that same
-    // button is very often the answer to the first prompt too.
     let mut run = snes_run(joystick_keys(), BTreeMap::new(), [0x130].into());
     let first = run.current().expect("a first prompt");
 
@@ -332,15 +244,8 @@ fn a_button_pressed_after_the_run_started_is_not_a_settling_button() {
     assert_eq!(run.index(), 1);
 }
 
-// ---------------------------------------------------------------------------
-// MappingRun: skip
-// ---------------------------------------------------------------------------
-
 #[test]
 fn a_hold_past_the_skip_threshold_skips_the_control_instead_of_recording_it() {
-    // Skip cannot be a *particular* button: nothing is mapped yet and the
-    // front-end sees no controller input at all, so "press Select to skip"
-    // could never have worked. Holding any button needs no prior mapping.
     let mut run = run();
     let first = run.current().expect("a first prompt");
 
@@ -360,8 +265,6 @@ fn a_hold_of_exactly_the_skip_threshold_skips() {
     run.feed(Event::key(0x130, 1), 0.0);
     let outcome = run.feed(Event::key(0x130, 0), SKIP_HOLD_SECONDS);
 
-    // The comparison is `>=`. A threshold that needed to be exceeded would make
-    // a hold timed exactly right bind the control it was meant to pass over.
     assert_eq!(outcome, Outcome::Skipped { control: first });
 }
 
@@ -402,8 +305,7 @@ fn skipping_the_last_control_finishes_the_run() {
 
 #[test]
 fn a_skip_starts_the_same_gap_a_capture_does() {
-    // The button released after a skip-hold must not answer the control the
-    // skip moved on to; it is one continuous gesture from the pad's side.
+    // The button released after a skip-hold must not answer the control the.
     let mut run = run();
     let released = SKIP_HOLD_SECONDS + 0.01;
     hold(&mut run, 0x130, 0.0);
@@ -427,21 +329,11 @@ fn skip_called_directly_advances_clears_the_conflict_and_blocks() {
 
     assert_eq!(run.index(), 1);
     assert_eq!(run.conflict(), None);
-    // Blocked, on the same terms as a capture.
     assert_eq!(tap(&mut run, 0x130, 0.1), Outcome::Ignored);
 }
 
-// ---------------------------------------------------------------------------
-// MappingRun: the capture gap
-// ---------------------------------------------------------------------------
-
 #[test]
 fn nothing_is_accepted_during_the_gap_even_on_a_different_code() {
-    // "There is no delay between buttons being set -- if I hold the d-pad too
-    // long it registers as two." Recording used to advance instantly, leaving
-    // whatever the user was still holding pointed at a fresh prompt. The
-    // per-axis arming rule catches one axis springing back; this catches the
-    // general case, including an input arriving on a different code entirely.
     let mut run = run();
     tap(&mut run, 0x130, 0.0);
     let at = run.index();
@@ -458,8 +350,6 @@ fn nothing_is_accepted_during_the_gap_even_on_a_different_code() {
 #[test]
 fn an_axis_inside_the_gap_cannot_answer_either() {
     let mut run = snes_run(Vec::new(), axes(&[(0x02, stick())]), BTreeSet::new());
-    // Answer the face-button prompt with a push to the stop, then oscillate
-    // while still holding it -- which is what an analogue axis does.
     assert!(run.feed(Event::abs(0x02, 100), 0.0).advanced());
 
     assert_eq!(run.feed(Event::abs(0x02, -100), 0.05), Outcome::Ignored);
@@ -470,8 +360,6 @@ fn an_axis_inside_the_gap_cannot_answer_either() {
 
 #[test]
 fn a_button_pressed_inside_the_gap_and_released_after_it_records_nothing() {
-    // The press never happened as far as the run is concerned, so there is no
-    // hold duration to judge and nothing to bind. It must still work next time.
     let mut run = run();
     tap(&mut run, 0x130, 0.0);
 
@@ -487,19 +375,14 @@ fn a_button_pressed_inside_the_gap_and_released_after_it_records_nothing() {
 
 #[test]
 fn a_release_inside_the_gap_clears_the_press_it_belonged_to() {
-    // Releases are tracked during the gap even though nothing is accepted,
-    // "so a button held across the gap is not still considered down". Without
-    // it the press stays on the books, and a stray second release -- which a
-    // pad that reconnects mid-run really does produce -- binds a control from
-    // a press nobody made.
     let mut run = run();
     play(
         &mut run,
         &[
-            (Event::key(0x131, 1), 0.00), // down before anything is captured
+            (Event::key(0x131, 1), 0.00),
             (Event::key(0x130, 1), 0.10),
-            (Event::key(0x130, 0), 0.15), // captures; blocks until 0.50
-            (Event::key(0x131, 0), 0.20), // released inside the gap
+            (Event::key(0x130, 0), 0.15),
+            (Event::key(0x131, 0), 0.20),
         ],
     );
     assert_eq!(run.index(), 1);
@@ -516,11 +399,7 @@ fn a_release_inside_the_gap_clears_the_press_it_belonged_to() {
 
 #[test]
 fn an_axis_released_inside_the_gap_is_still_re_armed() {
-    // A release takes about a tenth of the time the gap lasts, so this is where
-    // nearly every one of them lands. Dropping it leaves the axis disarmed with
-    // nothing left to re-arm it: a trigger settles at rest and stops reporting
-    // entirely, and the wizard then ignores it for good. That is the "pressing
-    // R causes it to stay stuck in the interface" report.
+    // Release during gap must still re-arm; drop it and trigger gets stuck.
     let mut run = snes_run(Vec::new(), axes(&[(ABS_X, stick())]), BTreeSet::new());
     let clock = skip_to(&mut run, first_dpad());
 
@@ -528,7 +407,7 @@ fn an_axis_released_inside_the_gap_is_still_re_armed() {
         run.feed(Event::abs(ABS_X, -100), clock).advanced(),
         "full left"
     );
-    run.feed(Event::abs(ABS_X, 0), clock + 0.05); // the release, inside the gap
+    run.feed(Event::abs(ABS_X, 0), clock + 0.05);
 
     assert!(
         run.feed(Event::abs(ABS_X, 100), clock + AFTER_GAP)
@@ -543,7 +422,7 @@ fn a_hat_released_inside_the_gap_is_still_re_armed() {
     let clock = skip_to(&mut run, first_dpad());
 
     assert!(run.feed(Event::abs(ABS_HAT0X, -1), clock).advanced());
-    run.feed(Event::abs(ABS_HAT0X, 0), clock + 0.05); // released inside the gap
+    run.feed(Event::abs(ABS_HAT0X, 0), clock + 0.05);
 
     assert!(
         run.feed(Event::abs(ABS_HAT0X, 1), clock + AFTER_GAP)
@@ -552,15 +431,8 @@ fn a_hat_released_inside_the_gap_is_still_re_armed() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// MappingRun: autorepeat
-// ---------------------------------------------------------------------------
-
 #[test]
 fn an_autorepeat_does_not_walk_the_wizard() {
-    // value 2 is the kernel repeating a key that is still down. Binding on the
-    // release rather than the press is what made this stop needing a special
-    // case; it is pinned because the special case is easy to reintroduce.
     let mut run = run();
     run.feed(Event::key(0x130, 1), 0.0);
 
@@ -584,16 +456,8 @@ fn an_autorepeat_is_not_mistaken_for_a_release_and_does_not_end_settling() {
     assert!(run.settling(), "a repeat is not a release");
 }
 
-// ---------------------------------------------------------------------------
-// MappingRun: double claims
-// ---------------------------------------------------------------------------
-
 #[test]
 fn one_button_cannot_answer_two_prompts() {
-    // The refusal is invisible from the outside -- the press simply does
-    // nothing, which looks exactly like a dead button or a hung wizard. Naming
-    // the control that holds it is the only actionable remedy: restart and
-    // answer the earlier prompt differently.
     let mut run = run();
     let first = run.current().expect("a first prompt");
     tap(&mut run, 0x130, 0.0);
@@ -625,7 +489,7 @@ fn one_hat_direction_cannot_answer_two_prompts() {
     let first = run.current().expect("a d-pad prompt");
 
     run.feed(Event::abs(ABS_HAT0X, 1), clock);
-    run.feed(Event::abs(ABS_HAT0X, 0), clock + 0.05); // re-arms inside the gap
+    run.feed(Event::abs(ABS_HAT0X, 0), clock + 0.05);
     let outcome = run.feed(Event::abs(ABS_HAT0X, 1), clock + AFTER_GAP);
 
     assert_eq!(
@@ -643,15 +507,12 @@ fn one_hat_direction_cannot_answer_two_prompts() {
 
 #[test]
 fn one_axis_half_cannot_answer_two_prompts() {
-    // This bites hardest where a pad has fewer inputs than the layout has
-    // controls: mapping an N64 pad to the GameCube layout, the C directions are
-    // the only spare axis halves.
     let mut run = snes_run(Vec::new(), axes(&[(ABS_X, stick())]), BTreeSet::new());
     let clock = skip_to(&mut run, first_dpad());
     let first = run.current().expect("a d-pad prompt");
 
     run.feed(Event::abs(ABS_X, -100), clock);
-    run.feed(Event::abs(ABS_X, 0), clock + 0.05); // re-arms inside the gap
+    run.feed(Event::abs(ABS_X, 0), clock + 0.05);
     let outcome = run.feed(Event::abs(ABS_X, -100), clock + AFTER_GAP);
 
     assert_eq!(
@@ -669,8 +530,6 @@ fn one_axis_half_cannot_answer_two_prompts() {
 
 #[test]
 fn the_other_half_of_an_axis_is_a_separate_claim() {
-    // One physical stick answers two prompts, and must: left and right are
-    // different controls even though they are one axis.
     let mut run = snes_run(Vec::new(), axes(&[(ABS_X, stick())]), BTreeSet::new());
     let clock = skip_to(&mut run, first_dpad());
 
@@ -685,8 +544,7 @@ fn the_other_half_of_an_axis_is_a_separate_claim() {
 
 #[test]
 fn a_later_capture_clears_the_conflict() {
-    // A stale conflict pinned under a later control names a clash that is not
-    // happening, and the front-end would go on showing it.
+    // A stale conflict pinned under a later control names a clash that is not.
     let mut run = run();
     tap(&mut run, 0x130, 0.0);
     tap(&mut run, 0x130, 1.0);
@@ -709,19 +567,8 @@ fn a_skip_clears_the_conflict_too() {
     assert_eq!(run.conflict(), None);
 }
 
-// ---------------------------------------------------------------------------
-// MappingRun: axis arming
-// ---------------------------------------------------------------------------
-
 #[test]
 fn an_axis_springing_back_through_centre_does_not_answer_the_next_prompt() {
-    // Reported from a real N64 adapter: pressing left filled in both left *and*
-    // right. The d-pad there is an analogue axis; releasing it lets the stick
-    // spring back through centre and overshoot far enough to pass the capture
-    // threshold in the opposite direction, which is indistinguishable event for
-    // event from a deliberate push the other way. The threshold alone cannot
-    // fix it -- the overshoot is a genuine full deflection. What makes it not a
-    // press is that the axis never went back to rest in between.
     let mut run = snes_run(Vec::new(), axes(&[(ABS_X, stick())]), BTreeSet::new());
     let clock = skip_to(&mut run, first_dpad());
     let up = run.current().expect("a d-pad prompt");
@@ -730,8 +577,6 @@ fn an_axis_springing_back_through_centre_does_not_answer_the_next_prompt() {
     assert_eq!(left.0, up);
     let down = run.current().expect("the next d-pad prompt");
 
-    // The overshoot, inside the gap and then after it. Neither may answer,
-    // because the axis has not been back to rest.
     assert_eq!(
         run.feed(Event::abs(ABS_X, 100), clock + 0.05),
         Outcome::Ignored
@@ -742,7 +587,6 @@ fn an_axis_springing_back_through_centre_does_not_answer_the_next_prompt() {
     );
     assert_eq!(run.current(), Some(down));
 
-    // Settle, then a deliberate push the other way, which must be taken.
     run.feed(Event::abs(ABS_X, 0), clock + 1.1);
     let right = recorded(&run.feed(Event::abs(ABS_X, 100), clock + 1.2));
 
@@ -757,9 +601,6 @@ fn an_axis_springing_back_through_centre_does_not_answer_the_next_prompt() {
 
 #[test]
 fn an_axis_that_only_comes_back_part_way_is_not_re_armed() {
-    // Re-arming needs the axis back inside AXIS_RELEASE of rest. A stick that
-    // stops 40% out has not been let go of, and the events it is still sending
-    // are the tail of the push that already answered a prompt.
     let part_way = (AXIS_RELEASE * 100.0) as i32 + 10;
     let mut run = snes_run(Vec::new(), axes(&[(ABS_X, stick())]), BTreeSet::new());
     let clock = skip_to(&mut run, first_dpad());
@@ -772,15 +613,12 @@ fn an_axis_that_only_comes_back_part_way_is_not_re_armed() {
         Outcome::Ignored
     );
     assert_eq!(run.bindings().len(), 1);
-    // ...and all the way back does re-arm it.
     run.feed(Event::abs(ABS_X, 0), clock + 1.0);
     assert!(run.feed(Event::abs(ABS_X, 100), clock + 1.1).advanced());
 }
 
 #[test]
 fn an_axis_never_touched_is_armed_from_the_start() {
-    // Absent means armed. An axis that has to be pushed and released once
-    // before it counts would lose the first answer of every run.
     let mut run = snes_run(Vec::new(), axes(&[(ABS_X, stick())]), BTreeSet::new());
     let clock = skip_to(&mut run, first_dpad());
 
@@ -789,40 +627,26 @@ fn an_axis_never_touched_is_armed_from_the_start() {
 
 #[test]
 fn a_trigger_resting_at_its_minimum_still_re_arms_after_it_is_let_go() {
-    // The whole GameCube L/R story in one sequence: rest reads 0, a press reads
-    // about 2.0, and the release passes back through rest so the trigger
-    // re-arms. Measured from the midpoint instead, the untouched trigger reads
-    // fully deflected and can never come back near enough to be re-armed --
-    // after one press the trigger was dead and every later press was dropped in
-    // silence. That is the "stuck".
     let triggers = axes(&[(0x02, trigger()), (0x05, trigger())]);
     let mut run = snes_run(Vec::new(), triggers, BTreeSet::new());
     let clock = skip_to(&mut run, first_dpad());
 
     let (_, first) = recorded(&run.feed(Event::abs(0x02, 255), clock));
-    run.feed(Event::abs(0x02, 0), clock + 0.05); // settles back to rest
+    run.feed(Event::abs(0x02, 0), clock + 0.05);
     let again = run.feed(Event::abs(0x02, 255), clock + AFTER_GAP);
 
     assert_eq!(first, Binding::axis(0, 1), "a trigger only travels one way");
-    // A refusal is proof it re-armed: a disarmed axis never reaches the claim
-    // check at all, and answers Ignored.
     assert!(
         matches!(again, Outcome::Refused { .. }),
         "the trigger went dead after one press: {again:?}"
     );
-    // The *other* trigger is a different claim and answers the next prompt.
     let (_, second) = recorded(&run.feed(Event::abs(0x05, 255), clock + AFTER_GAP + 0.1));
     assert_eq!(second, Binding::axis(1, 1));
 }
 
-// ---------------------------------------------------------------------------
-// MappingRun: an axis answering a face button
-// ---------------------------------------------------------------------------
-
 #[test]
 fn a_resting_axis_reports_nothing_at_all() {
-    // A resting axis streams events continuously. Reporting them would bury the
-    // session, and the front-end would flash a refusal with nothing touched.
+    // Continuous resting axis events must not bury session.
     let mut run = snes_run(Vec::new(), axes(&[(0x02, stick())]), BTreeSet::new());
     assert_eq!(run.layout.controls[0].kind, "button");
 
@@ -837,10 +661,6 @@ fn a_resting_axis_reports_nothing_at_all() {
 
 #[test]
 fn an_axis_between_the_two_thresholds_reports_how_far_short_it_fell() {
-    // Past AXIS_THRESHOLD it is deliberate enough to be worth telling the user
-    // about, and short of AXIS_AS_BUTTON_THRESHOLD it is not enough to bind.
-    // Without the message, pressing C-up for Y did nothing at all: no log line
-    // and no change on screen.
     let mut run = snes_run(Vec::new(), axes(&[(0x02, stick())]), BTreeSet::new());
 
     let outcome = run.feed(Event::abs(0x02, 70), 0.0);
@@ -883,9 +703,6 @@ fn the_too_gentle_report_carries_the_direction_it_was_pushed() {
 
 #[test]
 fn an_axis_exactly_at_the_face_button_threshold_answers_the_prompt() {
-    // An N64 pad mapped against the GameCube layout has to answer X and Y from
-    // its C cluster, which that pad reports as axes. A flat refusal made those
-    // prompts unanswerable.
     let mut run = snes_run(Vec::new(), axes(&[(0x02, stick())]), BTreeSet::new());
     let first = run.current().expect("a face-button prompt");
 
@@ -901,10 +718,6 @@ fn an_axis_exactly_at_the_face_button_threshold_answers_the_prompt() {
 
 #[test]
 fn an_axis_one_step_below_the_face_button_threshold_does_not() {
-    // Binding a stick to a face button by accident is expensive in a way no
-    // other misbinding is: every later stick movement presses that button for
-    // the rest of the session. That is how a mapping ended up with cancel on
-    // `-a3`.
     let mut run = snes_run(Vec::new(), axes(&[(0x02, stick())]), BTreeSet::new());
 
     let outcome = run.feed(
@@ -918,8 +731,6 @@ fn an_axis_one_step_below_the_face_button_threshold_does_not() {
 
 #[test]
 fn an_axis_the_pad_never_declared_cannot_answer_a_face_button() {
-    // A device sending ABS events while declaring no axes at all would
-    // otherwise fill face buttons in from noise.
     let mut run = snes_run(Vec::new(), BTreeMap::new(), BTreeSet::new());
 
     assert_eq!(run.feed(Event::abs(0x02, 32767), 0.0), Outcome::Ignored);
@@ -929,9 +740,7 @@ fn an_axis_the_pad_never_declared_cannot_answer_a_face_button() {
 
 #[test]
 fn a_hat_never_answers_a_face_button_prompt_at_any_value() {
-    // A d-pad direction answering a face button is a mistake in every case
-    // anyone has had, and a device reporting a hat it does not have would
-    // otherwise fill face buttons in from noise.
+    // Hat answering face button is never correct; undeclared hat must not fill face buttons.
     let mut run = run();
     assert_eq!(run.layout.controls[0].kind, "button");
 
@@ -949,8 +758,6 @@ fn a_hat_never_answers_a_face_button_prompt_at_any_value() {
 
 #[test]
 fn an_axis_answers_a_shoulder_prompt_on_the_ordinary_threshold() {
-    // Only a *button* prompt demands a push to the stop. For a shoulder or a
-    // d-pad an axis is the expected answer and the only risk is drift.
     let mut run = snes_run(Vec::new(), axes(&[(ABS_X, stick())]), BTreeSet::new());
     let clock = skip_to(&mut run, first_dpad());
     assert_eq!(run.layout.controls[first_dpad()].kind, "dpad");
@@ -968,8 +775,6 @@ fn an_axis_answers_a_shoulder_prompt_on_the_ordinary_threshold() {
 
 #[test]
 fn an_axis_short_of_the_ordinary_threshold_never_answers_a_dpad_prompt() {
-    // Generous on purpose: the alternative -- catching drift -- silently binds
-    // a control to a stick that merely leans.
     let mut run = snes_run(Vec::new(), axes(&[(ABS_X, stick())]), BTreeSet::new());
     let clock = skip_to(&mut run, first_dpad());
 
@@ -981,18 +786,8 @@ fn an_axis_short_of_the_ordinary_threshold_never_answers_a_dpad_prompt() {
     assert_eq!(outcome, Outcome::Ignored);
 }
 
-// ---------------------------------------------------------------------------
-// deflection
-// ---------------------------------------------------------------------------
-
 #[test]
 fn deflection_is_measured_from_rest_not_from_the_declared_middle() {
-    // "When I registered a GameCube controller, pressing R causes it to stay
-    // stuck in the interface." The untouched triggers on that adapter read 81%
-    // deflected when measured from the midpoint, so the first event of a press
-    // captured the direction the trigger was travelling *away* from, a resting
-    // report could answer a prompt with nothing touched, and the axis could
-    // never re-arm.
     let trigger = trigger();
 
     assert_eq!(
@@ -1004,7 +799,6 @@ fn deflection_is_measured_from_rest_not_from_the_declared_middle() {
         deflection(trigger, 255) > 1.9,
         "a pressed trigger reads about 2.0"
     );
-    // What the midpoint measurement would have said about an untouched trigger.
     assert!(
         deflection(trigger, 128) > 0.9,
         "the midpoint is a real push, not rest"
@@ -1024,9 +818,6 @@ fn deflection_is_signed_because_direction_is_what_a_binding_records() {
 
 #[test]
 fn deflection_scales_by_half_the_declared_range_not_the_travel_available() {
-    // Reading high is harmless -- every threshold here is a floor. Normalising
-    // by the travel available in the direction of movement would instead make
-    // an off-centre stick need a bigger push on its long side than its short.
     let lopsided = AxisSpan::new(0, 100, 20);
 
     assert_eq!(deflection(lopsided, 100), 1.6);
@@ -1035,20 +826,13 @@ fn deflection_scales_by_half_the_declared_range_not_the_travel_available() {
 
 #[test]
 fn deflection_of_a_degenerate_span_is_zero_rather_than_a_division_by_zero() {
-    // A span comes off a device, and a device can say anything.
     assert_eq!(deflection(AxisSpan::new(0, 0, 0), 50), 0.0);
     assert_eq!(deflection(AxisSpan::new(10, 5, 7), 50), 0.0);
     assert_eq!(deflection(AxisSpan::new(-1, -1, -1), 0), 0.0);
 }
 
-// ---------------------------------------------------------------------------
-// MappingRun: hats and axis numbering
-// ---------------------------------------------------------------------------
-
 #[test]
 fn each_hat_direction_records_the_sdl_bit_that_names_it() {
-    // Y is positive downwards, which is the one that is easy to get backwards
-    // and produces a d-pad that works upside down in every game.
     for (code, value, bit) in [
         (ABS_HAT0X, 1, HAT_RIGHT),
         (ABS_HAT0X, -1, HAT_LEFT),
@@ -1070,7 +854,6 @@ fn each_hat_direction_records_the_sdl_bit_that_names_it() {
 
 #[test]
 fn a_hat_at_full_scale_is_still_just_one_direction() {
-    // Some pads report a hat as a full-range axis rather than as -1/0/1.
     let mut run = snes_run(Vec::new(), BTreeMap::new(), BTreeSet::new());
     let clock = skip_to(&mut run, first_dpad());
 
@@ -1092,8 +875,6 @@ fn a_hat_release_records_nothing() {
 
 #[test]
 fn a_hat_binding_is_always_hat_zero_whichever_code_it_arrived_on() {
-    // Both hat codes are the same physical hat, and SDL and RetroArch both
-    // write it as hat 0 with a direction bit.
     let mut run = snes_run(Vec::new(), BTreeMap::new(), BTreeSet::new());
     let clock = skip_to(&mut run, first_dpad());
 
@@ -1107,8 +888,7 @@ fn a_hat_binding_is_always_hat_zero_whichever_code_it_arrived_on() {
 
 #[test]
 fn an_axis_records_its_index_among_the_pads_axes_not_its_evdev_code() {
-    // ABS_RZ is code 5 but may be axis 3. Storing the raw code and hoping it is
-    // the index works right up to the first pad whose axes are not 0,1,2,...
+    // Code 0x05 may not be axis 5 in the map.
     let mut run = snes_run(
         Vec::new(),
         axes(&[(0x00, stick()), (0x01, stick()), (0x05, stick())]),
@@ -1127,8 +907,6 @@ fn an_axis_records_its_index_among_the_pads_axes_not_its_evdev_code() {
 
 #[test]
 fn hat_codes_do_not_count_towards_the_axis_numbering() {
-    // Neither consumer counts a hat as an axis, so an axis map that happens to
-    // carry hat codes must not shift the real axes along.
     let mut run = snes_run(
         Vec::new(),
         axes(&[(0x00, stick()), (ABS_HAT0X, stick()), (0x05, stick())]),
@@ -1141,14 +919,8 @@ fn hat_codes_do_not_count_towards_the_axis_numbering() {
     assert_eq!(binding, Binding::axis(1, 1));
 }
 
-// ---------------------------------------------------------------------------
-// MappingRun: buttons the pad does not report
-// ---------------------------------------------------------------------------
-
 #[test]
 fn a_key_the_pad_never_declared_records_nothing() {
-    // There is no number to give it, and inventing one binds a button that does
-    // not exist -- which both consumers accept without complaining.
     let mut run = snes_run(vec![0x130, 0x131], BTreeMap::new(), BTreeSet::new());
 
     assert_eq!(tap(&mut run, 0x2ff, 0.0), Outcome::Ignored);
@@ -1159,11 +931,6 @@ fn a_key_the_pad_never_declared_records_nothing() {
 
 #[test]
 fn a_key_below_btn_misc_records_as_invisible_to_retroarch() {
-    // A combo adapter reporting KEY_A alongside its twelve buttons used to
-    // store SDL's index for RetroArch too, binding a button RetroArch's udev
-    // driver never enumerates: the control works in the front-end and is dead
-    // in every game. SDL still numbers it, and it goes *after* the joystick
-    // codes because SDL walks BTN_JOYSTICK..KEY_MAX before 0..BTN_JOYSTICK.
     let key_a: u16 = 0x1e;
     let mut run = snes_run(vec![key_a, 0x130, 0x131], BTreeMap::new(), BTreeSet::new());
 
@@ -1180,10 +947,6 @@ fn a_key_below_btn_misc_records_as_invisible_to_retroarch() {
         "a button RetroArch cannot see was given a number"
     );
 }
-
-// ---------------------------------------------------------------------------
-// MappingRun: degenerate runs
-// ---------------------------------------------------------------------------
 
 #[test]
 fn a_layout_with_no_controls_is_finished_before_it_starts() {
@@ -1210,7 +973,6 @@ fn a_layout_with_no_controls_is_finished_before_it_starts() {
 
 #[test]
 fn an_event_that_is_neither_a_key_nor_an_axis_is_ignored() {
-    // EV_SYN arrives after every report and must not be mistaken for input.
     let mut run = run();
 
     assert_eq!(
@@ -1241,9 +1003,7 @@ fn an_event_that_is_neither_a_key_nor_an_axis_is_ignored() {
 
 #[test]
 fn the_scope_is_carried_on_the_run_because_it_is_needed_at_the_end() {
-    // A wizard that can be abandoned, restarted, or opened for a different
-    // player in between is exactly the shape of thing that loses a value parked
-    // elsewhere.
+    // Scope must persist across wizard abandon/restart.
     let run = snes_run(joystick_keys(), BTreeMap::new(), BTreeSet::new());
     assert_eq!(run.scope, "");
 
@@ -1261,15 +1021,8 @@ fn the_scope_is_carried_on_the_run_because_it_is_needed_at_the_end() {
     assert_eq!(filed.layout.id, "n64");
 }
 
-// ---------------------------------------------------------------------------
-// Claim and Outcome
-// ---------------------------------------------------------------------------
-
 #[test]
 fn a_claim_describes_itself_in_the_terms_a_log_reader_has_to_match() {
-    // Raw evdev codes for buttons and axes, because that is what a `padmon`
-    // trace and an `evtest` dump show; the hat is named, since its value is a
-    // direction bit and "8" means nothing to anyone.
     assert_eq!(Claim::Button { code: 0x130 }.to_string(), "button code 304");
     assert_eq!(
         Claim::Hat {
@@ -1315,8 +1068,7 @@ fn a_claim_describes_itself_in_the_terms_a_log_reader_has_to_match() {
 
 #[test]
 fn a_claim_on_a_hat_value_that_is_not_a_direction_still_describes_itself() {
-    // A diagonal reads 3 and is not a control, but a log line that raised
-    // instead of printing it would be worse than one that prints the number.
+    // A diagonal reads 3 and is not a control, but a log line that raised.
     assert_eq!(Claim::Hat { index: 0, value: 3 }.to_string(), "hat 3");
     assert_eq!(Claim::Hat { index: 0, value: 0 }.to_string(), "hat 0");
 }
@@ -1346,10 +1098,6 @@ fn only_a_capture_or_a_skip_counts_as_answering_the_prompt() {
     .advanced());
 }
 
-// ---------------------------------------------------------------------------
-// Chooser
-// ---------------------------------------------------------------------------
-
 fn chooser(axes: BTreeMap<u16, AxisSpan>, held: BTreeSet<u16>) -> Chooser {
     Chooser::new(
         1,
@@ -1361,8 +1109,6 @@ fn chooser(axes: BTreeMap<u16, AxisSpan>, held: BTreeSet<u16>) -> Chooser {
     )
 }
 
-/// The chooser's equivalent of [`play`]: a scripted sequence, and whether each
-/// event changed anything.
 fn play_chooser(chooser: &mut Chooser, script: &[(Event, f64)]) -> Vec<bool> {
     script
         .iter()
@@ -1372,9 +1118,7 @@ fn play_chooser(chooser: &mut Chooser, script: &[(Event, f64)]) -> Vec<bool> {
 
 #[test]
 fn a_chooser_moves_on_the_transition_into_a_direction_only() {
-    // A held stick would otherwise spin the selection past whatever the user
-    // was looking at, and a release would move it back off the entry they had
-    // just reached.
+    // Move on transition only; held stick would spin selection past entry.
     let mut chooser = chooser(BTreeMap::new(), BTreeSet::new());
     assert_eq!(chooser.index(), 0);
 
@@ -1397,8 +1141,6 @@ fn a_chooser_moves_on_the_transition_into_a_direction_only() {
 
 #[test]
 fn a_chooser_moves_from_the_analogue_stick_too() {
-    // ABS_X and ABS_HAT0X are horizontal on every pad, which is why they can be
-    // read with nothing mapped.
     let mut chooser = chooser(axes(&[(ABS_X, stick())]), BTreeSet::new());
 
     let moved = play_chooser(
@@ -1430,8 +1172,6 @@ fn a_chooser_ignores_a_stick_push_that_does_not_reach_the_threshold() {
 
 #[test]
 fn a_chooser_ignores_an_axis_that_is_not_the_horizontal_one() {
-    // Vertical movement, triggers and the right stick all stream while the
-    // picker is open, and none of them chooses anything.
     let mut chooser = chooser(axes(&[(0x01, stick()), (0x05, stick())]), BTreeSet::new());
 
     assert!(!chooser.feed(Event::abs(0x01, 100), 0.0));
@@ -1443,8 +1183,6 @@ fn a_chooser_ignores_an_axis_that_is_not_the_horizontal_one() {
 
 #[test]
 fn a_chooser_ignores_an_axis_it_has_no_span_for() {
-    // Without a span there is no way to say how far "far enough" is, and
-    // guessing from the raw value binds the picker to one pad's scale.
     let mut chooser = chooser(BTreeMap::new(), BTreeSet::new());
 
     assert!(!chooser.feed(Event::abs(ABS_X, 32767), 0.0));
@@ -1463,8 +1201,7 @@ fn a_chooser_ignores_an_axis_whose_span_is_degenerate() {
 
 #[test]
 fn a_chooser_wraps_at_both_ends() {
-    // The strip is a loop. Walking off the end and stopping would make the last
-    // console unreachable to anyone who pushed the wrong way first.
+    // Strip is a loop; wrapping keeps all consoles reachable.
     let count = layout_options(&BTreeSet::new()).len();
     let mut chooser = chooser(BTreeMap::new(), BTreeSet::new());
 
@@ -1473,7 +1210,6 @@ fn a_chooser_wraps_at_both_ends() {
     assert!(chooser.move_by(1));
     assert_eq!(chooser.index(), 0);
 
-    // ...and from the pad, which is the only way a user reaches it.
     play_chooser(
         &mut chooser,
         &[
@@ -1488,8 +1224,7 @@ fn a_chooser_wraps_at_both_ends() {
 
 #[test]
 fn an_empty_chooser_reports_no_choice_rather_than_indexing_past_the_end() {
-    // Reachable: game_scope_options answers an empty list for a game whose
-    // console is unknown, and the daemon must not take the picker down with it.
+    // game_scope_options returns empty for unknown console; daemon must not crash.
     let mut chooser = Chooser::new(
         1,
         Vec::new(),
@@ -1522,9 +1257,6 @@ fn a_chooser_reports_what_is_selected_and_what_to_draw_beside_it() {
 
 #[test]
 fn a_chooser_accepts_a_hold_and_ignores_a_tap() {
-    // The button that claimed the slot is often still travelling when this
-    // appears, and a picker that accepts the first press anyone makes is a
-    // picker nobody gets to use.
     let mut chooser = chooser(BTreeMap::new(), BTreeSet::new());
 
     chooser.feed(Event::key(0x130, 1), 0.0);
@@ -1561,8 +1293,6 @@ fn a_chooser_ignores_an_autorepeat_and_a_release_with_no_press() {
 
 #[test]
 fn a_confirmed_chooser_ignores_everything_afterwards() {
-    // The daemon is already building the run the answer named; a later push
-    // would change the selection under it.
     let mut chooser = chooser(axes(&[(ABS_X, stick())]), BTreeSet::new());
     chooser.feed(Event::key(0x130, 1), 0.0);
     chooser.feed(Event::key(0x130, 0), SKIP_HOLD_SECONDS + 0.01);
@@ -1580,20 +1310,16 @@ fn a_confirmed_chooser_ignores_everything_afterwards() {
 
 #[test]
 fn a_chooser_settles_before_it_accepts_anything() {
-    // Same reason as the wizard's: the press that opened the picker is still
-    // held, and it is a *hold*, so it would confirm the very first entry.
+    // Opening press held = *hold*, would confirm first entry.
     let mut chooser = chooser(axes(&[(ABS_X, stick())]), [0x130].into());
     assert!(chooser.settling());
 
-    // A long hold on another button while settling must not confirm...
     chooser.feed(Event::key(0x131, 1), 0.0);
     assert!(!chooser.feed(Event::key(0x131, 0), 1.0));
     assert!(!chooser.confirmed());
-    // ...nor may a stick push move the selection.
     assert!(!chooser.feed(Event::abs(ABS_X, 100), 1.1));
     assert_eq!(chooser.index(), 0);
 
-    // The opening press is released: that clears the hold and nothing else.
     assert!(!chooser.feed(Event::key(0x130, 0), 1.2));
     assert!(!chooser.settling());
     assert!(!chooser.confirmed());
@@ -1617,13 +1343,7 @@ fn a_chooser_settles_only_once_every_opening_button_is_released() {
 
 #[test]
 fn a_chooser_re_arms_at_the_push_threshold_not_at_the_wizards_release_threshold() {
-    // Deliberately *not* the wizard's rule. An uncalibrated stick can rest at
-    // 36% deflection -- measured on the N64 adapter here -- which never comes
-    // back inside AXIS_RELEASE, and a picker that stops responding after one
-    // move is worse than one that occasionally moves twice. A wrong step here
-    // costs a nudge back; a wrong step in the wizard costs a mis-recorded
-    // binding.
-    let resting = 40; // between AXIS_RELEASE (0.30) and AXIS_THRESHOLD (0.55)
+    let resting = 40;
     let mut chooser = chooser(axes(&[(ABS_X, stick())]), BTreeSet::new());
 
     assert!(chooser.feed(Event::abs(ABS_X, 100), 0.0));
@@ -1641,9 +1361,6 @@ fn a_chooser_re_arms_at_the_push_threshold_not_at_the_wizards_release_threshold(
 
 #[test]
 fn the_wizard_would_not_have_re_armed_where_the_chooser_does() {
-    // The other half of the pair above: the same 40% rest leaves the wizard's
-    // axis disarmed, and that is correct there, because the cost of a wrong
-    // step is a binding nobody can see is wrong.
     let resting = 40;
     let mut run = snes_run(Vec::new(), axes(&[(ABS_X, stick())]), BTreeSet::new());
     let clock = skip_to(&mut run, first_dpad());
@@ -1660,9 +1377,6 @@ fn the_wizard_would_not_have_re_armed_where_the_chooser_does() {
 
 #[test]
 fn a_chooser_says_which_question_it_is_asking() {
-    // Sent to the front-end rather than inferred: a theme guessing from the
-    // option ids would be a third place that has to know what a scope string
-    // looks like.
     assert_eq!(ChoiceKind::Layout.as_str(), "layout");
     assert_eq!(ChoiceKind::Scope.as_str(), "scope");
 
@@ -1672,15 +1386,8 @@ fn a_chooser_says_which_question_it_is_asking() {
     assert_eq!(chooser.player, 1);
 }
 
-// ---------------------------------------------------------------------------
-// layout_options
-// ---------------------------------------------------------------------------
-
 #[test]
 fn layout_options_offers_every_shipped_layout_in_catalogue_order() {
-    // The strip is built here rather than in the theme: a hardcoded list there
-    // would be a second copy of this table with nothing to notice when it fell
-    // behind, and a console added on this side would simply never appear.
     let options = layout_options(&BTreeSet::new());
     let catalogue = layout::all();
 
@@ -1688,8 +1395,6 @@ fn layout_options_offers_every_shipped_layout_in_catalogue_order() {
     for (option, shipped) in options.iter().zip(catalogue) {
         assert_eq!(option.id, shipped.id);
         assert_eq!(option.label, shipped.label);
-        // The layout picker draws the thing it names; the scope picker is the
-        // one where id and layout differ.
         assert_eq!(option.layout, option.id);
         assert!(!option.mapped);
     }
@@ -1697,8 +1402,6 @@ fn layout_options_offers_every_shipped_layout_in_catalogue_order() {
 
 #[test]
 fn layout_options_marks_the_layouts_already_captured() {
-    // Re-mapping a layout replaces what is there, and without a mark there is
-    // no way to tell which ones that would destroy.
     let mapped: BTreeSet<String> = ["n64".to_owned(), "snes".to_owned()].into();
 
     let options = layout_options(&mapped);
@@ -1727,15 +1430,8 @@ fn layout_options_ignores_a_mapped_name_that_is_not_a_layout() {
     assert!(options.iter().all(|option| !option.mapped));
 }
 
-// ---------------------------------------------------------------------------
-// game_scope_options
-// ---------------------------------------------------------------------------
-
 #[test]
 fn a_game_scope_strip_offers_the_console_first() {
-    // Console first: a pad that needs remapping for one N64 game usually needs
-    // it for all of them, and the first entry is the one a hurried user
-    // confirms.
     let options = game_scope_options("n64", "n64/goldeneye", "GoldenEye 007", &BTreeSet::new());
 
     assert_eq!(options.len(), 2);
@@ -1747,8 +1443,7 @@ fn a_game_scope_strip_offers_the_console_first() {
 
 #[test]
 fn both_game_scope_entries_draw_the_consoles_pad() {
-    // A mapping for one N64 game is still a mapping of the N64 control set, and
-    // the pad shown has to be the pad the wizard then asks about.
+    // Game mapping is still N64 control set; pad shown must match wizard's.
     let options = game_scope_options("n64", "n64/goldeneye", "GoldenEye 007", &BTreeSet::new());
 
     assert_eq!(options[0].layout, "n64");
@@ -1757,11 +1452,7 @@ fn both_game_scope_entries_draw_the_consoles_pad() {
 
 #[test]
 fn a_game_with_no_console_is_offered_nothing_rather_than_the_generic_pad() {
-    // The exporter writes a game key for every game but omits the console when
-    // the collection's core is not one padmap recognises, so a front-end really
-    // can send a key with no console. Offering it would draw the generic pad
-    // beside the entry and then walk whatever the pad's icon guesses -- the
-    // strip promising one controller while the wizard asks about another.
+    // Exporter omits console for unrecognized cores; strip would promise wrong controller.
     assert!(game_scope_options("", "x/y", "Title", &BTreeSet::new()).is_empty());
     assert!(game_scope_options("", "", "", &BTreeSet::new()).is_empty());
 }
@@ -1777,7 +1468,6 @@ fn a_game_scope_strip_with_no_key_offers_only_the_console() {
 
 #[test]
 fn a_game_with_no_title_is_offered_under_its_key() {
-    // Better a key than a blank strip entry nobody can aim at.
     let options = game_scope_options("snes", "snes/smw", "", &BTreeSet::new());
 
     assert_eq!(options[1].label, "snes/smw");
@@ -1785,8 +1475,6 @@ fn a_game_with_no_title_is_offered_under_its_key() {
 
 #[test]
 fn a_console_label_is_used_in_place_of_the_controllers_name() {
-    // "Arcade stick games" describes the controller; "Arcade games" is what the
-    // scope actually covers.
     let options = game_scope_options("arcade", "", "", &BTreeSet::new());
 
     assert_eq!(options[0].label, "Arcade games");
@@ -1802,10 +1490,6 @@ fn a_game_scope_strip_marks_each_entry_separately() {
     assert!(options[1].mapped, "the game scope is");
 }
 
-// ---------------------------------------------------------------------------
-// scope_options
-// ---------------------------------------------------------------------------
-
 #[test]
 fn a_scope_strip_offers_any_game_first_then_every_console() {
     let options = scope_options(&BTreeSet::new(), "gamecube", &[]);
@@ -1813,9 +1497,6 @@ fn a_scope_strip_offers_any_game_first_then_every_console() {
 
     assert_eq!(options[0].id, scope::UNIVERSAL);
     assert_eq!(options[0].label, "Any game");
-    // Drawn beside "any game" only so the strip has a picture there; it is not
-    // a promise about which layout the wizard will walk, because that entry
-    // leads to the layout picker.
     assert_eq!(options[0].layout, "gamecube");
     assert_eq!(options.len(), 1 + consoles.len());
     for (option, console) in options[1..].iter().zip(&consoles) {
@@ -1826,8 +1507,6 @@ fn a_scope_strip_offers_any_game_first_then_every_console() {
 
 #[test]
 fn a_scope_strip_does_not_offer_the_generic_layout_as_a_console() {
-    // "My pad, when playing generic games" is not a thing anyone can mean, and
-    // the scope would never resolve because no core ever reports it.
     let options = scope_options(&BTreeSet::new(), "generic", &[]);
 
     assert!(options.iter().all(|option| option.id != "console:generic"));
@@ -1844,9 +1523,6 @@ fn a_scope_strip_with_no_recent_games_is_just_any_game_and_the_consoles() {
 
 #[test]
 fn a_scope_strip_lists_recent_games_after_the_consoles() {
-    // Newest first, and several rather than only the newest: someone who has
-    // since started something else would otherwise find the game they actually
-    // wanted to fix no longer on offer.
     let recent = vec![
         (
             "n64".to_owned(),
@@ -1875,10 +1551,6 @@ fn a_scope_strip_lists_recent_games_after_the_consoles() {
 
 #[test]
 fn a_scope_strip_skips_a_recent_game_with_no_console() {
-    // padmap records every launch, including one whose core cannot be named --
-    // deliberately, since a launch with an unknown core is exactly the one
-    // whose controls are most likely to have felt wrong. Offering it is what
-    // ends with cancel bound to an axis.
     let recent = vec![
         (
             "n64".to_owned(),
@@ -1896,8 +1568,6 @@ fn a_scope_strip_skips_a_recent_game_with_no_console() {
 
 #[test]
 fn a_scope_strip_skips_a_recent_game_with_no_key() {
-    // There is nothing to file a mapping under, so the entry could only ever be
-    // decoration.
     let recent = vec![("n64".to_owned(), String::new(), "Nameless".to_owned())];
 
     let options = scope_options(&BTreeSet::new(), "generic", &recent);
@@ -1907,8 +1577,6 @@ fn a_scope_strip_skips_a_recent_game_with_no_key() {
 
 #[test]
 fn a_scope_strip_does_not_offer_the_same_game_twice() {
-    // The recent list is a launch history, so the game someone played three
-    // times in a row is in it three times.
     let recent = vec![
         (
             "n64".to_owned(),
@@ -1947,11 +1615,6 @@ fn a_scope_strip_does_not_offer_the_same_game_twice() {
 
 #[test]
 fn a_console_less_sighting_does_not_hide_the_same_game_s_usable_entry() {
-    // Found by this test in its first form, when the Rust marked the key as
-    // seen *before* testing the console and so dropped the entry entirely.
-    // Reachable: the launcher records every launch, including one whose core
-    // it cannot name, so the same ROM really does appear twice -- once with a
-    // console and once without.
     let recent = vec![
         (String::new(), "n64/mario".to_owned(), "Mario 64".to_owned()),
         (
@@ -1980,8 +1643,7 @@ fn a_console_less_sighting_does_not_hide_the_same_game_s_usable_entry() {
 
 #[test]
 fn a_scope_strip_marks_what_is_already_captured() {
-    // Re-mapping a scope replaces it, and without a mark there is no way to
-    // tell which ones that would destroy.
+    // Mark captured scopes so user knows what re-mapping would destroy.
     let scopes: BTreeSet<String> = [
         scope::UNIVERSAL.to_owned(),
         "console:n64".to_owned(),

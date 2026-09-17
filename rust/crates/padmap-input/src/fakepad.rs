@@ -6,12 +6,9 @@ pub struct Axis {
     pub code: u16,
     pub minimum: i32,
     pub maximum: i32,
-    /// Where it sits untouched -- *not* always the middle of the range.
     pub rest: i32,
     pub fuzz: i32,
-    /// The deadzone the driver asks for. padmap's calibration reads it, and a
-    /// fixture that dropped it would test a stick more sensitive than any
-    /// real one.
+    /// The deadzone the driver asks for.
     pub flat: i32,
 }
 
@@ -27,8 +24,6 @@ impl Axis {
         }
     }
 
-    /// A 360-family stick, as `xpad_set_up_abs` declares one:
-    /// `input_set_abs_params(input_dev, abs, -32768, 32767, 16, 128)`.
     const fn xpad_stick(code: u16) -> Axis {
         Axis {
             code,
@@ -49,17 +44,13 @@ pub struct Fixture {
     pub vid: u16,
     pub pid: u16,
     pub bustype: u16,
-    /// Where the numbers came from. Not decoration: every one is checkable.
     pub source: &'static str,
-    /// Vocabulary name -> evdev key code.
     pub buttons: &'static [(&'static str, u16)],
-    /// Vocabulary name -> axis.
     pub axes: &'static [(&'static str, Axis)],
     /// Whether the driver emits `MSC_SCAN` before each key (hid-generic does, xpad doesn't).
     pub emits_scan: bool,
     /// Vocabulary name -> the HID usage its driver puts in `MSC_SCAN`.
     pub scancodes: &'static [(&'static str, u32)],
-    /// Is the d-pad a hat (`ABS_HAT0X`/`Y`) rather than four keys?
     pub dpad_is_hat: bool,
 }
 
@@ -74,7 +65,7 @@ const BTN_START: u16 = 0x13B;
 const BTN_MODE: u16 = 0x13C;
 const BTN_THUMBL: u16 = 0x13D;
 const BTN_THUMBR: u16 = 0x13E;
-/// `KEY_RECORD`: a key code, not a BTN_. Padmap must not assume BTN_.
+/// `KEY_RECORD`: a key code, not a BTN_.
 const KEY_RECORD: u16 = 167;
 
 const ABS_X: u16 = 0x00;
@@ -88,7 +79,6 @@ pub const ABS_HAT0Y: u16 = 0x11;
 
 const BUS_USB: u16 = 0x03;
 
-/// The baseline pad for comparisons: sticks at zero, triggers at zero, hat for d-pad.
 pub const XBOX_360: Fixture = Fixture {
     name: "Microsoft X-Box 360 pad",
     vid: 0x045E,
@@ -116,7 +106,6 @@ pub const XBOX_360: Fixture = Fixture {
         ("ly", Axis::xpad_stick(ABS_Y)),
         ("rx", Axis::xpad_stick(ABS_RX)),
         ("ry", Axis::xpad_stick(ABS_RY)),
-        // 360 triggers are 0..255; Series X is 0..1023 (the only mapping difference).
         ("lt", Axis::new(ABS_Z, 0, 255, 0)),
         ("rt", Axis::new(ABS_RZ, 0, 255, 0)),
     ],
@@ -159,7 +148,6 @@ pub const XBOX_SERIES_X: Fixture = Fixture {
     dpad_is_hat: true,
 };
 
-/// Triggers on ABS_RX/RY (not ABS_Z/RZ), rest at 24-25 (81% deflected), no zero rest, emits MSC_SCAN.
 pub const MAYFLASH_GAMECUBE: Fixture = Fixture {
     name: "mayflash MAYFLASH GameCube Controller Adapter",
     vid: 0x0079,
@@ -179,8 +167,6 @@ pub const MAYFLASH_GAMECUBE: Fixture = Fixture {
         ("start", BTN_START),
         ("select", BTN_SELECT),
     ],
-    // hid-generic puts the HID usage in MSC_SCAN: Button page usages,
-    // 0x00090001 upwards.
     scancodes: &[
         ("a", 0x0009_0001),
         ("b", 0x0009_0002),
@@ -194,7 +180,6 @@ pub const MAYFLASH_GAMECUBE: Fixture = Fixture {
     axes: &[
         ("lx", Axis::new(ABS_X, 0, 255, 128)),
         ("ly", Axis::new(ABS_Y, 0, 255, 128)),
-        // C-stick Y is ABS_Z (RetroArch reads it as trigger).
         ("cx", Axis::new(ABS_RZ, 0, 255, 128)),
         ("cy", Axis::new(ABS_Z, 0, 255, 131)),
         ("lt", Axis::new(ABS_RX, 0, 255, 24)),
@@ -203,14 +188,11 @@ pub const MAYFLASH_GAMECUBE: Fixture = Fixture {
     dpad_is_hat: true,
 };
 
-/// Every fixture padmap carries.
 pub const EVERY: [&Fixture; 3] = [&XBOX_360, &XBOX_SERIES_X, &MAYFLASH_GAMECUBE];
 
-/// The four d-pad directions, when the pad reports them as a hat.
 pub const DPAD: [&str; 4] = ["up", "down", "left", "right"];
 
 impl Fixture {
-    /// Every name this controller answers to.
     pub fn controls(&self) -> Vec<&'static str> {
         let mut names: Vec<&'static str> = self
             .buttons
@@ -254,7 +236,6 @@ impl Fixture {
         codes
     }
 
-    /// Every absolute axis this pad declares, the hat included.
     pub fn abs_codes(&self) -> Vec<u16> {
         let mut codes: Vec<u16> = self.axes.iter().map(|(_, axis)| axis.code).collect();
         if self.dpad_is_hat {
@@ -290,7 +271,6 @@ mod tests {
                 fixture.name
             );
             assert!(fixture.vid != 0 && fixture.pid != 0, "{}", fixture.name);
-            // No duplicate controls; every scancode names a real button.
             let names: BTreeSet<&str> = fixture.controls().into_iter().collect();
             assert_eq!(names.len(), fixture.controls().len(), "{}", fixture.name);
             for (name, _) in fixture.scancodes {
@@ -325,7 +305,6 @@ mod tests {
 
     #[test]
     fn the_gamecube_triggers_are_where_they_actually_are() {
-        // Triggers on wrong axes and wrong rest values, unlike other sticks.
         let lt = MAYFLASH_GAMECUBE.axis("lt").expect("lt");
         let rt = MAYFLASH_GAMECUBE.axis("rt").expect("rt");
         assert_eq!((lt.code, lt.rest), (ABS_RX, 24));
@@ -346,7 +325,6 @@ mod tests {
 
     #[test]
     fn only_the_hid_generic_pad_sends_a_scancode() {
-        // Const blocks fail at edit time if values are wrong.
         const { assert!(MAYFLASH_GAMECUBE.emits_scan) };
         const { assert!(!XBOX_360.emits_scan) };
         const { assert!(!XBOX_SERIES_X.emits_scan) };

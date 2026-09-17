@@ -1,5 +1,4 @@
 //! User tuning: deadzone, debounce, ignore for misbehaving controllers.
-//! Debounce holds releases back to collapse switch bounces.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -106,7 +105,6 @@ fn centred_band(value: i32, declared: &Declared, fraction: f32) -> i32 {
     let value = f64::from(value).clamp(low, high);
     let offset = value - mid;
     if offset.abs() <= dead {
-        // Integer division midpoint (matches AxisCalibration::midpoint).
         return ((i64::from(declared.minimum) + i64::from(declared.maximum)) / 2) as i32;
     }
     let live = half - dead;
@@ -323,11 +321,9 @@ impl Debouncer {
             return Some(value);
         }
         if value == 0 {
-            // Release held; repeated releases don't extend the deadline.
             self.pending.entry(code).or_insert(now_ms + self.window_ms);
             return None;
         }
-        // Press: if release pending, it's a bounce; don't emit either.
         if self.pending.remove(&code).is_some() {
             return None;
         }
@@ -434,7 +430,6 @@ mod tests {
             flat: 0,
         };
         let tuning = with_deadzone(2, 0.2);
-        // 0..255 has no exact middle; 127 is where calibration puts it too.
         assert_eq!(tuning.shape_axis(2, 128, Some(&c_stick)), Some(127));
         assert_eq!(tuning.shape_axis(2, 110, Some(&c_stick)), Some(127));
         assert_eq!(tuning.shape_axis(2, 0, Some(&c_stick)), Some(0));

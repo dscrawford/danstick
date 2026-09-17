@@ -1,5 +1,4 @@
 //! Where an axis rests, how far it actually travels, and its dead band.
-//! Applied per-event; allocations and validity checks hoisted to load time.
 
 use serde::{Deserialize, Serialize};
 
@@ -7,11 +6,10 @@ use serde::{Deserialize, Serialize};
 pub const EVDEV_VALUE_MIN: i64 = -(1 << 31);
 pub const EVDEV_VALUE_MAX: i64 = (1 << 31) - 1;
 
-/// Measured vs. declared range; measured reach restores full travel on limited sticks.
+/// Measured vs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AxisCalibration {
     pub center: i32,
-    // Renamed from min/max for code clarity; stored profiles use old names.
     #[serde(rename = "min")]
     pub minimum: i32,
     #[serde(rename = "max")]
@@ -107,11 +105,9 @@ impl AxisCalibration {
             mid as f64 + scaled * (i64::from(self.maximum) - mid) as f64
         };
 
-        // Clamp order: max then min, to handle inverted ranges gracefully.
         let clamped = out
             .min(f64::from(self.maximum))
             .max(f64::from(self.minimum));
-        // Ties-to-even: matches Python round on recorded captures.
         clamped.round_ties_even() as i32
     }
 }
@@ -210,7 +206,6 @@ mod tests {
 
     #[test]
     fn the_midpoint_floors_the_way_python_did_even_across_zero() {
-        // Truncating division seeds on wrong side of centre for ranges straddling zero.
         assert_eq!(AxisCalibration::new(0, -1, 0).midpoint(), -1);
         assert_eq!(AxisCalibration::new(0, -32768, 32767).midpoint(), -1);
         assert_eq!(AxisCalibration::new(0, 0, 255).midpoint(), 127);
@@ -267,7 +262,6 @@ mod tests {
 
     #[test]
     fn a_calibration_round_trips_through_the_python_json_shape() {
-        // Serializes as min/max to preserve stored profile compatibility.
         let raw = serde_json::json!({
             "center": 174, "min": 0, "max": 255,
             "flat": 4, "reach_min": 20, "reach_max": 250

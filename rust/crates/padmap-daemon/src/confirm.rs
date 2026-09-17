@@ -1,5 +1,4 @@
 //! The confirm gesture: hold a button on an already-claimed pad.
-//! Release must match the starting button to avoid a resting thumb cancelling the hold.
 
 use std::collections::BTreeMap;
 
@@ -7,7 +6,6 @@ pub const CONFIRM_HOLD_SECONDS: f64 = 0.7;
 
 #[derive(Debug, Default, Clone)]
 pub struct ConfirmHold {
-    // Invariant: started and button are always kept in sync; clear both together.
     started: BTreeMap<String, f64>,
     button: BTreeMap<String, u16>,
 }

@@ -1,5 +1,4 @@
 //! Cemu profiles: SDL GUID binding, motion-aware (player 1 is GamePad for gyro).
-//! DSU supplies motion as second controller element.
 
 /// Environment variable to reach Cemu (only SDL-recognized gamepads appear).
 pub const CONFIG_ENV: &str = "SDL_GAMECONTROLLERCONFIG";
@@ -199,7 +198,6 @@ pub fn profile(player: u32, guid: &str, display_name: &str) -> String {
          \t\t<api>SDLController</api>\n",
         emulated.tag()
     );
-    // UUID prefix is always 0_ (each player's GUID is unique).
     out.push_str(&format!("\t\t<uuid>0_{guid}</uuid>\n"));
     out.push_str(&format!(
         "\t\t<display_name>{}</display_name>\n",
@@ -209,7 +207,6 @@ pub fn profile(player: u32, guid: &str, display_name: &str) -> String {
         "\t\t<motion>false</motion>\n\
          \t\t<rumble>0</rumble>\n",
     );
-    // Write defaults so Cemu doesn't add them on next save.
     for group in ["axis", "rotation", "trigger"] {
         out.push_str(&format!(
             "\t\t<{group}>\n\t\t\t<deadzone>0.25</deadzone>\n\t\t\t<range>1</range>\n\t\t</{group}>\n"

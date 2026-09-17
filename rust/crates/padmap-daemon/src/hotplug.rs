@@ -1,5 +1,4 @@
 //! Noticing controllers arriving and leaving, cheaply.
-//! Directory listing is fast; only scan when it changes.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -14,16 +13,13 @@ pub fn event_nodes() -> BTreeSet<String> {
         .collect()
 }
 
-// Nodes exist before uaccess ACL is applied; retry bounded to avoid tight loops.
 pub const ATTACH_ATTEMPTS: u32 = 20;
 pub const ATTACH_SCAN_SECONDS: f64 = 0.25;
 
 #[derive(Debug, Default, Clone)]
 pub struct Attached {
-    // Invariant: assignments persist; live tracks current attachments only.
     pub live: BTreeMap<String, u32>,
     pub attempts: BTreeMap<String, u32>,
-    // Remains across scans to avoid restart on new device scan.
     pub unbindable: BTreeSet<String>,
 }
 

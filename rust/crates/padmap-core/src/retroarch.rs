@@ -67,8 +67,7 @@ pub fn lines(
     drop_shadowed_axis_halves(out)
 }
 
-/// RetroArch's player slots. Every one is written by a launch override,
-/// assigned or not.
+/// RetroArch's player slots.
 pub const MAX_PLAYERS: u32 = 16;
 
 /// `input_playerN_device_reservation_type` values.
@@ -82,8 +81,6 @@ pub fn empty_indices(pad_count: usize, wanted: usize) -> Vec<usize> {
 }
 
 /// Player -> the pad index RetroArch's udev driver will give its clone.
-///
-/// `order` is the live enumeration: index -> device path.
 pub fn compute_pad_indices(
     virtual_paths: &BTreeMap<u32, String>,
     order: &BTreeMap<usize, String>,
@@ -99,10 +96,6 @@ pub fn compute_pad_indices(
 }
 
 /// Player -> pad index, for the players padmap is actually binding.
-///
-/// An assignment whose clone is missing from the enumeration is *not*
-/// managed: padmap cannot bind a pad RetroArch will not see, and pretending
-/// otherwise leaves that slot on whatever retroarch.cfg holds.
 pub fn managed_players(
     players: &[u32],
     virtual_paths: &BTreeMap<u32, String>,
@@ -260,8 +253,7 @@ pub fn launch_config(
     for player in 1..=MAX_PLAYERS {
         let index = match managed.get(&player) {
             Some(index) => *index,
-            // Never runs dry: exactly one spare per unmanaged slot, by
-            // construction above.
+            // Never runs dry: exactly one spare per unmanaged slot, by construction above.
             None => spare.next().unwrap_or(MAX_PLAYERS as usize - 1),
         };
         lines.push(format!("input_player{player}_joypad_index = \"{index}\""));

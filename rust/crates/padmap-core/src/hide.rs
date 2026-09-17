@@ -1,21 +1,4 @@
-//! udev rules that hide the physical pads, so only padmap's are enumerated.
-//!
-//! Anything reading controllers through udev -- RetroArch's joypad driver
-//! filters on `ID_INPUT_JOYSTICK=1` -- sees the physical adapter *and* the
-//! clone padmap made from it, and cannot tell which is which. Clearing that
-//! property on the adapters padmap manages leaves only padmap's pads visible,
-//! so indices become exactly 0..N-1 in the order the user assigned.
-//!
-//! A convenience, not a requirement, and it has a failure mode worth knowing:
-//! while these rules are installed and padmap is *not* running, the hidden
-//! adapters are invisible and there are no controllers at all. So the rules
-//! name explicit vid/pid pairs rather than "all joysticks", and are undone by
-//! deleting the file and reloading udev.
-//!
-//! EVIOCGRAB alone is not enough. Grabbing stops event *delivery* to other
-//! readers, but the node stays in udev's enumeration, so a consumer still
-//! counts it as a pad and gives it a port. Confirmed against a live run:
-//! three grabbed physical pads plus two virtual ones produced five ports.
+//! udev rules that hide physical pads, so only padmap's virtual ones are visible.
 
 /// One controller, as much of it as a rule needs.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -43,8 +26,6 @@ pub fn generate_rules(pads: &[Hideable]) -> String {
     let mut seen: Vec<(u16, u16)> = Vec::new();
     for pad in pads {
         if pad.vid == 0 || pad.pid == 0 {
-            // Without a vid/pid there is nothing safe to match on; matching by
-            // name would be far too broad.
             out.push_str(&format!("# skipped {:?}: no usable vid/pid\n", pad.name));
             continue;
         }
@@ -59,18 +40,6 @@ pub fn generate_rules(pads: &[Hideable]) -> String {
              ATTRS{{idProduct}}==\"{:04x}\", ENV{{ID_INPUT_JOYSTICK}}=\"\"\n",
             pad.vid, pad.pid
         ));
-        // The same pad again, for when it arrives over Bluetooth.
-        //
-        // ATTRS{idVendor} walks up to a USB parent, and a Bluetooth pad has
-        // none -- so the rule above silently covers nothing and the controller
-        // stays visible. Not theoretical: a Switch Pro paired over Bluetooth
-        // was enumerated alongside padmap's clone, both claiming 057e:2009,
-        // and the game got the wrong one.
-        //
-        // Bluetooth HID devices hang off uhid and the directory name carries
-        // the bus and ids, so this stays as narrow as the USB rule. It cannot
-        // catch padmap's own pads: those are /devices/virtual/input/, with no
-        // uhid anywhere in the path. Uppercase, as the kernel spells it.
         out.push_str(&format!(
             "SUBSYSTEM==\"input\", DEVPATH==\"*/uhid/0005:{:04X}:{:04X}.*\", \
              ENV{{ID_INPUT_JOYSTICK}}=\"\"\n",
@@ -80,20 +49,7 @@ pub fn generate_rules(pads: &[Hideable]) -> String {
     out
 }
 
-/// Every physical pad that must be hidden.
-///
-/// All of them, not just the ones holding a player slot right now. Which
-/// controller is assigned changes every session; which adapters exist is a
-/// property of the machine. Generating rules from the assignment is how an
-/// installed file came to cover a Fightstick and a USB pad but not the
-/// GameCube adapter plugged in later -- whose four ports then took player
-/// slots 2 through 5.
-///
-/// It is also actively destructive to regenerate from the assignment: with one
-/// controller assigned the result would *drop* the rules covering every other
-/// adapter, un-hiding pads that were correctly hidden before. Union rather than
-/// `discovered` alone, so a pad that is assigned but missing from the scan
-/// still gets a rule.
+/// All physical pads that must be hidden: union of discovered and assigned.
 pub fn targets(discovered: &[Hideable], assigned: &[Hideable]) -> Vec<Hideable> {
     let mut out = Vec::new();
     let mut seen: Vec<(u16, u16)> = Vec::new();
@@ -108,15 +64,9 @@ pub fn targets(discovered: &[Hideable], assigned: &[Hideable]) -> Vec<Hideable> 
     out
 }
 
-/// The vid/pid pairs an installed rules file already covers.
-///
-/// Parsed out of the text rather than remembered from what was written, for
-/// the usual reason: what is on disk is what udev applies, and a rebuild, a
-/// reboot or an edit can all put those two out of step.
+/// The vid/pid pairs an installed rules file already covers (parsed from text, not remembered).
 pub fn covered(rules: &str) -> Vec<(u16, u16)> {
     let mut out = Vec::new();
-    // Deliberately not a regex: the shape is fixed and this has to agree with
-    // what `generate_rules` writes, which is the only thing that writes it.
     for line in rules.lines() {
         let Some(vendor) = field_after(line, "ATTRS{idVendor}==\"") else {
             continue;
@@ -143,14 +93,7 @@ fn field_after(line: &str, marker: &str) -> Option<String> {
 }
 
 /// Pads padmap republishes that the installed rules do not cover.
-///
-/// The rules are generated from whatever was plugged in at the time and then
-/// left alone, so a controller bought afterwards is simply not in them.
-/// Nothing notices: padmap goes on working, and a consumer quietly sees the
-/// physical adapter *as well as* the virtual pad padmap made from it.
 pub fn unhidden(pads: &[Hideable], rules: Option<&str>) -> Vec<Hideable> {
-    // No rules installed at all is not this function's business to complain
-    // about -- it is a setup step the user may simply not have taken.
     let Some(rules) = rules else {
         return Vec::new();
     };
@@ -201,8 +144,6 @@ mod tests {
 
     #[test]
     fn each_pad_gets_a_usb_rule_and_a_bluetooth_rule() {
-        // ATTRS{idVendor} walks up to a USB parent and a Bluetooth pad has
-        // none, so the USB rule alone silently covers nothing over Bluetooth.
         let rules = generate_rules(&[pad("Switch Pro", 0x057E, 0x2009)]);
         assert!(rules.contains(r#"ATTRS{idVendor}=="057e""#));
         assert!(rules.contains(r#"ATTRS{idProduct}=="2009""#));
@@ -233,7 +174,6 @@ mod tests {
 
     #[test]
     fn the_same_model_twice_produces_one_pair_of_rules() {
-        // Four ports of one adapter are one device to udev.
         let pads: Vec<Hideable> = (0..4).map(|_| pad("Mayflash", 0x0079, 0x1843)).collect();
         let rules = generate_rules(&pads);
         assert_eq!(rules.matches("ATTRS{idVendor}").count(), 1);
@@ -241,8 +181,6 @@ mod tests {
 
     #[test]
     fn targets_are_the_union_and_not_just_what_is_assigned() {
-        // Regenerating from the assignment would drop the rules covering every
-        // other adapter, un-hiding pads that were correctly hidden before.
         let discovered = [pad("A", 1, 2), pad("B", 3, 4)];
         let assigned = [pad("B", 3, 4), pad("C", 5, 6)];
         let result = targets(&discovered, &assigned);
@@ -260,8 +198,6 @@ mod tests {
 
     #[test]
     fn what_was_generated_is_read_back_as_covered() {
-        // The only writer and the only reader of this file are these two
-        // functions, so a disagreement between them is the whole failure.
         let pads = [pad("A", 0x0079, 0x1843), pad("B", 0x057E, 0x2009)];
         let rules = generate_rules(&pads);
         assert_eq!(covered(&rules), [(0x0079, 0x1843), (0x057E, 0x2009)]);
@@ -278,14 +214,11 @@ mod tests {
 
     #[test]
     fn no_rules_file_at_all_is_not_a_complaint() {
-        // A setup step the user may simply not have taken.
         assert!(unhidden(&[pad("A", 1, 2)], None).is_empty());
     }
 
     #[test]
     fn an_installed_file_covering_nothing_reports_every_pad() {
-        // Different from "no file": an empty installed file must not read as
-        // though everything were hidden.
         assert_eq!(unhidden(&[pad("A", 1, 2)], Some("")).len(), 1);
     }
 

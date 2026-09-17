@@ -1,10 +1,4 @@
 //! Real controllers, as the kernel declares them, through the DSU picture.
-//!
-//! Each fixture in `fakepad` is a controller model with its axes exactly as
-//! the driver publishes them, rest values included. A DSU consumer sees the
-//! pad through `dsupad::Tracker`, and the question here is whether a pad
-//! nobody is touching looks untouched -- which is where a rest value that is
-//! not the middle of its range bites.
 
 use std::collections::BTreeMap;
 
@@ -61,9 +55,6 @@ fn a_controller_at_rest_has_centred_sticks() {
             ("right x", pad.right_x),
             ("right y", pad.right_y),
         ] {
-            // Within 2% of the middle. The Mayflash C-stick genuinely rests
-            // at 131 of 255; that is what calibration is for, and the tracker
-            // is fed the *corrected* stream in the daemon.
             assert!(
                 (CENTRE - 5..=CENTRE + 5).contains(&value),
                 "{}: {name} rests at {value}, not the centre",
@@ -75,10 +66,6 @@ fn a_controller_at_rest_has_centred_sticks() {
 
 #[test]
 fn the_gamecube_c_stick_is_not_a_trigger() {
-    // The Mayflash adapter puts the C-stick's Y on ABS_Z, resting at 131 of
-    // 0..255. By code that is the left trigger, and 131 is past half way: a
-    // tracker that goes by code alone reports L2 held for as long as the
-    // adapter is plugged in.
     let fixture = &fakepad::MAYFLASH_GAMECUBE;
     let mut tracker = tracker_for(fixture);
     rest(&mut tracker, fixture);
@@ -91,9 +78,6 @@ fn the_gamecube_c_stick_is_not_a_trigger() {
 
 #[test]
 fn the_gamecube_triggers_rest_released_and_press_to_full() {
-    // Its triggers are on ABS_RX/ABS_RY, resting at 24 and 25 of 0..255 --
-    // by code the right stick, and 81% deflected. Read as a stick, the right
-    // stick is jammed in a corner; read by rest, they are triggers at rest.
     let fixture = &fakepad::MAYFLASH_GAMECUBE;
     let mut tracker = tracker_for(fixture);
     rest(&mut tracker, fixture);
@@ -111,8 +95,6 @@ fn the_gamecube_triggers_rest_released_and_press_to_full() {
 
 #[test]
 fn the_gamecube_c_stick_drives_the_right_stick() {
-    // Which of the two axes is X is the adapter's secret; what matters is
-    // that both reach the right stick and neither reaches a trigger.
     let fixture = &fakepad::MAYFLASH_GAMECUBE;
     let mut tracker = tracker_for(fixture);
     rest(&mut tracker, fixture);
@@ -162,10 +144,7 @@ fn an_xbox_trigger_pressed_half_way_sets_its_byte_and_not_its_bit() {
 
 #[test]
 fn every_gamepad_button_a_fixture_declares_lands_somewhere_or_is_the_guide() {
-    // A button the tracker does not know is a press nobody sees. Everything
-    // in the BTN_GAMEPAD block is mapped. The Series X's share button is
-    // KEY_RECORD, outside it, and DSU has no byte for it: that one is allowed
-    // to go nowhere, and is the only one.
+    // A button the tracker does not know is a press nobody sees.
     for fixture in fakepad::EVERY {
         for (control, code) in fixture.buttons {
             let mut tracker = tracker_for(fixture);
@@ -200,8 +179,6 @@ fn every_gamepad_button_a_fixture_declares_lands_somewhere_or_is_the_guide() {
 
 #[test]
 fn the_xbox_face_buttons_land_by_position() {
-    // Xbox A is the bottom button, which on a DualShock is Cross. Y is the
-    // top: Triangle. X is left: Square. B is right: Circle.
     let fixture = &fakepad::XBOX_360;
     let expect = [
         ("a", button::CROSS),
@@ -219,8 +196,6 @@ fn the_xbox_face_buttons_land_by_position() {
 
 #[test]
 fn a_hat_dpad_and_a_button_dpad_produce_the_same_bits() {
-    // xpad reports the d-pad as a hat; hid-nintendo reports it as four
-    // BTN_DPAD_* keys. A DSU consumer sees the same four bits either way.
     for fixture in fakepad::EVERY {
         let mut tracker = tracker_for(fixture);
         assert!(

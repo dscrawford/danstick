@@ -1,5 +1,4 @@
-//! Writing the files other programs read. Both destinations are shared with
-//! somebody, so each is rewritten rather than appended.
+//! Writing the files other programs read.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -264,7 +263,7 @@ pub fn retroarch_config_dir() -> PathBuf {
     env_path("RETROARCH_CONFIG_DIR").unwrap_or_else(|| home().join(".config").join("retroarch"))
 }
 
-/// Existing joypad profile directories, most specific first. Scanned once per process.
+/// Existing joypad profile directories, most specific first.
 pub fn autoconfig_dirs() -> Vec<PathBuf> {
     static DIRS: std::sync::OnceLock<Vec<PathBuf>> = std::sync::OnceLock::new();
     DIRS.get_or_init(scan_autoconfig_dirs).clone()
@@ -276,7 +275,6 @@ fn scan_autoconfig_dirs() -> Vec<PathBuf> {
     dirs.push(PathBuf::from(
         "/run/current-system/sw/share/libretro/autoconfig",
     ));
-    // Nix has no global share dir; fall back to the store paths, newest name first.
     if let Ok(entries) = std::fs::read_dir("/nix/store") {
         let mut stores: Vec<PathBuf> = entries
             .flatten()
@@ -313,7 +311,7 @@ fn profiles_under(base: &Path) -> Vec<PathBuf> {
     out
 }
 
-/// Best libretro profile for a pad: exact name first, vid/pid fallback. Memoised per process.
+/// Best libretro profile for a pad: exact name first, vid/pid fallback.
 pub fn find_profile(name: &str, vid: u16, pid: u16) -> Option<(String, Vec<(String, String)>)> {
     type Found = Option<(String, Vec<(String, String)>)>;
     type Cache = std::sync::OnceLock<std::sync::Mutex<BTreeMap<(String, u16, u16), Found>>>;
@@ -380,7 +378,7 @@ pub fn sdl_database_paths() -> Vec<PathBuf> {
     paths
 }
 
-/// A mapping for this GUID already on disk, and where it came from. padmap's own lines are skipped.
+/// A mapping for this GUID already on disk, and where it came from.
 pub fn carried_fields(guid: &str) -> Option<(padmap_core::fields::Fields, String)> {
     if guid.is_empty() {
         return None;
@@ -472,7 +470,6 @@ mod tests {
             "input_device = \"Mine\"\ninput_vendor_id = \"0\"\ninput_product_id = \"0\"\ninput_a_btn = \"0\"\n",
         )
         .expect("seed");
-        // A child process, so the environment is set without touching this process's.
         let out = std::process::Command::new(std::env::current_exe().expect("exe"))
             .args([
                 "--exact",

@@ -1,5 +1,4 @@
 //! Discovery and identity for physical joypads.
-//! Multi-port adapters like Mayflash GameCube have indistinguishable ports; identity comes from button press.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -82,9 +81,6 @@ pub fn discover(filter: Filter) -> std::io::Result<Vec<Pad>> {
     let mut enumerator = udev::Enumerator::new()?;
     enumerator.match_subsystem("input")?;
 
-    // Every motion sensor on the machine, so each pad can be asked whether one
-    // of them is its own. Collected in the same pass rather than a second
-    // enumeration: this runs on the daemon's tick.
     let mut accelerometers: Vec<(PathBuf, PathBuf)> = Vec::new();
     let mut pads: Vec<Pad> = Vec::new();
     for device in enumerator.scan_devices()? {
@@ -95,7 +91,6 @@ pub fn discover(filter: Filter) -> std::io::Result<Vec<Pad>> {
             continue;
         }
 
-        // Collect every accelerometer on the machine (each pad will check if one is its own).
         if property(&device, "ID_INPUT_ACCELEROMETER").as_deref() == Some("1") {
             accelerometers.push((
                 std::fs::canonicalize(device.syspath())
@@ -142,7 +137,6 @@ pub fn discover(filter: Filter) -> std::io::Result<Vec<Pad>> {
 
     pads.sort_by(|left, right| left.syspath.cmp(&right.syspath));
 
-    // Steam Controllers have no joypad node; append them to preserve RetroArch's enumeration order.
     if filter.include_undriven && !filter.retroarch_only {
         pads.extend(crate::triton::slots(true));
     }
@@ -180,7 +174,6 @@ pub fn clone_nodes() -> BTreeMap<String, PathBuf> {
 }
 
 /// Motion sensor belonging to a pad: matched by longest shared syspath prefix (ancestor).
-/// Pure; takes candidates as argument for testability.
 pub fn motion_sibling<'a>(
     pad: &Path,
     accelerometers: &'a [(PathBuf, PathBuf)],
@@ -188,7 +181,6 @@ pub fn motion_sibling<'a>(
     let mine = pad.parent()?;
     accelerometers
         .iter()
-        // Two nodes sit side by side under input device or same HID interface.
         .filter(|(syspath, _)| syspath.parent() == Some(mine) || syspath.starts_with(mine))
         .map(|(_, devnode)| devnode.as_path())
         .next()
@@ -264,10 +256,6 @@ fn property(device: &udev::Device, name: &str) -> Option<String> {
 }
 
 /// A sysfs attribute, walking up to the first parent that has it.
-///
-/// `name`, `phys` and the id files sit on the `inputN` directory; a caller may
-/// hand us either that or the `eventN` child, and both have to answer.
-/// Sysfs attribute, walking up 4 levels to find it (name, phys, id files sit on inputN).
 fn attribute(device: &udev::Device, name: &str) -> Option<String> {
     let mut current = Some(device.clone());
     for _ in 0..4 {

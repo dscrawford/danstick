@@ -1,5 +1,4 @@
-//! `AxisCalibration::apply` runs per `EV_ABS` event: it must never panic and
-//! never leave `minimum..=maximum` (a +-2^40 profile once killed the daemon mid-game).
+//! `AxisCalibration::apply` runs per `EV_ABS` event: it must never panic and never leave `minimum..=maximum` (a +-2^40 profile once killed the daemon mid-game).
 
 use padmap_core::calibration::{AxisCalibration, EVDEV_VALUE_MAX, EVDEV_VALUE_MIN};
 use proptest::prelude::*;
@@ -213,7 +212,6 @@ proptest! {
         let high = cal.high();
         let centre = i64::from(cal.center);
         let flat = i64::from(cal.flat);
-        // A degenerate side collapses to the midpoint instead; that is the next property.
         if centre - flat - low > 0 {
             prop_assert_eq!(cal.apply(low_of(&cal)), cal.minimum, "full deflection to {} missed the bottom stop", low);
         }
@@ -339,7 +337,6 @@ fn a_true_centred_pad_moves_nothing_it_does_not_have_to() {
 
 #[test]
 fn the_worn_n64_stick_resting_at_174_still_reaches_both_of_its_stops() {
-    // Measured: rests at 174 on 0-255, 36% deflection, which scrolls a menu forever uncorrected.
     let cal = AxisCalibration::new(174, 0, 255);
     assert_eq!(cal.apply(174), 127, "rest must read as the middle");
     assert_eq!(cal.apply(0), 0, "full left");
@@ -352,7 +349,6 @@ fn the_worn_n64_stick_resting_at_174_still_reaches_both_of_its_stops() {
 
 #[test]
 fn a_gamecube_trigger_resting_at_its_minimum_reads_centred_until_it_is_pressed() {
-    // All of its travel is on one side; the bottom span is zero and the division is skipped.
     let trigger = AxisCalibration::new(0, 0, 255);
     assert_eq!(trigger.low(), 0, "there is no travel below rest");
     assert_eq!(trigger.high(), 255);
@@ -372,7 +368,6 @@ fn a_gamecube_trigger_resting_at_its_minimum_reads_centred_until_it_is_pressed()
 
 #[test]
 fn an_adapter_that_declares_more_travel_than_the_stick_has_still_gets_full_left() {
-    // Declares 0-255, physically emits 160-255: five counts of travel left of rest.
     let declared = AxisCalibration::new(200, 0, 255);
     let measured = AxisCalibration::new(200, 0, 255).with_reach(160, 255);
     assert!(
@@ -490,7 +485,6 @@ fn an_overshoot_past_the_measured_reach_is_clamped_to_the_declared_range() {
 
 #[test]
 fn a_tie_rounds_to_even_as_python_does_where_f64_round_would_go_away_from_zero() {
-    // Each reading lands on an exact binary half; `apply` uses `round_ties_even` for parity.
     for (name, cal, reading, want) in [
         ("2.5 -> 2", cal(0, 0, 3, 0, (None, Some(4))), 3, 2),
         ("0.5 -> 0", cal(0, 0, 1, 0, (None, Some(2))), 1, 0),
@@ -576,7 +570,6 @@ fn a_half_written_profile_missing_a_required_field_is_refused_rather_than_guesse
 
 #[test]
 fn an_inverted_declared_range_must_not_panic_the_per_event_path() {
-    // Regression: `f64::clamp` asserts min <= max. The Python clamps to `minimum` and carries on.
     let inverted = cal(-1, 1, 0, 0, (None, None));
     assert_eq!(inverted.apply(0), 1);
 }

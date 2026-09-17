@@ -1,16 +1,4 @@
-//! What a client may ask the daemon to do.
-//!
-//! This is the process boundary. The socket lives in `XDG_RUNTIME_DIR` and any
-//! process running as this user may write to it, so every field here arrives
-//! from outside and is coerced rather than trusted -- and where the coercion
-//! fails, the refusal is part of the contract, because a front-end reads the
-//! error reply and shows it to somebody.
-//!
-//! Named as an enum rather than matched as strings in a dispatch chain. A
-//! command that is defined but never *routed* is a handler that exists, reads
-//! correctly, and is unreachable -- and nothing says so until someone presses
-//! the key on the setup screen, where the pads are grabbed and there is no
-//! other feedback to fall back on.
+//! Socket protocol: what a client may ask the daemon to do.
 
 use serde_json::Value;
 
@@ -73,23 +61,13 @@ pub enum Command {
         icon: String,
     },
     Status,
-    /// Listen for an unseated controller taking a free seat, with no session
-    /// open and nothing grabbed.
-    ///
-    /// The moments a controller needs to join are the moments a modal screen
-    /// is most expensive: somebody arrives mid-game, a pad dies and is swapped
-    /// for a charged one, a controller is switched on after the picker has
-    /// started. Opening a session for any of them grabs every pad, so one
-    /// person joining costs everybody else the thing they were doing.
+    /// Listen for an unseated controller taking a free seat, with no session open and nothing grabbed.
     Seating {
         open: bool,
-        /// How many seats exist. Only meaningful when opening.
+        /// How many seats exist.
         players: i64,
     },
-    /// Set what a misbehaving controller needs: a deadzone, a debounce, an
-    /// axis or button to ignore. By player when it is seated, else by the
-    /// physical pad's signature, so a controller can be tuned before it has
-    /// ever taken a seat.
+    /// Set what a misbehaving controller needs: a deadzone, a debounce, an axis or button to ignore.
     Tune {
         player: i64,
         signature: String,
@@ -100,16 +78,13 @@ pub enum Command {
 /// Why a message could not be acted on.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum Refused {
-    /// Not a command padmap has. Answered with `unknown command`.
+    /// Not a command padmap has.
     #[error("unknown command {0:?}")]
     Unknown(String),
     /// A `tune` field that is not what it claims to be.
     #[error("{0}")]
     BadTuning(String),
-    /// A field that must be a number was something else. The Python raises
-    /// here and the daemon answers with the exception's text, so a client
-    /// sees a refusal either way -- what matters is that neither
-    /// implementation *acts* on it.
+    /// A field that must be a number was something else.
     #[error("{field} is not a number")]
     NotANumber { field: &'static str },
 }
@@ -121,10 +96,6 @@ impl Command {
         if !COMMANDS.contains(&name) {
             return Err(Refused::Unknown(name.to_owned()));
         }
-        // Python's `int(...)` on a bool is 0 or 1, and on a float truncates
-        // toward zero. Both are reachable from a JSON message and both are
-        // reproduced, because refusing what the Python accepts is as much a
-        // divergence as accepting what it refuses.
         let number = |field: &'static str, default: i64| -> Result<i64, Refused> {
             match message.get(field) {
                 None => Ok(default),
@@ -140,19 +111,7 @@ impl Command {
                 Some(_) => Err(Refused::NotANumber { field }),
             }
         };
-        // Strings only, and anything else is empty rather than rendered.
-        //
-        // `str(...)` on a JSON null gives the four characters "None" and on a
-        // `true` gives "True", and those are *stored* -- an icon called
-        // "None" is written into a profile as though somebody chose it. It is
-        // also a cross-language trap, since Rust renders the same boolean
-        // "true" and the two would disagree about a message they both read.
-        // The Python was changed to match; the same rule as
-        // `runtime::recent_games_from`.
-        //
-        // Not a refusal, unlike a bad number: an empty layout or icon means
-        // "unset", which every caller already handles, where an empty player
-        // number would mean player zero.
+        // Strings only; anything else (including bools/nulls) becomes empty, not rendered.
         let text = |field: &str| -> String {
             match message.get(field) {
                 Some(Value::String(value)) => value.clone(),
@@ -203,18 +162,13 @@ impl Command {
                 request: crate::tuning::Request::from_json(message).map_err(Refused::BadTuning)?,
             },
             "seating" => Command::Seating {
-                // Absent means "open it", so a bare {"cmd":"seating"} turns it
-                // on rather than silently doing nothing.
                 open: match message.get("open") {
                     Some(Value::Bool(value)) => *value,
                     None => true,
-                    // A string or a number here is a client that thinks it is
-                    // saying something; refusing is better than guessing which.
                     Some(_) => return Err(Refused::NotANumber { field: "open" }),
                 },
                 players: number("players", 4)?,
             },
-            // Unreachable: the membership test above is the only way in.
             other => return Err(Refused::Unknown(other.to_owned())),
         })
     }

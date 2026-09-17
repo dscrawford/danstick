@@ -1,7 +1,4 @@
 //! Taking a seat without a session.
-//! Reads unseated pads without grabbing them, so nobody else's controller
-//! stops working. Only unseated pads and only free seats, or holding a button
-//! mid-game would reseat a player.
 
 use std::path::PathBuf;
 

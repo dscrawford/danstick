@@ -1,5 +1,4 @@
-//! Where padmap keeps state that lasts a login session. Paths must agree with
-//! the Python launcher's for as long as both are installed.
+//! Where padmap keeps state that lasts a login session.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -260,7 +259,7 @@ pub struct Game {
     pub title: String,
 }
 
-/// Recently launched games, newest first. Never fails.
+/// Recently launched games, newest first.
 pub fn read_recent_games() -> Vec<Game> {
     recent_games_from(&std::fs::read_to_string(last_game_path()).unwrap_or_default())
 }

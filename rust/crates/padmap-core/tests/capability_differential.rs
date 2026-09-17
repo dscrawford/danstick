@@ -45,7 +45,6 @@ fn every_bitmap_parses_to_the_same_bits() {
 
 #[test]
 fn a_mask_of_zero_is_not_a_mask_that_could_not_be_read() {
-    // Reading "0" as unreadable sends the device to the open() fallback: 11ms of URB teardown per node.
     let zero = mask("0");
     assert!(zero.is_empty());
     assert!(Mask::parse("").is_none());
@@ -73,7 +72,6 @@ fn the_words_are_most_significant_first() {
 
 #[test]
 fn every_recorded_decision_matches() {
-    // The corpus carries masks as decimal strings; a >128-bit one cannot be rebuilt here.
     let to_mask = |value: &Value| -> Option<Mask> {
         let number: u128 = value.as_str()?.parse().ok()?;
         Mask::parse(&format!("{:x} {:x}", (number >> 64) as u64, number as u64))
@@ -109,7 +107,6 @@ fn every_device_on_the_recording_machine_is_judged_the_same() {
     for case in &cases {
         let absolute = case["abs_raw"].as_str().and_then(Mask::parse);
         let keys = case["key_raw"].as_str().and_then(Mask::parse);
-        // Every recorded node had both files, so `None` is itself a divergence.
         let verdict = capability::joypad(absolute.as_ref(), keys.as_ref()).unwrap_or_else(|| {
             panic!(
                 "could not judge a device the Python judged: abs {:?}",

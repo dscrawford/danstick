@@ -1,5 +1,4 @@
-//! Reading and writing the profile store. Same paths and filenames as the
-//! Python, because the store is the user's data.
+//! Reading and writing the profile store.
 
 use std::path::{Path, PathBuf};
 

@@ -1,5 +1,4 @@
-//! Switch Pro Controller over hidraw. Powers up in report 0x3f (simple); must request 0x30 (full).
-//! Mode request is output report written via write(), not feature report (ioctl).
+//! Switch Pro Controller over hidraw.
 
 use std::collections::BTreeMap;
 use std::io;
@@ -23,7 +22,7 @@ pub const SIMPLE_REPORTS_BEFORE_RETRY: u32 = 100;
 
 const RUMBLE_NEUTRAL: [u8; 8] = [0x00, 0x01, 0x40, 0x40, 0x00, 0x01, 0x40, 0x40];
 
-// Byte 3 of full report. Nintendo labels are mirrored; hid-nintendo publishes by position (button A = BTN_EAST).
+// Byte 3 of full report.
 const BUTTONS_RIGHT: [(u8, KeyCode); 6] = [
     (0x01, KeyCode::BTN_WEST),
     (0x02, KeyCode::BTN_NORTH),
@@ -49,7 +48,6 @@ const DPAD_UP: u8 = 0x02;
 const DPAD_RIGHT: u8 = 0x04;
 const DPAD_LEFT: u8 = 0x08;
 
-// Sticks are 12-bit, published raw (stored calibration stays meaningful).
 pub const STICK_MIN: i32 = 0;
 pub const STICK_MAX: i32 = 4095;
 const STICK_FUZZ: i32 = 16;
@@ -67,7 +65,7 @@ pub struct State {
     pub right_y: i32,
 }
 
-/// Decode one 0x30 report. Y is inverted here (controller reports up; evdev is down like screen).
+/// Decode one 0x30 report.
 pub fn decode_state(data: &[u8]) -> Option<State> {
     if data.len() < 12 {
         return None;
@@ -110,7 +108,7 @@ pub fn full_mode_packet(counter: u8) -> [u8; 64] {
     packet
 }
 
-/// User decisions about hidraw path: `{"057e:2017": true}`. Booleans only (not 1 or "yes").
+/// User decisions about hidraw path: `{"057e:2017": true}`.
 pub fn parse_overrides(text: &str) -> BTreeMap<String, bool> {
     let Ok(raw) = serde_json::from_str::<serde_json::Value>(text) else {
         return BTreeMap::new();
@@ -264,7 +262,6 @@ impl Source {
             (AbsoluteAxisCode::ABS_RX, state.right_x),
             (AbsoluteAxisCode::ABS_RY, state.right_y),
         ] {
-            // Only past fuzz: these jitter and sending it means a wakeup per axis.
             let changed = match self.axes.get(&axis.0) {
                 None => true,
                 Some(&previous) => (previous - value).abs() >= STICK_FUZZ,

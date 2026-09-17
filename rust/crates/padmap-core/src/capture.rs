@@ -1,4 +1,4 @@
-//! Button mapping wizard. Guards reject drift, noise, and inputs still settling.
+//! Button mapping wizard.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -7,15 +7,12 @@ use crate::control::Control;
 use crate::layout::Layout;
 use crate::sdl::AxisSpan;
 
-/// evdev constants, spelled out rather than imported: this crate is pure logic
-/// and a device library for the sake of five numbers is not a trade.
 pub const EV_KEY: u16 = 0x01;
 pub const EV_ABS: u16 = 0x03;
 pub const ABS_X: u16 = 0x00;
 pub const ABS_HAT0X: u16 = 0x10;
 pub const ABS_HAT0Y: u16 = 0x11;
 
-/// Axis travel from rest before deliberate (generous to avoid drift).
 pub const AXIS_THRESHOLD: f64 = 0.55;
 
 /// Axis must settle within this of rest before re-arming (prevents overshoot re-triggering).
@@ -24,16 +21,13 @@ pub const AXIS_RELEASE: f64 = 0.30;
 /// Axis must move far to answer a face-button prompt (axis binding is expensive).
 pub const AXIS_AS_BUTTON_THRESHOLD: f64 = 0.90;
 
-/// SDL hat bits, which is also how a hat binding is written.
 pub const HAT_UP: i32 = 1;
 pub const HAT_RIGHT: i32 = 2;
 pub const HAT_DOWN: i32 = 4;
 pub const HAT_LEFT: i32 = 8;
 
-/// Hold duration to skip a control.
 pub const SKIP_HOLD_SECONDS: f64 = 0.8;
 
-/// Gap after recording a control to prevent one input answering two prompts.
 pub const CAPTURE_GAP_SECONDS: f64 = 0.35;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -61,12 +55,10 @@ impl Event {
     }
 }
 
-/// Axis travel from rest, as fraction of half declared range (not midpoint).
 pub fn deflection(span: AxisSpan, value: i32) -> f64 {
     if span.maximum <= span.minimum {
         return 0.0;
     }
-    // Widen to i64 before subtracting to avoid overflow with extreme ranges.
     let travel = i64::from(value) - i64::from(span.rest);
     let span = i64::from(span.maximum) - i64::from(span.minimum);
     travel as f64 / (span as f64 / 2.0)
@@ -74,18 +66,9 @@ pub fn deflection(span: AxisSpan, value: i32) -> f64 {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Claim {
-    Button {
-        code: u16,
-    },
-    Hat {
-        index: i32,
-        value: i32,
-    },
-    /// sign is -1 or 1; axis half is a separate control from its other half.
-    Axis {
-        code: u16,
-        sign: i32,
-    },
+    Button { code: u16 },
+    Hat { index: i32, value: i32 },
+    Axis { code: u16, sign: i32 },
 }
 
 impl std::fmt::Display for Claim {
@@ -119,12 +102,10 @@ pub enum Outcome {
     Skipped {
         control: Control,
     },
-    /// Input already held by earlier control (press is silent).
     Refused {
         claim: Claim,
         held_by: Control,
     },
-    /// Axis moved past AXIS_THRESHOLD but short of face-button threshold.
     TooGentle {
         claim: Claim,
         travel: f64,
@@ -210,7 +191,6 @@ impl MappingRun {
         &self.bindings
     }
 
-    /// The control being asked about, or `None` once every one is answered.
     pub fn current(&self) -> Option<Control> {
         self.layout
             .controls
@@ -222,7 +202,6 @@ impl MappingRun {
         let control = self.current()?;
         self.index += 1;
         self.conflict = None;
-        // Apply capture gap so skip-release doesn't answer next control.
         self.blocked_until = now + CAPTURE_GAP_SECONDS;
         Some(control)
     }
@@ -250,13 +229,11 @@ impl MappingRun {
         }
 
         if now < self.blocked_until {
-            // Blocked but track releases to avoid leaving state hanging.
             if event.kind == EV_KEY && event.value == 0 {
                 self.down.remove(&event.code);
                 self.down_at.remove(&event.code);
                 self.opening_held.remove(&event.code);
             } else if event.kind == EV_ABS {
-                // Re-arm axes during gap (most releases land here).
                 self.rearm(event);
             }
             return Outcome::Ignored;
@@ -279,7 +256,6 @@ impl MappingRun {
             return Outcome::Ignored; // Autorepeat
         }
 
-        // Binding on release: hold time determines skip vs record.
         self.down.remove(&event.code);
         let started = self.down_at.remove(&event.code);
         if self.opening_held.remove(&event.code) {
@@ -307,13 +283,11 @@ impl MappingRun {
         let Some(index) = sdl_button_index(&self.keys, event.code) else {
             return Outcome::Ignored;
         };
-        // Store both SDL and RetroArch indices.
         let binding =
             Binding::button(index).with_ra_index(retroarch_button_index(&self.keys, event.code));
         self.record(binding, claim, now)
     }
 
-    // Mark axis as ready to answer again once settled near rest.
     fn rearm(&mut self, event: Event) {
         if event.code == ABS_HAT0X || event.code == ABS_HAT0Y {
             if event.value == 0 {
@@ -343,7 +317,6 @@ impl MappingRun {
             return Outcome::Ignored;
         };
         if current.kind == "button" {
-            // Hat cannot answer face-button (prevents noise from fake hats).
             if event.code == ABS_HAT0X || event.code == ABS_HAT0Y {
                 return Outcome::Ignored;
             }
@@ -416,12 +389,10 @@ impl MappingRun {
         if let Some(holder) = self.claimed.get(&claim).copied() {
             return self.refuse(claim, holder);
         }
-        // Use axis index not evdev code: ABS_RZ is code 5 but may be axis 3.
         let codes: Vec<u16> = self.axes.keys().copied().collect();
         let Some(index) = axis_index(&codes, event.code) else {
             return Outcome::Ignored;
         };
-        // Disarm until settled to prevent spring-back from answering next prompt.
         self.axis_armed.insert(event.code, false);
         self.record(Binding::axis(index, sign), claim, now)
     }
@@ -463,7 +434,6 @@ pub struct Chooser {
     opening_held: BTreeSet<u16>,
     down: BTreeSet<u16>,
     down_at: BTreeMap<u16, f64>,
-    // Per axis: -1, 0, or 1; move on direction transition, not held state.
     pushed: BTreeMap<u16, i32>,
 }
 
@@ -558,7 +528,6 @@ impl Chooser {
         if self.settling() {
             return false;
         }
-        // Only hold-confirms (taps are ignored to avoid mis-selection).
         if now - started >= SKIP_HOLD_SECONDS {
             self.confirmed = true;
             return true;
@@ -597,7 +566,6 @@ impl Chooser {
         let previous = self.pushed.get(&event.code).copied().unwrap_or(0);
         self.pushed.insert(event.code, direction);
         if direction == 0 || direction == previous {
-            // Don't use wizard's re-arm rule (occasional double-moves ok).
             return false;
         }
         self.move_by(direction)
@@ -659,7 +627,6 @@ pub fn game_scope_options(
     options
 }
 
-/// A game offered by [`scope_options`]: console layout id, key, title.
 pub type RecentGame = (String, String, String);
 
 pub fn scope_options(
@@ -687,11 +654,9 @@ pub fn scope_options(
         if key.is_empty() {
             continue;
         }
-        // Skip games with no console (they're often entries with unknown cores).
         if game_console.is_empty() {
             continue;
         }
-        // Skip duplicates (ROM may appear with and without console in recent list).
         if !seen.insert(key.as_str()) {
             continue;
         }
@@ -780,7 +745,6 @@ mod tests {
         run.feed(Event::key(0x131, 1), 0.06);
         assert_eq!(run.feed(Event::key(0x131, 0), 0.10), Outcome::Ignored);
         assert_eq!(run.index(), at, "an input inside the gap answered a prompt");
-        // ...and the same press works once the gap has passed.
         run.feed(Event::key(0x131, 1), 0.5);
         assert!(run.feed(Event::key(0x131, 0), 0.55).advanced());
     }
@@ -832,21 +796,18 @@ mod tests {
             BTreeSet::new(),
         );
         assert_eq!(run.layout.controls[0].kind, "button");
-        // 0.70 of the way over: past AXIS_THRESHOLD, short of the stop.
         let nudge = 128 + (0.70 * 127.5) as i32;
         assert!(matches!(
             run.feed(Event::abs(0x02, nudge), 0.0),
             Outcome::TooGentle { .. }
         ));
         assert_eq!(run.index(), 0);
-        // Back to rest to re-arm, then all the way over.
         run.feed(Event::abs(0x02, 128), 0.1);
         assert!(run.feed(Event::abs(0x02, 255), 0.2).advanced());
     }
 
     #[test]
     fn a_resting_axis_does_not_report_anything_at_all() {
-        // Resting axes stream continuously; avoid noise.
         let axes: BTreeMap<u16, AxisSpan> = [(0x02, span(0, 255, 128))].into_iter().collect();
         let mut run = MappingRun::new(
             1,
@@ -883,7 +844,6 @@ mod tests {
         run.index = start;
 
         assert!(run.feed(Event::abs(ABS_X, 0), 0.0).advanced(), "full left");
-        // Overshoot in gap and after; no answer until axis returns to rest.
         assert_eq!(run.feed(Event::abs(ABS_X, 255), 0.1), Outcome::Ignored);
         assert_eq!(run.feed(Event::abs(ABS_X, 255), 1.0), Outcome::Ignored);
         assert_eq!(run.index(), start + 1);
@@ -971,7 +931,6 @@ mod tests {
         chooser.feed(Event::key(0x130, 1), 1.0);
         assert!(chooser.feed(Event::key(0x130, 0), 1.0 + SKIP_HOLD_SECONDS));
         assert!(chooser.confirmed());
-        // Nothing gets through afterwards.
         assert!(!chooser.feed(Event::abs(ABS_HAT0X, 1), 3.0));
     }
 
@@ -997,7 +956,6 @@ mod tests {
         assert_eq!(options[0].id, "console:n64");
         assert_eq!(options[1].id, "game:n64/goldeneye");
         assert_eq!(options[1].label, "GoldenEye 007");
-        // Both draw the console pad.
         assert_eq!(options[0].layout, "n64");
         assert_eq!(options[1].layout, "n64");
     }

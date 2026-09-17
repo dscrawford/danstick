@@ -43,9 +43,7 @@ fn every_destination_can_be_pointed_somewhere_else() {
     let game = root.join("state/config");
     std::fs::create_dir_all(&game).expect("mkdir");
 
-    // ares and Ryujinx are only rewritten, never invented -- their files hold
-    // every other setting those emulators have -- so a launch that wants them
-    // written has them in the environment already.
+    // ares and Ryujinx are only rewritten, never invented -- their files hold every other setting those emulators have -- so a launch that wants them written has them in the environment already.
     let ares = game.join("ares/settings.bml");
     let ryujinx = game.join("Ryujinx/Config.json");
     std::fs::create_dir_all(ares.parent().expect("parent")).expect("mkdir");
@@ -102,7 +100,6 @@ fn every_destination_can_be_pointed_somewhere_else() {
     );
     assert!(pads.contains("[GCPad2]"), "{pads}");
     let core = std::fs::read_to_string(dolphin.join("Dolphin.ini")).expect("Dolphin.ini");
-    // Two players seated, so other ports are emptied from any previous session.
     assert!(
         core.contains("SIDevice0 = 6") && core.contains("SIDevice1 = 6"),
         "{core}"
@@ -112,7 +109,6 @@ fn every_destination_can_be_pointed_somewhere_else() {
         "{core}"
     );
 
-    // ...and nothing was written to the locations it was pointed away from.
     assert!(
         !root.join("fallback-config").exists(),
         "emit wrote to the default config location as well"
@@ -144,7 +140,6 @@ fn an_absent_flag_keeps_the_default_location() {
     let cemu = root.join("elsewhere/Cemu");
     std::fs::create_dir_all(&root).expect("mkdir");
 
-    // Only Cemu redirected; env file keeps default location.
     let out = emit(&root, &["--cemu-dir", cemu.to_str().expect("utf8")]);
     assert!(
         out.status.success(),
@@ -164,8 +159,7 @@ fn an_absent_flag_keeps_the_default_location() {
 
 #[test]
 fn a_destination_flag_with_no_value_is_refused() {
-    // `--ryujinx-config` with the path forgotten must not silently mean "the
-    // user's own Ryujinx config", which is the one file this exists to avoid.
+    // `--ryujinx-config` with the path forgotten must not silently mean "the user's own Ryujinx config", which is the one file this exists to avoid.
     let root = std::env::temp_dir().join(format!("padmap-emit-noval-{}", std::process::id()));
     let _ = std::fs::create_dir_all(&root);
     let out = emit(&root, &["--ryujinx-config"]);

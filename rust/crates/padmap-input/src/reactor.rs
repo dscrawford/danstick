@@ -1,5 +1,4 @@
-//! One epoll set over every descriptor. Tick is a timerfd (fires when kernel says, expiry count shows lag).
-//! TFD_TIMER_ABSTIME keeps period self-correcting (no drift per iteration).
+//! One epoll set over every descriptor.
 
 use std::mem::MaybeUninit;
 use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
@@ -67,7 +66,6 @@ impl Watched {
     }
 }
 
-// Four pads = 2 descriptors + tick = 9; generous 32 (level-triggered epoll).
 const MAX_READY: usize = 32;
 
 /// What one wakeup found, without allocating for it.

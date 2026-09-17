@@ -1,4 +1,4 @@
-//! The offline commands: everything that is not the daemon.
+//! Offline commands: everything except the daemon.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
@@ -24,8 +24,6 @@ pub fn cmd_list_json() -> Result<()> {
     use serde_json::json;
 
     let pads = pad::discover(pad::Filter::default())?;
-    // Clones too, so a player's node can be reported: they are what a game
-    // actually opens, and a launcher binds those rather than the hardware.
     let clones = pad::clone_nodes();
     let saved = assignments::load(&runtime::assignments_path()).unwrap_or_default();
     let order = publish::visible_order();
@@ -77,7 +75,6 @@ pub fn cmd_list_json() -> Result<()> {
             "virtual": virtual_pad,
         }));
     }
-    // Assigned players first and in seat order, so `.[0]` is player 1.
     entries.sort_by_key(|entry| {
         entry["player"]
             .as_u64()
@@ -104,7 +101,6 @@ pub fn cmd_play(argv: Vec<String>) -> Result<()> {
         launch::title_for(&rom)
     };
 
-    // Record even unknown launches; they're the ones whose controls felt wrong.
     if !key.is_empty() {
         let game = runtime::Game {
             console: console.to_owned(),
@@ -123,7 +119,6 @@ pub fn cmd_play(argv: Vec<String>) -> Result<()> {
         eprintln!("padmap: no assigned controllers; leaving autoconfig alone");
         return Ok(());
     }
-
     let context = if title.is_empty() {
         Path::new(&rom)
             .file_name()
@@ -177,7 +172,6 @@ pub fn cmd_setup(wanted: Option<u32>) -> Result<()> {
         Some(count) => println!("Waiting for {count} controller(s); Ctrl-C to stop early.\n"),
         None => println!("Press Ctrl-C when you are done.\n"),
     }
-
     let mut session = Session::open(pads).context("opening the controllers")?;
     let target = wanted.unwrap_or(u32::MAX);
     let started = std::time::Instant::now();
@@ -209,7 +203,6 @@ pub fn cmd_setup(wanted: Option<u32>) -> Result<()> {
             break;
         }
     }
-
     let claimed: Vec<assignments::Assignment> = session
         .claimed_pads()
         .into_iter()
@@ -279,7 +272,6 @@ pub fn cmd_forget(all: bool) -> Result<()> {
             targets.push(path.clone());
         }
     }
-
     let mut removed = 0;
     for path in &targets {
         match std::fs::remove_file(path) {
@@ -290,18 +282,12 @@ pub fn cmd_forget(all: bool) -> Result<()> {
                     path.file_name().unwrap_or_default().to_string_lossy()
                 );
             }
-            // A directory named *.json, or one that is not ours to remove:
-            // --all unlinks everything it globbed, so without this the
-            // "remove everything and start again" command is the only one
-            // that dies on the mess it is meant to clear up.
             Err(error) => println!(
                 "  could not remove {}: {error}",
                 path.file_name().unwrap_or_default().to_string_lossy()
             ),
         }
     }
-
-    // Clear 'already asked' for all controllers to fix ones stuck as new but already prompted.
     let prompted_path = runtime::prompted_path();
     let prompted = runtime::read_prompted(&prompted_path);
     let kept: BTreeSet<String> = if all {
@@ -321,7 +307,6 @@ pub fn cmd_forget(all: bool) -> Result<()> {
             runtime::write_prompted(&prompted_path, &kept).map_err(|_| ())
         };
     }
-
     if targets.is_empty() && cleared == 0 {
         println!(
             "Nothing to forget for the connected controllers (profiles in {}).",
@@ -333,9 +318,6 @@ pub fn cmd_forget(all: bool) -> Result<()> {
         return Ok(());
     }
     if !targets.is_empty() {
-        // What was actually removed, not what was attempted: reporting five
-        // when one is still on disk sends someone away believing a controller
-        // was reset when it will come back configured.
         println!("\nForgot {removed} profile(s). They will be set up again");
         println!("on the next controller assignment.");
     }
@@ -389,7 +371,6 @@ pub fn cmd_clean_config(config: Option<String>, dry_run: bool) -> Result<()> {
     Ok(())
 }
 
-/// Record which button is which from a terminal using the capture machine.
 pub fn cmd_map(layout_id: Option<String>, which: Option<String>, scope: String) -> Result<()> {
     use padmap_daemon::session::Session;
 
@@ -422,7 +403,6 @@ pub fn cmd_map(layout_id: Option<String>, which: Option<String>, scope: String) 
         }
     };
 
-    // Stored layout is the better default; usually correcting a control.
     let stored = publish::stored_layout(&pad);
     let chosen = layout_id.unwrap_or(stored);
     if chosen.is_empty() {
@@ -481,7 +461,6 @@ pub fn cmd_map(layout_id: Option<String>, which: Option<String>, scope: String) 
         capture::SKIP_HOLD_SECONDS
     );
     println!("Ctrl-C to abandon without saving.\n");
-
     let mut run = MappingRun::new(1, layout, keys, scope.clone(), axes, held);
     let started = std::time::Instant::now();
     let mut shown = usize::MAX;
@@ -526,13 +505,11 @@ pub fn cmd_map(layout_id: Option<String>, which: Option<String>, scope: String) 
                 _ => {}
             }
         }
-        // The skip hold ends on the clock, not on an event.
         let now = started.elapsed().as_secs_f64();
         let _ = run.feed(capture::Event::key(0, 2), now);
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
     drop(session);
-
     let missing = publish::store_mapping(&pad, &layout.id, run.bindings(), &scope);
     println!(
         "\nSaved {} control(s) for {name}{}.",
@@ -551,7 +528,6 @@ pub fn cmd_map(layout_id: Option<String>, which: Option<String>, scope: String) 
     Ok(())
 }
 
-/// Measure stick centre and range; two phases to handle adapters with odd declarations.
 pub fn cmd_calibrate(force: bool) -> Result<()> {
     use padmap_daemon::calibration::{CalibrationRun, Phase, Step};
     use padmap_daemon::session::Session;
@@ -637,9 +613,7 @@ pub fn cmd_calibrate(force: bool) -> Result<()> {
     Ok(())
 }
 
-/// Guarantee a daemon is running this version of the code.
 pub fn cmd_ensure_daemon(check: bool, timeout: f64) -> Result<()> {
-    // Rules from this moment on; later controllers won't be in them.
     let pads = discover().unwrap_or_default();
     let hideable: Vec<padmap_core::hide::Hideable> = pads
         .iter()
@@ -681,10 +655,8 @@ pub fn cmd_ensure_daemon(check: bool, timeout: f64) -> Result<()> {
         );
         return Ok(());
     };
-
     let theirs = state["build"].as_str().unwrap_or("");
     let their_identity = state["identity"].as_str();
-    // Check both build id and identity; identity changes where clones advertise themselves.
     if theirs == ours && their_identity.is_none_or(|mode| mode == our_identity.as_str()) {
         println!(
             "daemon is current (build {ours}, identity {})",
@@ -733,11 +705,6 @@ fn installed_rules() -> Option<String> {
     None
 }
 
-/// Send one command to the running daemon and wait for one event by name,
-/// or `None` if nothing answers in time.
-///
-/// An `error` event ends the wait too, and is returned, so a caller can say
-/// what the daemon said rather than "timed out".
 pub fn daemon_ask(
     command: &serde_json::Value,
     want: &str,
@@ -771,7 +738,6 @@ pub fn daemon_ask(
     None
 }
 
-/// Ask the running daemon for its state, or `None` if nothing answers.
 pub fn daemon_state(timeout: f64) -> Option<serde_json::Value> {
     use std::io::Read;
     use std::os::unix::net::UnixStream;
@@ -779,8 +745,6 @@ pub fn daemon_state(timeout: f64) -> Option<serde_json::Value> {
     let mut sock = UnixStream::connect(runtime::socket_path()).ok()?;
     let window = std::time::Duration::from_secs_f64(timeout);
     sock.set_read_timeout(Some(window)).ok()?;
-    // The daemon greets on connect, so no command is needed; asking anyway
-    // makes this work regardless of that greeting.
     sock.write_all(b"{\"cmd\":\"status\"}\n").ok()?;
     let mut reader = padmap_core::wire::LineReader::new();
     let deadline = std::time::Instant::now() + window;
@@ -800,14 +764,8 @@ pub fn daemon_state(timeout: f64) -> Option<serde_json::Value> {
     None
 }
 
-/// Start a daemon detached from this process, so it outlives whatever asked
-/// for it -- a front-end launcher, typically, which would otherwise take the
-/// controllers down with it when it exits.
 fn spawn_daemon() -> Result<()> {
     let exe = std::env::current_exe().context("finding this binary")?;
-    // Into a file rather than /dev/null: the daemon is the only thing that
-    // sees a controller being claimed or a mapping captured, and discarding
-    // all of it means the answer to "what happened" is simply gone.
     let log_path = runtime::daemon_log_path();
     if let Some(parent) = log_path.parent() {
         let _ = std::fs::create_dir_all(parent);
@@ -822,11 +780,6 @@ fn spawn_daemon() -> Result<()> {
             command.stderr(errors);
         }
     }
-    // Its own process group, so a front-end exiting -- or the shell that
-    // started it being killed -- does not take the daemon's controllers with
-    // it. `process_group` rather than a `pre_exec` closure, because that
-    // would be the only unsafe block in this binary for something the
-    // standard library already does safely.
     command.process_group(0);
     command.spawn().context("starting the daemon")?;
     Ok(())
@@ -843,15 +796,6 @@ fn wait_for_daemon(timeout: f64) -> Option<serde_json::Value> {
     None
 }
 
-/// Ask the daemon that answered us to exit, and wait for it to go.
-///
-/// Signals exactly the pid it reported. Matching on the command line instead
-/// hits *every* padmap daemon the user is running, including one on a
-/// different `XDG_RUNTIME_DIR` -- an earlier version of this, run from a test
-/// with its own runtime dir, took down the real daemon with it.
-///
-/// SIGTERM rather than SIGKILL: the handler releases every grab on the way
-/// out, and a killed daemon leaves the machine with no working controllers.
 fn stop_daemon(state: &serde_json::Value, timeout: f64) -> bool {
     let pid = match state["pid"].as_i64() {
         Some(pid) => pid as i32,
@@ -888,16 +832,8 @@ fn stop_daemon(state: &serde_json::Value, timeout: f64) -> bool {
     false
 }
 
-/// Where the udev rules go: tmpfs, so a reboot undoes it, and on NixOS
-/// `/etc/udev/rules.d` is a store symlink that cannot be written at all.
 pub const RUNTIME_RULES_PATH: &str = "/run/udev/rules.d/99-padmap.rules";
 
-/// Install the rules and make udev apply them.
-///
-/// Reloading is not optional: udev keeps its rules in memory, so a file
-/// written without the reload changes nothing until the next boot -- and a
-/// controller still visible after padmap said it had hidden it is precisely
-/// the silent gap this project keeps tripping over.
 pub fn install_rules(rules: &str) -> (bool, Vec<String>) {
     let target = Path::new(RUNTIME_RULES_PATH);
     let existing = std::fs::read(target)
@@ -938,8 +874,6 @@ pub fn install_rules(rules: &str) -> (bool, Vec<String>) {
 }
 
 fn udevadm(args: &[&str]) -> Result<(), String> {
-    // Located rather than assumed: on NixOS it lives under
-    // /run/current-system/sw/bin, which is not always on a root shell's PATH.
     let binary = ["udevadm", "/run/current-system/sw/bin/udevadm"]
         .into_iter()
         .find(|candidate| {
@@ -964,7 +898,6 @@ pub fn cmd_launch(rest: Vec<String>, log: Option<Option<String>>) -> Result<i32>
         println!("No assignments. Run `padmap setup` first.");
         std::process::exit(1);
     }
-    // A running daemon holds the controllers; this republishes them, so they can't coexist.
     let running = runtime::daemon_pids(None);
     if let Some(pid) = running.first() {
         println!("the padmap daemon (pid {pid}) already holds the controllers.");
@@ -976,7 +909,6 @@ pub fn cmd_launch(rest: Vec<String>, log: Option<Option<String>>) -> Result<i32>
         println!("  kill {pid}");
         std::process::exit(1);
     }
-
     let log_path = log.map(|explicit| {
         explicit
             .map(PathBuf::from)
@@ -1005,7 +937,6 @@ pub fn cmd_launch(rest: Vec<String>, log: Option<Option<String>>) -> Result<i32>
     Ok(status.code().unwrap_or(0))
 }
 
-/// The pad `--pad` names, or the only one, or a list and an exit.
 fn pick_pad(pads: &[Pad], which: Option<&str>) -> Pad {
     match which {
         Some(name) => match pads
@@ -1032,7 +963,6 @@ fn pick_pad(pads: &[Pad], which: Option<&str>) -> Pad {
     }
 }
 
-/// Tune a misbehaving controller; settings live with the pad, not the seat.
 pub fn cmd_tune(
     which: Option<String>,
     request: padmap_core::tuning::Request,
@@ -1072,7 +1002,6 @@ pub fn cmd_tune(
                 .unwrap_or("no reason given")
         ),
         None => {
-            // No daemon; read axes and write the profile; next republish picks it up.
             let declared: Vec<u16> = clone::open_source(&pad, false)
                 .map(|source| source.declared_axes().keys().copied().collect())
                 .unwrap_or_default();

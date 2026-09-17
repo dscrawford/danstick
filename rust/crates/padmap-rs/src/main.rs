@@ -1,8 +1,4 @@
 //! padmap's republisher, in Rust.
-//!
-//! Deliberately not the whole of `padmap`. The daemon's socket protocol, the
-//! assignment session, the mapping wizard and every offline command stay in
-//! Python for now; this is the forwarding path and the profile store it reads.
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -22,7 +18,6 @@ use padmap_input::{
     triton,
 };
 
-/// How often the tick runs. Matches the Python's `TICK_SECONDS`.
 const TICK: Duration = Duration::from_millis(20);
 
 fn main() -> Result<()> {
@@ -85,8 +80,6 @@ fn main() -> Result<()> {
                 .unwrap_or(10.0),
         ),
         Some("launch") => {
-            // `--log` takes an optional value, so it is read before the rest
-            // is handed to RetroArch verbatim.
             let log = rest.iter().position(|arg| arg == "--log").map(|at| {
                 rest.get(at + 1)
                     .filter(|value| !value.starts_with('-'))
@@ -108,7 +101,6 @@ fn main() -> Result<()> {
     }
 }
 
-/// Refuse a flag given without a value, so `--layout` forgotten doesn't silently walk the generic pad.
 fn flag_value(args: &[String], names: &[&str]) -> Option<String> {
     let at = args.iter().position(|arg| names.contains(&arg.as_str()))?;
     match args.get(at + 1) {
@@ -154,7 +146,6 @@ fn cmd_serve() -> Result<()> {
     Ok(())
 }
 
-/// Print SDL's mapping line for a GUID, or nothing if unknown.
 fn cmd_sdl_mapping(guid: Option<String>) -> Result<()> {
     let Some(guid) = guid else {
         eprintln!("usage: padmap-rs sdl-mapping <guid>");
@@ -168,7 +159,6 @@ fn cmd_sdl_mapping(guid: Option<String>) -> Result<()> {
     Ok(())
 }
 
-/// Write emulator config files from stdin; always exit 0 on well-formed input.
 fn cmd_emit(args: &[String]) -> Result<()> {
     let mut body = String::new();
     std::io::Read::read_to_string(&mut std::io::stdin(), &mut body)
@@ -176,11 +166,6 @@ fn cmd_emit(args: &[String]) -> Result<()> {
     let pads: Vec<emulators::Published> =
         serde_json::from_str(&body).context("parsing the pad list")?;
 
-    // A caller that keeps each game in an environment of its own -- its own
-    // state directory, its own config -- is not writing to the user's home,
-    // and two variants of one game must not share a Ryujinx configuration.
-    // An absent flag keeps the default location, so overriding one leaves the
-    // others alone.
     let destinations = emulators::Destinations {
         cemu_dir: flag_value(args, &["--cemu-dir"]).map(PathBuf::from),
         dolphin_dir: flag_value(args, &["--dolphin-dir"]).map(PathBuf::from),
@@ -198,7 +183,6 @@ fn cmd_emit(args: &[String]) -> Result<()> {
     Ok(())
 }
 
-/// Run a program with padmap's mappings in its environment.
 fn cmd_exec(args: Vec<String>) -> Result<()> {
     let args: Vec<String> = args.into_iter().skip_while(|arg| arg == "--").collect();
     let Some((program, rest)) = args.split_first() else {
@@ -206,10 +190,6 @@ fn cmd_exec(args: Vec<String>) -> Result<()> {
         std::process::exit(2);
     };
 
-    // The file the daemon wrote at its last republish, which is the same value
-    // it put in every emulator's config. Read rather than recomputed: this
-    // process has no pads open and opening them would grab them away from the
-    // daemon that does.
     let value = match std::fs::read_to_string(emulators::env_path()) {
         Ok(text) => emulators::value_from_script(&text).unwrap_or_default(),
         Err(error) => {
@@ -320,7 +300,6 @@ fn report_dormant() {
     }
 }
 
-/// Print udev rules to hide physical pads; install if running as root.
 fn cmd_hide(args: &[String]) -> Result<()> {
     let pads = pad::discover(pad::Filter::default()).context("enumerating input devices")?;
     let hideable: Vec<hide::Hideable> = pads
@@ -337,7 +316,6 @@ fn cmd_hide(args: &[String]) -> Result<()> {
         return Ok(());
     }
     let rules = hide::generate_rules(&targets);
-    // Running as root means install; don't ask to paste it back.
     let root = rustix::process::geteuid().is_root();
     if args.iter().any(|arg| arg == "--print") || !root {
         if args.iter().any(|arg| arg == "--install") && !root {
@@ -422,7 +400,6 @@ fn cmd_run() -> Result<()> {
         anyhow::bail!("no pad could be republished");
     }
 
-    // Write before the loop so a consumer launched immediately finds them there.
     if let Err(error) = publish_artefacts(&vpads) {
         warn!("could not write the mapping files: {error}");
     }
@@ -444,7 +421,6 @@ fn cmd_run() -> Result<()> {
         }
     }
 
-    // Run serves motion too, same mode a game is launched under.
     let mut motion = match padmap_daemon::dsu::Motion::bind(padmap_core::dsu::PORT) {
         Ok(motion) => {
             reactor
@@ -530,7 +506,6 @@ fn cmd_run() -> Result<()> {
     Ok(())
 }
 
-/// Write SDL database and RetroArch autoconfig from stored profiles.
 fn publish_artefacts(vpads: &[padmap_input::VirtualPad]) -> Result<()> {
     let mut sdl_lines = BTreeMap::new();
     let mut profiles_out = BTreeMap::new();
@@ -612,9 +587,6 @@ fn publish_artefacts(vpads: &[padmap_input::VirtualPad]) -> Result<()> {
         }
     }
 
-    // Best-effort by design. Most machines have none of these three
-    // installed, and "ares has never run" must read as an ordinary skip
-    // rather than as the mapping files having failed.
     let emulators = emulators::publish(&published, &emulators::Destinations::default());
     for path in &emulators.paths {
         info!("emulator config: {}", path.display());
@@ -625,7 +597,6 @@ fn publish_artefacts(vpads: &[padmap_input::VirtualPad]) -> Result<()> {
     Ok(())
 }
 
-/// Answer socket if asked, then send what changed; read requests first.
 fn serve_motion(
     motion: Option<&mut padmap_daemon::dsu::Motion>,
     republisher: &republish::Republisher,
@@ -654,7 +625,6 @@ fn drop_pad(reactor: &reactor::Reactor, republisher: &republish::Republisher, in
     let Some(vpad) = republisher.pads.get(index) else {
         return;
     };
-    // Dead nodes report readable forever; unwatch to prevent the loop spinning.
     let _ = reactor.unwatch(vpad.source.as_fd());
 }
 
@@ -689,7 +659,6 @@ and are applied to everything padmap publishes for it, after calibration.
   --show               print what is set and change nothing
 ";
 
-/// The `tune` flags as a request, refusing what does not parse.
 fn tune_request(args: &[String]) -> Result<padmap_core::tuning::Request> {
     use padmap_core::tuning::Request;
     let mut request = Request {

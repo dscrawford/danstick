@@ -1,9 +1,7 @@
-//! Cemuhook DSU protocol (UDP port 26760). Keys: payload_length includes type,
-//! CRC covers whole packet, PadData byte 11 is 1 (PortInfo: 0).
+//! Cemuhook DSU protocol (UDP port 26760).
 
 use crate::motion::Motion;
 
-/// UDP port every DSU consumer defaults to.
 pub const PORT: u16 = 26760;
 
 /// Loopback (unauthenticated protocol, no reason to leave machine).
@@ -12,12 +10,9 @@ pub const HOST: &str = "127.0.0.1";
 /// `PROTOCOL_VERSION`, `udp_protocol.h`.
 pub const PROTOCOL_VERSION: u16 = 1001;
 
-/// `CLIENT_MAGIC` -- an emulator asking.
 pub const CLIENT_MAGIC: [u8; 4] = *b"DSUC";
-/// `SERVER_MAGIC` -- padmap answering.
 pub const SERVER_MAGIC: [u8; 4] = *b"DSUS";
 
-/// MAX_PORTS; also padmap's player count (4 for a living room).
 pub const MAX_SLOTS: usize = 4;
 
 pub const HEADER_BYTES: usize = 20;
@@ -49,7 +44,6 @@ impl Kind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Connected {
     No = 0,
-    /// Reserved (padmap never sends this; absent pad is disconnected).
     Reserved = 1,
     Yes = 2,
 }
@@ -117,7 +111,6 @@ impl Port {
     }
 }
 
-/// Stable MAC per player; locally administered unicast, won't collide with real NIC.
 pub fn mac_for_player(player: u32) -> [u8; 6] {
     [0x02, b'p', b'm', 0x00, 0x00, player as u8] // 0x02: locally admin, unicast
 }
@@ -163,7 +156,7 @@ fn u32_at(bytes: &[u8], at: usize) -> u32 {
     u32::from_le_bytes([bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]])
 }
 
-/// Parse client datagram. CRC checked only when non-zero (some clients send 0).
+/// Parse client datagram.
 pub fn parse_request(datagram: &[u8]) -> Option<Incoming> {
     if datagram.len() < HEADER_BYTES {
         return None;
@@ -174,7 +167,6 @@ pub fn parse_request(datagram: &[u8]) -> Option<Incoming> {
     if u16_at(datagram, 4) != PROTOCOL_VERSION {
         return None;
     }
-    // Length counts type and payload; datagram can be longer (padding ok), shorter is lie.
     let claimed = u16_at(datagram, 6) as usize;
     if claimed < 4 || datagram.len() < HEADER_BYTES - 4 + claimed {
         return None;
@@ -197,7 +189,6 @@ pub fn parse_request(datagram: &[u8]) -> Option<Incoming> {
             if body.len() < 4 {
                 return None;
             }
-            // Clamp count to prevent hostile packets from over-reading.
             let asked = u32_at(body, 0) as usize;
             let count = asked.min(MAX_SLOTS).min(body.len() - 4);
             let mut slots = [0u8; MAX_SLOTS];
@@ -304,7 +295,6 @@ impl Default for Pad {
             buttons: 0,
             home: 0,
             touch_click: 0,
-            // Stick at rest is CENTRE, not 0 (which is hard left+up).
             left_x: CENTRE,
             left_y: CENTRE,
             right_x: CENTRE,
@@ -316,10 +306,8 @@ impl Default for Pad {
     }
 }
 
-/// Where a stick rests in DSU's `u8` range.
 pub const CENTRE: u8 = 128;
 
-// Bit positions from udp_protocol.h; DualShock naming.
 pub mod button {
     pub const SHARE: u16 = 1 << 0;
     pub const L3: u16 = 1 << 1;
@@ -339,7 +327,6 @@ pub mod button {
     pub const SQUARE: u16 = 1 << 15;
 }
 
-// AnalogButton indices (not same as bit order; wrong index is silent failure).
 pub mod analog {
     pub const DPAD_LEFT: usize = 0;
     pub const DPAD_DOWN: usize = 1;
@@ -389,10 +376,7 @@ mod tests {
 
     #[test]
     fn crc32_matches_the_standard_check_value() {
-        // The CRC-32/ISO-HDLC "check" vector: every catalogue lists 0xCBF43926
-        // for the nine bytes "123456789". If this is wrong, every packet
-        // padmap sends is rejected by a client that validates, and the symptom
-        // is an emulator that sees the server and never a sample.
+        // The CRC-32/ISO-HDLC "check" vector: every catalogue lists 0xCBF43926.
         assert_eq!(crc32(b"123456789"), 0xCBF4_3926);
         assert_eq!(crc32(b""), 0);
     }
@@ -403,7 +387,6 @@ mod tests {
         assert_eq!(packet.len(), HEADER_BYTES + 2);
         assert_eq!(&packet[0..4], b"DSUS");
         assert_eq!(u16_at(&packet, 4), PROTOCOL_VERSION);
-        // Length = payload (2) + type (4).
         assert_eq!(u16_at(&packet, 6), 6);
         assert_eq!(u32_at(&packet, 12), 7);
         assert_eq!(u32_at(&packet, 16), Kind::Version as u32);
@@ -422,7 +405,6 @@ mod tests {
 
     #[test]
     fn a_pad_reply_is_exactly_a_hundred_bytes() {
-        // Client reads fixed-size struct; off by one = garbage.
         let port = Port {
             slot: 1,
             connected: Connected::Yes,
@@ -462,8 +444,6 @@ mod tests {
 
     #[test]
     fn a_resting_pad_reports_centred_sticks() {
-        // Zero here is a stick held hard over, which is the difference between
-        // "nobody is playing" and "somebody is walking into a wall".
         let packet = pad_reply(0, &Port::empty(0), 0, &Pad::default());
         let body = &packet[HEADER_BYTES..];
         assert_eq!(&body[20..24], &[128, 128, 128, 128]);
@@ -515,7 +495,6 @@ mod tests {
 
     #[test]
     fn a_port_request_claiming_more_slots_than_it_carries_is_clamped() {
-        // Clamp to actual slots (don't trust count, don't read past datagram).
         let packet = client_packet(Kind::PortInfo, &[255, 255, 255, 255, 0, 1]);
         let got = parse_request(&packet).expect("a clamped port request");
         assert_eq!(
