@@ -27,6 +27,27 @@
 //!   already recognises as gamepads, so padmap's mapping has to reach it
 //!   through `SDL_GAMECONTROLLERCONFIG` in the environment. Writing the
 //!   profile alone is not enough. See [`CONFIG_ENV`].
+//!
+//! # Motion, and why player one is a GamePad
+//!
+//! A real Wii U Pro Controller has no gyroscope, and Cemu's `ProController`
+//! has no motion code to match -- `VPADController` and `WPADController` have
+//! it and `ProController.cpp` does not contain the word. So a Wii U game that
+//! uses motion reads the **GamePad**, and a padmap that writes Pro Controller
+//! for everybody has no way to deliver a gyro at all.
+//!
+//! Player one therefore gets `<type>Wii U GamePad</type>`, which is also
+//! Cemu's own default and what some games require outright. Cemu emulates
+//! exactly one, so players two and up stay Pro Controllers. The two use
+//! *different button id tables* -- see [`GAMEPAD_MAPPING`] -- which is the
+//! trap this file already warned about.
+//!
+//! Motion itself arrives as a **second `<controller>` element** on the same
+//! emulated controller. `InputManager::load` iterates `select_nodes(
+//! "controller")` and `EmulatedController::get_motion_data` returns the first
+//! one whose `<motion>` is true, so a DSU entry beside the SDL entry gives one
+//! emulated pad whose buttons come from the clone and whose gyro comes from
+//! padmap's DSU server.
 
 /// The environment variable that carries padmap's mapping into Cemu.
 ///
@@ -70,6 +91,42 @@ pub enum WiiU {
     StickRDown = 23,
     StickRLeft = 24,
     StickRRight = 25,
+}
+
+/// `VPADController::ButtonId`, from Cemu's `src/input/emulated/VPADController.h`.
+///
+/// Identical to [`WiiU`] through `Minus`, and then one lower for everything
+/// after it -- the Pro table skips 11 and this one does not. Written out
+/// rather than derived from the other by subtraction, because "the same but
+/// one less from here on" is a relationship nobody can check against Cemu's
+/// header at a glance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum GamePad {
+    A = 1,
+    B = 2,
+    X = 3,
+    Y = 4,
+    L = 5,
+    R = 6,
+    Zl = 7,
+    Zr = 8,
+    Plus = 9,
+    Minus = 10,
+    Up = 11,
+    Down = 12,
+    Left = 13,
+    Right = 14,
+    StickL = 15,
+    StickR = 16,
+    StickLUp = 17,
+    StickLDown = 18,
+    StickLLeft = 19,
+    StickLRight = 20,
+    StickRUp = 21,
+    StickRDown = 22,
+    StickRLeft = 23,
+    StickRRight = 24,
 }
 
 /// Cemu's `Buttons2` ids for the SDL backend, `src/input/api/Controller.h`.
@@ -138,17 +195,96 @@ pub const MAPPING: [(WiiU, u8); 24] = [
     (WiiU::StickRRight, sdl_id::ROTATION_X_POS),
 ];
 
+/// The GamePad's bindings, in the same order and to the same SDL ids.
+///
+/// Only the left column differs from [`MAPPING`]: the right-hand side is what
+/// SDL calls the button, and that does not change with what Cemu emulates.
+pub const GAMEPAD_MAPPING: [(GamePad, u8); 24] = [
+    (GamePad::A, sdl_id::EAST),
+    (GamePad::B, sdl_id::SOUTH),
+    (GamePad::X, sdl_id::NORTH),
+    (GamePad::Y, sdl_id::WEST),
+    (GamePad::L, sdl_id::LEFT_SHOULDER),
+    (GamePad::R, sdl_id::RIGHT_SHOULDER),
+    (GamePad::Zl, sdl_id::TRIGGER_X_POS),
+    (GamePad::Zr, sdl_id::TRIGGER_Y_POS),
+    (GamePad::Plus, sdl_id::START),
+    (GamePad::Minus, sdl_id::BACK),
+    (GamePad::Up, sdl_id::DPAD_UP),
+    (GamePad::Down, sdl_id::DPAD_DOWN),
+    (GamePad::Left, sdl_id::DPAD_LEFT),
+    (GamePad::Right, sdl_id::DPAD_RIGHT),
+    (GamePad::StickL, sdl_id::LEFT_STICK),
+    (GamePad::StickR, sdl_id::RIGHT_STICK),
+    (GamePad::StickLUp, sdl_id::AXIS_Y_NEG),
+    (GamePad::StickLDown, sdl_id::AXIS_Y_POS),
+    (GamePad::StickLLeft, sdl_id::AXIS_X_NEG),
+    (GamePad::StickLRight, sdl_id::AXIS_X_POS),
+    (GamePad::StickRUp, sdl_id::ROTATION_Y_NEG),
+    (GamePad::StickRDown, sdl_id::ROTATION_Y_POS),
+    (GamePad::StickRLeft, sdl_id::ROTATION_X_NEG),
+    (GamePad::StickRRight, sdl_id::ROTATION_X_POS),
+];
+
+/// What Cemu emulates for a player.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Emulated {
+    /// `Wii U GamePad`. The only one with motion, and Cemu emulates one.
+    GamePad,
+    /// `Wii U Pro Controller`.
+    Pro,
+}
+
+impl Emulated {
+    /// What goes in `<type>`.
+    pub fn tag(self) -> &'static str {
+        match self {
+            Emulated::GamePad => "Wii U GamePad",
+            Emulated::Pro => "Wii U Pro Controller",
+        }
+    }
+
+    /// The bindings, as `(control id, SDL id)`.
+    pub fn mapping(self) -> Vec<(u8, u8)> {
+        match self {
+            Emulated::GamePad => GAMEPAD_MAPPING
+                .iter()
+                .map(|(control, button)| (*control as u8, *button))
+                .collect(),
+            Emulated::Pro => MAPPING
+                .iter()
+                .map(|(control, button)| (*control as u8, *button))
+                .collect(),
+        }
+    }
+}
+
+/// Player one is the GamePad; everybody else is a Pro Controller.
+///
+/// Cemu emulates exactly one GamePad, and it is the only emulated controller
+/// with motion -- so this is both the constraint and the reason.
+pub fn emulated_for(player: u32) -> Emulated {
+    if player == 1 {
+        Emulated::GamePad
+    } else {
+        Emulated::Pro
+    }
+}
+
 /// `controllerN.xml` for one player.
 ///
 /// `player` is 1-based, as padmap counts; Cemu's filename is 0-based, which
-/// [`profile_filename`] handles.
-pub fn profile(guid: &str, display_name: &str) -> String {
-    let mut out = String::from(
+/// [`profile_filename`] handles. It also decides what is emulated and which
+/// DSU slot the motion comes from.
+pub fn profile(player: u32, guid: &str, display_name: &str) -> String {
+    let emulated = emulated_for(player);
+    let mut out = format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
          <emulated_controller>\n\
-         \t<type>Wii U Pro Controller</type>\n\
+         \t<type>{}</type>\n\
          \t<controller>\n\
          \t\t<api>SDLController</api>\n",
+        emulated.tag()
     );
     // Always `0_`: each player's GUID embeds a CRC of its own name, so no two
     // padmap pads share one and none is ever the second holder.
@@ -170,14 +306,42 @@ pub fn profile(guid: &str, display_name: &str) -> String {
         ));
     }
     out.push_str("\t\t<mappings>\n");
-    for (control, button) in MAPPING {
+    for (control, button) in emulated.mapping() {
         out.push_str(&format!(
-            "\t\t\t<entry>\n\t\t\t\t<mapping>{}</mapping>\n\t\t\t\t<button>{button}</button>\n\t\t\t</entry>\n",
-            control as u8
+            "\t\t\t<entry>\n\t\t\t\t<mapping>{control}</mapping>\n\t\t\t\t<button>{button}</button>\n\t\t\t</entry>\n"
         ));
     }
-    out.push_str("\t\t</mappings>\n\t</controller>\n</emulated_controller>\n");
+    out.push_str("\t\t</mappings>\n\t</controller>\n");
+    out.push_str(&motion_controller(player, display_name));
+    out.push_str("</emulated_controller>\n");
     out
+}
+
+/// A second `<controller>` that supplies nothing but motion.
+///
+/// `<uuid>` is the DSU slot as a bare integer -- `ControllerFactory` parses it
+/// with `ConvertString<uint32>`, so the `0_` prefix the SDL entry needs would
+/// be a parse failure here and the whole controller would be skipped with one
+/// line in Cemu's log.
+///
+/// No `<mappings>`: buttons come from the clone, and a DSU entry that also
+/// bound buttons would give every press twice.
+fn motion_controller(player: u32, display_name: &str) -> String {
+    format!(
+        "\t<controller>\n\
+         \t\t<api>DSUController</api>\n\
+         \t\t<uuid>{slot}</uuid>\n\
+         \t\t<display_name>{name} motion</display_name>\n\
+         \t\t<motion>true</motion>\n\
+         \t\t<rumble>0</rumble>\n\
+         \t\t<ip>{host}</ip>\n\
+         \t\t<port>{port}</port>\n\
+         \t</controller>\n",
+        slot = player.saturating_sub(1),
+        name = escape(display_name),
+        host = crate::dsu::HOST,
+        port = crate::dsu::PORT,
+    )
 }
 
 /// `controller0.xml` for player 1, and so on.

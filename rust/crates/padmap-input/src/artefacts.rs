@@ -182,7 +182,7 @@ pub fn write_cemu_profiles(
             continue;
         }
         let path = target.join(padmap_core::cemu::profile_filename(player));
-        let body = padmap_core::cemu::profile(&guid_for(player), &name_for(player));
+        let body = padmap_core::cemu::profile(player, &guid_for(player), &name_for(player));
         std::fs::write(&path, body).map_err(|error| WriteError::Io(path.clone(), error))?;
         written.push(path);
     }

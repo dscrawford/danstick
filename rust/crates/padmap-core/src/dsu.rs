@@ -25,6 +25,13 @@ use crate::motion::Motion;
 /// UDP port every DSU consumer defaults to.
 pub const PORT: u16 = 26760;
 
+/// Where a consumer on this machine finds padmap.
+///
+/// Loopback, and written into every config padmap generates: this is an
+/// unauthenticated protocol reporting what buttons somebody in the room is
+/// pressing, and there is no reason for it to leave the machine.
+pub const HOST: &str = "127.0.0.1";
+
 /// `PROTOCOL_VERSION`, `udp_protocol.h`.
 pub const PROTOCOL_VERSION: u16 = 1001;
 

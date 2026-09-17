@@ -160,3 +160,40 @@ fn merging_into_nothing_is_just_our_entries() {
     );
     assert_eq!(merged.as_array().map(Vec::len), Some(1));
 }
+
+#[test]
+fn motion_is_asked_of_padmap_rather_than_of_sdl() {
+    // The gamepad driver would ask SDL, and SDL pairs a joystick with its
+    // sensor by EVIOCGUNIQ -- which a uinput clone cannot set, so with two
+    // players it hands out the wrong one. padmap answers instead.
+    let config = ryujinx::input_config(2, PADMAP_GUIDS[1], "padmap Player 2", 0).expect("a config");
+    let motion = &config["motion"];
+    assert_eq!(motion["motion_backend"], "CemuHook");
+    assert_eq!(motion["enable_motion"], true);
+    assert_eq!(motion["dsu_server_host"], padmap_core::dsu::HOST);
+    assert_eq!(motion["dsu_server_port"], padmap_core::dsu::PORT);
+}
+
+#[test]
+fn player_one_takes_slot_zero() {
+    // DSU slots are zero-based and players are one-based. Off by one here and
+    // every player gets the next player's gyro, silently.
+    for player in 1..=4u32 {
+        let config = ryujinx::input_config(player, PADMAP_GUIDS[0], "padmap", 0).expect("a config");
+        assert_eq!(config["motion"]["slot"], player - 1);
+        assert_eq!(config["motion"]["alt_slot"], player - 1);
+    }
+}
+
+#[test]
+fn the_backend_name_is_one_ryujinx_will_accept() {
+    // Its JSON converter throws on an unrecognised `motion_backend` rather
+    // than falling back, so a misspelling is a config file Ryujinx refuses to
+    // load at all -- not a controller with no gyro.
+    let config = ryujinx::input_config(1, PADMAP_GUIDS[0], "padmap", 0).expect("a config");
+    assert!(["CemuHook", "GamepadDriver"].contains(
+        &config["motion"]["motion_backend"]
+            .as_str()
+            .expect("a string")
+    ));
+}

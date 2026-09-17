@@ -48,7 +48,10 @@ fn cemus_own() -> String {
 #[test]
 fn every_binding_matches_the_one_cemu_wrote_itself() {
     let theirs = pairs(&cemus_own());
+    // Player 2, because the reference file Cemu wrote is a Pro Controller and
+    // player 1 is now a GamePad. The two number the same controls differently.
     let ours = pairs(&cemu::profile(
+        2,
         "0600c9a7091200000100000001000000",
         "padmap Player 1",
     ));
@@ -78,7 +81,7 @@ fn a_and_b_are_mirrored_the_way_nintendo_labels_them() {
     // Cemu maps by label, and Nintendo's A is where everyone else's B is.
     // Getting this the obvious way round swaps A and B in every Wii U game,
     // which feels like the emulator's fault rather than padmap's.
-    let ours = pairs(&cemu::profile("0", "x"));
+    let ours = pairs(&cemu::profile(2, "0", "x"));
     assert_eq!(ours[&(cemu::WiiU::A as u32)], 1, "A is SDL East");
     assert_eq!(ours[&(cemu::WiiU::B as u32)], 0, "B is SDL South");
     assert_eq!(ours[&(cemu::WiiU::X as u32)], 3, "X is SDL North");
@@ -90,7 +93,7 @@ fn the_uuid_carries_the_guid_with_the_ordinal_prefix() {
     // The prefix is the ordinal among devices sharing that GUID, not a device
     // index -- and every padmap pad's GUID embeds a CRC of its own name, so
     // no two share one and the ordinal is always zero.
-    let xml = cemu::profile("0600c9a7091200000100000001000000", "padmap Player 1");
+    let xml = cemu::profile(1, "0600c9a7091200000100000001000000", "padmap Player 1");
     assert!(
         xml.contains("<uuid>0_0600c9a7091200000100000001000000</uuid>"),
         "{xml}"
@@ -104,13 +107,14 @@ fn the_type_is_the_one_the_mapping_table_is_for() {
     // The ids below are ProController::ButtonId. VPADController numbers the
     // same controls differently -- Home is 27 there, not 11 -- so a profile
     // claiming a different <type> would load and bind the wrong things.
-    assert!(cemu::profile("0", "x").contains("<type>Wii U Pro Controller</type>"));
+    assert!(cemu::profile(2, "0", "x").contains("<type>Wii U Pro Controller</type>"));
+    assert!(cemu::profile(1, "0", "x").contains("<type>Wii U GamePad</type>"));
 }
 
 #[test]
 fn a_name_with_xml_in_it_cannot_break_the_file() {
     // A stray `&` makes Cemu fail to parse the whole profile, not one field.
-    let xml = cemu::profile("0", "Pad & \"quoted\" <thing>");
+    let xml = cemu::profile(1, "0", "Pad & \"quoted\" <thing>");
     assert!(
         xml.contains("Pad &amp; &quot;quoted&quot; &lt;thing&gt;"),
         "{xml}"
@@ -131,7 +135,7 @@ fn the_filename_counts_from_zero_where_padmap_counts_from_one() {
 
 #[test]
 fn the_profile_is_well_formed_enough_for_cemu_to_read() {
-    let xml = cemu::profile("0600c9a7091200000100000001000000", "padmap Player 1");
+    let xml = cemu::profile(1, "0600c9a7091200000100000001000000", "padmap Player 1");
     assert!(xml.starts_with("<?xml version=\"1.0\" encoding=\"UTF-8\"?>"));
     assert!(xml.trim_end().ends_with("</emulated_controller>"));
     // Every tag padmap opens, it closes.
@@ -149,4 +153,78 @@ fn the_profile_is_well_formed_enough_for_cemu_to_read() {
             "unbalanced <{tag}>"
         );
     }
+}
+
+#[test]
+fn player_one_is_a_gamepad_because_that_is_the_one_with_motion() {
+    // ProController.cpp does not contain the word "motion"; VPADController
+    // does. A Wii U game that uses a gyro reads the GamePad, so writing Pro
+    // Controller for everybody means no motion is deliverable at all.
+    assert_eq!(cemu::emulated_for(1), cemu::Emulated::GamePad);
+    // Cemu emulates exactly one.
+    for player in 2..=8u32 {
+        assert_eq!(cemu::emulated_for(player), cemu::Emulated::Pro);
+    }
+}
+
+#[test]
+fn the_gamepad_numbers_its_controls_one_lower_from_the_dpad_on() {
+    // VPADController::ButtonId has Up at 11 where ProController::ButtonId
+    // skips to 12. Reusing the Pro table for a GamePad binds the d-pad to the
+    // sticks, one control out, all the way down.
+    assert_eq!(cemu::GamePad::Minus as u8, cemu::WiiU::Minus as u8);
+    assert_eq!(cemu::GamePad::Up as u8, cemu::WiiU::Up as u8 - 1);
+    assert_eq!(
+        cemu::GamePad::StickRRight as u8,
+        cemu::WiiU::StickRRight as u8 - 1
+    );
+}
+
+#[test]
+fn both_tables_bind_the_same_controls_to_the_same_sdl_ids() {
+    // Only the left column may differ. The right-hand side is what SDL calls
+    // the button, and that does not change with what Cemu emulates.
+    let pro: Vec<u8> = cemu::MAPPING.iter().map(|(_, sdl)| *sdl).collect();
+    let pad: Vec<u8> = cemu::GAMEPAD_MAPPING.iter().map(|(_, sdl)| *sdl).collect();
+    assert_eq!(pro, pad);
+}
+
+#[test]
+fn motion_arrives_as_a_second_controller_on_the_same_profile() {
+    // InputManager::load iterates select_nodes("controller") and
+    // get_motion_data returns the first with <motion> true, so the buttons can
+    // come from the clone while the gyro comes from padmap's DSU server.
+    let xml = cemu::profile(1, "0600c9a7091200000100000001000000", "padmap Player 1");
+    assert_eq!(xml.matches("<controller>").count(), 2, "{xml}");
+    assert!(xml.contains("<api>DSUController</api>"), "{xml}");
+    assert!(xml.contains("<motion>true</motion>"), "{xml}");
+    assert!(xml.contains("<motion>false</motion>"), "the SDL entry");
+    assert!(xml.contains(&format!("<port>{}</port>", padmap_core::dsu::PORT)));
+    assert!(xml.contains(&format!("<ip>{}</ip>", padmap_core::dsu::HOST)));
+}
+
+#[test]
+fn the_motion_uuid_is_a_bare_slot_number() {
+    // ControllerFactory parses a DSU uuid with ConvertString<uint32>. The
+    // `0_` prefix the SDL entry needs would throw, and Cemu skips the whole
+    // controller with one line in its log.
+    for player in 1..=4u32 {
+        let xml = cemu::profile(player, "0", "padmap");
+        assert!(
+            xml.contains(&format!("<uuid>{}</uuid>", player - 1)),
+            "player {player}: {xml}"
+        );
+    }
+}
+
+#[test]
+fn the_motion_entry_binds_no_buttons() {
+    // A DSU entry with mappings would deliver every press twice: once from the
+    // clone over SDL and once from padmap's own server.
+    let xml = cemu::profile(1, "0", "padmap");
+    let after = xml
+        .split("<api>DSUController</api>")
+        .nth(1)
+        .expect("a DSU entry");
+    assert!(!after.contains("<mapping>"), "{after}");
 }

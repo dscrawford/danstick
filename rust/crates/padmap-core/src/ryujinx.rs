@@ -40,6 +40,14 @@
 //! The ordinal remains an argument because it is Ryujinx's to assign when two
 //! devices really do collide -- two identical physical pads in mirror mode
 //! still can -- but for padmap's own pads it is always zero.
+//!
+//! # Motion comes from padmap, not from the gamepad driver
+//!
+//! `motion_backend` is `CemuHook`, pointed at padmap's own DSU server, rather
+//! than `GamepadDriver`. The gamepad driver would ask SDL, and SDL pairs a
+//! joystick with its sensor by comparing `EVIOCGUNIQ` -- which a uinput clone
+//! cannot set. See [`crate::dsu`]. The slot is the player number less one,
+//! which is the off-by-one that gives player one player two's gyro.
 
 use serde_json::{json, Value};
 
@@ -114,10 +122,15 @@ pub fn input_config(player: u32, guid: &str, name: &str, ordinal: u32) -> Option
         "range_right": 1.0,
         "trigger_threshold": 0.5,
         "motion": {
-            "motion_backend": "GamepadDriver",
+            "motion_backend": "CemuHook",
             "sensitivity": 100,
             "gyro_deadzone": 1.0,
-            "enable_motion": false
+            "enable_motion": true,
+            "slot": player - 1,
+            "alt_slot": player - 1,
+            "mirror_input": false,
+            "dsu_server_host": crate::dsu::HOST,
+            "dsu_server_port": crate::dsu::PORT
         },
         "rumble": {
             "strong_rumble": 1.0,
