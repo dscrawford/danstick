@@ -30,6 +30,8 @@ use std::time::{Duration, Instant};
 use evdev::{AbsInfo, AbsoluteAxisCode, EventType, InputEvent, KeyCode};
 use log::{debug, info};
 
+use padmap_core::motion::Motion;
+
 use crate::lizard;
 use crate::pad::Pad;
 
@@ -185,6 +187,37 @@ const OFF_BUTTONS: usize = 1;
 /// Through the right stick, which is the last field padmap reads.
 const STATE_PREFIX_BYTES: usize = 17;
 
+/// Where the accelerometer starts, in every state report.
+///
+/// `TritonMTUNoQuat_t` reaches it past a `uint32_t` IMU timestamp at 29;
+/// `TritonMTUNoQuat32TS_t` reaches it past an extra trackpad timestamp and a
+/// `uint16_t` IMU one. The two arithmetics land on the same byte, which is
+/// luck rather than design -- asserted in `the_two_report_shapes_agree`,
+/// because a later revision that breaks it would otherwise read the gyro out
+/// of the touchpad pressure.
+const OFF_IMU_ACCEL: usize = 33;
+/// Six `short`s: accel X, Y, Z then gyro X, Y, Z.
+const IMU_BYTES: usize = 12;
+/// The last byte an IMU-carrying report needs.
+const STATE_IMU_BYTES: usize = OFF_IMU_ACCEL + IMU_BYTES;
+
+/// Full scale, from `SDL_hidapi_steam_triton.c`: the raw value over 32768 is
+/// a fraction of +/-2000 degrees per second and of +/-2 g.
+const GYRO_FULL_SCALE_DPS: f32 = 2000.0;
+const ACCEL_FULL_SCALE_G: f32 = 2.0;
+const IMU_HALF_RANGE: f32 = 32768.0;
+
+/// The IMU timestamp's units, and where it sits, per report.
+///
+/// 0x47 counts in 32-microsecond steps ("The timestamp is in units of 32
+/// microseconds" -- SDL) and the others in single microseconds. Reporting the
+/// wrong one makes a consumer integrate over a window 32 times too long or too
+/// short, which reads as motion that is far too slow or far too twitchy rather
+/// than as motion that is missing.
+const OFF_IMU_CLOCK_WIDE: usize = 29;
+const OFF_IMU_CLOCK_SHORT: usize = 31;
+const IMU_CLOCK_SHORT_US: u64 = 32;
+
 /// The gamepad fields of one state report.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct State {
@@ -219,6 +252,44 @@ pub fn decode_state(payload: &[u8]) -> Option<State> {
         right_x: i16_at(at + 12),
         right_y: i16_at(at + 14),
     })
+}
+
+/// One state report's motion, in DSU's frame, or `None` without one.
+///
+/// The Steam Controller is why padmap has a DSU server at all: there is no
+/// evdev node to pass a sensor through, because the kernel is not publishing
+/// one. padmap already reads these reports and, until now, threw the last
+/// twelve bytes away.
+///
+/// `wide` says which report this is -- see [`OFF_IMU_CLOCK_WIDE`].
+pub fn decode_motion(payload: &[u8], wide: bool) -> Option<Motion> {
+    if payload.len() < STATE_IMU_BYTES {
+        return None;
+    }
+    let i16_at = |i: usize| i16::from_le_bytes([payload[i], payload[i + 1]]) as f32;
+    let at = OFF_IMU_ACCEL;
+    let accel = |i: usize| i16_at(at + i * 2) / IMU_HALF_RANGE * ACCEL_FULL_SCALE_G;
+    let gyro = |i: usize| i16_at(at + 6 + i * 2) / IMU_HALF_RANGE * GYRO_FULL_SCALE_DPS;
+    // SDL's remap into its own sensor frame: the controller reports X, Y, Z
+    // and SDL publishes X, Z, -Y. Then `Motion::from_sdl_frame` does the rest.
+    let timestamp_us = if wide {
+        u64::from(u32::from_le_bytes([
+            payload[OFF_IMU_CLOCK_WIDE],
+            payload[OFF_IMU_CLOCK_WIDE + 1],
+            payload[OFF_IMU_CLOCK_WIDE + 2],
+            payload[OFF_IMU_CLOCK_WIDE + 3],
+        ]))
+    } else {
+        u64::from(u16::from_le_bytes([
+            payload[OFF_IMU_CLOCK_SHORT],
+            payload[OFF_IMU_CLOCK_SHORT + 1],
+        ])) * IMU_CLOCK_SHORT_US
+    };
+    Some(Motion::from_sdl_frame(
+        [accel(0), accel(2), -accel(1)],
+        [gyro(0), gyro(2), -gyro(1)],
+        timestamp_us,
+    ))
 }
 
 /// The d-pad as `(ABS_HAT0X, ABS_HAT0Y)`.
@@ -474,6 +545,20 @@ pub struct Source {
     axes: BTreeMap<u16, i32>,
     hat: (i32, i32),
     last_lizard: Option<Instant>,
+    /// The latest motion sample, on a clock that only goes forwards.
+    motion: Option<Motion>,
+    /// The device's own tick, in microseconds, as last seen.
+    ///
+    /// Kept so the published timestamp can be accumulated from *differences*.
+    /// The controller's counter is 32 bits of microseconds on one report and
+    /// 16 bits of 32-microsecond steps on another, which wrap after 71 minutes
+    /// and after 2.1 seconds. A consumer integrates the gap between samples,
+    /// and Cemu throws away any sample whose timestamp did not advance
+    /// (`integrate_motion`), so a raw counter means motion that dies every two
+    /// seconds. SDL accumulates for the same reason.
+    imu_tick: Option<u64>,
+    /// Microseconds since padmap started reading this controller.
+    imu_clock: u64,
     /// Whether a controller is paired into this slot. A slot with nothing in
     /// it opens cleanly and reads nothing for ever, so this is the difference
     /// between "no controller" and "broken".
@@ -489,6 +574,9 @@ impl Source {
             axes: BTreeMap::new(),
             hat: (0, 0),
             last_lizard: None,
+            motion: None,
+            imu_tick: None,
+            imu_clock: 0,
             connected: false,
         };
         source.leave_lizard_mode();
@@ -501,6 +589,35 @@ impl Source {
 
     pub fn connected(&self) -> bool {
         self.connected
+    }
+
+    /// The latest motion sample, or `None` if the controller has not sent one.
+    pub fn motion(&self) -> Option<Motion> {
+        self.motion
+    }
+
+    /// Fold one report's motion in, advancing the published clock by the gap
+    /// the device reported rather than by wall time.
+    fn note_motion(&mut self, payload: &[u8], wide: bool) {
+        let Some(sample) = decode_motion(payload, wide) else {
+            return;
+        };
+        let raw = sample.timestamp_us;
+        // The counter's period, in microseconds, so a wrap is a small forward
+        // step rather than an enormous backwards one.
+        let period: u64 = if wide {
+            1 << 32
+        } else {
+            (1 << 16) * IMU_CLOCK_SHORT_US
+        };
+        if let Some(last) = self.imu_tick {
+            self.imu_clock += (raw + period - last) % period;
+        }
+        self.imu_tick = Some(raw);
+        self.motion = Some(Motion {
+            timestamp_us: self.imu_clock,
+            ..sample
+        });
     }
 
     /// Turn lizard mode off, and remember when.
@@ -578,6 +695,7 @@ impl Source {
             if !self.connected {
                 self.note_connected(true, out);
             }
+            self.note_motion(payload, id != REPORT_STATE_TIMESTAMP);
             self.decode(payload, out);
         } else if (id == REPORT_WIRELESS || id == REPORT_WIRELESS_X) && !payload.is_empty() {
             self.note_connected(payload[0] == WIRELESS_CONNECT, out);

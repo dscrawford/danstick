@@ -345,6 +345,7 @@ macro_rules! needs_pty {
 }
 
 const REPORT_STATE: u8 = 0x42;
+const REPORT_STATE_TIMESTAMP: u8 = 0x47;
 const REPORT_WIRELESS: u8 = 0x79;
 const WIRELESS_DISCONNECT: u8 = 1;
 const BIT_A: u32 = 0x0000_0001;
@@ -578,4 +579,113 @@ fn a_press_on_a_puck_claims_a_seat() {
     assert_eq!(claimed.len(), 1, "holding A claimed no seat");
     assert_eq!(claimed[0].player, 1);
     assert_eq!(claimed[0].button, KeyCode::BTN_SOUTH.0);
+}
+
+// --- motion -----------------------------------------------------------------
+
+/// A state report payload carrying an IMU block.
+///
+/// `wide` picks the report shape: `TritonMTUNoQuat_t`, whose IMU timestamp is
+/// a `uint32_t` at 29, or `TritonMTUNoQuat32TS_t`, whose trackpad timestamp
+/// pushes a `uint16_t` one to 31.
+fn state_imu(accel: [i16; 3], gyro: [i16; 3], tick: u32, wide: bool) -> Vec<u8> {
+    let mut out = state(0, 0, 0, 0, 0, 0, 0);
+    if wide {
+        out[29..33].copy_from_slice(&tick.to_le_bytes());
+    } else {
+        out[31..33].copy_from_slice(&(tick as u16).to_le_bytes());
+    }
+    for (index, value) in accel.iter().chain(gyro.iter()).enumerate() {
+        let at = 33 + index * 2;
+        out[at..at + 2].copy_from_slice(&value.to_le_bytes());
+    }
+    out
+}
+
+#[test]
+fn the_two_report_shapes_put_the_imu_on_the_same_byte() {
+    // Adding the packed field widths of each struct in controller_structs.h.
+    // They land together by luck rather than by design, and padmap reads both
+    // with one offset -- so a later revision that moves either is a wrong
+    // reading of the touchpad pressure rather than a decode failure.
+    let common = 1 + 4 + 2 + 2 + 2 * 4; // seq, buttons, triggers, sticks
+    let pads = (2 + 2 + 2) * 2; // x, y, pressure, twice
+    let no_quat = common + pads + 4; // uint32_t imu timestamp
+    let timestamped = common + 2 + pads + 2; // trackpad timestamp, uint16_t imu
+    assert_eq!(no_quat, 33);
+    assert_eq!(timestamped, 33);
+}
+
+#[test]
+fn a_gyro_at_half_scale_is_a_thousand_degrees_a_second() {
+    // SDL: raw over 32768, times 2000 degrees per second. Then its remap into
+    // SDL's frame (X, Z, -Y), then padmap's into DSU's (pitch, -yaw, -roll).
+    let payload = state_imu([0; 3], [16384, 0, 0], 0, true);
+    let motion = triton::decode_motion(&payload, true).expect("an IMU block");
+    assert!((motion.gyro[0] - 1000.0).abs() < 0.1, "{:?}", motion.gyro);
+    assert_eq!(motion.gyro[1], 0.0);
+    assert_eq!(motion.gyro[2], 0.0);
+}
+
+#[test]
+fn the_controllers_own_axes_land_where_dsu_expects_them() {
+    // The controller's raw Z is up. DSU's Y is down, so a pad resting face up
+    // has to read negative there. Upside down is the most visible way the
+    // frame conversion can be wrong.
+    let flat = state_imu([0, 0, 16384], [0; 3], 0, true);
+    let motion = triton::decode_motion(&flat, true).expect("an IMU block");
+    assert!((motion.accel[1] + 1.0).abs() < 0.01, "{:?}", motion.accel);
+    // The controller's raw Y becomes DSU's roll, and its Z becomes yaw.
+    let turning = state_imu([0; 3], [0, 16384, 0], 0, true);
+    let motion = triton::decode_motion(&turning, true).expect("an IMU block");
+    assert!((motion.gyro[2] - 1000.0).abs() < 0.1, "{:?}", motion.gyro);
+    let turning = state_imu([0; 3], [0, 0, 16384], 0, true);
+    let motion = triton::decode_motion(&turning, true).expect("an IMU block");
+    assert!((motion.gyro[1] + 1000.0).abs() < 0.1, "{:?}", motion.gyro);
+}
+
+#[test]
+fn the_short_timestamp_counts_in_thirty_two_microsecond_steps() {
+    // "The timestamp is in units of 32 microseconds" -- SDL, of this report
+    // only. Reading it as microseconds makes a consumer integrate over a
+    // window 32 times too short, which reads as motion far too twitchy rather
+    // than as motion that is missing.
+    let payload = state_imu([0; 3], [0; 3], 100, false);
+    let motion = triton::decode_motion(&payload, false).expect("an IMU block");
+    assert_eq!(motion.timestamp_us, 3200);
+}
+
+#[test]
+fn a_report_too_short_for_an_imu_block_is_not_one() {
+    assert!(triton::decode_motion(&[0u8; 44], true).is_none());
+    assert!(triton::decode_motion(&[], true).is_none());
+    assert!(triton::decode_motion(&[0u8; 45], true).is_some());
+}
+
+#[test]
+fn the_published_clock_only_goes_forwards_across_a_wrap() {
+    // The short counter wraps every 2.1 seconds. Cemu discards any sample
+    // whose timestamp did not advance, so a raw counter is motion that dies
+    // every two seconds and comes back.
+    let mut fake = needs_pty!();
+    let mut source = triton::Source::open(fake.slave.as_path()).expect("open");
+    assert_eq!(source.motion(), None, "nothing read yet");
+
+    fake.push(
+        REPORT_STATE_TIMESTAMP,
+        &state_imu([0; 3], [0; 3], 65_000, false),
+    );
+    let _ = fetch(&mut source);
+    let first = source.motion().expect("a sample").timestamp_us;
+
+    // 65_000 -> 1_000 is a wrap, not a jump backwards of two seconds.
+    fake.push(
+        REPORT_STATE_TIMESTAMP,
+        &state_imu([0; 3], [1, 0, 0], 1_000, false),
+    );
+    let _ = fetch(&mut source);
+    let second = source.motion().expect("a second sample").timestamp_us;
+    assert!(second > first, "{second} came after {first}");
+    // (65536 - 65000 + 1000) steps of 32 microseconds.
+    assert_eq!(second - first, (65_536 - 65_000 + 1_000) * 32);
 }

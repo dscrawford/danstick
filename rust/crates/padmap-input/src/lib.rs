@@ -11,6 +11,7 @@ pub mod clone;
 pub mod emulators;
 pub mod fakepad;
 pub mod lizard;
+pub mod motion;
 pub mod nintendo;
 pub mod pad;
 pub mod profiles;
