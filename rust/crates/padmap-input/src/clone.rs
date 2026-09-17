@@ -1,5 +1,4 @@
-//! Republish a physical pad as `padmap Player N` on phys `padmap/pN`: a unique
-//! identity per port, and a name RetroArch's reservation matcher can pin exactly.
+//! Clone a physical pad as `padmap Player N` with unique identity per port.
 
 use std::collections::BTreeMap;
 use std::ffi::CString;
@@ -39,8 +38,7 @@ pub fn virtual_phys(player: u32) -> String {
     format!("{VIRTUAL_PHYS_PREFIX}p{player}")
 }
 
-/// Mirror keeps the source's bus and ids so SDL's database still matches an unmapped pad;
-/// Padmap is 1209:0001 on BUS_VIRTUAL, the only thing `PADMAP_ONLY_VIRTUAL` lets SDL see.
+/// Mirror: keep source's bus/ids; Padmap: use 1209:0001 on BUS_VIRTUAL.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IdentityMode {
     Mirror,
@@ -71,8 +69,7 @@ impl IdentityMode {
     }
 }
 
-/// All four fields go into the SDL GUID, and measured against SDL the *bus* decides a match:
-/// every database entry for a USB pad is under BUS_USB, and uinput defaults to BUS_VIRTUAL.
+/// Four fields for SDL GUID; bus field decides match in SDL database.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Identity {
     pub vendor: u16,
@@ -89,7 +86,6 @@ impl Identity {
         version: PADMAP_VERSION,
     };
 
-    /// The single place a clone's identity is decided; the GUID writers must agree with it.
     pub fn for_source(mode: IdentityMode, source: &Device, player: u32) -> Identity {
         let version = version_for(player);
         match mode {
@@ -123,7 +119,7 @@ pub fn forwarded(kind: EventType) -> bool {
     )
 }
 
-/// Where a clone's events come from: the kernel's evdev node, or a protocol padmap speaks itself.
+/// Event source: evdev node or Triton (Steam Controller).
 #[derive(Debug)]
 pub enum Source {
     Evdev(Box<Device>),
@@ -151,7 +147,6 @@ fn key_ups(codes: impl IntoIterator<Item = u16>) -> Vec<InputEvent> {
 }
 
 impl Source {
-    /// Append events since the last call, or `WouldBlock`. Into the caller's buffer: hot path.
     pub fn fetch_events(&mut self, out: &mut Vec<InputEvent>) -> std::io::Result<()> {
         match self {
             Source::Evdev(device) => {
@@ -162,7 +157,6 @@ impl Source {
         }
     }
 
-    /// Motion decoded from the same reports as the buttons; an evdev pad's is a separate node.
     pub fn motion(&self) -> Option<padmap_core::motion::Motion> {
         match self {
             Source::Evdev(_) => None,
@@ -176,7 +170,6 @@ impl Source {
         }
     }
 
-    /// A hidraw source is never grabbed: the kernel publishes no evdev node for anyone else.
     pub fn grab(&mut self) -> std::io::Result<()> {
         match self {
             Source::Evdev(device) => device.grab(),
@@ -194,7 +187,6 @@ impl Source {
         }
     }
 
-    /// Refused for a hidraw source: accepting an effect it cannot play would advertise rumble.
     pub fn upload_ff_effect(&mut self, effect: evdev::FFEffectData) -> std::io::Result<FFEffect> {
         match self {
             Source::Evdev(device) => device.upload_ff_effect(effect),
@@ -239,7 +231,6 @@ impl Source {
         }
     }
 
-    /// A Triton source is opened `O_NONBLOCK` and stays that way; this is a no-op for one.
     pub fn set_nonblocking(&mut self, nonblocking: bool) -> std::io::Result<()> {
         match self {
             Source::Evdev(device) => device.set_nonblocking(nonblocking),
@@ -254,8 +245,6 @@ impl Source {
         }
     }
 
-    /// SDL's GUID for the physical pad, from the raw name: SDL checksums what the kernel
-    /// reports, and stripping e.g. the N64 adapter's leading 0x18 byte would change it.
     pub fn physical_guid(&self) -> Option<String> {
         match self {
             Source::Evdev(device) => {
@@ -272,7 +261,6 @@ impl Source {
         }
     }
 
-    /// Discard whatever is queued. Left non-blocking: epoll only promises one read will not block.
     pub fn drain(&mut self) {
         let mut sink = Vec::new();
         let _ = self.set_nonblocking(true);
@@ -320,29 +308,22 @@ pub fn open_source(pad: &Pad, grab: bool) -> Result<Source, CloneError> {
     Ok(Source::Evdev(Box::new(source)))
 }
 
-/// A physical pad, its clone, and what passes between them.
+/// Physical pad, clone, and event pipeline.
 #[derive(Debug)]
 pub struct VirtualPad {
     pub player: u32,
     pub pad: Pad,
-    /// Kept because the SDL GUID is computed from it.
     pub identity: Identity,
     pub source: Source,
     pub clone: VirtualDevice,
-    /// ABS code -> calibration, applied as events pass through.
     pub axes: BTreeMap<u16, AxisCalibration>,
-    /// Applied after calibration.
     pub tuning: Tuning,
     pub declared: BTreeMap<u16, Declared>,
     pub debouncer: Debouncer,
-    /// The DSU picture, fed from the *corrected* stream so UDP and the clone agree.
     pub tracker: dsupad::Tracker,
-    /// `None` for no gyro, a Steam Controller (motion rides in its reports), or a node that would not open.
     pub sensor: Option<motion::Sensor>,
-    /// Counted, not logged per event: a repeating fault once filled a 3.1GB tmpfs with log lines.
     pub dropped: u64,
     pub gone: bool,
-    /// Clone effect id -> the physical device's effect. Dropping an entry erases it upstream.
     effects: BTreeMap<i16, FFEffect>,
     forwarded_any: bool,
 }
@@ -366,8 +347,6 @@ pub fn create(
 ) -> Result<VirtualPad, CloneError> {
     let source = open_source(pad, grab)?;
     let (identity, clone) = match &source {
-        // No evdev device to read ids off: mirror what discovery read from sysfs, on BUS_USB,
-        // because that is how it is attached and the bus is what SDL's database keys on.
         Source::Triton(triton) => {
             let version = version_for(player);
             let identity = match mode {
@@ -392,7 +371,6 @@ pub fn create(
     };
     let clone = clone.map_err(|error| CloneError::Build(player, error))?;
 
-    // Re-checked here because a live measurement arrives without a round trip through the store.
     let mut axes = BTreeMap::new();
     for (code, calibration) in profile_axes {
         if calibration.fits() {
@@ -487,8 +465,7 @@ fn build_clone_from(
     })
 }
 
-/// evdev 0.13 encodes `UI_SET_PHYS` with a `c_char` payload where the kernel wants `char *`,
-/// so the ioctl can be EINVAL; a clone without a phys is matched by name (`pad::is_padmap_clone`).
+/// evdev 0.13 may fail UI_SET_PHYS; retry without phys (matched by name instead).
 fn with_phys_retry(
     player: u32,
     build: impl Fn(bool) -> std::io::Result<VirtualDevice>,
@@ -502,7 +479,6 @@ fn with_phys_retry(
     })
 }
 
-/// Name, ids and (optionally) phys. The builder borrows the name, so the caller owns it.
 fn head<'a>(
     name: &'a str,
     player: u32,
@@ -540,14 +516,13 @@ fn assemble(
         builder = builder.with_msc(misc)?;
     }
     builder = builder.with_properties(source.properties())?;
-    // Full absinfo, never bare codes: min = max = 0 is a divide by zero in RetroArch's
-    // udev_compute_axis, and the game dies with SIGFPE at its first input poll.
+    // Full absinfo: min=max=0 causes SIGFPE in RetroArch's udev_compute_axis.
     if let Ok(absinfo) = source.get_absinfo() {
         for (code, info) in absinfo {
             builder = builder.with_absolute_axis(&UinputAbsSetup::new(code, info))?;
         }
     }
-    // Mirror the source's effect count: uinput's default of 96 advertises rumble it cannot play.
+    // Mirror source's effect count: default 96 would falsely advertise rumble.
     if let Some(ff) = source.supported_ff() {
         builder = builder.with_ff(ff)?;
         builder = builder.with_ff_effects_max(source.max_ff_effects() as u32);
@@ -556,7 +531,6 @@ fn assemble(
 }
 
 impl VirtualPad {
-    /// `/dev/input/eventN` of the clone. The node appears a moment after creation: bounded wait.
     pub fn node(&mut self) -> Option<String> {
         for attempt in 0..50 {
             if attempt > 0 {
@@ -586,8 +560,7 @@ impl VirtualPad {
         virtual_name(self.player)
     }
 
-    /// Seed each calibrated axis at its centre, not the source's value: an adapter's absinfo
-    /// can hold a stale power-on default (174 on a 0-255 axis centred at 128) until touched.
+    /// Seed calibrated axes at centre, not source default (may be stale).
     fn seed_calibrated_axes(&mut self) {
         if self.axes.is_empty() {
             return;
@@ -628,7 +601,7 @@ impl VirtualPad {
         }
     }
 
-    /// Calibration, then tuning. A `None` may be a release the debouncer is holding for later.
+    /// Calibration then tuning; None may be debounced release.
     pub fn shape(&mut self, event: InputEvent, now_ms: u64) -> Option<InputEvent> {
         let event = self.correct(event);
         let code = event.code();
@@ -648,17 +621,14 @@ impl VirtualPad {
         Some(InputEvent::new(event.event_type().0, code, value))
     }
 
-    /// Releases the debouncer has finished holding, as key-up events.
     pub fn due_releases(&mut self, now_ms: u64) -> Vec<InputEvent> {
         key_ups(self.debouncer.due(now_ms))
     }
 
-    /// Every release still held, as key-up events.
     pub fn held_releases(&mut self) -> Vec<InputEvent> {
         key_ups(self.debouncer.drain())
     }
 
-    /// Logged once: "no input reaches the game" has two causes this line tells apart.
     pub fn note_forwarding(&mut self) {
         if !self.forwarded_any {
             self.forwarded_any = true;
@@ -681,7 +651,6 @@ impl VirtualPad {
         self.source.ungrab();
     }
 
-    /// Re-upload a game's effect to the real pad, which allocates its own id.
     pub fn proxy_upload(&mut self, event: UInputEvent) {
         let player = self.player;
         let Ok(mut upload) = self
@@ -704,7 +673,6 @@ impl VirtualPad {
         }
     }
 
-    /// Dropping our handle erases the effect upstream too.
     pub fn proxy_erase(&mut self, event: UInputEvent) {
         let player = self.player;
         let Ok(mut erase) = self
@@ -723,13 +691,11 @@ impl VirtualPad {
             return;
         };
         if let Err(error) = effect.play(count) {
-            // Debug: a game may drive rumble continuously at a pad that has been unplugged.
             log::debug!("player {}: rumble write failed: {error}", self.player);
         }
     }
 }
 
-/// Key codes and absolute axis codes (hat included) a pad reports.
 pub fn capabilities(source: &Device) -> (Vec<u16>, Vec<u16>) {
     let keys: Vec<u16> = source
         .supported_keys()
@@ -742,7 +708,6 @@ pub fn capabilities(source: &Device) -> (Vec<u16>, Vec<u16>) {
     (keys, axes)
 }
 
-/// Travel and rest value per axis; rest is what separates a stick from a trigger on ABS_RX.
 pub fn axis_spans(source: &Device) -> BTreeMap<u16, AxisSpan> {
     let Ok(absinfo) = source.get_absinfo() else {
         return BTreeMap::new();

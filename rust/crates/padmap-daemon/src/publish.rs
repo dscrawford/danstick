@@ -104,7 +104,7 @@ pub fn mapping_scopes(pad: &Pad) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// The SDL database line for a player's clone, from what the user pressed.
+/// The SDL database line for a player's clone.
 pub fn sdl_line_for(
     player: u32,
     identity: Identity,
@@ -115,9 +115,7 @@ pub fn sdl_line_for(
     emit::sdl_line_for(player, identity, bindings, Some(&sticks))
 }
 
-/// The stored mapping's line, or empty when there is none -- a line built
-/// from no bindings claims a pad with no buttons, and SDL believing that is
-/// worse than SDL falling back to its own database.
+/// The stored mapping's line, or empty. Empty is better than a line from no bindings.
 pub fn stored_sdl_line(player: u32, pad: &Pad, identity: Identity, facts: &PadFacts) -> String {
     let bindings = resolved(pad, "", "").1.resolved();
     if bindings.is_empty() {
@@ -126,15 +124,7 @@ pub fn stored_sdl_line(player: u32, pad: &Pad, identity: Identity, facts: &PadFa
     sdl_line_for(player, identity, &bindings, facts)
 }
 
-/// A usable line for a pad that has never been mapped, plus where it came
-/// from. `None` when the pad reports no buttons at all, which is not a
-/// controller anything could navigate with.
-///
-/// Two sources, in order of how much they are worth trusting: a line the
-/// user already has on disk for the physical controller, then SDL's own
-/// database, then a guess from the pad's capabilities. Under padmap's own
-/// identity the line is the *only* thing between the user and a controller
-/// with no buttons, since SDL knows nothing about 1209:0001.
+/// A usable SDL line for unmapped pads. None if the pad reports no buttons.
 pub fn fallback_line_for(
     player: u32,
     identity: Identity,
@@ -162,15 +152,13 @@ pub fn fallback_line_for(
     ))
 }
 
-/// A mapping already on disk, or in SDL's own database, for this GUID.
+/// Mapping already on disk or in SDL's database for this GUID.
 fn carried(guid: Option<&str>) -> Option<(Fields, String)> {
     let guid = guid?;
     if let Some(found) = artefacts::carried_fields(guid) {
         return Some(found);
     }
-    // SDL's compiled-in database, asked through a process of its own -- see
-    // `sdlprobe`. A line naming one of our own pads describes a previous
-    // generation rather than a controller.
+    // Skip virtual pads named by padmap itself.
     let line = sdlprobe::isolated(guid)?;
     let (_, name, fields) = sdl::parse_line(&line)?;
     if name.starts_with(emit::VIRTUAL_PREFIX) {
@@ -183,9 +171,6 @@ fn carried(guid: Option<&str>) -> Option<(Fields, String)> {
 }
 
 /// The autoconfig profile for one clone, as text.
-///
-/// The same bytes the `controller` event reports, so a consumer applying
-/// binds live and RetroArch reading the file cannot disagree.
 pub fn profile_text(
     pad: &Pad,
     player: u32,
@@ -198,9 +183,6 @@ pub fn profile_text(
     let (scope, mapping) = resolved(pad, console, game);
     let bindings = mapping.resolved();
     if !bindings.is_empty() {
-        // The user pressed these buttons themselves. Copying libretro's
-        // entry instead would give two sets of bindings for one controller,
-        // differing in ways nobody is told about.
         log_unmapped(pad, &scope, &mapping.layout, &bindings);
         return emit::retroarch_profile(
             player,
@@ -223,11 +205,7 @@ pub fn profile_text(
     )
 }
 
-/// Name the layout's controls a mapping has no binding for.
-///
-/// A mapping captured before its layout gained a control keeps working and
-/// keeps being chosen, so the new control is simply dead in game. Logged
-/// rather than repaired: the repair is a question for the user.
+/// Log layout controls a mapping doesn't bind. User must remap to use them.
 fn log_unmapped(pad: &Pad, scope: &str, layout_id: &str, bindings: &BTreeMap<Control, Binding>) {
     let layout = padmap_core::layout::get(layout_id);
     let missing: Vec<&str> = layout
@@ -247,7 +225,7 @@ fn log_unmapped(pad: &Pad, scope: &str, layout_id: &str, bindings: &BTreeMap<Con
     }
 }
 
-/// Pad index -> device path, exactly as RetroArch's udev driver will see it.
+/// Pad index to device path, in RetroArch's enumeration order.
 pub fn visible_order() -> BTreeMap<usize, String> {
     pad::discover(pad::Filter {
         include_virtual: true,
@@ -263,19 +241,13 @@ pub fn visible_order() -> BTreeMap<usize, String> {
     .unwrap_or_default()
 }
 
-/// What the writers produced, for the events that follow.
+/// What the writers produced.
 #[derive(Debug, Default, Clone)]
 pub struct Written {
-    /// The SDL lines, in player order.
     pub sdl_lines: Vec<String>,
 }
 
-/// Write every file the roster implies.
-///
-/// `virtual_paths` are the clones' device nodes, which decide the pad
-/// indices; `last` is the game most recently launched, whose scope the
-/// autoconfig is resolved for -- a consumer applying these during a game must
-/// be given that game's mapping, not the context-free one.
+/// Write every file the roster implies. Resolves configs for the last-launched game.
 pub fn write_all(
     slots: &[Slot],
     virtual_paths: &BTreeMap<u32, String>,
@@ -293,7 +265,6 @@ pub fn write_all(
         .collect();
     let players: Vec<u32> = slots.iter().map(|slot| slot.player).collect();
 
-    // The autoconfig profiles, resolved for the last game.
     let profiles_out: BTreeMap<u32, String> = slots
         .iter()
         .map(|slot| {
@@ -315,7 +286,6 @@ pub fn write_all(
         Err(error) => warn!("could not write the autoconfig profiles: {error}"),
     }
 
-    // The launch override and its flags.
     let order = visible_order();
     let managed = retroarch::managed_players(&players, virtual_paths, &order);
     let all_calibrated = slots
@@ -339,7 +309,6 @@ pub fn write_all(
         warn!("could not write the launch flags: {error}");
     }
 
-    // The SDL database, and the emulators that cannot read it.
     let mut lines: BTreeMap<u32, String> = BTreeMap::new();
     let mut notes: BTreeMap<u32, String> = BTreeMap::new();
     let mut published: Vec<emulators::Published> = Vec::new();
@@ -388,13 +357,7 @@ pub fn write_all(
     }
 }
 
-/// Keep a capture against the *controller*, under one scope.
-///
-/// The stored profile for a pad, or a fresh one carrying its identity.
-///
-/// Every `store_*` below starts from this and changes one thing, so choosing
-/// an icon is never a reason to forget where the buttons are, and setting a
-/// deadzone is never a reason to forget the icon.
+/// Get or create a profile for a pad, preserving existing identity.
 fn profile_for(pad: &Pad) -> Profile {
     let mut profile = profiles::load(pad, None).unwrap_or_default();
     profile.signature = profiles::signature_of(pad);
@@ -402,12 +365,7 @@ fn profile_for(pad: &Pad) -> Profile {
     profile
 }
 
-/// Save a capture under a scope, and say which controls it did not bind.
-///
-/// The unbound list is the layout's controls the capture has no binding for.
-/// A wizard that was skipped through leaves them; a game reads each as an
-/// absence, which emits no key at all, and naming them is what tells that
-/// apart from a control the wizard never offered.
+/// Save a mapping capture under a scope. Returns controls it didn't bind.
 pub fn store_mapping(
     pad: &Pad,
     layout_id: &str,
@@ -415,10 +373,7 @@ pub fn store_mapping(
     scope: &str,
 ) -> Vec<String> {
     let mut profile = profile_for(pad);
-    // Only from a capture with no scope, and only layout ids that are also
-    // icon names. A GameCube controller mapped *for N64 games* is captured
-    // against the N64 layout, and taking the icon from it would relabel the
-    // pad as an N64 controller forever after.
+    // Only set icon from default-scope captures with layout id matching an icon.
     if profile.icon.is_empty() && scope.is_empty() && padmap_core::icons::known(layout_id) {
         profile.icon = layout_id.to_owned();
     }
@@ -444,8 +399,7 @@ pub fn store_mapping(
         .collect()
 }
 
-/// Write a profile with these axes, preserving everything else already
-/// chosen for the pad.
+/// Save axis calibration, preserving everything else.
 pub fn store_calibration(
     pad: &Pad,
     axes: BTreeMap<u16, padmap_core::calibration::AxisCalibration>,
@@ -462,9 +416,7 @@ pub fn store_calibration(
     }
 }
 
-/// Record the user's choice of icon. This is what retires the built-in
-/// vid/pid table: once a pad has been through setup, its icon comes from the
-/// person who owns it.
+/// Save the user's icon choice.
 pub fn store_icon(pad: &Pad, icon: &str) {
     let mut profile = profile_for(pad);
     profile.icon = icon.to_owned();
@@ -473,32 +425,32 @@ pub fn store_icon(pad: &Pad, icon: &str) {
     }
 }
 
-/// Record what the user set for a misbehaving controller.
+/// Save tuning adjustments for a misbehaving pad.
 pub fn store_tuning(pad: &Pad, tuning: padmap_core::tuning::Tuning) -> std::io::Result<()> {
     let mut profile = profile_for(pad);
     profile.tuning = tuning;
     profiles::save(&profile, None).map(|_| ())
 }
 
-/// What the user has set for a pad, or nothing.
+/// Get the user's tuning settings for a pad, or defaults.
 pub fn tuning_for(pad: &Pad) -> padmap_core::tuning::Tuning {
     profiles::load(pad, None)
         .map(|profile| profile.tuning)
         .unwrap_or_default()
 }
 
-/// The icon a pad should be drawn with.
+/// The icon a pad should display.
 pub fn icon_for(pad: &Pad, overrides: &BTreeMap<String, String>) -> &'static str {
     let stored = profiles::load(pad, None).map(|profile| profile.icon);
     padmap_core::icons::for_pad(pad.vid, pad.pid, &pad.name, stored.as_deref(), overrides)
 }
 
-/// Which layout a pad's default capture was taken under, or "".
+/// Layout of the pad's default (no-scope) capture.
 pub fn stored_layout(pad: &Pad) -> String {
     resolved(pad, "", "").1.layout
 }
 
-/// Layout ids this controller already has a capture under.
+/// Layout ids the pad has captures under.
 pub fn mapped_layouts(pad: &Pad) -> std::collections::BTreeSet<String> {
     profiles::load(pad, None)
         .map(|profile| {

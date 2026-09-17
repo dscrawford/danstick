@@ -1,4 +1,4 @@
-//! Emulators that cannot find padmap's pads on their own.
+//! Emulator configuration publishing.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -8,15 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::artefacts;
 
-/// One published pad, as an emulator needs to see it.
-///
-/// The capabilities are the *clone's*, not the controller's, and for the same
-/// reason the GUID is: ares counts indices over the device SDL opened, and SDL
-/// opens the clone.
-///
-/// Serialisable because `padmap emit` takes this list on stdin: a launcher
-/// that owns the roster -- and the directories the launch will use -- can have
-/// the configs written without going through the daemon.
+/// Published pad: capabilities are from the clone, GUID is SDL's index over it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Published {
     pub player: u32,
@@ -31,28 +23,17 @@ pub struct Published {
     pub sdl_line: String,
 }
 
-/// Where each file goes.
-///
-/// `None` means the real location. Overriding one leaves the others alone,
-/// which is what a test wanting to check exactly one emulator needs -- and
-/// what a caller that runs each game in an isolated environment needs, since
-/// two variants of one game are two configurations that must never see each
-/// other, and neither of them is the one in the user's home.
+/// Output paths (None = real location).
 #[derive(Debug, Clone, Default)]
 pub struct Destinations {
     pub cemu_dir: Option<PathBuf>,
-    /// Dolphin's config *directory*, not a file: it needs two of them.
     pub dolphin_dir: Option<PathBuf>,
     pub ares_settings: Option<PathBuf>,
     pub ryujinx_config: Option<PathBuf>,
     pub env_file: Option<PathBuf>,
 }
 
-/// What actually happened, target by target.
-///
-/// Skips are carried rather than logged in place so the caller decides how
-/// loud they are: the daemon says them once at INFO, and a test asserts on
-/// them.
+/// Write results and skips.
 #[derive(Debug, Default)]
 pub struct Written {
     pub paths: Vec<PathBuf>,
@@ -77,16 +58,8 @@ pub fn env_path() -> PathBuf {
     crate::runtime::dir().join("env.sh")
 }
 
-/// A POSIX-sh fragment exporting [`CONFIG_ENV`].
-///
-/// Single-quoted with embedded newlines, which is valid sh and is what SDL's
-/// reader expects: it parses the variable with the same code that reads a
-/// database file, one mapping per line.
+/// POSIX-sh fragment exporting CONFIG_ENV: single-quoted for SDL parsing.
 pub fn env_script(value: &str) -> String {
-    // A mapping line cannot contain a quote today -- the name is "padmap
-    // Player N" and the rest is hex and SDL control names -- but this file is
-    // sourced by a shell, and "cannot happen" is how a shell injection gets
-    // written.
     let quoted = value.replace('\'', r"'\''");
     format!(
         "# Written by padmap on every republish. Source it, or use\n\
@@ -97,12 +70,7 @@ pub fn env_script(value: &str) -> String {
     )
 }
 
-/// The value back out of a file [`env_script`] wrote.
-///
-/// `padmap-rs exec` reads the file rather than recomputing the value: it has
-/// no pads open, and opening them would take them from the daemon that does.
-/// `None` if the file is not one of ours -- better than handing a program half
-/// a mapping.
+/// Extract value from env_script output; None if not ours.
 pub fn value_from_script(script: &str) -> Option<String> {
     let start = script.find(&format!("{CONFIG_ENV}='"))? + CONFIG_ENV.len() + 2;
     let rest = &script[start..];
@@ -122,11 +90,7 @@ pub fn write_env(value: &str, path: Option<&Path>) -> Result<PathBuf, artefacts:
     Ok(target)
 }
 
-/// Write every emulator artefact for these pads.
-///
-/// Never fails: an emulator that is not installed, or whose config padmap
-/// declines to invent, is a skip. Losing Cemu's profiles is not a reason to
-/// stop republishing the pads themselves.
+/// Write all emulator configs; skips instead of failing.
 pub fn publish(pads: &[Published], dirs: &Destinations) -> Written {
     let mut written = Written::default();
 
@@ -199,10 +163,7 @@ pub fn publish(pads: &[Published], dirs: &Destinations) -> Written {
     written
 }
 
-/// The value [`CONFIG_ENV`] should hold for these pads.
-///
-/// Exposed for `padmap-rs exec`, which sets the variable directly rather than
-/// going through a file.
+/// VALUE for CONFIG_ENV variable (for `padmap-rs exec`).
 pub fn config_value(pads: &[Published]) -> String {
     let lines: BTreeMap<u32, String> = pads
         .iter()
@@ -235,9 +196,6 @@ mod tests {
     }
 
     fn only(dir: &Path) -> Destinations {
-        // Everything inside one scratch directory, so nothing reaches a real
-        // config and a test that forgets an override fails loudly rather than
-        // rewriting the developer's own ares settings.
         Destinations {
             cemu_dir: Some(dir.join("cemu")),
             dolphin_dir: Some(dir.join("dolphin-emu")),
@@ -249,18 +207,12 @@ mod tests {
 
     #[test]
     fn an_emulator_that_has_never_run_is_skipped_not_invented() {
-        // ares and Ryujinx keep every setting in the one file. Writing one
-        // from nothing would leave the emulator with padmap's ports and
-        // defaults for everything else -- video, audio, paths.
         let dir = scratch("absent");
         let written = publish(&[pad(1)], &only(&dir));
 
         let skipped: Vec<&str> = written.skipped.iter().map(|(what, _)| *what).collect();
         assert!(skipped.contains(&"ares"), "{written:?}");
         assert!(skipped.contains(&"ryujinx"), "{written:?}");
-        // Dolphin is not among them: neither of its files is the whole of
-        // Dolphin's settings, and it reads them at startup whether or not it
-        // has run before -- so bindings are worth having on the first run.
         assert!(!skipped.contains(&"dolphin"), "{written:?}");
         assert!(dir.join("dolphin-emu/GCPadNew.ini").exists());
         assert!(dir.join("dolphin-emu/Dolphin.ini").exists());
@@ -276,8 +228,6 @@ mod tests {
 
     #[test]
     fn a_skip_never_stops_the_other_emulators() {
-        // The whole point of collecting skips rather than returning an error:
-        // one absent emulator used to be indistinguishable from a failure.
         let dir = scratch("partial");
         std::fs::write(dir.join("ares.bml"), "Video\n  Driver: OpenGL\n").expect("seed");
         let written = publish(&[pad(1), pad(2)], &only(&dir));
@@ -295,9 +245,6 @@ mod tests {
 
     #[test]
     fn every_player_gets_a_distinct_ryujinx_id() {
-        // Ryujinx blanks the name checksum out of the GUID. Before the player
-        // number moved into the version field, four pads produced one id and
-        // three of them silently did nothing.
         let dir = scratch("ryujinx");
         std::fs::write(dir.join("Config.json"), r#"{"version": 50}"#).expect("seed");
         let pads: Vec<Published> = (1..=4).map(pad).collect();
@@ -334,9 +281,6 @@ mod tests {
 
     #[test]
     fn a_pad_with_no_mapping_contributes_no_line() {
-        // An empty line in SDL_GAMECONTROLLERCONFIG is not harmless: the value
-        // is parsed as a database, and a line claiming a pad with no buttons
-        // is worse than SDL falling back to its own entry.
         let mut unmapped = pad(2);
         unmapped.sdl_line = String::new();
         let value = config_value(&[pad(1), unmapped]);
@@ -349,8 +293,6 @@ mod tests {
         let script = env_script(hostile);
         assert!(!script.contains("rm -rf /;\n"), "{script}");
         assert!(script.contains(r"'\''"), "{script}");
-        // And `exec` still recovers exactly what went in, quotes and all --
-        // otherwise escaping would be trading an injection for a wrong mapping.
         assert_eq!(value_from_script(&script).as_deref(), Some(hostile));
     }
 
@@ -370,8 +312,6 @@ mod tests {
 
     #[test]
     fn a_ninth_player_is_left_out_rather_than_wrapped_round() {
-        // Cemu has eight slots and ares five. Wrapping player nine to
-        // controller0.xml would take player one's pad away.
         let dir = scratch("cap");
         std::fs::write(dir.join("ares.bml"), "Video\n").expect("seed");
         publish(&[pad(1), pad(6), pad(9)], &only(&dir));
