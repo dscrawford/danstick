@@ -1,12 +1,4 @@
 //! ares bindings, checked against a settings.bml ares itself wrote.
-//!
-//! ares reads raw SDL joystick state, so every number in a binding is a
-//! position on the device rather than a standard id -- which means a wrong one
-//! does not fail, it binds a different button. The reference file is one ares
-//! produced on the development machine, and the control names are taken from
-//! it rather than from the documentation: ares keeps its own unbound entry
-//! beside any name it does not recognise, so a misspelling leaves the control
-//! dead with nothing to say why.
 
 use std::path::Path;
 
@@ -43,30 +35,26 @@ fn reference_controls() -> Vec<String> {
     out
 }
 
-/// A standard pad: the eleven keys and six axes plus a hat that SDL reported
-/// as `axes=6 hats=1 buttons=11` when measured.
+/// Measured on SDL 3 as `axes=6 hats=1 buttons=11`.
 fn standard() -> Indices {
     Indices::of(
-        &[
-            0x130, 0x131, 0x133, 0x134, 0x136, 0x137, 0x13A, 0x13B, 0x13C, 0x13D, 0x13E,
-        ],
+        &[0x130, 0x131, 0x133, 0x134, 0x136, 0x137, 0x13A, 0x13B, 0x13C, 0x13D, 0x13E],
         &[0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x10, 0x11],
     )
 }
 
+fn hat(vertical: bool, half: Half) -> Source {
+    Source::Hat { vertical, half }
+}
+
 #[test]
 fn every_control_name_is_one_ares_uses() {
-    // ares does not reject a name it does not know; it keeps its own entry
-    // beside it and the control stays unbound. So the only way to be sure is
-    // to compare against a file ares wrote.
+    // ares keeps an unbound entry beside a name it does not know, so only its own file can say.
     let theirs = reference_controls();
     assert!(!theirs.is_empty(), "the reference file has no VirtualPad1");
     let ours: Vec<&str> = ares::CONTROLS.iter().map(|(name, _)| *name).collect();
     for name in &ours {
-        assert!(
-            theirs.iter().any(|known| known == name),
-            "{name:?} is not a control ares writes; it has {theirs:?}"
-        );
+        assert!(theirs.iter().any(|known| known == name), "{name:?} is not a control ares writes");
     }
     // Rumble is the one ares has that padmap does not bind.
     assert!(theirs.contains(&"Rumble".to_owned()));
@@ -75,83 +63,26 @@ fn every_control_name_is_one_ares_uses() {
 
 #[test]
 fn an_index_is_the_ordinal_in_ascending_evdev_order() {
-    // Measured against SDL 3: a device declaring these eleven keys and six
-    // non-hat axes was reported as axes=6 hats=1 buttons=11.
     let indices = standard();
-    // BTN_SOUTH is the lowest key code, so button 0.
-    assert_eq!(
-        ares::assignment("G", Source::Button(0x130), &indices).as_deref(),
-        Some("G/0/3/0")
-    );
-    // BTN_EAST is next.
-    assert_eq!(
-        ares::assignment("G", Source::Button(0x131), &indices).as_deref(),
-        Some("G/0/3/1")
-    );
-    // ABS_X is axis 0, ABS_RZ is axis 5 -- the hat codes are not counted.
-    assert_eq!(
-        ares::assignment("G", Source::Axis(0x00, Some(Half::Lo)), &indices).as_deref(),
-        Some("G/0/0/0/Lo")
-    );
-    assert_eq!(
-        ares::assignment("G", Source::Axis(0x05, Some(Half::Hi)), &indices).as_deref(),
-        Some("G/0/0/5/Hi")
-    );
-}
-
-#[test]
-fn the_hat_is_two_inputs_x_then_y() {
-    let indices = standard();
-    assert_eq!(
-        ares::assignment(
-            "G",
-            Source::Hat {
-                vertical: false,
-                half: Half::Lo
-            },
-            &indices
-        )
-        .as_deref(),
-        Some("G/0/1/0/Lo"),
-        "left is hat X negative"
-    );
-    assert_eq!(
-        ares::assignment(
-            "G",
-            Source::Hat {
-                vertical: true,
-                half: Half::Lo
-            },
-            &indices
-        )
-        .as_deref(),
-        Some("G/0/1/1/Lo"),
-        "up is hat Y negative"
-    );
+    for (name, source, want) in [
+        ("BTN_SOUTH is button 0", Source::Button(0x130), "G/0/3/0"),
+        ("BTN_EAST is next", Source::Button(0x131), "G/0/3/1"),
+        ("ABS_X is axis 0", Source::Axis(0x00, Some(Half::Lo)), "G/0/0/0/Lo"),
+        ("ABS_RZ is axis 5; hats not counted", Source::Axis(0x05, Some(Half::Hi)), "G/0/0/5/Hi"),
+        ("left is hat X negative", hat(false, Half::Lo), "G/0/1/0/Lo"),
+        ("up is hat Y negative", hat(true, Half::Lo), "G/0/1/1/Lo"),
+    ] {
+        assert_eq!(ares::assignment("G", source, &indices).as_deref(), Some(want), "{name}");
+    }
 }
 
 #[test]
 fn a_control_the_pad_does_not_have_is_left_unbound() {
-    // Pointing it at index zero would bind a real button to a control the
-    // user never pressed, which is worse than a dead entry they can see.
+    // Index zero would bind a real button to a control the user never pressed.
     let no_hat = Indices::of(&[0x130], &[0x00, 0x01]);
-    assert_eq!(
-        ares::assignment(
-            "G",
-            Source::Hat {
-                vertical: true,
-                half: Half::Lo
-            },
-            &no_hat
-        ),
-        None
-    );
-    assert_eq!(ares::assignment("G", Source::Button(0x137), &no_hat), None);
-    assert_eq!(
-        ares::assignment("G", Source::Axis(0x05, Some(Half::Hi)), &no_hat),
-        None
-    );
-
+    for source in [hat(true, Half::Lo), Source::Button(0x137), Source::Axis(0x05, Some(Half::Hi))] {
+        assert_eq!(ares::assignment("G", source, &no_hat), None, "{source:?}");
+    }
     let block = ares::virtual_pad(1, "G", &no_hat);
     assert!(block.contains("Pad.Up: ;;"), "{block}");
     assert!(block.contains("A..South: G/0/3/0;;"), "{block}");
@@ -161,10 +92,8 @@ fn a_control_the_pad_does_not_have_is_left_unbound() {
 fn the_block_is_shaped_the_way_ares_writes_one() {
     let block = ares::virtual_pad(3, "abc", &standard());
     assert!(block.starts_with("VirtualPad3\n"));
-    // Two-space indent, `Name: value`, three alternatives joined by ';'.
     for line in block.lines().skip(1) {
-        assert!(line.starts_with("  "), "{line:?}");
-        assert!(!line.starts_with("   "), "{line:?}");
+        assert!(line.starts_with("  ") && !line.starts_with("   "), "{line:?}");
         assert!(line.ends_with(";;"), "{line:?}");
     }
     assert!(block.contains("  A..South: abc/0/3/0;;"), "{block}");
@@ -173,8 +102,6 @@ fn the_block_is_shaped_the_way_ares_writes_one() {
 
 #[test]
 fn only_five_ports_exist() {
-    // ares has five; padmap's own limit is higher, and a sixth player simply
-    // has no port rather than overwriting the first.
     assert_eq!(ares::MAX_PLAYERS, 5);
     assert!(ares_own().contains("VirtualPad5"));
     assert!(!ares_own().contains("VirtualPad6"));

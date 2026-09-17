@@ -1,9 +1,4 @@
 //! Reading a RetroArch command line, held to what the Python decided.
-//!
-//! `split_args` asks the filesystem whether a token is a file. The corpus
-//! records the set of paths that existed beside each answer, so the Rust --
-//! which takes that as a predicate and touches no disk -- is held to the same
-//! decision for a case neither implementation could otherwise be pinned on.
 
 use std::path::Path;
 
@@ -17,15 +12,12 @@ fn corpus(name: &str) -> Vec<Value> {
 }
 
 fn strings(raw: &Value) -> Vec<String> {
-    raw.as_array()
-        .expect("array")
-        .iter()
-        .map(|item| item.as_str().expect("string").to_owned())
-        .collect()
+    raw.as_array().expect("array").iter().map(|item| item.as_str().expect("string").to_owned()).collect()
 }
 
 #[test]
 fn every_command_line_splits_the_same_way() {
+    // `split_args` asks whether a token is a file; the corpus records which paths existed.
     let cases = corpus("launch_split");
     assert!(!cases.is_empty());
     for case in cases {
@@ -34,12 +26,7 @@ fn every_command_line_splits_the_same_way() {
         let (core, rom) = launch::split_args(&argv, |path| present.iter().any(|p| p == path));
         assert_eq!(core, case["core"].as_str().expect("core"), "{argv:?}");
         assert_eq!(rom, case["rom"].as_str().expect("rom"), "{argv:?}");
-        // The title the picker shows for whatever was identified.
-        let title = if rom.is_empty() {
-            String::new()
-        } else {
-            launch::title_for(&rom)
-        };
+        let title = if rom.is_empty() { String::new() } else { launch::title_for(&rom) };
         assert_eq!(title, case["title"].as_str().expect("title"), "{argv:?}");
     }
 }
@@ -48,10 +35,6 @@ fn every_command_line_splits_the_same_way() {
 fn every_title_reads_the_same() {
     for case in corpus("launch_titles") {
         let rom = case["rom"].as_str().expect("rom");
-        assert_eq!(
-            launch::title_for(rom),
-            case["out"].as_str().expect("out"),
-            "{rom:?}"
-        );
+        assert_eq!(launch::title_for(rom), case["out"].as_str().expect("out"), "{rom:?}");
     }
 }

@@ -1,12 +1,5 @@
-//! The DSU wire format, attacked.
-//!
-//! The socket is unauthenticated and on localhost: anything on the machine can
-//! write to it, and the only defence is that the parser never reads past what
-//! it measured. So the parser is fed every truncation of a real packet, random
-//! bytes, and lying length fields, and must answer or decline without
-//! panicking. The layout tests pin offsets against `udp_protocol.h` by hand,
-//! because a consumer reads a fixed struct off the wire and one byte out makes
-//! every later field garbage.
+//! The DSU wire format, attacked: the socket is unauthenticated, so the parser
+//! must never read past what it measured. Offsets are pinned against `udp_protocol.h`.
 
 use padmap_core::dsu::{self, analog, button, Kind, Pad, Port, Request, Subscribe, Touch};
 use padmap_core::dsupad::Range;
@@ -22,22 +15,22 @@ fn client_packet(kind: Kind, body: &[u8]) -> Vec<u8> {
     out.extend_from_slice(&7u32.to_le_bytes());
     out.extend_from_slice(&(kind as u32).to_le_bytes());
     out.extend_from_slice(body);
-    let crc = dsu::crc32(&out);
-    out[8..12].copy_from_slice(&crc.to_le_bytes());
+    stamp_crc(&mut out);
     out
+}
+
+fn stamp_crc(packet: &mut [u8]) {
+    packet[8..12].fill(0);
+    let crc = dsu::crc32(packet);
+    packet[8..12].copy_from_slice(&crc.to_le_bytes());
 }
 
 #[test]
 fn a_client_that_pads_its_datagram_past_a_hundred_bytes_is_still_believed() {
-    // The length field says how much matters; a client is free to send more.
-    // The CRC it computed covers everything it sent, so padmap has to check
-    // the same bytes -- checking only the first hundred rejects an honest
-    // client with a large send buffer, silently, for ever.
+    // The client's CRC covers everything it sent; checking only the first hundred rejects it for ever.
     let mut packet = client_packet(Kind::Version, &[]);
     packet.extend_from_slice(&[0xAB; 200]);
-    packet[8..12].fill(0);
-    let crc = dsu::crc32(&packet);
-    packet[8..12].copy_from_slice(&crc.to_le_bytes());
+    stamp_crc(&mut packet);
     let got = dsu::parse_request(&packet).expect("a padded but honest packet");
     assert_eq!(got.request, Request::Version);
 }
@@ -65,7 +58,7 @@ proptest! {
     ) {
         let packet = client_packet(kind, &body);
         let _ = dsu::parse_request(&packet);
-        // And with the CRC blanked, which some clients send.
+        // Some clients send a blank CRC.
         let mut blank = packet.clone();
         blank[8..12].fill(0);
         let _ = dsu::parse_request(&blank);
@@ -91,7 +84,6 @@ proptest! {
         let range = Range::declared(min, max, min);
         let _ = range.to_u8(value);
         let _ = range.to_u8_inverted(value);
-        // Both ends of a proper range reach the ends of the byte.
         if max > min {
             prop_assert_eq!(range.to_u8(min), 0);
             prop_assert_eq!(range.to_u8(max), 255);
@@ -115,23 +107,14 @@ proptest! {
 
 #[test]
 fn a_port_request_naming_more_slots_than_exist_asks_only_about_the_first_four() {
-    // Eight slot bytes with a count of eight. Only four exist; trusting the
-    // count would index past the slots array.
     let packet = client_packet(Kind::PortInfo, &[8, 0, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7]);
     let got = dsu::parse_request(&packet).expect("a clamped request");
-    assert_eq!(
-        got.request,
-        Request::PortInfo {
-            slots: [0, 1, 2, 3],
-            count: 4
-        }
-    );
+    assert_eq!(got.request, Request::PortInfo { slots: [0, 1, 2, 3], count: 4 });
 }
 
 #[test]
 fn an_unknown_subscription_flag_is_declined_rather_than_treated_as_all() {
-    // Flag 3 is not in RegisterFlags. Treating it as "all pads" would give a
-    // malformed client every player's buttons.
+    // Flag 3 is not in RegisterFlags; "all pads" would hand a malformed client every player.
     let packet = client_packet(Kind::PadData, &[3, 0, 0, 0, 0, 0, 0, 0]);
     assert!(dsu::parse_request(&packet).is_none());
 }
@@ -139,10 +122,7 @@ fn an_unknown_subscription_flag_is_declined_rather_than_treated_as_all() {
 #[test]
 fn a_subscription_by_slot_ignores_the_mac_bytes_and_vice_versa() {
     let by_slot = client_packet(Kind::PadData, &[1, 2, 9, 9, 9, 9, 9, 9]);
-    assert_eq!(
-        dsu::parse_request(&by_slot).expect("parses").request,
-        Request::PadData(Subscribe::Slot(2))
-    );
+    assert_eq!(dsu::parse_request(&by_slot).expect("parses").request, Request::PadData(Subscribe::Slot(2)));
     let by_mac = client_packet(Kind::PadData, &[2, 9, 1, 2, 3, 4, 5, 6]);
     assert_eq!(
         dsu::parse_request(&by_mac).expect("parses").request,
@@ -191,106 +171,77 @@ fn every_field_of_a_pad_sample_sits_at_its_struct_offset() {
         right_x: 30,
         right_y: 40,
         analog,
-        touch: [
-            Touch {
-                down: true,
-                id: 5,
-                x: 0x1234,
-                y: 0x5678,
-            },
-            Touch::default(),
-        ],
-        motion: Motion {
-            accel: [0.5, -1.0, 0.25],
-            gyro: [10.0, -20.0, 30.0],
-            timestamp_us: 0xDEAD_BEEF_CAFE,
-        },
+        touch: [Touch { down: true, id: 5, x: 0x1234, y: 0x5678 }, Touch::default()],
+        motion: Motion { accel: [0.5, -1.0, 0.25], gyro: [10.0, -20.0, 30.0], timestamp_us: 0xDEAD_BEEF_CAFE },
     };
     let packet = dsu::pad_reply(0x11, &port, 0x0102_0304, &pad);
     let body = &packet[dsu::HEADER_BYTES..];
     assert_eq!(body.len(), layout::END);
 
-    assert_eq!(
-        &body[layout::INFO..layout::INFO + 12],
-        &[2, 2, 2, 2, 1, 2, 3, 4, 5, 6, 4, 1]
-    );
+    assert_eq!(&body[layout::INFO..layout::INFO + 12], &[2, 2, 2, 2, 1, 2, 3, 4, 5, 6, 4, 1]);
     assert_eq!(&body[layout::COUNTER..layout::COUNTER + 4], &[4, 3, 2, 1]);
     let buttons = u16::from_le_bytes([body[layout::BUTTONS], body[layout::BUTTONS + 1]]);
     assert_eq!(buttons, button::CROSS | button::UP | button::L2);
-    assert_eq!(body[layout::HOME], 1);
-    assert_eq!(body[layout::TOUCH_CLICK], 0);
-    assert_eq!(body[layout::LEFT_X], 10);
-    assert_eq!(body[layout::LEFT_Y], 20);
-    assert_eq!(body[layout::RIGHT_X], 30);
-    assert_eq!(body[layout::RIGHT_Y], 40);
-    assert_eq!(body[layout::ANALOG + analog::L2], 200);
-    assert_eq!(body[layout::ANALOG + analog::DPAD_UP], 255);
-    assert_eq!(
-        &body[layout::TOUCH..layout::TOUCH + 6],
-        &[1, 5, 0x34, 0x12, 0x78, 0x56]
-    );
+    for (at, want) in [
+        (layout::HOME, 1),
+        (layout::TOUCH_CLICK, 0),
+        (layout::LEFT_X, 10),
+        (layout::LEFT_Y, 20),
+        (layout::RIGHT_X, 30),
+        (layout::RIGHT_Y, 40),
+        (layout::ANALOG + analog::L2, 200),
+        (layout::ANALOG + analog::DPAD_UP, 255),
+    ] {
+        assert_eq!(body[at], want, "byte {at}");
+    }
+    assert_eq!(&body[layout::TOUCH..layout::TOUCH + 6], &[1, 5, 0x34, 0x12, 0x78, 0x56]);
     assert_eq!(&body[layout::TOUCH + 6..layout::TOUCH + 12], &[0; 6]);
-    assert_eq!(
-        u64::from_le_bytes(
-            body[layout::TIMESTAMP..layout::TIMESTAMP + 8]
-                .try_into()
-                .expect("8")
-        ),
-        0xDEAD_BEEF_CAFE
-    );
+    let timestamp = u64::from_le_bytes(body[layout::TIMESTAMP..layout::TIMESTAMP + 8].try_into().expect("8"));
+    assert_eq!(timestamp, 0xDEAD_BEEF_CAFE);
     let f = |at: usize| f32::from_le_bytes(body[at..at + 4].try_into().expect("4"));
-    assert_eq!(
-        [f(layout::ACCEL), f(layout::ACCEL + 4), f(layout::ACCEL + 8)],
-        [0.5, -1.0, 0.25]
-    );
-    assert_eq!(
-        [f(layout::GYRO), f(layout::GYRO + 4), f(layout::GYRO + 8)],
-        [10.0, -20.0, 30.0]
-    );
+    assert_eq!([f(layout::ACCEL), f(layout::ACCEL + 4), f(layout::ACCEL + 8)], [0.5, -1.0, 0.25]);
+    assert_eq!([f(layout::GYRO), f(layout::GYRO + 4), f(layout::GYRO + 8)], [10.0, -20.0, 30.0]);
 }
 
 #[test]
 fn the_analog_block_is_in_the_structs_order_not_the_bitfields() {
-    // AnalogButton runs dpad_left, dpad_down, dpad_right, dpad_up, square,
-    // cross, circle, triangle, r1, l1, r2, l2 -- not the bit order, and with
-    // r1 before l1 and r2 before l2. Writing a trigger into the d-pad's byte
-    // is silent.
+    // AnalogButton runs dpad_left..triangle, then r1, l1, r2, l2: r before l, both times.
     assert_eq!(dsu::ANALOG_ORDER[analog::DPAD_LEFT], "dpad_left");
     assert_eq!(dsu::ANALOG_ORDER[analog::CROSS], "cross");
     assert_eq!(dsu::ANALOG_ORDER[analog::R1], "r1");
     assert_eq!(dsu::ANALOG_ORDER[analog::L1], "l1");
     assert_eq!(dsu::ANALOG_ORDER[analog::R2], "r2");
     assert_eq!(dsu::ANALOG_ORDER[analog::L2], "l2");
-    let order: Vec<usize> = vec![analog::R1, analog::L1, analog::R2, analog::L2];
-    assert_eq!(order, vec![8, 9, 10, 11], "r before l, both times");
+    assert_eq!([analog::R1, analog::L1, analog::R2, analog::L2], [8, 9, 10, 11]);
 }
 
 #[test]
 fn the_button_bits_are_the_dualshocks() {
-    // From the union spelled out in udp_protocol.h. Share is bit 0 and Square
-    // is bit 15; Cross is 14, not 0 -- the order is the DS4 report's.
-    assert_eq!(button::SHARE, 1);
-    assert_eq!(button::L3, 2);
-    assert_eq!(button::R3, 4);
-    assert_eq!(button::OPTIONS, 8);
-    assert_eq!(button::UP, 16);
-    assert_eq!(button::RIGHT, 32);
-    assert_eq!(button::DOWN, 64);
-    assert_eq!(button::LEFT, 128);
-    assert_eq!(button::L2, 256);
-    assert_eq!(button::R2, 512);
-    assert_eq!(button::L1, 1024);
-    assert_eq!(button::R1, 2048);
-    assert_eq!(button::TRIANGLE, 4096);
-    assert_eq!(button::CIRCLE, 8192);
-    assert_eq!(button::CROSS, 16384);
-    assert_eq!(button::SQUARE, 32768);
+    // From the union in udp_protocol.h: Share is bit 0, Cross is 14, Square is 15.
+    for (name, bit, want) in [
+        ("SHARE", button::SHARE, 1),
+        ("L3", button::L3, 2),
+        ("R3", button::R3, 4),
+        ("OPTIONS", button::OPTIONS, 8),
+        ("UP", button::UP, 16),
+        ("RIGHT", button::RIGHT, 32),
+        ("DOWN", button::DOWN, 64),
+        ("LEFT", button::LEFT, 128),
+        ("L2", button::L2, 256),
+        ("R2", button::R2, 512),
+        ("L1", button::L1, 1024),
+        ("R1", button::R1, 2048),
+        ("TRIANGLE", button::TRIANGLE, 4096),
+        ("CIRCLE", button::CIRCLE, 8192),
+        ("CROSS", button::CROSS, 16384),
+        ("SQUARE", button::SQUARE, 32768),
+    ] {
+        assert_eq!(bit, want, "{name}");
+    }
 }
 
 #[test]
 fn a_server_reply_validates_under_its_own_parser_rules() {
-    // padmap's own packets carry a correct CRC. If they did not, a client that
-    // validates would drop every sample and show a server with no pads.
     for packet in [
         dsu::version_reply(1),
         dsu::port_reply(1, &Port::empty(0)),
