@@ -9,18 +9,11 @@ license.workspace = true
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
-# Python's str.isprintable is a Unicode-category test, and its result is a
-# profile's filename -- an approximation orphans files that already exist.
 unicode-general-category = "1"
-# The icon name table is an ordered list of regexes and has to keep matching
-# exactly what Python's `re` matched; hand-rolling it is how the two diverge.
 regex = "1"
 thiserror = "2"
 
 [dev-dependencies]
-# Property tests for the arithmetic: the invariants worth asserting here are
-# "monotonic across the whole range" and "never leaves the declared bounds",
-# which are statements about every input rather than about a chosen few.
 proptest = "1"
 
 [lints]

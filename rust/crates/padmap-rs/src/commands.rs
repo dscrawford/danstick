@@ -1,9 +1,4 @@
 //! The offline commands: everything that is not the daemon.
-//!
-//! Each of these runs, does one thing and exits. They share the daemon's
-//! libraries and none of its lifetime, so the rule that governs the daemon --
-//! never die, never drop a pad -- does not apply; here, failing loudly with a
-//! message a user can act on is the right answer.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
@@ -24,18 +19,7 @@ pub fn discover() -> Result<Vec<Pad>> {
     pad::discover(pad::Filter::default()).context("enumerating input devices")
 }
 
-/// What is plugged in, as JSON.
-///
-/// For a launcher: it runs once, needs one answer, has `jq`, and should not
-/// have to start a daemon to ask. The socket is the right answer for a
-/// front-end that is already connected; this is for the script that runs
-/// before the game does.
-///
-/// The vocabulary is deliberately the `controller` event's -- same keys, same
-/// meanings -- so a caller that reads both learns one shape rather than two.
-///
-/// Entries come out in the order a consumer enumerates pads, with assigned
-/// players first, and an unassigned controller has `"player": null`.
+/// List plugged-in controllers as JSON, without needing a daemon.
 pub fn cmd_list_json() -> Result<()> {
     use serde_json::json;
 
@@ -49,9 +33,6 @@ pub fn cmd_list_json() -> Result<()> {
 
     let mut entries = Vec::new();
     for pad in &pads {
-        // Whether padmap can bind this pad correctly with no capture at all,
-        // so a picker can say "this already works; remap only if you want to"
-        // rather than sending everybody through a wizard they do not need.
         let facts = publish::pad_facts(pad);
         let autobound = padmap_core::standard::is_standard(&facts.keys);
         let player = saved
@@ -69,9 +50,6 @@ pub fn cmd_list_json() -> Result<()> {
                 "vid": format!("{:04x}", identity.vendor),
                 "pid": format!("{:04x}", identity.product),
                 "bustype": identity.bustype,
-                // Where a consumer enumerating pads will find it, or null:
-                // a clone that is not running yet has no index, and guessing
-                // one would point a port at somebody else's controller.
                 "index": node
                     .as_ref()
                     .and_then(|node| {
@@ -91,16 +69,9 @@ pub fn cmd_list_json() -> Result<()> {
                 "signature": profiles::signature_of(pad),
                 "configured": publish::has_mapping(pad),
                 "autobound": autobound,
-                // False once `padmap hide` has cleared ID_INPUT_JOYSTICK.
                 "retroarch_visible": pad.retroarch_visible,
-                // The controller's own motion sensor, and **not** something
-                // padmap republishes: a clone carries the axes its source's
-                // joypad node declares, and a gyro is never among them. Open
-                // this to read motion; the clone will never carry it.
                 "motion": pad.motion.is_some(),
                 "motion_node": pad.motion.as_ref().map(|path| path.display().to_string()),
-                // What the user set for a misbehaving controller. `{}` is
-                // nothing; see `padmap tune`.
                 "tuning": serde_json::to_value(publish::tuning_for(pad)).unwrap_or(serde_json::json!({})),
             },
             "virtual": virtual_pad,
@@ -117,19 +88,8 @@ pub fn cmd_list_json() -> Result<()> {
     Ok(())
 }
 
-/// Resolve each controller's mapping for the game that is about to start.
-///
-/// The launcher's half: `padmap-play` hands over RetroArch's own command line,
-/// and this rewrites the autoconfig directory the launch override already
-/// points at with whichever of each controller's mappings applies -- this
-/// game, else this console, else the default.
-///
-/// Never fails a launch. The profiles the daemon wrote are already in place
-/// and are a working, if less specific, answer; a game that refuses to start
-/// because a mapping could not be narrowed is a far worse outcome than one
-/// played on the default mapping.
+/// Resolve each controller's mapping for the game about to start.
 pub fn cmd_play(argv: Vec<String>) -> Result<()> {
-    // `--` is how the wrapper separates its own arguments from RetroArch's.
     let argv: Vec<String> = argv.into_iter().skip_while(|arg| arg == "--").collect();
     let (core, rom) = launch::split_args(&argv, |path| Path::new(path).exists());
     let console = padmap_core::layout::for_core(&core);
@@ -144,9 +104,7 @@ pub fn cmd_play(argv: Vec<String>) -> Result<()> {
         launch::title_for(&rom)
     };
 
-    // Recorded even when nothing about this launch is recognised: the scope
-    // picker offers "...for the game you just played", and a launch with an
-    // unknown core is exactly the one whose controls felt wrong.
+    // Record even unknown launches; they're the ones whose controls felt wrong.
     if !key.is_empty() {
         let game = runtime::Game {
             console: console.to_owned(),
@@ -162,8 +120,6 @@ pub fn cmd_play(argv: Vec<String>) -> Result<()> {
     let pads = discover().unwrap_or_default();
     let (found, _missing) = assignments::resolve(&saved, &pads);
     if found.is_empty() {
-        // Not an error: running a game with no padmap assignment is what
-        // happens before anyone has been through the setup screen.
         eprintln!("padmap: no assigned controllers; leaving autoconfig alone");
         return Ok(());
     }
@@ -205,7 +161,6 @@ pub fn cmd_play(argv: Vec<String>) -> Result<()> {
     Ok(())
 }
 
-/// Assign player order by pressing and holding a button.
 pub fn cmd_setup(wanted: Option<u32>) -> Result<()> {
     use padmap_core::assign::HOLD_SECONDS;
     use padmap_daemon::session::Session;
@@ -283,7 +238,6 @@ pub fn cmd_setup(wanted: Option<u32>) -> Result<()> {
     Ok(())
 }
 
-/// Delete stored profiles so controllers are treated as new again.
 pub fn cmd_forget(all: bool) -> Result<()> {
     let directory = profiles::dir();
     let connected: BTreeSet<String> = discover()
@@ -310,9 +264,6 @@ pub fn cmd_forget(all: bool) -> Result<()> {
             targets.push(path.clone());
             continue;
         }
-        // isinstance-style care: a profile that is not an object, or is not
-        // JSON at all, must not stop the command that exists to clear up a
-        // broken profile store.
         let Ok(text) = std::fs::read_to_string(path) else {
             continue;
         };
@@ -350,11 +301,7 @@ pub fn cmd_forget(all: bool) -> Result<()> {
         }
     }
 
-    // Clear the 'already asked' record for every controller in scope, not
-    // only the ones that had a profile. A controller stuck in the second
-    // memory with nothing in the first -- never configured, so it reports as
-    // new, but already asked about, so the daemon stays silent -- is exactly
-    // what someone runs this to fix.
+    // Clear 'already asked' for all controllers to fix ones stuck as new but already prompted.
     let prompted_path = runtime::prompted_path();
     let prompted = runtime::read_prompted(&prompted_path);
     let kept: BTreeSet<String> = if all {
@@ -396,8 +343,6 @@ pub fn cmd_forget(all: bool) -> Result<()> {
         println!("Cleared {cleared} 'already asked' record(s), so setup is");
         println!("offered again without waiting for a reboot.");
     }
-    // The SDL database is the other half of "reset this controller", and
-    // padmap has no business deleting it silently -- but say where it is.
     let database = artefacts::sdl_database_path();
     if database.is_file() {
         println!("\nThe SDL mappings padmap wrote are separate and still present:");
@@ -407,7 +352,6 @@ pub fn cmd_forget(all: bool) -> Result<()> {
     Ok(())
 }
 
-/// Strip padmap values that `config_save_on_exit` persisted into retroarch.cfg.
 pub fn cmd_clean_config(config: Option<String>, dry_run: bool) -> Result<()> {
     let target = config
         .map(PathBuf::from)
@@ -416,9 +360,6 @@ pub fn cmd_clean_config(config: Option<String>, dry_run: bool) -> Result<()> {
         println!("No RetroArch config at {}", target.display());
         std::process::exit(1);
     }
-    // Bytes in, bytes out: the only lines this may alter are the ones it
-    // reports, and the backup has to be the file that was there rather than
-    // padmap's reading of it.
     let raw = std::fs::read(&target).with_context(|| format!("reading {}", target.display()))?;
     let (changes, body) = padmap_core::userconfig::clean_bytes(&raw);
     if changes.is_empty() {
@@ -438,9 +379,6 @@ pub fn cmd_clean_config(config: Option<String>, dry_run: bool) -> Result<()> {
         println!("\nDry run; nothing written. Re-run without --dry-run to apply.");
         return Ok(());
     }
-    // RetroArch's config is thousands of lines the user did not write by
-    // hand, but it is still theirs and this rewrite is not reconstructible
-    // from padmap state. Back it up before touching it.
     let backup = target.with_extension(format!(
         "{}.padmap-backup",
         target.extension().unwrap_or_default().to_string_lossy()
@@ -451,13 +389,7 @@ pub fn cmd_clean_config(config: Option<String>, dry_run: bool) -> Result<()> {
     Ok(())
 }
 
-/// Record which button is which, from a terminal.
-///
-/// The same capture state machine the daemon drives for a front-end. It
-/// exists because a front-end was once the only thing that could reach it,
-/// and padmap is a virtual gamepad before it is any one front-end's
-/// component -- a controller you cannot map is a virtual gamepad that emits
-/// the wrong buttons.
+/// Record which button is which from a terminal using the capture machine.
 pub fn cmd_map(layout_id: Option<String>, which: Option<String>, scope: String) -> Result<()> {
     use padmap_daemon::session::Session;
 
@@ -490,9 +422,7 @@ pub fn cmd_map(layout_id: Option<String>, which: Option<String>, scope: String) 
         }
     };
 
-    // A stored layout is the better default than the generic pad: it is what
-    // this controller was mapped as last time, and re-running the wizard is
-    // usually correcting a control rather than changing the console.
+    // Stored layout is the better default; usually correcting a control.
     let stored = publish::stored_layout(&pad);
     let chosen = layout_id.unwrap_or(stored);
     if chosen.is_empty() {
@@ -621,12 +551,7 @@ pub fn cmd_map(layout_id: Option<String>, which: Option<String>, scope: String) 
     Ok(())
 }
 
-/// Walk each controller through centre and range measurement.
-///
-/// Two phases, because measuring only the resting position is not enough: an
-/// adapter can declare a 0-255 axis while the stick physically reaches far
-/// less, and scaling against the declared range then leaves one direction
-/// with no usable travel.
+/// Measure stick centre and range; two phases to handle adapters with odd declarations.
 pub fn cmd_calibrate(force: bool) -> Result<()> {
     use padmap_daemon::calibration::{CalibrationRun, Phase, Step};
     use padmap_daemon::session::Session;
@@ -712,17 +637,9 @@ pub fn cmd_calibrate(force: bool) -> Result<()> {
     Ok(())
 }
 
-/// Guarantee a daemon is running *this* code, then return.
-///
-/// Meant to be run just before a front-end starts. A daemon keeps the code it
-/// was started with, so after a rebuild it goes on answering and goes on
-/// writing plausible files from the previous version -- which is not visible
-/// in anything it produces.
+/// Guarantee a daemon is running this version of the code.
 pub fn cmd_ensure_daemon(check: bool, timeout: f64) -> Result<()> {
-    // Rules are generated once from whatever was plugged in at the time, so a
-    // controller added later is not in them -- and then a consumer sees the
-    // physical adapter as well as the clone. Silent until someone wonders why
-    // there are extra controllers.
+    // Rules from this moment on; later controllers won't be in them.
     let pads = discover().unwrap_or_default();
     let hideable: Vec<padmap_core::hide::Hideable> = pads
         .iter()
@@ -767,11 +684,7 @@ pub fn cmd_ensure_daemon(check: bool, timeout: f64) -> Result<()> {
 
     let theirs = state["build"].as_str().unwrap_or("");
     let their_identity = state["identity"].as_str();
-    // Identity as well as build id: flipping PADMAP_PAD_IDENTITY changes what
-    // the clones advertise, and so the GUID every mapping is written under,
-    // but it changes no source -- a build-id comparison alone reports a stale
-    // daemon as current and leaves it publishing pads nothing has a mapping
-    // for.
+    // Check both build id and identity; identity changes where clones advertise themselves.
     if theirs == ours && their_identity.is_none_or(|mode| mode == our_identity.as_str()) {
         println!(
             "daemon is current (build {ours}, identity {})",
@@ -1045,17 +958,13 @@ fn udevadm(args: &[&str]) -> Result<(), String> {
     }
 }
 
-/// Republish the assigned pads, then start RetroArch bound to that order.
 pub fn cmd_launch(rest: Vec<String>, log: Option<Option<String>>) -> Result<i32> {
     let saved = assignments::load(&runtime::assignments_path())?;
     if saved.is_empty() {
         println!("No assignments. Run `padmap setup` first.");
         std::process::exit(1);
     }
-    // A running daemon already holds the controllers, and this republishes
-    // them itself; the two cannot coexist. Said plainly, because what came
-    // out before was `OSError: [Errno 16] Device or resource busy` from
-    // inside a library, which names neither the daemon nor the way out.
+    // A running daemon holds the controllers; this republishes them, so they can't coexist.
     let running = runtime::daemon_pids(None);
     if let Some(pid) = running.first() {
         println!("the padmap daemon (pid {pid}) already holds the controllers.");
@@ -1084,8 +993,6 @@ pub fn cmd_launch(rest: Vec<String>, log: Option<Option<String>>) -> Result<i32>
         command.arg("--verbose").arg("--log-file").arg(path);
         println!("logging RetroArch output to {}", path.display());
     }
-    // The --nodevice flags go before the caller's own, so a port can still be
-    // overridden by hand: RetroArch's parser takes the last one it sees.
     let args_file = runtime::dir().join("launch.args");
     if let Ok(text) = std::fs::read_to_string(&args_file) {
         for line in text.lines().filter(|line| !line.trim().is_empty()) {
@@ -1125,13 +1032,7 @@ fn pick_pad(pads: &[Pad], which: Option<&str>) -> Pad {
     }
 }
 
-/// Set a deadzone, a debounce, or an axis or button to ignore, for a
-/// controller that misbehaves.
-///
-/// Through the daemon when one is running, so a seated pad is rebuilt with
-/// the new setting at once; straight into the profile store otherwise, where
-/// the next `run` or `serve` reads it. Either way the setting lives with the
-/// physical controller and follows it to whatever seat it takes.
+/// Tune a misbehaving controller; settings live with the pad, not the seat.
 pub fn cmd_tune(
     which: Option<String>,
     request: padmap_core::tuning::Request,
@@ -1171,8 +1072,7 @@ pub fn cmd_tune(
                 .unwrap_or("no reason given")
         ),
         None => {
-            // No daemon. Read the axes ourselves and write the profile; the
-            // next republish picks it up.
+            // No daemon; read axes and write the profile; next republish picks it up.
             let declared: Vec<u16> = clone::open_source(&pad, false)
                 .map(|source| source.declared_axes().keys().copied().collect())
                 .unwrap_or_default();

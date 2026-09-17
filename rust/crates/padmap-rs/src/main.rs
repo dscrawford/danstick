@@ -1,32 +1,8 @@
 //! padmap's republisher, in Rust.
 //!
-//!     padmap list          what is plugged in (--json for a launcher)
-//!     padmap setup         assign player order by pressing a button
-//!     padmap map           record which button is which
-//!     padmap calibrate     measure where each controller's sticks rest
-//!     padmap tune          set a deadzone, a debounce, or what to ignore
-//!     padmap forget        delete stored controller profiles
-//!     padmap run           republish the assigned pads and keep them alive
-//!     padmap serve         the same, as a daemon a client drives
-//!     padmap launch        republish, then start RetroArch
-//!     padmap play          resolve mappings for the game about to run
-//!     padmap hide          udev rules that hide the physical pads
-//!     padmap ensure-daemon start the daemon, or restart a stale one
-//!     padmap clean-config  strip padmap values out of retroarch.cfg
-//!     padmap emit          write the emulator config files, from JSON
-//!                          (--cemu-dir, --dolphin-dir, --ares-settings,
-//!                          --ryujinx-config, --env-file to say where)
-//!     padmap exec          run a program with padmap's mappings set
-//!     padmap sdl-mapping <guid>
-//!                          what SDL's built-in database says about a GUID
-//!
 //! Deliberately not the whole of `padmap`. The daemon's socket protocol, the
 //! assignment session, the mapping wizard and every offline command stay in
 //! Python for now; this is the forwarding path and the profile store it reads.
-//!
-//! It reads and writes the same `assignments.json` the Python does, so the two
-//! can be swapped for each other while the port is in progress -- which is also
-//! what makes `tools/latency.py --command` an A/B rather than an anecdote.
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -132,12 +108,7 @@ fn main() -> Result<()> {
     }
 }
 
-/// The value after a flag, or `None` if the flag was not given.
-///
-/// A flag that *is* given and has no value is refused rather than ignored:
-/// `--layout` with the value forgotten would otherwise read as "no layout"
-/// and walk the generic pad, and `--config` as "the default config", which is
-/// the user's own retroarch.cfg.
+/// Refuse a flag given without a value, so `--layout` forgotten doesn't silently walk the generic pad.
 fn flag_value(args: &[String], names: &[&str]) -> Option<String> {
     let at = args.iter().position(|arg| names.contains(&arg.as_str()))?;
     match args.get(at + 1) {
@@ -149,7 +120,6 @@ fn flag_value(args: &[String], names: &[&str]) -> Option<String> {
     }
 }
 
-/// A number, or a refusal naming the flag -- not a silent zero.
 fn parse_number<T: std::str::FromStr>(value: &str, flag: &str) -> T {
     match value.parse() {
         Ok(parsed) => parsed,
@@ -171,13 +141,7 @@ fn usage() {
     );
 }
 
-/// The daemon.
-///
-/// SIGTERM has to release the grabs: without a handler an open session keeps
-/// EVIOCGRAB on every pad as the process dies, leaving the machine with no
-/// working controllers. Ask the loop to exit instead, so the normal teardown
-/// runs -- and install the handlers *after* restore, so a restart interrupted
-/// mid-restore still tears down through the same path.
+/// SIGTERM must release grabs lest the machine be left with no working controllers.
 fn cmd_serve() -> Result<()> {
     let mut server = padmap_daemon::server::Server::new().context("preparing the daemon")?;
     server.start().context("starting the daemon")?;
@@ -190,12 +154,7 @@ fn cmd_serve() -> Result<()> {
     Ok(())
 }
 
-/// Print SDL's own mapping line for a GUID, or nothing.
-///
-/// A process of its own on purpose: `SDL_Init` starts threads and enumerates
-/// every joystick, and the daemon that asks holds those same devices grabbed.
-/// See `padmap_input::sdlprobe`. Exit 0 with empty output is "SDL has never
-/// heard of it", which is the ordinary answer and not a failure.
+/// Print SDL's mapping line for a GUID, or nothing if unknown.
 fn cmd_sdl_mapping(guid: Option<String>) -> Result<()> {
     let Some(guid) = guid else {
         eprintln!("usage: padmap-rs sdl-mapping <guid>");
@@ -209,16 +168,7 @@ fn cmd_sdl_mapping(guid: Option<String>) -> Result<()> {
     Ok(())
 }
 
-/// Write the emulator config files for the pads described on stdin.
-///
-/// The Python daemon is still the one that runs, and it calls this after every
-/// republish. Stdin rather than a state file so the caller's view is the one
-/// that is written -- reading `assignments.json` back would answer for whatever
-/// is on disk now, which during a hotplug is not what the caller just
-/// published.
-///
-/// Always exits 0 on a well-formed request. An emulator that is not installed
-/// is a skip, and a daemon must not learn to treat that as a failure.
+/// Write emulator config files from stdin; always exit 0 on well-formed input.
 fn cmd_emit(args: &[String]) -> Result<()> {
     let mut body = String::new();
     std::io::Read::read_to_string(&mut std::io::stdin(), &mut body)
@@ -248,12 +198,7 @@ fn cmd_emit(args: &[String]) -> Result<()> {
     Ok(())
 }
 
-/// Run a program with padmap's mappings already in its environment.
-///
-/// For Cemu and anything else that reads no controller database: the pads are
-/// simply absent from its device list until SDL is told about them, and SDL
-/// reads its database once at startup. `padmap-rs exec -- Cemu` is the whole
-/// of the fix, and needs nothing from the program being run.
+/// Run a program with padmap's mappings in its environment.
 fn cmd_exec(args: Vec<String>) -> Result<()> {
     let args: Vec<String> = args.into_iter().skip_while(|arg| arg == "--").collect();
     let Some((program, rest)) = args.split_first() else {
@@ -292,15 +237,10 @@ fn cmd_list() -> Result<()> {
     let pads = pad::discover(pad::Filter::default()).context("enumerating input devices")?;
     if pads.is_empty() {
         println!("No joypads found.");
-        // The case that matters most: a controller is plugged in and the
-        // kernel is not treating it as one, so "none found" is true and
-        // useless.
         report_dormant();
         return Ok(());
     }
 
-    // Indices count only the pads RetroArch can see, so a hidden pad gets no
-    // index rather than silently shifting the ones below it.
     println!(
         "{} pad(s), in the order RetroArch would enumerate them:\n",
         pads.len()
@@ -349,16 +289,8 @@ fn cmd_list() -> Result<()> {
     Ok(())
 }
 
-/// Say when a controller is present but the kernel is not driving it as one.
-///
-/// "No joypads found" is true and useless when the controller is sitting there
-/// pretending to be a keyboard. Nothing else on the machine will say so: the
-/// device enumerates perfectly and every layer below this one is behaving
-/// correctly.
+/// Report dormant controllers the kernel isn't driving as joypads.
 fn report_dormant() {
-    // padmap drives everything it has a protocol for (see `triton.rs`), so
-    // what is left here is a model with no driver, or a receiver with nothing
-    // paired into it. Neither needs more than a line.
     let driven: Vec<PathBuf> = triton::slots(true)
         .into_iter()
         .map(|pad| pad.path)
@@ -388,12 +320,7 @@ fn report_dormant() {
     }
 }
 
-/// Print the udev rules that hide the physical pads.
-///
-/// Printed rather than installed: writing them needs root, and a command that
-/// silently asks for a password on a machine plugged into a television is
-/// worse than one that shows you what to write. The Python's `padmap hide`
-/// installs them when it is already root; this does not yet.
+/// Print udev rules to hide physical pads; install if running as root.
 fn cmd_hide(args: &[String]) -> Result<()> {
     let pads = pad::discover(pad::Filter::default()).context("enumerating input devices")?;
     let hideable: Vec<hide::Hideable> = pads
@@ -410,10 +337,7 @@ fn cmd_hide(args: &[String]) -> Result<()> {
         return Ok(());
     }
     let rules = hide::generate_rules(&targets);
-    // Running as root is taken as the instruction to install: there is no
-    // other reason to run this with privileges, and printing a script for
-    // someone who already typed `sudo` to paste back into the same shell is a
-    // step that exists only to be got wrong.
+    // Running as root means install; don't ask to paste it back.
     let root = rustix::process::geteuid().is_root();
     if args.iter().any(|arg| arg == "--print") || !root {
         if args.iter().any(|arg| arg == "--install") && !root {
@@ -478,11 +402,6 @@ fn cmd_run() -> Result<()> {
 
     let mut vpads = Vec::new();
     for (player, pad) in found {
-        // The same store the Python writes, read by the same filename. A pad
-        // with no profile is forwarded verbatim, which is correct for a
-        // controller that centres itself; one with a measured resting position
-        // is corrected in transit, which is the only place every consumer
-        // benefits at once.
         let axes: BTreeMap<u16, padmap_core::calibration::AxisCalibration> =
             profiles::load(pad, None)
                 .map(|stored| stored.axes)
@@ -503,13 +422,8 @@ fn cmd_run() -> Result<()> {
         anyhow::bail!("no pad could be republished");
     }
 
-    // The two artefacts other programs read. Written before the loop starts,
-    // so a consumer launched immediately afterwards finds them already there:
-    // SDL reads its database once, at startup, and a mapping that lands later
-    // does nothing until that program is restarted.
+    // Write before the loop so a consumer launched immediately finds them there.
     if let Err(error) = publish_artefacts(&vpads) {
-        // Not fatal. A pad that is republished but unmapped still works as a
-        // pad; one that is not republished at all does not exist.
         warn!("could not write the mapping files: {error}");
     }
 
@@ -530,10 +444,7 @@ fn cmd_run() -> Result<()> {
         }
     }
 
-    // `run` serves motion too. It is the mode a game is launched under, which
-    // is exactly when an emulator asks -- a gyro that works under the daemon
-    // and not under `padmap run` would be the kind of difference nobody finds
-    // until they are holding a controller.
+    // Run serves motion too, same mode a game is launched under.
     let mut motion = match padmap_daemon::dsu::Motion::bind(padmap_core::dsu::PORT) {
         Ok(motion) => {
             reactor
@@ -593,13 +504,9 @@ fn cmd_run() -> Result<()> {
                     if expiries > 1 {
                         late_ticks += expiries - 1;
                     }
-                    // A debounced release is delivered from here, so it is at
-                    // most one tick late on top of its window.
                     republisher.flush_debounce();
                     serve_motion(motion.as_mut(), &republisher, false);
                 }
-                // `run` has no socket and no session; those kinds are the
-                // daemon's, and are never registered here.
                 reactor::Watched::Listener
                 | reactor::Watched::Client(_)
                 | reactor::Watched::Session(_)
@@ -623,12 +530,7 @@ fn cmd_run() -> Result<()> {
     Ok(())
 }
 
-/// Write the SDL database and the RetroArch autoconfig for these pads.
-///
-/// Both come from the stored profile: a capture the user performed, resolved
-/// under no console context, because at republish time nothing knows what is
-/// about to run. A launcher regenerates the autoconfig with the real context
-/// immediately before starting a game.
+/// Write SDL database and RetroArch autoconfig from stored profiles.
 fn publish_artefacts(vpads: &[padmap_input::VirtualPad]) -> Result<()> {
     let mut sdl_lines = BTreeMap::new();
     let mut profiles_out = BTreeMap::new();
@@ -651,10 +553,7 @@ fn publish_artefacts(vpads: &[padmap_input::VirtualPad]) -> Result<()> {
             .unwrap_or_default();
         let bindings = mapping.resolved();
 
-        // A pad nobody has mapped still has to be usable, or the user cannot
-        // reach whatever would let them map it. The face buttons in the guess
-        // really are a guess; the d-pad and sticks come from the pad's own
-        // capabilities and are not.
+        // Unmapped pads must still be usable; d-pad and sticks come from capabilities.
         let line = if bindings.is_empty() {
             let (keys, axis_codes) = vpad.source.capabilities();
             let spans = vpad.source.axis_spans();
@@ -667,9 +566,6 @@ fn publish_artefacts(vpads: &[padmap_input::VirtualPad]) -> Result<()> {
         } else {
             emit::sdl_line_for(vpad.player, identity, &bindings, None)
         };
-        // Cemu, ares and Ryujinx each need something the SDL database cannot
-        // give them: see `emulators`. They take the *clone's* capabilities,
-        // not the controller's, because SDL opens the clone.
         let (keys, axes) = vpad.source.capabilities();
         published.push(emulators::Published {
             player: vpad.player,
@@ -695,8 +591,6 @@ fn publish_artefacts(vpads: &[padmap_input::VirtualPad]) -> Result<()> {
         );
     }
 
-    // A slot with no identity of its own falls back to padmap's, which is
-    // only ever asked about players that are not attached right now.
     let fallback = Identity {
         bustype: 0x06,
         vendor: clone::PADMAP_VID,
@@ -731,11 +625,7 @@ fn publish_artefacts(vpads: &[padmap_input::VirtualPad]) -> Result<()> {
     Ok(())
 }
 
-/// Answer the socket if asked, then send whatever changed.
-///
-/// `asked` says a datagram is waiting. Reading it first matters: a consumer's
-/// very first subscription should be answered with the sample that prompted
-/// this wake-up rather than with the next one.
+/// Answer socket if asked, then send what changed; read requests first.
 fn serve_motion(
     motion: Option<&mut padmap_daemon::dsu::Motion>,
     republisher: &republish::Republisher,
@@ -764,15 +654,12 @@ fn drop_pad(reactor: &reactor::Reactor, republisher: &republish::Republisher, in
     let Some(vpad) = republisher.pads.get(index) else {
         return;
     };
-    // A dead node reports readable forever; left registered, the loop spins on
-    // it for as long as the daemon runs. That is how the Python filled a 3.1GB
-    // tmpfs with one warning per wakeup.
+    // Dead nodes report readable forever; unwatch to prevent the loop spinning.
     let _ = reactor.unwatch(vpad.source.as_fd());
 }
 
 fn install_signal_handlers(stop: &Arc<AtomicBool>) -> Result<()> {
-    // SIGTERM has to release the grabs. Without it the pads stay held by a
-    // process the user no longer thinks exists, and the only cure is a replug.
+    // SIGTERM must release grabs lest pads be held after the process exits.
     for signal in [signal_hook::consts::SIGINT, signal_hook::consts::SIGTERM] {
         signal_hook::flag::register(signal, Arc::clone(stop))
             .with_context(|| format!("installing a handler for signal {signal}"))?;

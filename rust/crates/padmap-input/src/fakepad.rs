@@ -1,20 +1,4 @@
 //! Real controllers, written down and executable.
-//!
-//! Everything padmap has been caught out by is some controller behaving
-//! unlike the one in front of the person writing the code. A GameCube
-//! adapter's triggers are not on the codes their names suggest, rest at 81%
-//! deflected and never return to centre; an Xbox Series pad declares a
-//! trigger four times wider than a 360's from the same driver switch; a
-//! hid-generic pad sends a scancode before every key and xpad does not.
-//!
-//! These are those surprises as fixtures. Each carries a `source` citing
-//! where its numbers came from -- a fixture nobody can check is a guess with
-//! a struct around it.
-//!
-//! The two controllers padmap drives over hidraw are not here: a Steam
-//! Controller and a Switch Pro have no evdev node to build, and their report
-//! bytes are already fixtures in `tests/triton_protocol.rs` and
-//! `tests/nintendo_differential.rs`.
 
 /// One absolute axis, exactly as its driver declares it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -60,8 +44,7 @@ impl Axis {
 /// One real controller model, as the kernel publishes it.
 #[derive(Debug, Clone)]
 pub struct Fixture {
-    /// Exactly the string the driver publishes. padmap matches profiles on
-    /// it, so "close enough" is a different controller.
+    /// The exact string the driver publishes (profiles match exactly).
     pub name: &'static str,
     pub vid: u16,
     pub pid: u16,
@@ -72,13 +55,7 @@ pub struct Fixture {
     pub buttons: &'static [(&'static str, u16)],
     /// Vocabulary name -> axis.
     pub axes: &'static [(&'static str, Axis)],
-    /// Does its driver emit `MSC_SCAN` before each key?
-    ///
-    /// hid-generic does -- `hid-input.c:1787` sends `EV_MSC, MSC_SCAN,
-    /// usage->hid` ahead of the key -- and xpad, which is not a hid-input
-    /// driver, does not. padmap sees both, so both are reproduced: a capture
-    /// that mistook the scancode for the press would work on an Xbox pad and
-    /// fail on everything driven by hid-generic.
+    /// Whether the driver emits `MSC_SCAN` before each key (hid-generic does, xpad doesn't).
     pub emits_scan: bool,
     /// Vocabulary name -> the HID usage its driver puts in `MSC_SCAN`.
     pub scancodes: &'static [(&'static str, u32)],
@@ -86,7 +63,6 @@ pub struct Fixture {
     pub dpad_is_hat: bool,
 }
 
-// evdev codes, spelled out so this module needs no evdev import to be read.
 const BTN_SOUTH: u16 = 0x130;
 const BTN_EAST: u16 = 0x131;
 const BTN_NORTH: u16 = 0x133;
@@ -98,8 +74,7 @@ const BTN_START: u16 = 0x13B;
 const BTN_MODE: u16 = 0x13C;
 const BTN_THUMBL: u16 = 0x13D;
 const BTN_THUMBR: u16 = 0x13E;
-/// `KEY_RECORD`. A key code, not a `BTN_` -- worth testing in itself, since
-/// padmap must not assume every control on a joypad is a `BTN_`.
+/// `KEY_RECORD`: a key code, not a BTN_. Padmap must not assume BTN_.
 const KEY_RECORD: u16 = 167;
 
 const ABS_X: u16 = 0x00;
@@ -113,11 +88,7 @@ pub const ABS_HAT0Y: u16 = 0x11;
 
 const BUS_USB: u16 = 0x03;
 
-/// The pad every other pad is compared against.
-///
-/// Worth having precisely because it is unremarkable: sticks centred at zero,
-/// triggers starting at zero, a hat for the d-pad. Anything that only works
-/// here is assuming this shape.
+/// The baseline pad for comparisons: sticks at zero, triggers at zero, hat for d-pad.
 pub const XBOX_360: Fixture = Fixture {
     name: "Microsoft X-Box 360 pad",
     vid: 0x045E,
@@ -145,20 +116,14 @@ pub const XBOX_360: Fixture = Fixture {
         ("ly", Axis::xpad_stick(ABS_Y)),
         ("rx", Axis::xpad_stick(ABS_RX)),
         ("ry", Axis::xpad_stick(ABS_RY)),
-        // XTYPE_XBOX360: 0..255. The Series X is 0..1023 from the same
-        // switch, which is the only difference a mapping would notice.
+        // 360 triggers are 0..255; Series X is 0..1023 (the only mapping difference).
         ("lt", Axis::new(ABS_Z, 0, 255, 0)),
         ("rt", Axis::new(ABS_RZ, 0, 255, 0)),
     ],
     dpad_is_hat: true,
 };
 
-/// Same driver, wider triggers, one extra button.
-///
-/// Here to catch anything that hard-codes 0..255 for a trigger because the
-/// 360 does. `xpad_set_up_abs` picks 0..1023 for every XTYPE_XBOXONE pad, and
-/// a binding captured on one and applied to the other is wrong by a factor of
-/// four with nothing to say so.
+/// Same driver as 360, but triggers are 0..1023 instead of 0..255 (wrong by 4x if confused).
 pub const XBOX_SERIES_X: Fixture = Fixture {
     name: "Microsoft Xbox Series S|X Controller",
     vid: 0x045E,
@@ -194,22 +159,7 @@ pub const XBOX_SERIES_X: Fixture = Fixture {
     dpad_is_hat: true,
 };
 
-/// The adapter that broke three things at once.
-///
-/// Everything awkward about it is real and measured, and is why it is here
-/// rather than a second Xbox pad:
-///
-/// * **the triggers are ABS_RX and ABS_RY**, not the ABS_Z/ABS_RZ the names
-///   would suggest. Code that assumed which codes a trigger lives on found
-///   nothing at all.
-/// * **they rest at 24 and 25 of 0-255** -- 81% deflected, untouched. A
-///   capture recorded the direction the axis was moving away from, a resting
-///   report answered a prompt nothing had touched, and re-arming waited for a
-///   return to centre that a trigger never makes -- so after one press the
-///   trigger was dead and every later press was dropped in silence.
-/// * **no axis rests at zero**, because 0..255 has no such value once the
-///   midpoint is 127.5. Half-axis binds cannot work both ways on it.
-/// * it is driven by hid-generic, so it **emits MSC_SCAN** before every key.
+/// Triggers on ABS_RX/RY (not ABS_Z/RZ), rest at 24-25 (81% deflected), no zero rest, emits MSC_SCAN.
 pub const MAYFLASH_GAMECUBE: Fixture = Fixture {
     name: "mayflash MAYFLASH GameCube Controller Adapter",
     vid: 0x0079,
@@ -244,11 +194,9 @@ pub const MAYFLASH_GAMECUBE: Fixture = Fixture {
     axes: &[
         ("lx", Axis::new(ABS_X, 0, 255, 128)),
         ("ly", Axis::new(ABS_Y, 0, 255, 128)),
-        // The C-stick. padmap publishes its Y on ABS_Z, which RetroArch then
-        // treats as an analogue trigger.
+        // C-stick Y is ABS_Z (RetroArch reads it as trigger).
         ("cx", Axis::new(ABS_RZ, 0, 255, 128)),
         ("cy", Axis::new(ABS_Z, 0, 255, 131)),
-        // See the note above for why these axes and these rest values.
         ("lt", Axis::new(ABS_RX, 0, 255, 24)),
         ("rt", Axis::new(ABS_RY, 0, 255, 25)),
     ],
@@ -317,10 +265,7 @@ impl Fixture {
         codes
     }
 
-    /// Four held directions as a hat.
-    ///
-    /// Opposites cancel: the hardware cannot report both, and a fixture that
-    /// did would be testing padmap against a pad that does not exist.
+    /// Four held directions as a hat (opposites cancel: hardware can't report both).
     pub fn hat_from(held: &[&str]) -> (i32, i32) {
         let has = |name: &str| held.contains(&name);
         (
@@ -345,8 +290,7 @@ mod tests {
                 fixture.name
             );
             assert!(fixture.vid != 0 && fixture.pid != 0, "{}", fixture.name);
-            // No control answers to two things, and every scancode names a
-            // button this pad actually has.
+            // No duplicate controls; every scancode names a real button.
             let names: BTreeSet<&str> = fixture.controls().into_iter().collect();
             assert_eq!(names.len(), fixture.controls().len(), "{}", fixture.name);
             for (name, _) in fixture.scancodes {
@@ -363,7 +307,7 @@ mod tests {
                     fixture.name
                 );
             }
-            // Every axis declares travel, and rests inside it.
+            // Axes must have range and rest within that range.
             for (name, axis) in fixture.axes {
                 assert!(
                     axis.maximum > axis.minimum,
@@ -381,13 +325,11 @@ mod tests {
 
     #[test]
     fn the_gamecube_triggers_are_where_they_actually_are() {
-        // The whole reason this fixture exists: not ABS_Z/ABS_RZ, and not
-        // resting anywhere near centre.
+        // Triggers on wrong axes and wrong rest values, unlike other sticks.
         let lt = MAYFLASH_GAMECUBE.axis("lt").expect("lt");
         let rt = MAYFLASH_GAMECUBE.axis("rt").expect("rt");
         assert_eq!((lt.code, lt.rest), (ABS_RX, 24));
         assert_eq!((rt.code, rt.rest), (ABS_RY, 25));
-        // And a stick that does centre, so the difference is the point.
         assert_eq!(MAYFLASH_GAMECUBE.axis("lx").expect("lx").rest, 128);
     }
 
@@ -398,18 +340,15 @@ mod tests {
         assert_eq!(three_sixty.maximum, 255);
         assert_eq!(series.maximum, 1023, "XTYPE_XBOXONE is four times wider");
         assert_eq!(XBOX_360.axis("lx"), XBOX_SERIES_X.axis("lx"));
-        // The Series pad's extra control is a KEY_, not a BTN_.
-        assert_eq!(XBOX_SERIES_X.button("capture"), Some(KEY_RECORD));
+        assert_eq!(XBOX_SERIES_X.button("capture"), Some(KEY_RECORD)); // KEY_, not BTN_
         assert!(XBOX_360.button("capture").is_none());
     }
 
     #[test]
     fn only_the_hid_generic_pad_sends_a_scancode() {
-        // Checked when the crate builds, not when the test runs: these are
-        // facts about constants, and stating them in a const block puts the
-        // failure at the edit that broke them.
-        const { assert!(MAYFLASH_GAMECUBE.emits_scan) }; // hid-generic does
-        const { assert!(!XBOX_360.emits_scan) }; // xpad is not a hid-input driver
+        // Const blocks fail at edit time if values are wrong.
+        const { assert!(MAYFLASH_GAMECUBE.emits_scan) };
+        const { assert!(!XBOX_360.emits_scan) };
         const { assert!(!XBOX_SERIES_X.emits_scan) };
     }
 
@@ -429,7 +368,7 @@ mod tests {
                 let codes = fixture.abs_codes();
                 assert!(codes.contains(&ABS_HAT0X), "{}", fixture.name);
                 assert!(codes.contains(&ABS_HAT0Y), "{}", fixture.name);
-                // ...and answers to the four directions by name.
+                // Pad must answer to all four directions.
                 for direction in DPAD {
                     assert!(
                         fixture.controls().contains(&direction),

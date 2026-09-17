@@ -8,19 +8,9 @@ license.workspace = true
 
 [dependencies]
 padmap-core = { path = "../padmap-core" }
-# Chosen over input-linux and the abandoned `uinput` crate because it is the
-# only one that can build a virtual device with a mirrored *bustype* -- which
-# is the field SDL's database is keyed on, so a clone on BUS_VIRTUAL matches
-# no entry written for a USB pad no matter what ids it carries -- and the only
-# one that can proxy force feedback back to the physical device.
 evdev = "0.13"
-# The whole point: read udev's database directly instead of spawning
-# `udevadm info` once per input device. That subprocess storm is 257-294ms on
-# this machine, on the thread that forwards controller events, and it is the
-# measured cause of the tail in docs/LATENCY.md.
+# udev avoids spawning udevadm (257-294ms latency per event on this machine).
 udev = "0.9"
-# epoll and timerfd without a runtime. OwnedFd/BorrowedFd native, so the
-# descriptors evdev already owns go straight in.
 rustix = { version = "1", features = ["event", "time", "process", "std", "fs", "pty", "termios"] }
 serde = { workspace = true }
 serde_json = { workspace = true }

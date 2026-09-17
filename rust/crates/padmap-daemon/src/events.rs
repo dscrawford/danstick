@@ -1,8 +1,5 @@
 //! What the daemon says to a client, as JSON.
-//!
-//! One place, so an event's shape is written once. The Python built these
-//! inline where they were sent, and the same event was assembled in three
-//! places with three chances to disagree.
+//! One place to avoid multiple out-of-sync definitions.
 
 use std::collections::BTreeMap;
 
@@ -10,8 +7,6 @@ use padmap_core::capture::{Chooser, MappingRun};
 use padmap_core::state::{PlayerState, StateEvent};
 use serde_json::{json, Value};
 
-/// `round(x, 3)`: a fraction is for a progress bar and three places is plenty
-/// on a socket that carries a few of these a second.
 pub fn round3(value: f64) -> f64 {
     format!("{value:.3}").parse().unwrap_or(value)
 }
@@ -43,8 +38,6 @@ pub fn confirm(fraction: f64) -> Value {
     json!({ "event": "confirm", "frac": round3(fraction) })
 }
 
-/// `configured` lets a front-end offer calibration the first time it sees a
-/// controller, and stay quiet on every later run.
 pub fn claim(player: u32, name: &str, node: &str, icon: &str, configured: bool) -> Value {
     json!({
         "event": "claim",
@@ -86,9 +79,6 @@ fn layout_json(layout_id: &str) -> Value {
     serde_json::to_value(padmap_core::layout::get(layout_id)).unwrap_or(Value::Null)
 }
 
-/// A picker in flight: console, or what a mapping is for. One mechanism, two
-/// questions. Kept as `layout_choice` although it carries both: the event
-/// name is part of every client, and renaming it would buy nothing.
 pub fn layout_choice(chooser: &Chooser) -> Value {
     json!({
         "event": "layout_choice",
@@ -98,9 +88,6 @@ pub fn layout_choice(chooser: &Chooser) -> Value {
         "title": chooser.title,
         "index": chooser.index(),
         "chosen": chooser.chosen(),
-        // Built from the same options the daemon will act on, so the picture
-        // the user chose from and what the daemon does next cannot disagree
-        // about which entry index 2 is.
         "choices": chooser.options.iter().map(|option| json!({
             "id": option.id,
             "label": option.label,
@@ -110,7 +97,6 @@ pub fn layout_choice(chooser: &Chooser) -> Value {
     })
 }
 
-/// The picker has closed without a wizard following it.
 pub fn layout_choice_ended(chooser: Option<&Chooser>) -> Value {
     json!({
         "event": "layout_choice",
@@ -124,7 +110,6 @@ pub fn layout_choice_ended(chooser: Option<&Chooser>) -> Value {
     })
 }
 
-/// What a front-end needs to draw the current wizard step.
 pub fn mapping(run: &MappingRun) -> Value {
     let control = run.current();
     let label = control
@@ -150,15 +135,11 @@ pub fn mapping(run: &MappingRun) -> Value {
         "control": control.map(|c| c.to_string()).unwrap_or_default(),
         "label": label,
         "done": run.finished(),
-        // The control holding the input the user just pressed, or "". Carried
-        // so a theme can say "already used for R" rather than leaving a press
-        // that does nothing look like a dead button.
         "conflict": run.conflict().map(|c| c.to_string()).unwrap_or_default(),
         "captured": captured,
     })
 }
 
-/// The wizard has closed, keeping or discarding what it captured.
 pub fn mapping_done(run: Option<&MappingRun>, stored: bool) -> Value {
     json!({
         "event": "mapping",
@@ -182,15 +163,10 @@ pub fn accepted(players: Vec<PlayerState>, launch_config: &str) -> Value {
     })
 }
 
-/// SDL database lines padmap has just written. SDL reads its database once,
-/// when a program starts, so a mapping written mid-session does nothing until
-/// that program is relaunched; a client feeds these to
-/// `SDL_GameControllerAddMapping` instead.
 pub fn sdl_mapping(lines: &[String]) -> Value {
     json!({ "event": "sdl_mapping", "lines": lines })
 }
 
-/// What a controller is now tuned to, after a `tune` command.
 pub fn tuned(player: u32, signature: &str, tuning: &padmap_core::tuning::Tuning) -> Value {
     json!({
         "event": "tuned",

@@ -1,16 +1,5 @@
-//! Per-device profiles: what was measured and captured for one controller.
-//!
-//! Everything device-specific padmap needs -- which icon to show, where a stick
-//! actually rests, which button is which -- is learned once and stored under
-//! the user's data directory. Nothing here ships a table of known vendor ids,
-//! and the hardware is why: vendor 0x0079 is resold in a great many unrelated
-//! adapters, so `0079:1879` is an N64 adapter on one machine and a generic pad
-//! on the next; and a worn N64 stick rests at 174 on a 0-255 axis, which is a
-//! property of one physical controller rather than of a product line.
-//!
-//! The on-disk shape is the Python's, exactly, including the two keys it writes
-//! only for the benefit of a rollback. A profile store is user data that
-//! outlives any one version.
+//! Per-device profiles: measured and stored per-controller calibration, icons, and button mappings.
+//! Vendor IDs alone cannot identify hardware (0x0079 resold in many unrelated adapters) or wear (N64 stick centers vary).
 
 use std::collections::BTreeMap;
 
@@ -23,40 +12,20 @@ use crate::scope;
 use crate::tuning::Tuning;
 
 /// One capture: where every control of one layout lives on this pad.
-///
-/// The unit a scope points at. The layout id is carried *inside* the mapping
-/// rather than beside it, because a binding set is only interpretable together
-/// with the layout it was captured under -- the whole reason a GameCube pad
-/// needs a separate N64 mapping is that the N64 layout asks for different
-/// controls and emits different RetroArch keys.
-///
-/// The id is stored rather than the resolved keys, so correcting a console's
-/// key table fixes every profile already captured under it. A wrong key is a
-/// button that silently does nothing, which is not something a user will think
-/// to re-capture for.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Mapping {
     /// Canonical control name -> where it lives on this pad.
-    ///
-    /// Keyed by `String` and not by `Control`, deliberately: this is read off
-    /// disk, and a name padmap no longer knows must cost that binding rather
-    /// than the whole profile.
     #[serde(default)]
     pub buttons: BTreeMap<String, Binding>,
     #[serde(default)]
     pub layout: String,
-    /// What to call this mapping in a list. Empty means "describe it from the
-    /// scope", which is what almost every one of them is.
+    /// Empty means describe it from the scope.
     #[serde(default)]
     pub name: String,
 }
 
 impl Mapping {
     /// The bindings, as the enum the rest of the crate uses.
-    ///
-    /// Names that are not canonical controls are dropped here rather than at
-    /// load, so a profile written by a newer padmap still loads on an older one
-    /// and keeps everything it does understand.
     pub fn resolved(&self) -> BTreeMap<crate::Control, Binding> {
         self.buttons
             .iter()
@@ -64,9 +33,7 @@ impl Mapping {
             .collect()
     }
 
-    /// Read one out of whatever a file happens to contain.
-    ///
-    /// Never fails. Junk in one binding slot costs that binding.
+    /// Never fails; junk in one binding slot costs that binding only.
     pub fn from_value(raw: &Value) -> Mapping {
         let Some(object) = raw.as_object() else {
             return Mapping::default();
@@ -95,14 +62,9 @@ pub struct Profile {
     pub icon: String,
     /// evdev ABS code -> calibration.
     pub axes: BTreeMap<u16, AxisCalibration>,
-    /// Scope -> capture, keyed by the *physical* controller's signature, so a
-    /// mapping follows the controller rather than the player slot it happened
-    /// to claim -- which is how SDL's own database loses it, since that is
-    /// keyed on "padmap Player N".
+    /// Scope -> capture.
     pub mappings: BTreeMap<String, Mapping>,
-    /// What the user set for a controller that misbehaves: deadzones, a
-    /// debounce, axes and buttons to ignore. Applied in transit, after
-    /// calibration.
+    /// User tuning: deadzones, debounce, ignored axes/buttons.
     pub tuning: Tuning,
 }
 
@@ -114,7 +76,6 @@ pub struct RejectedAxis {
 }
 
 impl Profile {
-    /// The universal mapping's bindings.
     pub fn buttons(&self) -> BTreeMap<String, Binding> {
         self.mappings
             .get(scope::UNIVERSAL)
@@ -122,7 +83,6 @@ impl Profile {
             .unwrap_or_default()
     }
 
-    /// The universal mapping's layout id.
     pub fn layout(&self) -> &str {
         self.mappings
             .get(scope::UNIVERSAL)
@@ -130,21 +90,12 @@ impl Profile {
             .unwrap_or("")
     }
 
-    /// Whether *any* scope has been captured.
-    ///
-    /// Not just the universal one: a pad mapped only for N64 has been through
-    /// the wizard, and reporting it as unconfigured would offer the wizard
-    /// again on every session.
+    /// Whether any scope has been captured.
     pub fn has_bindings(&self) -> bool {
         self.mappings.values().any(|m| !m.buttons.is_empty())
     }
 
-    /// The mapping that applies, and the scope it came from.
-    ///
-    /// Most specific wins. A scope holding an *empty* capture is skipped rather
-    /// than matched -- it would otherwise shadow the more general mapping that
-    /// does have bindings, which is the one case where "most specific wins" is
-    /// not what anybody means.
+    /// Most specific scope wins; empty scopes skipped.
     pub fn resolve(&self, console: &str, game: &str) -> (String, Mapping) {
         for candidate in scope::order(console, game) {
             if let Some(found) = self.mappings.get(&candidate) {
@@ -156,17 +107,7 @@ impl Profile {
         (scope::UNIVERSAL.to_owned(), Mapping::default())
     }
 
-    /// File a capture under a scope, seeding the default from the first.
-    ///
-    /// Someone whose first act is "map this pad for N64 games" would otherwise
-    /// end up with no universal mapping at all -- no SDL line for the front-end
-    /// to navigate with, and nothing for any other console, so the pad they
-    /// just configured would still be driven by a guess everywhere else. A
-    /// capture the user performed beats a guess, so the first one becomes the
-    /// default too.
-    ///
-    /// Later captures do not disturb it: once a default exists, saying "and for
-    /// N64, this instead" must not silently change every other console.
+    /// File a capture under a scope, seeding universal from the first.
     pub fn record(&mut self, scope_key: &str, captured: Mapping) {
         self.mappings.insert(scope_key.to_owned(), captured.clone());
         let universal_is_empty = self
@@ -179,7 +120,6 @@ impl Profile {
         }
     }
 
-    /// The JSON a profile is stored as.
     pub fn to_value(&self) -> Value {
         let universal = self
             .mappings
@@ -212,15 +152,11 @@ impl Profile {
             "icon": self.icon,
             "axes": axes,
             "mappings": mappings,
-            // The universal mapping is *also* written where it has always
-            // been. Nothing padmap ships reads these two keys any more, but a
-            // rollback to a build predating scopes then still finds the
-            // controller mapped instead of offering the wizard again.
+            // Rollback compatibility: universal mapping written where it has always been.
             "layout": universal.layout,
             "buttons": universal.buttons,
         });
-        // Only when something is set: a profile nobody has tuned keeps the
-        // shape it has always had, and a rollback never sees the key.
+        // Only when tuned: rollback sees no tuning key if profile is unmodified.
         if !self.tuning.is_default() {
             if let Ok(tuning) = serde_json::to_value(&self.tuning) {
                 out["tuning"] = tuning;
@@ -229,14 +165,8 @@ impl Profile {
         out
     }
 
-    /// Read a profile out of whatever a file happens to contain.
-    ///
-    /// Never fails, and that is the point. `is_known` is "a profile loaded",
-    /// and discovery calls it for every pad, so one damaged file must cost that
-    /// controller its settings and not its existence.
+    /// Never fails: damaged files cost settings, not existence.
     pub fn from_value(raw: &Value) -> (Profile, Vec<RejectedAxis>) {
-        // A file can hold valid JSON that is not a profile at all -- null, a
-        // list, a bare string -- and every read below assumes an object.
         let empty = serde_json::Map::new();
         let object = raw.as_object().unwrap_or(&empty);
 
@@ -247,22 +177,11 @@ impl Profile {
                 let Ok(number) = code.parse::<u16>() else {
                     continue;
                 };
-                // Junk in one axis slot costs that axis, not the profile.
                 let Ok(cal) = serde_json::from_value::<AxisCalibration>(values.clone()) else {
                     continue;
                 };
                 if !cal.fits() {
-                    // Rejected, not clamped, and deliberately. A range wider
-                    // than an evdev value can hold is not a measurement that
-                    // overshot -- no stick reports 2^40 -- it is a hand-edit or
-                    // a save cut short, and the numbers beside it are worth
-                    // nothing either. Clamping keeps scaling every reading
-                    // against nonsense, so the user trades a dead daemon for a
-                    // stick that reads permanently slammed into a corner, which
-                    // a front-end acts on immediately. Dropping the axis falls
-                    // back to forwarding it verbatim, which is what an
-                    // uncalibrated pad already does and is the one behaviour
-                    // here known to work.
+                    // Out-of-range: drop rather than clamp, fall back to verbatim.
                     rejected.push(RejectedAxis {
                         code: code.clone(),
                         why: format!(
@@ -285,13 +204,7 @@ impl Profile {
             }
         }
 
-        // Migration, in place and without a version number. Every profile
-        // written before scopes carries flat `buttons`/`layout` and no
-        // `mappings`, and that pair is exactly the universal scope -- it was
-        // the only scope there was. Doing it here rather than in a one-shot
-        // upgrade pass means a profile is migrated the first time it is looked
-        // at, including one restored from a backup years later, and there is no
-        // separate code path that can be forgotten.
+        // Migrate pre-scope profiles: flat buttons/layout → universal scope.
         if !mappings.contains_key(scope::UNIVERSAL) {
             let legacy = Mapping::from_value(&serde_json::json!({
                 "buttons": object.get("buttons").cloned().unwrap_or(Value::Null),
@@ -302,8 +215,7 @@ impl Profile {
             }
         }
 
-        // Junk under "tuning" costs the tuning, not the profile: a controller
-        // whose deadzone line was hand-edited badly still has its mapping.
+        // Junk costs tuning, not profile.
         let tuning = object
             .get("tuning")
             .and_then(|raw| serde_json::from_value(raw.clone()).ok())
@@ -324,21 +236,11 @@ impl Profile {
 fn string_at(value: Option<&Value>) -> String {
     match value {
         Some(Value::String(text)) => text.clone(),
-        // `str(raw.get(...))` in the Python, which stringifies whatever it
-        // finds. Anything that is not a string here is a damaged file, and an
-        // empty answer is the one that keeps the rest of the profile usable.
         _ => String::new(),
     }
 }
 
-/// Python's `str.isprintable`.
-///
-/// "Nonprintable characters are those characters defined in the Unicode
-/// character database as 'Other' or 'Separator', excepting the ASCII space."
-/// Reproduced rather than approximated because the result is a profile's
-/// *filename*: get it wrong and every profile a user already has is orphaned,
-/// silently, since a missing profile reads as "never configured" and the wizard
-/// simply opens again.
+/// Python's `str.isprintable`; exact match since result is profile filename.
 pub fn printable(character: char) -> bool {
     use unicode_general_category::{get_general_category, GeneralCategory::*};
     if character == ' ' {
@@ -357,20 +259,13 @@ pub fn printable(character: char) -> bool {
     )
 }
 
-/// Stable identity for a *model* of controller, across replugs.
-///
-/// Deliberately coarser than a single physical pad: two identical controllers
-/// should share a profile, and nothing padmap can read distinguishes them
-/// anyway.
+/// Stable identity for a controller model, across replugs.
 pub fn signature(vid: u16, pid: u16, name: &str) -> String {
     let cleaned: String = name.chars().filter(|c| printable(*c)).collect();
     format!("{vid:04x}:{pid:04x}:{}", cleaned.trim())
 }
 
-/// The file a signature is stored in.
-///
-/// Truncated to 120 characters *before* the suffix, as the Python did, so a
-/// pad with an absurd name cannot produce a filename the filesystem refuses.
+/// Filename for a signature, truncated to 120 chars + .json suffix.
 pub fn filename(signature: &str) -> String {
     let mut out = String::with_capacity(signature.len());
     let mut in_run = false;
@@ -416,17 +311,12 @@ mod tests {
 
     #[test]
     fn a_control_character_in_a_name_is_stripped_before_the_name_is_trimmed() {
-        // This machine reports an adapter whose name begins 0x18. If the strip
-        // and the trim happen in the wrong order the leading space survives
-        // into the signature, and therefore into the filename.
         assert_eq!(signature(1, 2, "\u{18} Pad"), "0001:0002:Pad");
         assert_eq!(signature(1, 2, "  Pad  "), "0001:0002:Pad");
     }
 
     #[test]
     fn a_space_inside_a_name_is_printable_and_kept() {
-        // The one exception in Python's definition: ASCII space is printable
-        // although its category is a separator.
         assert!(printable(' '));
         assert_eq!(
             signature(1, 2, "Pro Controller"),
@@ -484,7 +374,6 @@ mod tests {
 
     #[test]
     fn an_empty_capture_does_not_shadow_a_general_one_that_has_bindings() {
-        // The one case where "most specific wins" is not what anybody means.
         let mut profile = Profile::default();
         profile.record(scope::UNIVERSAL, capture("a", 1));
         profile
@@ -505,8 +394,6 @@ mod tests {
 
     #[test]
     fn the_first_capture_becomes_the_default_whatever_scope_it_was_for() {
-        // Otherwise someone whose first act is "map this for N64" has no SDL
-        // line for the front-end to navigate with.
         let mut profile = Profile::default();
         profile.record("console:n64", capture("a", 7));
         assert_eq!(profile.buttons()["a"], Binding::button(7));
@@ -531,7 +418,6 @@ mod tests {
 
     #[test]
     fn a_pad_mapped_only_for_one_console_counts_as_configured() {
-        // Reporting it unconfigured would offer the wizard again every session.
         let mut profile = Profile::default();
         assert!(!profile.has_bindings());
         profile.record("console:n64", capture("a", 1));
@@ -540,8 +426,6 @@ mod tests {
 
     #[test]
     fn a_profile_that_is_not_an_object_reads_as_an_empty_one() {
-        // is_known() is "a profile loaded", and discovery calls it for every
-        // pad, so one damaged file must not cost the controller its existence.
         for raw in [
             Value::Null,
             serde_json::json!([1, 2]),
@@ -581,8 +465,6 @@ mod tests {
 
     #[test]
     fn a_profile_written_before_scopes_is_migrated_on_the_way_in() {
-        // Flat buttons/layout and no mappings: that pair *is* the universal
-        // scope, because it was the only scope there was.
         let raw = serde_json::json!({
             "signature": "0079:1879:Pad",
             "layout": "n64",

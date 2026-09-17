@@ -1,15 +1,5 @@
 //! A calibration in flight, advanced from the daemon's tick.
-//!
-//! Sampling cannot block: the CLI's calibration owns a loop and waits for up
-//! to five seconds, which would stall every other pad and every connected
-//! client. This collects the same samples incrementally instead, fed by the
-//! session's raw event stream.
-//!
-//! Modal. While it runs, claim detection and the confirm gesture are both
-//! suspended: the user is pressing buttons to drive the wizard, and those
-//! must not also claim slots or end the session. It stays modal through the
-//! icon step too -- that was the "button press passed through to the
-//! confirmation underneath" bug.
+//! Collects samples incrementally to avoid blocking other pads or clients.
 
 use std::collections::BTreeMap;
 
@@ -37,24 +27,14 @@ impl Phase {
     }
 }
 
-/// Only the sampling phases are timed. The await phases wait for a button, so
-/// the user sets the pace and is never measured before they are ready.
 pub const REST_SECONDS: f64 = 0.8;
-/// The reach phase ends on a button press, but not before this -- otherwise
-/// the same press that started it could end it immediately.
 pub const REACH_MINIMUM_SECONDS: f64 = 1.2;
 
-/// What a tick decided.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Step {
-    /// Nothing changed; say where things are.
     Progress,
-    /// A phase ended; say so.
     Advanced,
-    /// The sweep is done: these are the calibrations to store, and the run
-    /// has moved to the icon step.
     Measured(BTreeMap<u16, AxisCalibration>),
-    /// Waiting on the user or the icon choice; nothing to say.
     Quiet,
 }
 
@@ -90,9 +70,7 @@ impl CalibrationRun {
     }
 
     fn reset_samples(&mut self) {
-        // Each phase starts a fresh window: reach must not inherit the rest
-        // phase's samples, or an axis that never moved would look like it
-        // spanned nothing.
+        // Each phase starts fresh; reach must not inherit rest phase's samples.
         self.seen = self
             .axes
             .iter()
@@ -104,7 +82,6 @@ impl CalibrationRun {
         now - self.started
     }
 
-    /// Progress 0..1, meaning whatever the current phase measures.
     pub fn fraction(&self, now: f64) -> f64 {
         match self.phase {
             Phase::Rest => (self.elapsed(now) / REST_SECONDS).min(1.0),
@@ -113,11 +90,6 @@ impl CalibrationRun {
         }
     }
 
-    /// How much of each axis's declared travel has been swept so far.
-    ///
-    /// Better feedback than a countdown: it tells the user whether the circles
-    /// they are making are actually reaching the edges, which is the thing
-    /// that determines whether the calibration is any good.
     pub fn coverage(&self) -> f64 {
         if self.axes.is_empty() {
             return 0.0;
@@ -187,8 +159,6 @@ impl CalibrationRun {
                 }
                 Step::Quiet
             }
-            // Waiting on set_icon. Still modal, so nothing the user presses
-            // while choosing can claim a slot or confirm the session.
             Phase::Icon => Step::Quiet,
             Phase::Rest => {
                 if self.elapsed(now) < REST_SECONDS {
@@ -198,8 +168,6 @@ impl CalibrationRun {
                 self.begin_phase(Phase::AwaitReach, now);
                 Step::Advanced
             }
-            // Ends on a button press, not a timer, so the user decides when
-            // the circles are good enough.
             Phase::Reach => {
                 if !(self.advance_requested && self.elapsed(now) >= REACH_MINIMUM_SECONDS) {
                     return Step::Progress;

@@ -1,18 +1,4 @@
-//! The assignment journey through a real daemon, with real presses.
-//!
-//! A socket harness can call `begin`; nothing about it proves that holding a
-//! button on a pad the daemon has grabbed claims a slot, that holding again
-//! confirms, or that the files a launch reads are then on disk. This drives
-//! the real `padmap-rs serve` with a uinput pad it creates and owns.
-//!
-//! Safe on a live machine, by construction: its own runtime, config and
-//! profile directories; `PADMAP_ONLY_DEVICE` restricts discovery to the test
-//! pad, so no real controller is grabbed; and the pad's signature is written
-//! into the *live* daemon's `prompted` file first and removed afterwards --
-//! creating a joystick node is not a neutral act while a daemon is watching
-//! for unfamiliar controllers.
-//!
-//! Skips, rather than fails, where /dev/uinput is not writable.
+//! Real daemon journey: PADMAP_ONLY_DEVICE isolates the test, and signatures go to prompted first.
 
 use std::collections::BTreeSet;
 use std::io::{Read, Write};
@@ -32,9 +18,6 @@ const PAD_VID: u16 = 0x1209;
 const FIRST_KEY: u16 = 0x130;
 const KEY_COUNT: u16 = 16;
 
-/// Each test gets its own pad name and product id, and its own
-/// `PADMAP_ONLY_DEVICE` token, so two running at once cannot see each other's
-/// controller -- which they otherwise do, the daemon reporting "2 pad(s)".
 #[derive(Clone, Copy)]
 struct PadId {
     name: &'static str,
@@ -79,7 +62,6 @@ fn uinput_writable() -> bool {
         .is_ok()
 }
 
-/// Tell the live daemon we have already been asked about this model.
 struct LiveGuard {
     path: PathBuf,
     added: bool,

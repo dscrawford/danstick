@@ -1,31 +1,4 @@
 //! Emulators that cannot find padmap's pads on their own.
-//!
-//! RetroArch and anything else reading `gamecontrollerdb.txt` is served by
-//! [`crate::artefacts`]: padmap writes a mapping and the program looks it up.
-//! Three emulators do not work that way, and each fails differently:
-//!
-//! * **Cemu** reads no mapping database at all. A pad SDL does not already
-//!   recognise as a gamepad never appears in its device list, so writing a
-//!   profile for it is not enough -- the mapping has to arrive in the
-//!   environment, through `SDL_GAMECONTROLLERCONFIG`. See [`env_script`].
-//! * **Ryujinx** blanks the name checksum out of the GUID before using it as a
-//!   device id, so padmap's pads used to collapse into one. That is fixed in
-//!   the GUID itself -- `padmap_core::emit::version_for` puts the player number
-//!   in the version field, which Ryujinx keeps -- and this module is where the
-//!   now-distinct ids get written down.
-//! * **ares** binds raw SDL joystick indices, so a binding that does not fail
-//!   binds the *wrong* button. The indices come from the clone's own
-//!   capabilities, which is why [`Published`] carries them.
-//! * **Dolphin** is the easy one, and looks like it should be the hardest: it
-//!   names inputs by standard gamepad element and does the per-model lookup
-//!   itself, so there is no capture to translate. What has to be right is the
-//!   device line and the port's declared device type.
-//!
-//! Every write here is best-effort and reported rather than propagated. ares
-//! and Ryujinx keep all of their settings in one file, so padmap refuses to
-//! invent one for an emulator that has never run; that refusal is an ordinary
-//! outcome -- most machines do not have all three installed -- and must not
-//! stop the daemon from publishing pads.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

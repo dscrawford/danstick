@@ -1,18 +1,5 @@
 # padmap, in Rust.
-#
-# Split so the parts that can be tested without a controller are separated
-# from the parts that cannot. `padmap-core` is pure logic and has no
-# dependency on Linux at all; everything device-shaped lives above it.
-#
-#   padmap-core    vocabulary, layouts, mappings, scopes, wire protocol.
-#                  No I/O, no unsafe, no evdev. Unit-testable to exhaustion.
-#   padmap-hid     controller report decoding. The decoders are pure
-#                  functions over byte slices, so a Switch Pro can be tested
-#                  from a recorded report rather than from hardware.
-#   padmap-input   evdev, uinput, hidraw and udev. The only crate that
-#                  touches a device node.
-#   padmap-daemon  the event loop and the session state machine.
-#   padmap-cli     the command line.
+# Workspace: padmap-core (logic), padmap-input (I/O), padmap-daemon (event loop).
 [workspace]
 resolver = "2"
 members = [
@@ -44,20 +31,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
 [profile.release]
-# One event's worth of work is tiny and called constantly; inlining across
-# crate boundaries is most of what makes the forwarding path cheap.
 lto = "thin"
 codegen-units = 1
-# Unwind, deliberately, and not the default-for-a-daemon reflex to abort.
-#
-# The Python this replaces states the invariant plainly: "A daemon must not be
-# killable by the thing it exists to serve... no message may end the process"
-# (src/padmap/server.py). When padmap dies it does not degrade -- every uinput
-# node goes with it, and every player's controller stops mid-game. An abort
-# turns a slice bounds check on a hand-edited profile into exactly that.
-#
-# So: unwind, and catch_unwind at the two boundaries the Python already
-# guards -- command dispatch and per-event forwarding.
 panic = "unwind"
 
 [profile.bench]

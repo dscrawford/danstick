@@ -1,9 +1,4 @@
 //! Everything that touches a device node.
-//!
-//! `padmap-core` decides things; this crate does them. The split is what makes
-//! the decisions testable without a controller plugged in, and it is also where
-//! the `unsafe` boundary would sit if any were needed -- none is, because the
-//! ioctls come from the `evdev` and `rustix` crates rather than from here.
 
 pub mod artefacts;
 pub mod assignments;

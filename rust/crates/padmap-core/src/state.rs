@@ -1,18 +1,4 @@
 //! The `state` event: what the daemon tells a client about itself.
-//!
-//! Sent on connect, and again whenever anything a client could be drawing
-//! changes. It is the only thing a front-end has: there is no other way to ask
-//! what padmap thinks is going on.
-//!
-//! Three of its fields exist because nothing else on the machine reveals them.
-//! A stale daemon keeps answering and keeps writing files that look right, so
-//! only the build id says the code changed underneath it. Matching a daemon by
-//! its command line hits every one the user is running, including ones on
-//! another `XDG_RUNTIME_DIR` that are none of the caller's business, so the pid
-//! is reported. And a daemon started without `PADMAP_ONLY_VIRTUAL` and a
-//! front-end started with it disagree about which pads exist, with a machine
-//! that has no controllers at all as the symptom -- so the identity mode is
-//! reported too.
 
 use serde::{Deserialize, Serialize};
 
@@ -30,27 +16,11 @@ pub struct PlayerState {
     /// `eventN`, not the whole path.
     pub node: String,
     pub icon: String,
-    /// **Mapped**, not merely known.
-    ///
-    /// A profile exists for several reasons -- calibration writes one, and so
-    /// does finishing a session -- so keying this on a profile's existence
-    /// meant a controller counted as set up before anyone had told padmap
-    /// where its buttons were, and the wizard was offered exactly once and
-    /// never again.
+    /// Mapped, not merely known.
     pub configured: bool,
-    /// Which scopes this controller has a capture under, so a front-end can
-    /// say what already exists rather than making re-mapping a blind,
-    /// destructive act.
-    ///
-    /// Scope strings, not labels: the labels are built where the picker is,
-    /// and a second set here would be a second thing to keep in step.
+    /// Scopes with captures for this controller.
     pub mappings: Vec<String>,
-    /// Whether this seat has a clone on the air right now.
-    ///
-    /// A wireless pad that goes to sleep loses its device node and cannot be
-    /// republished, but it keeps its seat -- its owner should not have to
-    /// re-take it because the controller idled. False is how a front-end draws
-    /// player 2 as *away* rather than either lying or making them vanish.
+    /// Whether this seat has a clone on the air.
     #[serde(default)]
     pub published: bool,
 }

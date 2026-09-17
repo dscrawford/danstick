@@ -1,3 +1,1 @@
-# The Python beside this is 79 columns. 100 is rustfmt's default and what
-# every other Rust reader expects; the two do not have to agree.
 max_width = 100

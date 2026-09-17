@@ -5,36 +5,10 @@ use std::collections::BTreeMap;
 use crate::binding::{Binding, BindingKind};
 use crate::control::{Control, CANONICAL_ORDER};
 
-/// The four analog stick half-axis pairs, by the stem of their RetroArch keys.
-/// Each stem gets both a `_minus` and a `_plus` bind, and RetroArch reads the
-/// two together -- see [`drop_shadowed_axis_halves`].
+/// Analog stick half-axis stems, each with `_minus` and `_plus` binds.
 pub const ANALOG_STEMS: [&str; 4] = ["input_l_x", "input_l_y", "input_r_x", "input_r_y"];
 
-/// Remove an `_axis` bind that would stop the other half's `_btn` working.
-///
-/// RetroArch reads a stick axis in `input_joypad_analog_axis`, and it reads
-/// both halves before it will look at a button:
-///
-/// ```text
-/// res  = abs(input_joypad_axis(..., axis_plus,  ...));
-/// res -= abs(input_joypad_axis(..., axis_minus, ...));
-/// if (res == 0) { ... consult bind_minus->joykey / bind_plus->joykey ... }
-/// ```
-///
-/// So a mapping that puts a button on one half of an axis and leaves an axis on
-/// the other half only works while that axis reads *exactly* zero, and it never
-/// does: `udev_compute_axis` is `(value - min) * 0xffff / range - 0x7fff`, and
-/// on the 0..255 range these adapters report there is no value that normalises
-/// to zero. An uncalibrated C-stick resting at 131 comes out at +900 -- under
-/// 3% of full scale, so it sits inside the core's deadzone and the stick looks
-/// perfectly normal, while `res` is 900 and the button on the other half is
-/// dead. That was the reported bug: Y mapped to C-up did nothing in Smash Bros.
-///
-/// The captured button is the deliberate instruction, so it wins. Dropping the
-/// opposing axis makes both halves AXIS_NONE, `res` is then always 0, and the
-/// button is read every time. It costs the stick's other direction, which is
-/// not padmap's to fix: RetroArch cannot express "this button, and also that
-/// axis" on one analog axis.
+/// Drop axis binds shadowed by button binds on the opposite half.
 pub fn drop_shadowed_axis_halves(lines: Vec<String>) -> Vec<String> {
     let key_of = |line: &str| line.split(" = ").next().unwrap_or("").to_owned();
     let keys: Vec<String> = lines
@@ -62,21 +36,7 @@ pub fn drop_shadowed_axis_halves(lines: Vec<String>) -> Vec<String> {
         .collect()
 }
 
-/// Autoconfig entries for the controls that were captured.
-///
-/// Only what the user actually pressed: a key bound to nothing is worse than an
-/// absent one, because RetroArch will happily bind a button that does not exist
-/// and report the pad as configured.
-///
-/// Which is also why a binding RetroArch cannot name is dropped here instead of
-/// guessed at -- a button below `BTN_MISC`, or a hat value that is not one
-/// direction bit, which used to fail out of the middle of writing a launch
-/// profile and leave the game to start with no controller config at all.
-///
-/// `overrides` carries the console's own wiring: cores map the abstract
-/// RetroPad onto real console buttons themselves and not identically, so
-/// mupen64plus-next reads N64 B from RetroPad **Y**. An empty override string
-/// falls back to the canonical key, as the Python's `or` did.
+/// Autoconfig entries for captured controls.
 pub fn lines(
     bindings: &BTreeMap<Control, Binding>,
     overrides: &BTreeMap<Control, String>,
@@ -96,11 +56,7 @@ pub fn lines(
             Some(override_key) if !override_key.is_empty() => override_key.clone(),
             _ => control.retroarch_key().to_owned(),
         };
-        // An axis has to go under the _axis key, not _btn. RetroArch parses a
-        // _btn value with strtoull, so "-0" and "+0" both come out as button 0
-        // -- the two directions of one stick collapse onto the same button and
-        // pressing either activates both. A silent misparse: nothing warns, and
-        // the pad looks configured.
+        // Axis must use _axis key, not _btn (strtoull misparses signs).
         let key = if binding.kind == BindingKind::Axis {
             key.replace("_btn", "_axis")
         } else {
@@ -119,17 +75,7 @@ pub const MAX_PLAYERS: u32 = 16;
 pub const RESERVATION_NONE: i32 = 0;
 pub const RESERVATION_RESERVED: i32 = 2;
 
-/// Pad indices with no device behind them, for the unmanaged slots.
-///
-/// RetroArch enumerates `pad_count` pads into 0..pad_count-1, so everything
-/// from there to MAX_PLAYERS-1 is vacant. Handing each unmanaged player a
-/// *distinct* vacant index is what stops two slots sharing one pad; reusing
-/// RetroArch's own N-1 default would not, because with the physical pads
-/// unhidden index N-1 is a real controller.
-///
-/// Degrades rather than collides if every index is occupied: the unmanaged
-/// slots are set to RETRO_DEVICE_NONE regardless, so a repeated index there
-/// reaches no core port.
+/// Vacant pad indices for unmanaged slots.
 pub fn empty_indices(pad_count: usize, wanted: usize) -> Vec<usize> {
     let ceiling = MAX_PLAYERS as usize - 1;
     (0..wanted).map(|n| (pad_count + n).min(ceiling)).collect()
@@ -170,10 +116,6 @@ pub fn managed_players(
 }
 
 /// Reservation settings for all sixteen slots.
-///
-/// Managed slots are reserved for their clone by name; every other slot is
-/// cleared, because an uncleared reservation naming a pad that is no longer
-/// republished still occupies the slot.
 pub fn reservation_lines(managed: &[u32], virtual_name: impl Fn(u32) -> String) -> String {
     let mut lines = Vec::new();
     for player in 1..=MAX_PLAYERS {
@@ -197,14 +139,6 @@ pub fn reservation_lines(managed: &[u32], virtual_name: impl Fn(u32) -> String) 
 }
 
 /// Config text pinning each player to its clone by name.
-///
-/// Deliberately does **not** set `input_max_users`.
-/// `reallocate_port_if_needed` computes the first free player slot while
-/// skipping RESERVED ones, then early-returns if that index is at or above
-/// `input_max_users` -- before it ever reaches the reservation matching loop.
-/// Setting it to the number of reserved players makes every slot below it
-/// reserved, the early return fires, and no reservation is ever matched.
-/// There has to be at least one free, unreserved slot below it.
 pub fn reservation_config(players: &[u32], virtual_name: impl Fn(u32) -> String) -> String {
     let mut sorted: Vec<u32> = players.to_vec();
     sorted.sort_unstable();
@@ -219,28 +153,7 @@ pub fn reservation_config(players: &[u32], virtual_name: impl Fn(u32) -> String)
     lines.join("\n") + "\n"
 }
 
-/// RetroArch flags emptying every core port nobody is assigned to.
-///
-/// The *only* working way to do it. `input_libretro_device_pN` reads like the
-/// config setting for a port's device type, and RetroArch ignores it from
-/// retroarch.cfg and --appendconfig alike: configuration.c only touches that
-/// key inside `.rmp` remap files. Setting it in the launch override changed
-/// nothing at all.
-///
-/// `--nodevice PORT` runs `input_config_set_device(port, RETRO_DEVICE_NONE)`
-/// during argument parsing, which is what `command_event_init_controllers`
-/// later reads back per core port. Verified with a probe core that logs every
-/// `retro_set_controller_port_device` call: without these an N64 core's four
-/// ports all get RETRO_DEVICE_JOYPAD, with them only the assigned ones do.
-///
-/// `input_max_users` reaches the same result and is deliberately not used:
-/// RetroArch skips reserved slots when finding the first free player slot and
-/// bails if that index reaches it, so constraining it would break the
-/// reservations that are padmap's order-independent binding.
-///
-/// Ports above the core's own count do not exist -- the loop is bounded by
-/// `num_core_ports` -- so emitting flags up to MAX_PLAYERS costs nothing and
-/// needs no knowledge of which core is about to run.
+/// Flags to empty core ports with no assigned players.
 pub fn launch_args(
     players: &[u32],
     virtual_paths: &BTreeMap<u32, String>,
@@ -253,11 +166,7 @@ pub fn launch_args(
         .collect()
 }
 
-/// Keys that identify a profile's pad rather than bind its buttons.
-///
-/// Dropped when copying a libretro profile for a clone: the clone has its own
-/// name and ids, and carrying the source's would make the profile claim a pad
-/// RetroArch is not looking at.
+/// Keys identifying a pad in a profile, not button binds.
 pub const IDENTITY_KEYS: [&str; 5] = [
     "input_device",
     "input_device_display_name",
@@ -266,17 +175,7 @@ pub const IDENTITY_KEYS: [&str; 5] = [
     "input_phys",
 ];
 
-/// A profile for a clone, keeping a libretro profile's button mapping.
-///
-/// For a pad nobody has mapped: libretro's database entry for the physical
-/// controller is the best answer available, and it is copied rather than
-/// referenced because RetroArch scans exactly one autoconfig directory --
-/// padmap's -- and the entry has to be in it under the clone's name.
-///
-/// `vid`/`pid` are what the clone actually advertises, which depends on the
-/// identity mode. RetroArch matches autoconfig primarily by device name, but
-/// a disagreeing vid/pid scores against the profile, and affinity is what
-/// decides whether it is used at all.
+/// Profile for a clone with button mapping from a libretro profile.
 pub fn derive_profile(
     source: Option<(&str, &[(String, String)])>,
     player: u32,
@@ -297,8 +196,6 @@ pub fn derive_profile(
         format!("input_vendor_id = \"{vid}\""),
         format!("input_product_id = \"{pid}\""),
     ];
-    // In the source's own order: the file is copied, and a reader diffing it
-    // against libretro's entry should see the same lines in the same places.
     if let Some((_, values)) = source {
         for (key, value) in values {
             if IDENTITY_KEYS.contains(&key.as_str()) || key == "input_driver" {
@@ -310,37 +207,18 @@ pub fn derive_profile(
     out.join("\n") + "\n"
 }
 
-/// What the launch override needs to know that is not in the enumeration.
+/// Facts for the launch override.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct LaunchFacts {
-    /// Whether every managed pad has a calibration. Only then is the analog
-    /// gain pinned to 1.0: a calibrated pad already delivers the stick's full
-    /// range, and gain on top saturates it early; an uncalibrated one still
-    /// needs whatever boost the user set.
+    /// Whether every managed pad is calibrated.
     pub all_calibrated: bool,
-    /// Where padmap's own autoconfig profiles are, for `joypad_autoconfig_dir`.
+    /// Path to padmap's autoconfig profiles.
     pub autoconfig_dir: String,
-    /// `padmap launch --log`: turn RetroArch's own logging up.
+    /// Enable verbose logging.
     pub verbose: bool,
 }
 
-/// The full override handed to RetroArch via `--appendconfig`.
-///
-/// Belt and braces. The joypad_index lines are the mechanism verified to work;
-/// the reservation lines are a second, order-independent binding that costs
-/// nothing if RetroArch honours it and is harmless if not.
-///
-/// Every one of the sixteen player slots is written, assigned or not. An
-/// unmanaged slot gets a vacant pad index, a cleared reservation, and (on the
-/// command line, see [`launch_args`]) RETRO_DEVICE_NONE, which together are
-/// the difference between "padmap said nothing about player 3" and "player 3
-/// has no controller".
-///
-/// A player outside 1..MAX_PLAYERS -- a hand-edited assignments.json, or more
-/// pads than slots -- is dropped rather than counted as managed. Counting it
-/// consumed no spare index while the emitting loop expected one per unmanaged
-/// slot, so the iterator ran dry; that was a crash during daemon startup,
-/// after the pads were grabbed.
+/// Full override config passed to RetroArch via `--appendconfig`.
 pub fn launch_config(
     players: &[u32],
     virtual_paths: &BTreeMap<u32, String>,
@@ -477,8 +355,6 @@ mod tests {
 
     #[test]
     fn an_uncaptured_control_gets_no_line_at_all() {
-        // A key bound to nothing is worse than an absent one: RetroArch binds a
-        // button that does not exist and still reports the pad as configured.
         let out = lines(&BTreeMap::new(), &BTreeMap::new());
         assert!(out.is_empty());
     }
@@ -505,8 +381,6 @@ mod tests {
 
     #[test]
     fn a_console_override_replaces_the_canonical_key() {
-        // mupen64plus-next reads N64 B from RetroPad Y, so binding the physical
-        // B to the key the canonical name suggests produces a dead button.
         let overrides: BTreeMap<Control, String> = [(Control::B, "input_y_btn".to_owned())]
             .into_iter()
             .collect();
@@ -552,8 +426,6 @@ mod tests {
 
     #[test]
     fn a_hat_value_that_is_not_one_direction_is_dropped_not_fatal() {
-        // This used to fail out of the middle of writing a launch profile and
-        // leave the game to start with no controller config at all.
         let out = lines(
             &bindings(&[
                 (Control::A, Binding::button(1)),
@@ -566,8 +438,6 @@ mod tests {
 
     #[test]
     fn a_c_button_on_one_half_kills_the_axis_on_the_other() {
-        // The reported bug: Y mapped to C-up did nothing in Smash Bros, with a
-        // C-stick that behaved and no error anywhere.
         let out = drop_shadowed_axis_halves(vec![
             "input_r_y_minus_btn = \"11\"".to_owned(),
             "input_r_y_plus_axis = \"+3\"".to_owned(),
@@ -618,8 +488,6 @@ mod tests {
 
     #[test]
     fn the_full_n64_c_button_capture_survives_end_to_end() {
-        // Four C-buttons as right-stick halves, which is the case the shadow
-        // rule exists for, plus the face buttons around them.
         let out = lines(
             &bindings(&[
                 (Control::A, Binding::button(1)),
