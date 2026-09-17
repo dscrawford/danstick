@@ -15,7 +15,7 @@ use padmap_core::capture::{self, MappingRun};
 use padmap_core::emit;
 use padmap_core::launch;
 use padmap_daemon::publish;
-use padmap_input::clone::IdentityMode;
+use padmap_input::clone::{self, IdentityMode};
 use padmap_input::pad::{self, Pad};
 use padmap_input::{artefacts, assignments, profiles, runtime};
 
@@ -99,6 +99,9 @@ pub fn cmd_list_json() -> Result<()> {
                 // this to read motion; the clone will never carry it.
                 "motion": pad.motion.is_some(),
                 "motion_node": pad.motion.as_ref().map(|path| path.display().to_string()),
+                // What the user set for a misbehaving controller. `{}` is
+                // nothing; see `padmap tune`.
+                "tuning": serde_json::to_value(publish::tuning_for(pad)).unwrap_or(serde_json::json!({})),
             },
             "virtual": virtual_pad,
         }));
@@ -817,6 +820,44 @@ fn installed_rules() -> Option<String> {
     None
 }
 
+/// Send one command to the running daemon and wait for one event by name,
+/// or `None` if nothing answers in time.
+///
+/// An `error` event ends the wait too, and is returned, so a caller can say
+/// what the daemon said rather than "timed out".
+pub fn daemon_ask(
+    command: &serde_json::Value,
+    want: &str,
+    timeout: f64,
+) -> Option<serde_json::Value> {
+    use std::io::Read;
+    use std::os::unix::net::UnixStream;
+
+    let mut sock = UnixStream::connect(runtime::socket_path()).ok()?;
+    let window = std::time::Duration::from_secs_f64(timeout);
+    sock.set_read_timeout(Some(window)).ok()?;
+    let mut line = serde_json::to_string(command).ok()?;
+    line.push('\n');
+    sock.write_all(line.as_bytes()).ok()?;
+    let mut reader = padmap_core::wire::LineReader::new();
+    let deadline = std::time::Instant::now() + window;
+    let mut chunk = [0u8; 65536];
+    while std::time::Instant::now() < deadline {
+        let count = match sock.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(count) => count,
+            Err(_) => break,
+        };
+        for message in reader.feed(&chunk[..count]) {
+            let event = message.get("event").and_then(|e| e.as_str());
+            if event == Some(want) || event == Some("error") {
+                return Some(serde_json::Value::Object(message));
+            }
+        }
+    }
+    None
+}
+
 /// Ask the running daemon for its state, or `None` if nothing answers.
 pub fn daemon_state(timeout: f64) -> Option<serde_json::Value> {
     use std::io::Read;
@@ -1055,4 +1096,99 @@ pub fn cmd_launch(rest: Vec<String>, log: Option<Option<String>>) -> Result<i32>
     println!("launching retroarch\n");
     let status = command.status().context("running retroarch")?;
     Ok(status.code().unwrap_or(0))
+}
+
+/// The pad `--pad` names, or the only one, or a list and an exit.
+fn pick_pad(pads: &[Pad], which: Option<&str>) -> Pad {
+    match which {
+        Some(name) => match pads
+            .iter()
+            .find(|pad| pad.name.contains(name) || pad.event() == name)
+        {
+            Some(pad) => pad.clone(),
+            None => {
+                println!("No pad matches {name:?}. Connected:");
+                for pad in pads {
+                    println!("  {}  {}", pad.event(), pad.name);
+                }
+                std::process::exit(1);
+            }
+        },
+        None if pads.len() == 1 => pads[0].clone(),
+        None => {
+            println!("Several pads are connected; name one with --pad:");
+            for pad in pads {
+                println!("  {}  {}", pad.event(), pad.name);
+            }
+            std::process::exit(1);
+        }
+    }
+}
+
+/// Set a deadzone, a debounce, or an axis or button to ignore, for a
+/// controller that misbehaves.
+///
+/// Through the daemon when one is running, so a seated pad is rebuilt with
+/// the new setting at once; straight into the profile store otherwise, where
+/// the next `run` or `serve` reads it. Either way the setting lives with the
+/// physical controller and follows it to whatever seat it takes.
+pub fn cmd_tune(
+    which: Option<String>,
+    request: padmap_core::tuning::Request,
+    show: bool,
+) -> Result<()> {
+    let pads = discover()?;
+    if pads.is_empty() {
+        println!("No joypads found.");
+        std::process::exit(1);
+    }
+    let pad = pick_pad(&pads, which.as_deref());
+    let signature = profiles::signature_of(&pad);
+
+    if show || request.is_empty() {
+        let tuning = publish::tuning_for(&pad);
+        println!("{}  {}", pad.event(), pad.name);
+        println!("{}", serde_json::to_string_pretty(&tuning)?);
+        if request.is_empty() && !show {
+            println!("\nNothing to change. See `padmap tune --help`.");
+        }
+        return Ok(());
+    }
+
+    let mut message = request.to_json();
+    message["cmd"] = "tune".into();
+    message["signature"] = signature.clone().into();
+    let tuning = match daemon_ask(&message, "tuned", 5.0) {
+        Some(reply) if reply.get("event").and_then(|e| e.as_str()) == Some("tuned") => reply
+            .get("tuning")
+            .cloned()
+            .unwrap_or(serde_json::json!({})),
+        Some(reply) => anyhow::bail!(
+            "the daemon refused: {}",
+            reply
+                .get("message")
+                .and_then(|m| m.as_str())
+                .unwrap_or("no reason given")
+        ),
+        None => {
+            // No daemon. Read the axes ourselves and write the profile; the
+            // next republish picks it up.
+            let declared: Vec<u16> = clone::open_source(&pad, false)
+                .map(|source| source.declared_axes().keys().copied().collect())
+                .unwrap_or_default();
+            if request.deadzone_all.is_some() && declared.is_empty() {
+                anyhow::bail!(
+                    "could not read {}'s axes to set a deadzone on them",
+                    pad.name
+                );
+            }
+            let tuning = request.apply(&publish::tuning_for(&pad), &declared);
+            publish::store_tuning(&pad, tuning.clone())
+                .with_context(|| format!("saving the profile for {}", pad.name))?;
+            serde_json::to_value(&tuning)?
+        }
+    };
+    println!("{}  {}", pad.event(), pad.name);
+    println!("{}", serde_json::to_string_pretty(&tuning)?);
+    Ok(())
 }

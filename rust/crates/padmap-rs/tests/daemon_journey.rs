@@ -62,6 +62,11 @@ const JOINER: PadId = PadId {
     pid: 0x0006,
     only: "RSTESTJOINER",
 };
+const TUNER: PadId = PadId {
+    name: "PADMAP RSTESTTUNER",
+    pid: 0x0007,
+    only: "RSTESTTUNER",
+};
 
 fn signature(id: PadId) -> String {
     format!("{PAD_VID:04x}:{:04x}:{}", id.pid, id.name)
@@ -823,6 +828,110 @@ fn a_pad_cannot_take_a_seat_that_does_not_exist() {
         daemon.last("claim").is_none(),
         "a pad took a seat that was already held by an absent controller"
     );
+
+    drop(daemon);
+    drop(pad);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// A `tune` command lands in the profile and on the running clone.
+#[test]
+fn a_tune_command_is_saved_and_applied_live() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let _guard = LiveGuard::new(TUNER);
+    let root = std::env::temp_dir().join(format!("padmap-tune-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let mut pad = TestPad::new(TUNER);
+    let mut daemon = Daemon::start(&root, TUNER);
+
+    // Before it has a seat, by signature: a drifting stick is usually noticed
+    // on the setup screen, before anybody has pressed anything.
+    daemon.events.clear();
+    daemon.send(serde_json::json!({
+        "cmd": "tune", "signature": signature(TUNER), "deadzone": 0.25, "debounce_ms": 30
+    }));
+    let tuned = daemon
+        .wait_for("tuned", |_| true, 5.0)
+        .expect("a tuned event");
+    assert_eq!(tuned["player"], 0, "not seated yet");
+    assert_eq!(tuned["signature"], signature(TUNER));
+    // A blanket deadzone lands on the sticks the pad declares and not on
+    // the hat.
+    assert_eq!(tuned["tuning"]["deadzone"]["0"], 0.25);
+    assert_eq!(tuned["tuning"]["deadzone"]["1"], 0.25);
+    assert!(tuned["tuning"]["deadzone"].get("16").is_none(), "{tuned}");
+    assert_eq!(tuned["tuning"]["debounce_ms"], 30);
+
+    // It is in the profile store, where the next republish reads it.
+    let profiles = root.join("devices");
+    let stored: Vec<Value> = std::fs::read_dir(&profiles)
+        .expect("profiles dir")
+        .flatten()
+        .filter_map(|entry| std::fs::read_to_string(entry.path()).ok())
+        .filter_map(|text| serde_json::from_str(&text).ok())
+        .collect();
+    let mine = stored
+        .iter()
+        .find(|profile| profile["signature"] == signature(TUNER))
+        .expect("a profile for the tuned pad");
+    assert_eq!(mine["tuning"]["debounce_ms"], 30, "{mine}");
+
+    // Seat it, and tune it again by player: reset, then a smaller debounce.
+    daemon.send(serde_json::json!({"cmd": "seating", "open": true, "players": 4}));
+    pad.hold(FIRST_KEY, 0.6);
+    daemon
+        .wait_for("state", |e| e["state"] == "ready", 5.0)
+        .expect("seated and published");
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "tune", "player": 1, "reset": true, "debounce_ms": 10}));
+    let tuned = daemon
+        .wait_for("tuned", |_| true, 5.0)
+        .expect("a second tuned event");
+    assert_eq!(tuned["player"], 1);
+    assert!(
+        tuned["tuning"].get("deadzone").is_none(),
+        "reset dropped it: {tuned}"
+    );
+    assert_eq!(tuned["tuning"]["debounce_ms"], 10);
+    // Applied in place: the clone is still on the air, and no `state` said
+    // otherwise -- a rebuilt clone would have been a disconnect mid-game.
+    assert!(
+        !daemon
+            .events
+            .iter()
+            .any(|e| e["event"] == "controller" && e["action"] == "removed"),
+        "tuning a seated pad took it off the air"
+    );
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "status"}));
+    let state = daemon.wait_for("state", |_| true, 3.0).expect("a state");
+    assert_eq!(state["state"], "ready");
+    assert_eq!(state["players"][0]["published"], true);
+
+    // What is not what it claims to be is refused, and the daemon lives.
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "tune", "player": 1, "deadzone": "lots"}));
+    let error = daemon.wait_for("error", |_| true, 3.0).expect("a refusal");
+    assert!(
+        error["message"].as_str().unwrap_or("").contains("deadzone"),
+        "{error}"
+    );
+    daemon.send(serde_json::json!({"cmd": "tune", "player": 3, "debounce_ms": 5}));
+    let error = daemon
+        .wait_for(
+            "error",
+            |e| e["message"].as_str().unwrap_or("").contains("player 3"),
+            3.0,
+        )
+        .expect("no such player");
+    assert!(error["message"]
+        .as_str()
+        .unwrap_or("")
+        .contains("no controller"));
 
     drop(daemon);
     drop(pad);

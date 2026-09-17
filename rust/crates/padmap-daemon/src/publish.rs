@@ -418,10 +418,22 @@ pub fn write_all(
 
 /// Keep a capture against the *controller*, under one scope.
 ///
-/// Everything else on the profile is carried over rather than rebuilt:
-/// recording an N64 mapping is not a reason to forget the calibration, the
-/// icon, or the mapping for every other console. Returns the controls the
-/// layout asked for and did not get -- a skipped control is stored as an
+/// The stored profile for a pad, or a fresh one carrying its identity.
+///
+/// Every `store_*` below starts from this and changes one thing, so choosing
+/// an icon is never a reason to forget where the buttons are, and setting a
+/// deadzone is never a reason to forget the icon.
+fn profile_for(pad: &Pad) -> Profile {
+    let mut profile = profiles::load(pad, None).unwrap_or_default();
+    profile.signature = profiles::signature_of(pad);
+    profile.name = crate::clean(&pad.name);
+    profile
+}
+
+/// Save a capture under a scope, and say which controls it did not bind.
+///
+/// The unbound list is the layout's controls the capture has no binding for.
+/// A wizard that was skipped through leaves them; a game reads each as an
 /// absence, which emits no key at all, and naming them is what tells that
 /// apart from a control the wizard never offered.
 pub fn store_mapping(
@@ -430,28 +442,14 @@ pub fn store_mapping(
     bindings: &BTreeMap<Control, Binding>,
     scope: &str,
 ) -> Vec<String> {
-    let existing = profiles::load(pad, None);
+    let mut profile = profile_for(pad);
     // Only from a capture with no scope, and only layout ids that are also
     // icon names. A GameCube controller mapped *for N64 games* is captured
     // against the N64 layout, and taking the icon from it would relabel the
     // pad as an N64 controller forever after.
-    let mut icon = existing
-        .as_ref()
-        .map(|p| p.icon.clone())
-        .unwrap_or_default();
-    if icon.is_empty() && scope.is_empty() && padmap_core::icons::known(layout_id) {
-        icon = layout_id.to_owned();
+    if profile.icon.is_empty() && scope.is_empty() && padmap_core::icons::known(layout_id) {
+        profile.icon = layout_id.to_owned();
     }
-    let mut profile = Profile {
-        signature: profiles::signature_of(pad),
-        name: crate::clean(&pad.name),
-        icon,
-        axes: existing
-            .as_ref()
-            .map(|p| p.axes.clone())
-            .unwrap_or_default(),
-        mappings: existing.map(|p| p.mappings).unwrap_or_default(),
-    };
     profile.record(
         scope,
         padmap_core::profile::Mapping {
@@ -480,17 +478,8 @@ pub fn store_calibration(
     pad: &Pad,
     axes: BTreeMap<u16, padmap_core::calibration::AxisCalibration>,
 ) {
-    let existing = profiles::load(pad, None);
-    let profile = Profile {
-        signature: profiles::signature_of(pad),
-        name: crate::clean(&pad.name),
-        icon: existing
-            .as_ref()
-            .map(|p| p.icon.clone())
-            .unwrap_or_default(),
-        mappings: existing.map(|p| p.mappings).unwrap_or_default(),
-        axes,
-    };
+    let mut profile = profile_for(pad);
+    profile.axes = axes;
     match profiles::save(&profile, None) {
         Ok(_) => info!(
             "calibrated {}: {} axis/axes",
@@ -505,22 +494,25 @@ pub fn store_calibration(
 /// vid/pid table: once a pad has been through setup, its icon comes from the
 /// person who owns it.
 pub fn store_icon(pad: &Pad, icon: &str) {
-    let existing = profiles::load(pad, None);
-    let profile = Profile {
-        signature: profiles::signature_of(pad),
-        name: crate::clean(&pad.name),
-        icon: icon.to_owned(),
-        // Carried over, not rebuilt: picking a picture is not a reason to
-        // forget where every button is.
-        mappings: existing
-            .as_ref()
-            .map(|p| p.mappings.clone())
-            .unwrap_or_default(),
-        axes: existing.map(|p| p.axes).unwrap_or_default(),
-    };
+    let mut profile = profile_for(pad);
+    profile.icon = icon.to_owned();
     if let Err(error) = profiles::save(&profile, None) {
         warn!("could not save the profile for {}: {error}", pad.name);
     }
+}
+
+/// Record what the user set for a misbehaving controller.
+pub fn store_tuning(pad: &Pad, tuning: padmap_core::tuning::Tuning) -> std::io::Result<()> {
+    let mut profile = profile_for(pad);
+    profile.tuning = tuning;
+    profiles::save(&profile, None).map(|_| ())
+}
+
+/// What the user has set for a pad, or nothing.
+pub fn tuning_for(pad: &Pad) -> padmap_core::tuning::Tuning {
+    profiles::load(pad, None)
+        .map(|profile| profile.tuning)
+        .unwrap_or_default()
 }
 
 /// The icon a pad should be drawn with.

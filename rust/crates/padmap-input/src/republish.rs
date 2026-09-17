@@ -14,9 +14,11 @@
 //! every write), where this issues one per frame.
 
 use std::io::ErrorKind;
+use std::time::Instant;
 
 use evdev::{EventType, InputEvent};
 use log::warn;
+use padmap_core::tuning::{Debouncer, Tuning};
 
 use crate::clone::{forwarded, VirtualPad};
 
@@ -41,6 +43,8 @@ pub struct Republisher {
     /// Reused between calls so the hot path allocates nothing.
     frame: Vec<InputEvent>,
     pending: Vec<InputEvent>,
+    /// The debouncers' clock starts here.
+    started: Instant,
 }
 
 impl Republisher {
@@ -50,7 +54,13 @@ impl Republisher {
             paused: false,
             frame: Vec::with_capacity(FRAME_HINT),
             pending: Vec::with_capacity(FRAME_HINT),
+            started: Instant::now(),
         }
+    }
+
+    /// Milliseconds since this republisher started: the debouncers' clock.
+    fn now_ms(&self) -> u64 {
+        self.started.elapsed().as_millis() as u64
     }
 
     pub fn paused(&self) -> bool {
@@ -102,6 +112,10 @@ impl Republisher {
                 .iter()
                 .map(|&code| InputEvent::new(EventType::KEY.0, code, 0))
                 .collect();
+            // A release the debouncer is still holding: the source no longer
+            // shows the key held, so `held_keys` would not lift it, and
+            // nothing else will while we are paused.
+            frame.extend(vpad.held_releases());
             if frame.is_empty() {
                 continue;
             }
@@ -125,7 +139,9 @@ impl Republisher {
             return out;
         }
 
-        self.pending.clear();
+        // Not cleared: a partial frame from the last read is still here, raw,
+        // waiting for its terminator.
+        let before = self.pending.len();
         match vpad.source.fetch_events(&mut self.pending) {
             Ok(()) => {}
             Err(error) if error.kind() == ErrorKind::WouldBlock => return out,
@@ -147,31 +163,38 @@ impl Republisher {
                 return out;
             }
         }
-        out.events = self.pending.len();
+        out.events = self.pending.len() - before;
 
         // Drained above whether or not we are paused, then discarded here --
         // that is the whole point of the pause.
         if self.paused {
+            self.pending.clear();
             return out;
         }
 
         self.frame.clear();
         let mut emitted_any = false;
-        for event in self.pending.drain(..) {
+        let now_ms = self.started.elapsed().as_millis() as u64;
+        // Only whole frames. A trailing partial stays in `pending`, *raw*, for
+        // the next read to finish -- shaping it now and again then would
+        // calibrate it twice and debounce it twice.
+        let complete = self
+            .pending
+            .iter()
+            .rposition(|event| event.event_type() == EventType::SYNCHRONIZATION)
+            .map(|at| at + 1)
+            .unwrap_or(0);
+        for event in self.pending.drain(..complete) {
             if !forwarded(event.event_type()) {
                 continue;
             }
-            let corrected = vpad.correct(event);
-            // The DSU picture is fed the corrected event, not the raw one, so
-            // a consumer reading padmap over UDP sees the same calibrated
-            // stick as one reading the clone.
-            vpad.tracker.apply(
-                corrected.event_type().0,
-                corrected.code(),
-                corrected.value(),
-            );
-            self.frame.push(corrected);
             if event.event_type() == EventType::SYNCHRONIZATION {
+                // A frame that tuning emptied is a bare SYN_REPORT, which the
+                // kernel drops on write and would count as a dropped event.
+                if self.frame.is_empty() {
+                    continue;
+                }
+                self.frame.push(event);
                 // A whole packet, and never less than one. Writing a partial
                 // frame publishes a torn reading -- a diagonal as an
                 // axis-aligned move -- which no consumer can detect.
@@ -183,12 +206,23 @@ impl Republisher {
                     Err(error) => vpad.note_dropped(&error),
                 }
                 self.frame.clear();
+                continue;
             }
+            // Calibration, then the user's tuning. An event the tuning drops
+            // or holds back is not in the frame, and the DSU picture is fed
+            // what the clone is, so the two never differ.
+            let Some(shaped) = vpad.shape(event, now_ms) else {
+                continue;
+            };
+            vpad.tracker
+                .apply(shaped.event_type().0, shaped.code(), shaped.value());
+            self.frame.push(shaped);
         }
-        // Whatever arrived after the last terminator waits for the next read.
-        // The kernel never splits a frame across a read boundary, so this is
-        // only non-empty when the device genuinely has more to say.
-        self.pending.append(&mut self.frame);
+        // Whatever arrived after the last terminator is still in `pending`,
+        // untouched, for the next read. The kernel never splits a frame across
+        // a read boundary, so it is only non-empty when the device genuinely
+        // has more to say.
+        debug_assert!(self.frame.is_empty());
         if emitted_any {
             vpad.note_forwarding();
         }
@@ -234,6 +268,60 @@ impl Republisher {
             out.frames = 1;
         }
         out
+    }
+
+    /// Change one pad's tuning without rebuilding its clone.
+    ///
+    /// A rebuild is a device that disappears and reappears, which every
+    /// consumer sees as a disconnect mid-game. The tuning is read per event,
+    /// so swapping it in place is enough -- after delivering any release the
+    /// old debouncer was still holding, or a shorter window would leave it
+    /// held for ever.
+    pub fn retune(&mut self, index: usize, tuning: Tuning) {
+        let Some(vpad) = self.pads.get_mut(index) else {
+            return;
+        };
+        let mut frame = vpad.held_releases();
+        if !frame.is_empty() && !self.paused {
+            for event in &frame {
+                vpad.tracker.apply(event.event_type().0, event.code(), 0);
+            }
+            frame.push(InputEvent::new(EventType::SYNCHRONIZATION.0, 0, 0));
+            if let Err(error) = vpad.clone.emit(&frame) {
+                vpad.note_dropped(&error);
+            }
+        }
+        vpad.debouncer = Debouncer::new(tuning.debounce_ms);
+        vpad.tuning = tuning;
+    }
+
+    /// Deliver every release the debouncers have finished holding.
+    ///
+    /// Called from the tick, so a release arrives at most one tick late on
+    /// top of its window. Paused pads are skipped: their releases were
+    /// delivered when the pause began, and anything held since is a press
+    /// the pause exists to withhold.
+    pub fn flush_debounce(&mut self) {
+        if self.paused {
+            return;
+        }
+        let now_ms = self.now_ms();
+        for vpad in &mut self.pads {
+            if vpad.gone {
+                continue;
+            }
+            let mut frame = vpad.due_releases(now_ms);
+            if frame.is_empty() {
+                continue;
+            }
+            for event in &frame {
+                vpad.tracker.apply(event.event_type().0, event.code(), 0);
+            }
+            frame.push(InputEvent::new(EventType::SYNCHRONIZATION.0, 0, 0));
+            if let Err(error) = vpad.clone.emit(&frame) {
+                vpad.note_dropped(&error);
+            }
+        }
     }
 
     /// Let go of a sensor whose device has gone.

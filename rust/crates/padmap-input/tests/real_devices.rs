@@ -110,8 +110,16 @@ fn clone_of(found: &pad::Pad, player: u32) -> clone::VirtualPad {
     let axes: BTreeMap<u16, padmap_core::calibration::AxisCalibration> = BTreeMap::new();
     // grab=false: something else on this machine may hold the pad, and a test
     // that took exclusive access would take it from a running daemon.
-    let mut virtual_pad = clone::create(found, player, clone::IdentityMode::Mirror, &axes, false)
-        .expect("create a clone");
+    let tuning = padmap_core::tuning::Tuning::default();
+    let mut virtual_pad = clone::create(
+        found,
+        player,
+        clone::IdentityMode::Mirror,
+        &axes,
+        tuning,
+        false,
+    )
+    .expect("create a clone");
     virtual_pad
         .source
         .set_nonblocking(true)
@@ -639,4 +647,202 @@ fn an_imu_that_vanishes_is_reported_gone_not_an_error() {
         }
     }
     assert!(gone, "the sensor never noticed its device had gone");
+}
+
+// --- tuning, through a real clone ---------------------------------------------
+
+/// A clone of `found` built with `tuning`, and its own node opened for
+/// reading, so a test sees exactly what a game would.
+fn tuned_clone_of(
+    found: &pad::Pad,
+    tuning: padmap_core::tuning::Tuning,
+) -> (clone::VirtualPad, Device) {
+    let axes: BTreeMap<u16, padmap_core::calibration::AxisCalibration> = BTreeMap::new();
+    let mut virtual_pad =
+        clone::create(found, 1, clone::IdentityMode::Mirror, &axes, tuning, false)
+            .expect("create a clone");
+    virtual_pad
+        .source
+        .set_nonblocking(true)
+        .expect("set the source non-blocking");
+    let node = virtual_pad.node().expect("the clone's node");
+    // A node exists before it is readable: udev applies the uaccess ACL a
+    // moment after the kernel creates it (see EVENTS.md). Wait for it.
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    let reader = loop {
+        match Device::open(&node) {
+            Ok(device) => break device,
+            Err(error) if std::time::Instant::now() < deadline => {
+                let _ = error;
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(error) => panic!("open the clone {node}: {error}"),
+        }
+    };
+    reader.set_nonblocking(true).expect("non-blocking");
+    (virtual_pad, reader)
+}
+
+/// Every key and axis event the clone has emitted so far, as `(type, code,
+/// value)`.
+fn drain_clone(reader: &mut Device) -> Vec<(u16, u16, i32)> {
+    let mut out = Vec::new();
+    for _ in 0..20 {
+        match reader.fetch_events() {
+            Ok(events) => out.extend(
+                events
+                    .filter(|e| e.event_type() != EventType::SYNCHRONIZATION)
+                    .map(|e| (e.event_type().0, e.code(), e.value())),
+            ),
+            Err(_) => break,
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    out
+}
+
+#[test]
+fn a_bouncing_button_reaches_the_clone_as_one_press() {
+    needs_uinput!();
+    let mut source = spawn_source();
+    let found = find(&mut source).expect("discover");
+    let tuning = padmap_core::tuning::Tuning {
+        debounce_ms: 40,
+        ..padmap_core::tuning::Tuning::default()
+    };
+    let (vpad, mut reader) = tuned_clone_of(&found, tuning);
+    let mut republisher = republish::Republisher::new(vec![vpad]);
+    let _ = republisher.forward(0);
+    let _ = drain_clone(&mut reader);
+
+    let key = KeyCode::BTN_SOUTH.code();
+    let press = |source: &mut VirtualDevice, value: i32| {
+        source
+            .emit(&[
+                InputEvent::new(EventType::KEY.0, key, value),
+                InputEvent::new(EventType::SYNCHRONIZATION.0, 0, 0),
+            ])
+            .expect("emit");
+    };
+    // Press, then a bounce: release and press again five milliseconds apart.
+    press(&mut source, 1);
+    std::thread::sleep(Duration::from_millis(20));
+    let _ = republisher.forward(0);
+    press(&mut source, 0);
+    std::thread::sleep(Duration::from_millis(5));
+    press(&mut source, 1);
+    std::thread::sleep(Duration::from_millis(20));
+    let _ = republisher.forward(0);
+    republisher.flush_debounce();
+    let seen = drain_clone(&mut reader);
+    assert_eq!(
+        seen,
+        vec![(EventType::KEY.0, key, 1)],
+        "one press, no bounce"
+    );
+
+    // Well past the window, still nothing: the bounce cancelled the release.
+    std::thread::sleep(Duration::from_millis(80));
+    republisher.flush_debounce();
+    assert!(drain_clone(&mut reader).is_empty());
+
+    // A real release arrives after the window, from the tick.
+    press(&mut source, 0);
+    std::thread::sleep(Duration::from_millis(20));
+    let _ = republisher.forward(0);
+    republisher.flush_debounce();
+    assert!(
+        drain_clone(&mut reader).is_empty(),
+        "held back, not delivered yet"
+    );
+    std::thread::sleep(Duration::from_millis(60));
+    republisher.flush_debounce();
+    assert_eq!(drain_clone(&mut reader), vec![(EventType::KEY.0, key, 0)]);
+    republisher.close();
+}
+
+#[test]
+fn a_deadzone_flattens_drift_and_keeps_the_ends() {
+    needs_uinput!();
+    let mut source = spawn_source();
+    let found = find(&mut source).expect("discover");
+    let tuning = padmap_core::tuning::Tuning {
+        deadzone: BTreeMap::from([(AbsoluteAxisCode::ABS_X.0, 0.2)]),
+        ..padmap_core::tuning::Tuning::default()
+    };
+    let (vpad, mut reader) = tuned_clone_of(&found, tuning);
+    let mut republisher = republish::Republisher::new(vec![vpad]);
+    let _ = republisher.forward(0);
+    let _ = drain_clone(&mut reader);
+
+    let mut send = |value: i32| {
+        source
+            .emit(&[
+                InputEvent::new(EventType::ABSOLUTE.0, AbsoluteAxisCode::ABS_X.0, value),
+                InputEvent::new(EventType::SYNCHRONIZATION.0, 0, 0),
+            ])
+            .expect("emit");
+        std::thread::sleep(Duration::from_millis(20));
+        let _ = republisher.forward(0);
+        drain_clone(&mut reader)
+    };
+    // Slammed reads as slammed, so a character can still run.
+    assert_eq!(send(32767), vec![(EventType::ABSOLUTE.0, 0, 32767)]);
+    // Drift inside the band reads as centred. (After the slam, so the kernel
+    // sees a change: it drops a write of the value an axis already holds.)
+    assert_eq!(send(3000), vec![(EventType::ABSOLUTE.0, 0, 0)]);
+    // And stays there as the drift wanders, with nothing emitted at all.
+    assert!(send(-5000).is_empty(), "drift inside the band is silence");
+    // And the untuned axis is untouched.
+    source
+        .emit(&[
+            InputEvent::new(EventType::ABSOLUTE.0, AbsoluteAxisCode::ABS_Y.0, 3000),
+            InputEvent::new(EventType::SYNCHRONIZATION.0, 0, 0),
+        ])
+        .expect("emit");
+    std::thread::sleep(Duration::from_millis(20));
+    let _ = republisher.forward(0);
+    assert_eq!(
+        drain_clone(&mut reader),
+        vec![(EventType::ABSOLUTE.0, 1, 3000)]
+    );
+    republisher.close();
+}
+
+#[test]
+fn an_ignored_button_and_axis_never_reach_the_clone() {
+    needs_uinput!();
+    let mut source = spawn_source();
+    let found = find(&mut source).expect("discover");
+    let tuning = padmap_core::tuning::Tuning {
+        ignore_axes: [AbsoluteAxisCode::ABS_Z.0].into_iter().collect(),
+        ignore_buttons: [KeyCode::BTN_EAST.code()].into_iter().collect(),
+        ..padmap_core::tuning::Tuning::default()
+    };
+    let (vpad, mut reader) = tuned_clone_of(&found, tuning);
+    let mut republisher = republish::Republisher::new(vec![vpad]);
+    let _ = republisher.forward(0);
+    let _ = drain_clone(&mut reader);
+
+    source
+        .emit(&[
+            InputEvent::new(EventType::KEY.0, KeyCode::BTN_EAST.code(), 1),
+            InputEvent::new(EventType::ABSOLUTE.0, AbsoluteAxisCode::ABS_Z.0, 200),
+            InputEvent::new(EventType::KEY.0, KeyCode::BTN_SOUTH.code(), 1),
+            InputEvent::new(EventType::SYNCHRONIZATION.0, 0, 0),
+        ])
+        .expect("emit");
+    std::thread::sleep(Duration::from_millis(20));
+    let _ = republisher.forward(0);
+    assert_eq!(
+        drain_clone(&mut reader),
+        vec![(EventType::KEY.0, KeyCode::BTN_SOUTH.code(), 1)],
+        "only the button that is not ignored"
+    );
+    assert_eq!(
+        republisher.pads[0].tracker.pad().buttons,
+        padmap_core::dsu::button::CROSS,
+        "and the DSU picture agrees"
+    );
+    republisher.close();
 }

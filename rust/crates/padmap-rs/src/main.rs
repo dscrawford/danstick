@@ -4,6 +4,7 @@
 //!     padmap setup         assign player order by pressing a button
 //!     padmap map           record which button is which
 //!     padmap calibrate     measure where each controller's sticks rest
+//!     padmap tune          set a deadzone, a debounce, or what to ignore
 //!     padmap forget        delete stored controller profiles
 //!     padmap run           republish the assigned pads and keep them alive
 //!     padmap serve         the same, as a daemon a client drives
@@ -80,6 +81,18 @@ fn main() -> Result<()> {
         Some("calibrate") => {
             commands::cmd_calibrate(rest.iter().any(|arg| arg == "-f" || arg == "--force"))
         }
+        Some("tune") => {
+            if rest.iter().any(|arg| arg == "-h" || arg == "--help") {
+                print!("{TUNE_USAGE}");
+                return Ok(());
+            }
+            let request = tune_request(&rest)?;
+            commands::cmd_tune(
+                flag_value(&rest, &["--pad"]),
+                request,
+                rest.iter().any(|arg| arg == "--show"),
+            )
+        }
         Some("map") => commands::cmd_map(
             flag_value(&rest, &["--layout"]),
             flag_value(&rest, &["--pad"]),
@@ -149,7 +162,7 @@ fn parse_number<T: std::str::FromStr>(value: &str, flag: &str) -> T {
 
 fn usage() {
     eprintln!(
-        "usage: padmap list [--json] | setup | map | calibrate | forget | run | serve | \
+        "usage: padmap list [--json] | setup | map | calibrate | tune | forget | run | serve | \
          launch | play | hide | ensure-daemon | clean-config | \
          emit [--cemu-dir D] [--dolphin-dir D] [--ares-settings F] \
          [--ryujinx-config F] \
@@ -480,7 +493,8 @@ fn cmd_run() -> Result<()> {
                 axes.len()
             );
         }
-        match clone::create(pad, player, mode, &axes, true) {
+        let tuning = padmap_daemon::publish::tuning_for(pad);
+        match clone::create(pad, player, mode, &axes, tuning, true) {
             Ok(vpad) => vpads.push(vpad),
             Err(error) => warn!("player {player}: {error}"),
         }
@@ -576,12 +590,13 @@ fn cmd_run() -> Result<()> {
                 reactor::Watched::Clone(index) => republisher.feedback(index),
                 reactor::Watched::Tick => {
                     let expiries = reactor.take_tick();
-                    // Nothing periodic belongs on this loop yet, and that is
-                    // the point: the tick exists so that when something does,
-                    // it runs 50 times a second and not once per event.
                     if expiries > 1 {
                         late_ticks += expiries - 1;
                     }
+                    // A debounced release is delivered from here, so it is at
+                    // most one tick late on top of its window.
+                    republisher.flush_debounce();
+                    serve_motion(motion.as_mut(), &republisher, false);
                 }
                 // `run` has no socket and no session; those kinds are the
                 // daemon's, and are never registered here.
@@ -763,4 +778,114 @@ fn install_signal_handlers(stop: &Arc<AtomicBool>) -> Result<()> {
             .with_context(|| format!("installing a handler for signal {signal}"))?;
     }
     Ok(())
+}
+
+const TUNE_USAGE: &str = "\
+usage: padmap tune [--pad NAME] [--deadzone F | --deadzone CODE=F]... [--debounce MS]
+                   [--ignore-axis CODE]... [--ignore-button CODE]... [--reset] [--show]
+
+For a controller that misbehaves. Settings live with the physical controller
+and are applied to everything padmap publishes for it, after calibration.
+
+  --deadzone F         a band of F (0 to 1) of each stick's and trigger's
+                       travel that reads as untouched; the rest is stretched
+                       so full deflection still reaches the end
+  --deadzone CODE=F    the same, for one ABS code (0 = left X, 1 = left Y,
+                       2 = left trigger, 3 = right X, 4 = right Y,
+                       5 = right trigger)
+  --debounce MS        hold every release back MS milliseconds and swallow a
+                       press that arrives inside that, for a switch that
+                       bounces. Up to 500.
+  --ignore-axis CODE   drop that axis entirely
+  --ignore-button CODE drop that key code entirely
+  --reset              start from nothing before applying the rest
+  --show               print what is set and change nothing
+";
+
+/// The `tune` flags as a request, refusing what does not parse.
+fn tune_request(args: &[String]) -> Result<padmap_core::tuning::Request> {
+    use padmap_core::tuning::Request;
+    let mut request = Request {
+        reset: args.iter().any(|arg| arg == "--reset"),
+        ..Request::default()
+    };
+    let mut ignore_axes = std::collections::BTreeSet::new();
+    let mut ignore_buttons = std::collections::BTreeSet::new();
+    let mut saw_ignore_axes = false;
+    let mut saw_ignore_buttons = false;
+    let mut at = 0;
+    while at < args.len() {
+        let flag = args[at].as_str();
+        let value = || -> Result<&String> {
+            args.get(at + 1)
+                .filter(|v| !v.starts_with("--"))
+                .with_context(|| format!("{flag} needs a value"))
+        };
+        match flag {
+            "--deadzone" => {
+                let text = value()?;
+                if let Some((code, fraction)) = text.split_once('=') {
+                    let code: u16 = code
+                        .trim()
+                        .parse()
+                        .with_context(|| format!("{code:?} is not an ABS code"))?;
+                    let fraction: f32 = fraction
+                        .trim()
+                        .parse()
+                        .with_context(|| format!("{fraction:?} is not a number"))?;
+                    anyhow::ensure!((0.0..=1.0).contains(&fraction), "a deadzone is from 0 to 1");
+                    request.deadzone.insert(code, fraction);
+                } else {
+                    let fraction: f32 = text
+                        .parse()
+                        .with_context(|| format!("{text:?} is not a number"))?;
+                    anyhow::ensure!((0.0..=1.0).contains(&fraction), "a deadzone is from 0 to 1");
+                    request.deadzone_all = Some(fraction);
+                }
+                at += 2;
+            }
+            "--debounce" => {
+                let text = value()?;
+                let ms: u32 = text
+                    .trim_end_matches("ms")
+                    .parse()
+                    .with_context(|| format!("{text:?} is not a number of milliseconds"))?;
+                anyhow::ensure!(
+                    ms <= padmap_core::tuning::MAX_DEBOUNCE_MS,
+                    "a debounce is at most {} ms",
+                    padmap_core::tuning::MAX_DEBOUNCE_MS
+                );
+                request.debounce_ms = Some(ms);
+                at += 2;
+            }
+            "--ignore-axis" => {
+                let text = value()?;
+                ignore_axes.insert(
+                    text.parse::<u16>()
+                        .with_context(|| format!("{text:?} is not an ABS code"))?,
+                );
+                saw_ignore_axes = true;
+                at += 2;
+            }
+            "--ignore-button" => {
+                let text = value()?;
+                ignore_buttons.insert(
+                    text.parse::<u16>()
+                        .with_context(|| format!("{text:?} is not a key code"))?,
+                );
+                saw_ignore_buttons = true;
+                at += 2;
+            }
+            "--pad" => at += 2,
+            "--reset" | "--show" => at += 1,
+            other => anyhow::bail!("unknown flag {other:?}\n{TUNE_USAGE}"),
+        }
+    }
+    if saw_ignore_axes || request.reset {
+        request.ignore_axes = Some(ignore_axes);
+    }
+    if saw_ignore_buttons || request.reset {
+        request.ignore_buttons = Some(ignore_buttons);
+    }
+    Ok(request)
 }

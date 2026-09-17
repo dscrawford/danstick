@@ -17,6 +17,7 @@ Everything downstream binds to those.
     padmap setup       assign player order by pressing and holding a button
     padmap map         record which button is which
     padmap calibrate   measure where the sticks actually rest
+    padmap tune        a deadzone, a debounce, or a broken part to ignore
     padmap run         republish the assigned pads and keep them alive
     padmap serve       the same, as a daemon with a socket
     padmap hide        udev rules hiding the physical pads from everything else

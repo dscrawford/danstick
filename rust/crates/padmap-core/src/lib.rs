@@ -40,6 +40,7 @@ pub mod scope;
 pub mod sdl;
 pub mod standard;
 pub mod state;
+pub mod tuning;
 pub mod userconfig;
 pub mod wire;
 

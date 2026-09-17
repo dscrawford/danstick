@@ -16,9 +16,10 @@ use evdev::{
     FFEffect, InputEvent, InputId, KeyCode, UInputEvent, UinputAbsSetup,
 };
 use log::{info, warn};
-use padmap_core::calibration::AxisCalibration;
+use padmap_core::calibration::{AxisCalibration, Declared};
 use padmap_core::dsupad;
 use padmap_core::emit::version_for;
+use padmap_core::tuning::{Debouncer, Tuning};
 
 use crate::motion;
 use crate::pad::{Pad, VIRTUAL_PHYS_PREFIX};
@@ -468,6 +469,13 @@ pub struct VirtualPad {
     /// rather than in a front-end means every consumer benefits, and a worn
     /// stick stops reading as permanently deflected everywhere at once.
     pub axes: BTreeMap<u16, AxisCalibration>,
+    /// What the user set for this controller. Applied after calibration.
+    pub tuning: Tuning,
+    /// Every axis as the source declares it, for the deadzone to know where
+    /// each one rests.
+    pub declared: BTreeMap<u16, Declared>,
+    /// Holds releases back for the tuning's debounce window.
+    pub debouncer: Debouncer,
     /// A DSU-shaped picture of the same events, for the motion server.
     ///
     /// Fed from the *corrected* stream rather than the raw one, so a consumer
@@ -511,6 +519,7 @@ pub fn create(
     player: u32,
     mode: IdentityMode,
     profile_axes: &BTreeMap<u16, AxisCalibration>,
+    tuning: Tuning,
     grab: bool,
 ) -> Result<VirtualPad, CloneError> {
     // Two ways to obtain the same three things. A Steam Controller slot is
@@ -584,9 +593,9 @@ pub fn create(
         }
     }
 
+    let declared = source.declared_axes();
     let tracker = dsupad::Tracker::new(
-        source
-            .declared_axes()
+        declared
             .iter()
             .map(|(code, declared)| {
                 (
@@ -621,6 +630,9 @@ pub fn create(
         source,
         clone,
         axes,
+        debouncer: Debouncer::new(tuning.debounce_ms),
+        tuning,
+        declared,
         tracker,
         sensor,
         dropped: 0,
@@ -877,6 +889,52 @@ impl VirtualPad {
             ),
             None => event,
         }
+    }
+
+    /// Calibration, then tuning: the event as the clone should see it, or
+    /// `None` if it should not see it at all.
+    ///
+    /// `now_ms` is the debouncer's clock. A release it holds back comes out
+    /// of [`VirtualPad::due_releases`] later, so a `None` here is not always
+    /// a dropped event.
+    pub fn shape(&mut self, event: InputEvent, now_ms: u64) -> Option<InputEvent> {
+        let event = self.correct(event);
+        let code = event.code();
+        match event.event_type() {
+            EventType::ABSOLUTE => {
+                let value =
+                    self.tuning
+                        .shape_axis(code, event.value(), self.declared.get(&code))?;
+                Some(InputEvent::new(event.event_type().0, code, value))
+            }
+            EventType::KEY => {
+                if self.tuning.ignores_button(code) {
+                    return None;
+                }
+                let value = self.debouncer.key(code, event.value(), now_ms)?;
+                Some(InputEvent::new(event.event_type().0, code, value))
+            }
+            _ => Some(event),
+        }
+    }
+
+    /// Releases the debouncer has finished holding, as key-up events.
+    pub fn due_releases(&mut self, now_ms: u64) -> Vec<InputEvent> {
+        self.debouncer
+            .due(now_ms)
+            .into_iter()
+            .map(|code| InputEvent::new(EventType::KEY.0, code, 0))
+            .collect()
+    }
+
+    /// Every release still held, as key-up events, for a pause or a pad
+    /// going away.
+    pub fn held_releases(&mut self) -> Vec<InputEvent> {
+        self.debouncer
+            .drain()
+            .into_iter()
+            .map(|code| InputEvent::new(EventType::KEY.0, code, 0))
+            .collect()
     }
 
     /// Say once, and only once, that input is actually reaching the clone.

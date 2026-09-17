@@ -20,6 +20,7 @@ use serde_json::Value;
 use crate::binding::Binding;
 use crate::calibration::AxisCalibration;
 use crate::scope;
+use crate::tuning::Tuning;
 
 /// One capture: where every control of one layout lives on this pad.
 ///
@@ -87,7 +88,7 @@ impl Mapping {
 }
 
 /// Everything learned about one model of controller.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Profile {
     pub signature: String,
     pub name: String,
@@ -99,6 +100,10 @@ pub struct Profile {
     /// to claim -- which is how SDL's own database loses it, since that is
     /// keyed on "padmap Player N".
     pub mappings: BTreeMap<String, Mapping>,
+    /// What the user set for a controller that misbehaves: deadzones, a
+    /// debounce, axes and buttons to ignore. Applied in transit, after
+    /// calibration.
+    pub tuning: Tuning,
 }
 
 /// What went wrong reading one axis, for a caller that wants to say so.
@@ -201,7 +206,7 @@ impl Profile {
                 )
             })
             .collect();
-        serde_json::json!({
+        let mut out = serde_json::json!({
             "signature": self.signature,
             "name": self.name,
             "icon": self.icon,
@@ -213,7 +218,15 @@ impl Profile {
             // controller mapped instead of offering the wizard again.
             "layout": universal.layout,
             "buttons": universal.buttons,
-        })
+        });
+        // Only when something is set: a profile nobody has tuned keeps the
+        // shape it has always had, and a rollback never sees the key.
+        if !self.tuning.is_default() {
+            if let Ok(tuning) = serde_json::to_value(&self.tuning) {
+                out["tuning"] = tuning;
+            }
+        }
+        out
     }
 
     /// Read a profile out of whatever a file happens to contain.
@@ -289,12 +302,20 @@ impl Profile {
             }
         }
 
+        // Junk under "tuning" costs the tuning, not the profile: a controller
+        // whose deadzone line was hand-edited badly still has its mapping.
+        let tuning = object
+            .get("tuning")
+            .and_then(|raw| serde_json::from_value(raw.clone()).ok())
+            .unwrap_or_default();
+
         let profile = Profile {
             signature: string_at(object.get("signature")),
             name: string_at(object.get("name")),
             icon: string_at(object.get("icon")),
             axes,
             mappings,
+            tuning,
         };
         (profile, rejected)
     }
@@ -590,6 +611,11 @@ mod tests {
                 .into_iter()
                 .collect(),
             mappings: BTreeMap::new(),
+            tuning: Tuning {
+                deadzone: BTreeMap::from([(0, 0.15)]),
+                debounce_ms: 25,
+                ..Tuning::default()
+            },
         };
         profile.record(scope::UNIVERSAL, capture("a", 1));
         profile.record("console:n64", capture("b", 2));
@@ -662,5 +688,26 @@ mod divergences {
         assert_eq!(profile.signature, "");
         assert_eq!(profile.name, "");
         assert_eq!(profile.icon, "");
+    }
+
+    #[test]
+    fn an_untuned_profile_writes_no_tuning_key() {
+        // The shape a rollback reads. A key it does not know is harmless, but
+        // a profile nobody touched should not change on disk.
+        let value = Profile::default().to_value();
+        assert!(value.get("tuning").is_none());
+    }
+
+    #[test]
+    fn junk_under_tuning_costs_the_tuning_and_not_the_profile() {
+        let (profile, _) = Profile::from_value(&serde_json::json!({
+            "signature": "s",
+            "icon": "n64",
+            "tuning": {"deadzone": "lots", "debounce_ms": -3}
+        }));
+        assert_eq!(profile.icon, "n64");
+        assert!(profile.tuning.is_default());
+        let (profile, _) = Profile::from_value(&serde_json::json!({"tuning": 7}));
+        assert!(profile.tuning.is_default());
     }
 }

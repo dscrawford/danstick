@@ -190,6 +190,16 @@ pub fn sdl_mapping(lines: &[String]) -> Value {
     json!({ "event": "sdl_mapping", "lines": lines })
 }
 
+/// What a controller is now tuned to, after a `tune` command.
+pub fn tuned(player: u32, signature: &str, tuning: &padmap_core::tuning::Tuning) -> Value {
+    json!({
+        "event": "tuned",
+        "player": player,
+        "signature": signature,
+        "tuning": serde_json::to_value(tuning).unwrap_or(Value::Null),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

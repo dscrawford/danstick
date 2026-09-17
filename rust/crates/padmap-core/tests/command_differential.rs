@@ -65,6 +65,17 @@ fn as_fields(command: &Command) -> Value {
         Command::Seating { open, players } => {
             serde_json::json!({"cmd": "seating", "open": open, "players": players})
         }
+        Command::Tune {
+            player,
+            signature,
+            request,
+        } => {
+            let mut out = request.to_json();
+            out["cmd"] = "tune".into();
+            out["player"] = (*player).into();
+            out["signature"] = signature.as_str().into();
+            out
+        }
     }
 }
 

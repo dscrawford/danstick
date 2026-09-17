@@ -21,6 +21,7 @@ use padmap_core::announce;
 use padmap_core::capture::{self, Chooser, MappingRun};
 use padmap_core::command::{Command, Refused};
 use padmap_core::state::{PlayerState, STATE_ASSIGNING, STATE_IDLE, STATE_READY};
+use padmap_core::tuning::Request;
 use padmap_core::wire::{self, LineReader};
 use padmap_core::{emit, scope};
 use padmap_input::clone::{self, IdentityMode};
@@ -669,6 +670,11 @@ impl Server {
                 }
             }
             Command::SetIcon { player, icon } => self.set_icon(as_player(player), &icon),
+            Command::Tune {
+                player,
+                signature,
+                request,
+            } => self.tune(fd, as_player(player), &signature, &request),
             Command::Seating { open, players } => {
                 if open {
                     self.seating
@@ -1371,6 +1377,94 @@ impl Server {
         }
     }
 
+    /// Apply a `tune` request to a pad, save it, and republish so it takes.
+    ///
+    /// The pad is found by player when seated, else by signature among what
+    /// is plugged in, so a controller can be tuned before it has a seat --
+    /// a stick that drifts is usually noticed on the setup screen.
+    fn tune(&mut self, fd: i32, player: u32, signature: &str, request: &Request) {
+        let pad = match self.pad_for_player(player).or_else(|| {
+            (!signature.is_empty())
+                .then(|| pad::discover(pad::Filter::default()).unwrap_or_default())
+                .and_then(|pads| {
+                    pads.into_iter()
+                        .find(|pad| profiles::signature_of(pad) == signature)
+                })
+        }) {
+            Some(pad) => pad,
+            None => {
+                self.send(
+                    fd,
+                    &events::error(if player > 0 {
+                        format!("player {player} has no controller")
+                    } else {
+                        format!("no controller with signature {signature:?} is plugged in")
+                    }),
+                );
+                return;
+            }
+        };
+        // The axes the pad declares, for a blanket deadzone to land on. From
+        // the running clone when there is one; opening the node otherwise.
+        let declared: Vec<u16> = self
+            .republisher
+            .as_ref()
+            .and_then(|republisher| {
+                republisher
+                    .pads
+                    .iter()
+                    .find(|vpad| vpad.pad.path == pad.path)
+                    .map(|vpad| vpad.declared.keys().copied().collect())
+            })
+            .or_else(|| {
+                clone::open_source(&pad, false)
+                    .ok()
+                    .map(|source| source.declared_axes().keys().copied().collect())
+            })
+            .unwrap_or_default();
+        if request.deadzone_all.is_some() && declared.is_empty() {
+            self.send(
+                fd,
+                &events::error(format!(
+                    "{}: could not read its axes to set a deadzone on them",
+                    clean(&pad.name)
+                )),
+            );
+            return;
+        }
+        let tuning = request.apply(&publish::tuning_for(&pad), &declared);
+        if let Err(error) = publish::store_tuning(&pad, tuning.clone()) {
+            self.send(
+                fd,
+                &events::error(format!(
+                    "could not save tuning for {}: {error}",
+                    clean(&pad.name)
+                )),
+            );
+            return;
+        }
+        info!("tuned {}: {tuning:?}", clean(&pad.name));
+        // Swapped into the running clone rather than rebuilt: a rebuilt
+        // clone is a device that vanishes and returns, which a game in
+        // progress sees as a disconnect.
+        if let Some(republisher) = self.republisher.as_mut() {
+            if let Some(index) = republisher
+                .pads
+                .iter()
+                .position(|vpad| vpad.pad.path == pad.path)
+            {
+                republisher.retune(index, tuning.clone());
+            }
+        }
+        let seat = self
+            .slots_assigned
+            .iter()
+            .find(|slot| slot.pad.path == pad.path)
+            .map(|slot| slot.player)
+            .unwrap_or(0);
+        self.broadcast(&events::tuned(seat, &profiles::signature_of(&pad), &tuning));
+    }
+
     // -- session input ----------------------------------------------------
 
     fn on_session_read(&mut self, index: usize) {
@@ -1714,6 +1808,12 @@ impl Server {
         // applied exactly never.
         self.sync_republish_pause();
         self.reap_dead_pads();
+        // Releases a debounce held back: at most one tick late on top of the
+        // window, and the DSU picture follows.
+        if let Some(republisher) = self.republisher.as_mut() {
+            republisher.flush_debounce();
+        }
+        self.publish_motion();
         self.republish_if_stale();
         self.refresh_seating(&mut scan);
         self.tick_seating();
@@ -1811,7 +1911,8 @@ impl Server {
             // and taking the whole roster down with it left a four-player
             // machine with no virtual pads at all -- for a pad that was merely
             // switched off. The seat is kept; see `players_payload`.
-            match clone::create(&slot.pad, slot.player, self.mode, &axes, true) {
+            let tuning = publish::tuning_for(&slot.pad);
+            match clone::create(&slot.pad, slot.player, self.mode, &axes, tuning, true) {
                 Ok(vpad) => vpads.push(vpad),
                 Err(error) => {
                     warn!(

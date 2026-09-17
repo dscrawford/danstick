@@ -15,7 +15,7 @@
 use serde_json::Value;
 
 /// Every command the socket accepts.
-pub const COMMANDS: [&str; 15] = [
+pub const COMMANDS: [&str; 16] = [
     "begin",
     "reset",
     "accept",
@@ -31,10 +31,11 @@ pub const COMMANDS: [&str; 15] = [
     "set_icon",
     "status",
     "seating",
+    "tune",
 ];
 
 /// A parsed command, with its arguments already coerced.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Command {
     Begin {
         players: i64,
@@ -85,6 +86,15 @@ pub enum Command {
         /// How many seats exist. Only meaningful when opening.
         players: i64,
     },
+    /// Set what a misbehaving controller needs: a deadzone, a debounce, an
+    /// axis or button to ignore. By player when it is seated, else by the
+    /// physical pad's signature, so a controller can be tuned before it has
+    /// ever taken a seat.
+    Tune {
+        player: i64,
+        signature: String,
+        request: crate::tuning::Request,
+    },
 }
 
 /// Why a message could not be acted on.
@@ -93,6 +103,9 @@ pub enum Refused {
     /// Not a command padmap has. Answered with `unknown command`.
     #[error("unknown command {0:?}")]
     Unknown(String),
+    /// A `tune` field that is not what it claims to be.
+    #[error("{0}")]
+    BadTuning(String),
     /// A field that must be a number was something else. The Python raises
     /// here and the daemon answers with the exception's text, so a client
     /// sees a refusal either way -- what matters is that neither
@@ -184,6 +197,11 @@ impl Command {
                 icon: text("icon"),
             },
             "status" => Command::Status,
+            "tune" => Command::Tune {
+                player: number("player", 0)?,
+                signature: text("signature"),
+                request: crate::tuning::Request::from_json(message).map_err(Refused::BadTuning)?,
+            },
             "seating" => Command::Seating {
                 // Absent means "open it", so a bare {"cmd":"seating"} turns it
                 // on rather than silently doing nothing.

@@ -13,6 +13,42 @@ A pad can be `autobound: true, configured: false` -- working, and never
 walked through anything -- and a capture always wins where one exists, so
 remapping stays available and stays optional.
 
+## Tuning a controller that misbehaves
+
+```json
+{"cmd": "tune", "player": 2, "deadzone": 0.15}
+{"cmd": "tune", "signature": "0079:1843:...", "debounce_ms": 30, "ignore_axes": [2]}
+{"cmd": "tune", "player": 2, "reset": true}
+```
+
+Calibration measures where a stick rests; this is what a person *sets* when
+measuring is not enough -- a stick that wanders, a switch that bounces, a
+trigger that fires on its own. Every setting lives with the **physical
+controller** and follows it to whatever seat it takes, and is applied to
+everything padmap publishes for it, after calibration: the virtual pad and
+the motion server both see the tuned stream.
+
+| field | meaning |
+|---|---|
+| `deadzone` | one number, 0 to 1: a band of that fraction of each stick's and trigger's travel that reads as untouched, on every axis `ABS_X`..`ABS_RZ` the pad declares. Or an object of ABS code to number, for one axis. Around the middle for a stick, above the minimum for a trigger; outside it the travel is stretched so full deflection still reaches the end. |
+| `debounce_ms` | hold every release back this long, and swallow a press that arrives inside it. A bouncing switch produces exactly that pair, which a game reads as a double tap. At most 500. |
+| `ignore_axes`, `ignore_buttons` | event codes dropped entirely, for a part that is simply broken. |
+| `reset` | start from nothing before applying the rest. |
+
+Only what is mentioned changes. `player` names a seated pad; `signature` finds
+one that is plugged in whether seated or not, so a stick noticed drifting on
+the setup screen can be tuned before anyone presses anything. The answer is
+one event:
+
+```json
+{"event": "tuned", "player": 2, "signature": "...", "tuning": {"deadzone": {"0": 0.15, "1": 0.15}, "debounce_ms": 30}}
+```
+
+or an `error` saying which field was not what it claimed to be. A seated pad
+is retuned **in place**: its clone is not rebuilt, so a game in progress sees
+no disconnect. `list --json` reports the same object under
+`controller.tuning`, and `padmap tune` is the same thing from a shell.
+
 ## Seating: taking a seat with no session
 
 ```json
