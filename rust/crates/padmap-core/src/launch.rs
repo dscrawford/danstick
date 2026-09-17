@@ -1,14 +1,5 @@
-//! Reading a RetroArch command line, to resolve a mapping for the game.
-//!
-//! The one moment anything knows what is being played. A front-end spawns
-//! `padmap-play`, which is handed RetroArch's own arguments -- `-L <core.so>`
-//! and a ROM path -- and that is the only place the console and the game are
-//! both available. The daemon writes its autoconfig profiles at republish
-//! time, long before, when nothing can know either.
-//!
-//! Pure: the caller decides what counts as an existing file, so this can be
-//! tested without a filesystem and behaves identically to the Python, which
-//! asked `Path.exists()`.
+//! Parse RetroArch command line: core path and ROM path.
+//! ROM identified as existing file, not by position (allows prepended/appended flags).
 
 /// RetroArch's own spellings for "use this core".
 ///

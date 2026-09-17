@@ -1,9 +1,5 @@
-//! An assignment session: the pads, held open and grabbed, and who has
-//! claimed what.
-//!
-//! Republishing grabs the physical pads, so it has to stop before a session
-//! can open them; otherwise every press would be invisible. The daemon owns
-//! that ordering; this owns the pads once they are its.
+//! An assignment session: the pads, held open and grabbed, and who has claimed what.
+//! Republishing grabs these pads, so it must stop before a session opens them.
 
 use std::collections::BTreeMap;
 
@@ -14,7 +10,6 @@ use padmap_core::capture::{EV_ABS, EV_KEY};
 use padmap_input::clone::{self, Source};
 use padmap_input::pad::Pad;
 
-/// One event off a session pad, reduced to what the flows read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Raw {
     pub kind: u16,
@@ -44,26 +39,14 @@ pub struct Session {
     pub pads: Vec<Pad>,
     sources: Vec<Source>,
     pub assigner: Assigner,
-    /// Pads that could not be grabbed exclusively; their presses reach other
-    /// applications as well as us.
+    /// Pads not grabbed exclusively; their presses reach other applications too.
     pub grab_failures: Vec<String>,
-    /// Reused between reads so the hot path allocates nothing.
     buffer: Vec<InputEvent>,
-    /// Whether each pad has ever produced a read. See [`Session::read`].
     read_seen: Vec<bool>,
 }
 
 impl Session {
-    /// Open and grab a set of pads, skipping any that have gone away.
-    ///
-    /// Discovery lists what /sys said a moment ago; opening reads what /dev
-    /// has now. A controller unplugged in between fails to open, and that
-    /// used to end the daemon -- at the moment padmap was trying to be
-    /// helpful about the pad that had just arrived.
-    ///
-    /// Retries without the pad that failed rather than abandoning the
-    /// session, because unplugging one controller is no reason the other
-    /// three cannot be assigned. Every pass drops one pad, so it terminates.
+    /// Retries without the pad that failed, one fewer each pass, so it terminates.
     pub fn open(pads: Vec<Pad>) -> Result<Session, OpenError> {
         let mut remaining = pads;
         let mut last = String::new();
@@ -72,10 +55,6 @@ impl Session {
             let mut grab_failures = Vec::new();
             let mut gone: Option<usize> = None;
             for (index, pad) in remaining.iter().enumerate() {
-                // Opened without grabbing; the grab comes once every pad is
-                // open, so its failures can be remembered by name -- "presses
-                // also reach the front-end" explains a setup screen that
-                // seems to answer itself.
                 match clone::open_source(pad, false) {
                     Ok(source) => sources.push(source),
                     Err(error) => {
@@ -104,10 +83,6 @@ impl Session {
                     return Ok(session);
                 }
                 Some(index) => {
-                    // Whatever was opened is dropped here, and dropping a
-                    // Source ungrabs it: nobody else will release those, and
-                    // every one is a controller that has stopped working
-                    // until the daemon dies.
                     drop(sources);
                     let dropped = remaining.remove(index);
                     grab_failures.clear();
@@ -122,8 +97,6 @@ impl Session {
         Err(OpenError::AllGone(last))
     }
 
-    /// Discard anything queued before we started listening, so a button
-    /// still held from before cannot claim a slot.
     pub fn drain(&mut self) {
         for source in &mut self.sources {
             source.drain();
@@ -146,24 +119,15 @@ impl Session {
         self.sources.get_mut(index)
     }
 
-    /// The session's index for a pad, by device path.
     pub fn index_of(&self, path: &std::path::Path) -> Option<usize> {
         self.pads.iter().position(|pad| pad.path == path)
     }
 
-    /// Drop every claim and start over. Drains too, so a button still held
-    /// from the previous round cannot immediately re-claim.
     pub fn reset(&mut self) {
         self.assigner.reset();
         self.drain();
     }
 
-    /// Everything queued on one pad, reduced.
-    ///
-    /// The first read from each pad is logged. A pad that is never readable is
-    /// never read, and that failure is otherwise entirely silent -- the screen
-    /// says "hold a button", the person holds it, and no log anywhere says the
-    /// descriptor never woke. It cost a day on a Steam Controller once.
     pub fn read(&mut self, index: usize) -> Vec<Raw> {
         let Some(source) = self.sources.get_mut(index) else {
             return Vec::new();
@@ -192,7 +156,6 @@ impl Session {
             .collect()
     }
 
-    /// The claims so far, as (player, pad index).
     pub fn claims(&self) -> Vec<(u32, usize)> {
         self.assigner
             .assignments()
@@ -201,7 +164,6 @@ impl Session {
             .collect()
     }
 
-    /// Claims as player -> pad.
     pub fn claimed_pads(&self) -> BTreeMap<u32, &Pad> {
         self.claims()
             .into_iter()

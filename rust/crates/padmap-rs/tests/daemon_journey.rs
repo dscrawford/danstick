@@ -282,7 +282,7 @@ impl Daemon {
 
 impl Drop for Daemon {
     fn drop(&mut self) {
-        // SIGTERM, so the teardown path runs and the grabs are released.
+        // SIGTERM so teardown path runs and grabs are released.
         let _ = Command::new("kill")
             .args(["-TERM", &self.child.id().to_string()])
             .status();
@@ -319,7 +319,6 @@ fn a_session_claims_confirms_and_writes_what_a_launch_reads() {
     assert_eq!(state["identity"], "mirror");
     assert!(state["pid"].as_u64().is_some());
 
-    // Opening a session sees the one pad.
     daemon.send(serde_json::json!({"cmd": "begin", "players": 2}));
     let pads = daemon.wait_for("pads", |_| true, 5.0).expect("pads");
     assert_eq!(pads["count"], 1);
@@ -327,7 +326,6 @@ fn a_session_claims_confirms_and_writes_what_a_launch_reads() {
         .wait_for("state", |e| e["state"] == "assigning", 5.0)
         .expect("assigning");
 
-    // A tap does not claim; a hold does.
     pad.tap(FIRST_KEY);
     daemon.pump(0.6);
     assert!(daemon.last("claim").is_none(), "a tap claimed a slot");
@@ -339,7 +337,6 @@ fn a_session_claims_confirms_and_writes_what_a_launch_reads() {
     assert_eq!(claim["configured"], false);
     assert_eq!(claim["name"], JOURNEY.name);
 
-    // Holding again confirms: accepted, ready, and the files exist.
     pad.hold(FIRST_KEY + 1, 1.1);
     let accepted = daemon
         .wait_for("accepted", |_| true, 5.0)
@@ -358,12 +355,9 @@ fn a_session_claims_confirms_and_writes_what_a_launch_reads() {
     assert_eq!(assignments[0]["player"], 1);
     assert_eq!(assignments[0]["name"], JOURNEY.name);
     let launch = std::fs::read_to_string(state_dir.join("launch.cfg")).expect("launch.cfg");
-    // The index arithmetic (and so which slots get `--nodevice`) is corpus
-    // tested; PADMAP_ONLY_DEVICE hides the clone from the enumeration here.
-    // This proves the wiring: the override is written for all sixteen slots.
+    // Override is written for all sixteen slots, even unoccupied ones.
     assert!(launch.contains("input_player16_joypad_index"), "{launch}");
     assert!(launch.contains("config_save_on_exit = \"false\""));
-    // launch.args is written even when it is empty.
     assert!(state_dir.join("launch.args").is_file(), "no launch.args");
     let autoconfig = state_dir
         .join("autoconfig")
@@ -379,9 +373,6 @@ fn a_session_claims_confirms_and_writes_what_a_launch_reads() {
     let mapping = daemon.last("sdl_mapping").expect("sdl_mapping");
     assert_eq!(mapping["lines"].as_array().map(Vec::len), Some(1));
 
-    // What a launcher sees, without connecting to the daemon at all: the
-    // seated player, the node its clone is on, and the GUID a mapping is
-    // filed under -- the same three facts the socket would have given it.
     let listed = Command::new(env!("CARGO_BIN_EXE_padmap-rs"))
         .args(["list", "--json"])
         .env("XDG_RUNTIME_DIR", &daemon.runtime)
@@ -399,14 +390,11 @@ fn a_session_claims_confirms_and_writes_what_a_launch_reads() {
     assert_eq!(seated["player"], 1);
     assert_eq!(seated["controller"]["name"], JOURNEY.name);
     assert_eq!(seated["controller"]["configured"], false, "not mapped yet");
-    // The clone's node, which is the thing a launcher binds.
     let node = seated["virtual"]["node"]
         .as_str()
         .expect("the clone's node")
         .to_owned();
     assert!(node.starts_with("/dev/input/event"), "{node}");
-    // ...and it is the GUID the SDL line was written under, so a mapping
-    // registered from this output is one SDL will actually look up.
     let guid = seated["virtual"]["guid"].as_str().expect("guid");
     assert!(
         mapping["lines"][0]

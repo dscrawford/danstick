@@ -551,20 +551,11 @@ mod tests {
 
 #[cfg(test)]
 mod divergences {
-    //! Where this deliberately does not do what the Python did.
-
+    //! Intentional differences from Python implementation.
     use super::*;
 
     #[test]
     fn a_field_that_is_not_a_string_reads_as_empty_rather_than_as_its_repr() {
-        // The Python wrote `str(raw.get("name"))`, which turns None into the
-        // literal "None" and ["x"] into "['x']" -- and then writes that back to
-        // the user's file on the next save, where it is indistinguishable from
-        // a controller actually called None. Only a hand-edited or truncated
-        // file gets here, and for all three fields an empty answer is honest
-        // about not knowing: the filename comes from the pad rather than from
-        // `signature`, an empty `icon` falls back to the guess, and an empty
-        // `name` is display-only.
         let raw = serde_json::json!({"signature": 5, "name": null, "icon": ["x"]});
         let (profile, _) = Profile::from_value(&raw);
         assert_eq!(profile.signature, "");
@@ -574,8 +565,6 @@ mod divergences {
 
     #[test]
     fn an_untuned_profile_writes_no_tuning_key() {
-        // The shape a rollback reads. A key it does not know is harmless, but
-        // a profile nobody touched should not change on disk.
         let value = Profile::default().to_value();
         assert!(value.get("tuning").is_none());
     }

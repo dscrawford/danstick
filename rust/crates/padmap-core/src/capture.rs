@@ -1,19 +1,4 @@
-//! Watching a pad to find out where each control lives.
-//!
-//! Deliberately separate from the daemon's socket handling so the interesting
-//! part -- deciding what an incoming event means -- can be exercised without a
-//! session, a client or a controller.
-//!
-//! The hard part is not reading events, it is refusing most of them. A pad
-//! streams axis noise continuously, an analogue trigger reports a resting value
-//! that is not zero on some hardware, and the button someone pressed to reach
-//! this screen is often still travelling when the first prompt appears. Every
-//! guard below exists because one of those otherwise fills several controls in
-//! with the same accidental input.
-//!
-//! The clock is a parameter rather than a field. The Python took an injectable
-//! `now` callable for exactly this reason; passing the reading in at the call
-//! site says the same thing without a boxed closure on a per-event path.
+//! Button mapping wizard. Guards reject drift, noise, and inputs still settling.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -30,34 +15,13 @@ pub const ABS_X: u16 = 0x00;
 pub const ABS_HAT0X: u16 = 0x10;
 pub const ABS_HAT0Y: u16 = 0x11;
 
-/// How far an axis must travel from rest before it counts as deliberate.
-/// Generous, because the alternative -- catching drift -- silently binds a
-/// control to a stick that merely leans.
+/// Axis travel from rest before deliberate (generous to avoid drift).
 pub const AXIS_THRESHOLD: f64 = 0.55;
 
-/// How close to rest an axis must come back before it may answer another
-/// prompt.
-///
-/// Without this, one push answers two controls: release a d-pad wired to an
-/// analogue axis and it springs back *through* centre, overshooting far enough
-/// to read as a deliberate push the other way. Pressing left then filled in
-/// both left and right, which is exactly what it looked like.
+/// Axis must settle within this of rest before re-arming (prevents overshoot re-triggering).
 pub const AXIS_RELEASE: f64 = 0.30;
 
-/// How far an axis must travel to answer a prompt for a *face button*.
-///
-/// Near the stop, and much higher than [`AXIS_THRESHOLD`], because the two
-/// cases have opposite failure modes. For a stick or a shoulder an axis is the
-/// expected answer and the only risk is drift; for a face button an axis is the
-/// unusual answer, and binding one by accident is expensive in a way no other
-/// misbinding is -- the axis is typically also the stick, so every later stick
-/// movement presses that button for the rest of the session. That is how a
-/// mapping ended up with cancel on `-a3`.
-///
-/// This used to be a flat refusal, which is right for a pad that has buttons to
-/// spare and wrong for one that does not: an N64 pad mapped against the
-/// GameCube layout has to answer X and Y from its C cluster, which that pad
-/// reports as axes. A push past this is not something drift produces.
+/// Axis must move far to answer a face-button prompt (axis binding is expensive).
 pub const AXIS_AS_BUTTON_THRESHOLD: f64 = 0.90;
 
 /// SDL hat bits, which is also how a hat binding is written.
@@ -66,22 +30,12 @@ pub const HAT_RIGHT: i32 = 2;
 pub const HAT_DOWN: i32 = 4;
 pub const HAT_LEFT: i32 = 8;
 
-/// Hold any button this long to skip a control the pad does not have.
-///
-/// It cannot be a *particular* button: the daemon holds EVIOCGRAB for the whole
-/// session and republishing is stopped, so a "press Select to skip" prompt
-/// could never have worked from a controller, and Select is not mapped until
-/// halfway through anyway.
+/// Hold duration to skip a control.
 pub const SKIP_HOLD_SECONDS: f64 = 0.8;
 
-/// Nothing is accepted for this long after a control is recorded.
-///
-/// Advancing instantly means a single continuous input can answer two prompts.
-/// The per-axis arming rule catches one axis springing back; this catches the
-/// general case, including inputs arriving on a different code entirely.
+/// Gap after recording a control to prevent one input answering two prompts.
 pub const CAPTURE_GAP_SECONDS: f64 = 0.35;
 
-/// One evdev event, reduced to the three fields any of this reads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Event {
     pub kind: u16,
@@ -107,37 +61,17 @@ impl Event {
     }
 }
 
-/// How far an axis has moved from rest, as a fraction of half its range.
-///
-/// Signed, because the direction of travel is what a binding records.
-///
-/// Measured from *rest* rather than from the middle of the declared range, and
-/// that distinction is the entire point. An analogue trigger rests at its
-/// minimum, so measuring from the midpoint reports an untouched trigger as
-/// fully deflected -- on a GameCube pad that made L and R unusable in the
-/// wizard, since the axis could never come back near enough to the midpoint to
-/// be re-armed and every later press was dropped.
-///
-/// Scaled by half the *declared* range rather than by the travel actually
-/// available in the direction of movement, so a trigger reads 0 at rest and 2.0
-/// fully pressed. Every threshold here is a floor, so reading high is harmless;
-/// normalising by available travel would instead make an off-centre stick need
-/// a bigger push on its long side than its short one.
+/// Axis travel from rest, as fraction of half declared range (not midpoint).
 pub fn deflection(span: AxisSpan, value: i32) -> f64 {
     if span.maximum <= span.minimum {
         return 0.0;
     }
-    // Widened before subtracting. A driver reporting an absinfo near the ends
-    // of i32 -- which is nonsense, and which padmap has already met once in the
-    // shape of a profile declaring a range of 2^40 -- would otherwise overflow
-    // here, on the path a wizard runs per event.
+    // Widen to i64 before subtracting to avoid overflow with extreme ranges.
     let travel = i64::from(value) - i64::from(span.rest);
     let span = i64::from(span.maximum) - i64::from(span.minimum);
     travel as f64 / (span as f64 / 2.0)
 }
 
-/// A raw input already spoken for, in the terms a log reader has to match it
-/// against.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Claim {
     Button {
@@ -147,7 +81,7 @@ pub enum Claim {
         index: i32,
         value: i32,
     },
-    /// `sign` is -1 or 1; an axis half is a separate control from its other half.
+    /// sign is -1 or 1; axis half is a separate control from its other half.
     Axis {
         code: u16,
         sign: i32,
@@ -175,27 +109,22 @@ impl std::fmt::Display for Claim {
     }
 }
 
-/// What one offered event did.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Outcome {
-    /// The overwhelming majority of what arrives.
     Ignored,
-    /// The prompt was answered and the wizard moved on.
-    Recorded { control: Control, binding: Binding },
-    /// The user held a button past [`SKIP_HOLD_SECONDS`]; this pad has no such
-    /// control.
-    Skipped { control: Control },
-    /// The input is already answering an earlier control.
-    ///
-    /// One input must not answer two prompts, and that rule is also invisible:
-    /// the press simply does nothing, which from the outside is
-    /// indistinguishable from a dead button or a wizard that has hung. Naming
-    /// the control that holds it is the only actionable remedy -- restart and
-    /// answer the earlier prompt differently.
-    Refused { claim: Claim, held_by: Control },
-    /// An axis moved, but not far enough to answer a *face button* prompt. Only
-    /// reported once it has actually moved past [`AXIS_THRESHOLD`], since a
-    /// resting axis streams events continuously.
+    Recorded {
+        control: Control,
+        binding: Binding,
+    },
+    Skipped {
+        control: Control,
+    },
+    /// Input already held by earlier control (press is silent).
+    Refused {
+        claim: Claim,
+        held_by: Control,
+    },
+    /// Axis moved past AXIS_THRESHOLD but short of face-button threshold.
     TooGentle {
         claim: Claim,
         travel: f64,
@@ -204,49 +133,27 @@ pub enum Outcome {
 }
 
 impl Outcome {
-    /// Whether this answered the current prompt -- what the Python's `feed`
-    /// returned as a bare bool.
     pub fn advanced(&self) -> bool {
         matches!(self, Outcome::Recorded { .. } | Outcome::Skipped { .. })
     }
 }
 
-/// One pass through a layout, recording what the user presses.
 #[derive(Debug, Clone)]
 pub struct MappingRun {
     pub player: u32,
     pub layout: &'static Layout,
-    /// The pad's evdev key codes, for turning a press into each consumer's
-    /// button number.
     pub keys: Vec<u16>,
-    /// Which scope the result will be filed under.
-    ///
-    /// Carried on the run rather than remembered beside it, because the answer
-    /// is needed at the *end*, and a wizard that can be abandoned, restarted,
-    /// or opened for a different player in between is exactly the shape of
-    /// thing that loses a value parked elsewhere.
     pub scope: String,
-    /// Absolute axis travel, for deciding when an axis has been pushed rather
-    /// than nudged. Rest is measured, not assumed to be the centre.
     pub axes: BTreeMap<u16, AxisSpan>,
 
     index: usize,
     bindings: BTreeMap<Control, Binding>,
-    /// Raw inputs already used, so one button cannot answer two prompts.
     claimed: BTreeMap<Claim, Control>,
-    /// Buttons down when the run started, read from the device rather than
-    /// guessed: the press that opened the wizard is usually still held, and its
-    /// release must not answer the first prompt.
     opening_held: BTreeSet<u16>,
     down: BTreeSet<u16>,
     down_at: BTreeMap<u16, f64>,
     blocked_until: f64,
-    /// The last refusal, for the front-end to show. Cleared once the prompt
-    /// moves on, because a stale conflict pinned under a later control names a
-    /// clash that is not happening.
     conflict: Option<Control>,
-    /// Axes that have returned near centre since they last answered a prompt.
-    /// Absent means armed: an axis never touched is ready.
     axis_armed: BTreeMap<u16, bool>,
 }
 
@@ -277,7 +184,6 @@ impl MappingRun {
         }
     }
 
-    /// True while something held from before the run is still down.
     pub fn settling(&self) -> bool {
         self.opening_held
             .iter()
@@ -312,13 +218,11 @@ impl MappingRun {
             .map(|control| control.canonical)
     }
 
-    /// Move past a control this pad does not have.
     pub fn skip(&mut self, now: f64) -> Option<Control> {
         let control = self.current()?;
         self.index += 1;
         self.conflict = None;
-        // Same gap as a capture: the button released after a skip-hold must not
-        // answer the control it moved on to.
+        // Apply capture gap so skip-release doesn't answer next control.
         self.blocked_until = now + CAPTURE_GAP_SECONDS;
         Some(control)
     }
@@ -340,27 +244,19 @@ impl MappingRun {
         Outcome::Refused { claim, held_by }
     }
 
-    /// Offer one evdev event.
     pub fn feed(&mut self, event: Event, now: f64) -> Outcome {
         if self.finished() {
             return Outcome::Ignored;
         }
 
         if now < self.blocked_until {
-            // Just recorded something. Accept nothing -- but go on tracking
-            // what is *released*, or the gap leaves state behind that nothing
-            // afterwards can correct.
+            // Blocked but track releases to avoid leaving state hanging.
             if event.kind == EV_KEY && event.value == 0 {
                 self.down.remove(&event.code);
                 self.down_at.remove(&event.code);
                 self.opening_held.remove(&event.code);
             } else if event.kind == EV_ABS {
-                // An axis let go inside the gap has genuinely been let go, and
-                // a release takes about a tenth of the time the gap lasts, so
-                // this is where nearly every one of them lands. Dropping it
-                // leaves the axis disarmed with nothing left to re-arm it: a
-                // trigger settles at rest and stops reporting entirely, and the
-                // wizard then ignores it for good.
+                // Re-arm axes during gap (most releases land here).
                 self.rearm(event);
             }
             return Outcome::Ignored;
@@ -380,17 +276,13 @@ impl MappingRun {
             return Outcome::Ignored;
         }
         if event.value != 0 {
-            // Autorepeat. Holding a button must not walk the whole wizard.
-            return Outcome::Ignored;
+            return Outcome::Ignored; // Autorepeat
         }
 
-        // Release. Binding happens here rather than on the press, because how
-        // long it was held is what separates "this is the button" from "skip
-        // this control", and that is only known once it comes back up.
+        // Binding on release: hold time determines skip vs record.
         self.down.remove(&event.code);
         let started = self.down_at.remove(&event.code);
         if self.opening_held.remove(&event.code) {
-            // Whatever opened the wizard has now been let go.
             return Outcome::Ignored;
         }
         let Some(started) = started else {
@@ -415,22 +307,15 @@ impl MappingRun {
         let Some(index) = sdl_button_index(&self.keys, event.code) else {
             return Outcome::Ignored;
         };
-        // Both numberings are stored. Recomputing RetroArch's at emission time
-        // would need the pad's key list to still be around, and would silently
-        // shift every binding on a pad carrying sub-0x120 codes.
+        // Store both SDL and RetroArch indices.
         let binding =
             Binding::button(index).with_ra_index(retroarch_button_index(&self.keys, event.code));
         self.record(binding, claim, now)
     }
 
-    /// Note an axis that has come back to rest, so it may answer again.
-    ///
-    /// Separate from [`Self::feed_abs`] because it has to run in places that
-    /// accept nothing at all -- notably inside the capture gap, where the
-    /// release of whatever was just recorded arrives.
+    // Mark axis as ready to answer again once settled near rest.
     fn rearm(&mut self, event: Event) {
         if event.code == ABS_HAT0X || event.code == ABS_HAT0Y {
-            // A hat only reads 0 at rest, so this is unambiguous.
             if event.value == 0 {
                 self.axis_armed.insert(event.code, true);
             }
@@ -458,19 +343,13 @@ impl MappingRun {
             return Outcome::Ignored;
         };
         if current.kind == "button" {
-            // The hat stays refused outright. A d-pad direction answering a
-            // face button is a mistake in every case anyone has had, and a
-            // device that reports a hat it does not have -- or sends ABS events
-            // while declaring no axes at all -- would otherwise fill face
-            // buttons in from noise.
+            // Hat cannot answer face-button (prevents noise from fake hats).
             if event.code == ABS_HAT0X || event.code == ABS_HAT0Y {
                 return Outcome::Ignored;
             }
             let Some(span) = self.axes.get(&event.code).copied() else {
                 return Outcome::Ignored;
             };
-            // An axis may answer, but only if it is meant. A nudge is refused,
-            // a push held against the stop is taken.
             let position = deflection(span, event.value);
             let travel = position.abs();
             if travel < AXIS_AS_BUTTON_THRESHOLD {
@@ -491,7 +370,7 @@ impl MappingRun {
 
         if event.code == ABS_HAT0X || event.code == ABS_HAT0Y {
             if event.value == 0 {
-                return Outcome::Ignored; // released; rearm has already noted it
+                return Outcome::Ignored;
             }
             let bit = if event.code == ABS_HAT0X {
                 if event.value > 0 {
@@ -521,8 +400,6 @@ impl MappingRun {
         let Some(span) = self.axes.get(&event.code).copied() else {
             return Outcome::Ignored;
         };
-        // Signed travel away from where this axis sat when the wizard opened --
-        // from rest, not from the middle of the declared range.
         let position = deflection(span, event.value);
         if position.abs() < AXIS_THRESHOLD {
             return Outcome::Ignored;
@@ -539,40 +416,25 @@ impl MappingRun {
         if let Some(holder) = self.claimed.get(&claim).copied() {
             return self.refuse(claim, holder);
         }
-        // By axis *index*, not evdev code: ABS_RZ is code 5 but may be axis 3.
+        // Use axis index not evdev code: ABS_RZ is code 5 but may be axis 3.
         let codes: Vec<u16> = self.axes.keys().copied().collect();
         let Some(index) = axis_index(&codes, event.code) else {
             return Outcome::Ignored;
         };
-        // Disarmed until it settles again, so the spring-back does not answer
-        // the next prompt too.
+        // Disarm until settled to prevent spring-back from answering next prompt.
         self.axis_armed.insert(event.code, false);
         self.record(Binding::axis(index, sign), claim, now)
     }
 }
 
-/// One entry on a chooser's strip.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Option_ {
-    /// What the daemon acts on: a layout id for the layout picker, a scope
-    /// string for the scope picker.
     pub id: String,
-    /// What the user reads.
     pub label: String,
-    /// Layout id to *draw*. May differ from `id` -- a scope option's id is
-    /// `console:n64` while the picture is the N64 pad. This is the entire
-    /// reason the two pickers share one overlay: the pad shown is the pad the
-    /// wizard will then ask about, from one set of coordinates.
     pub layout: String,
-    /// Whether something is already recorded here. Shown, because re-mapping a
-    /// scope replaces it and without a mark there is no way to tell which ones
-    /// that would destroy.
     pub mapped: bool,
 }
 
-/// Which question a [`Chooser`] is asking. Sent to the front-end rather than
-/// inferred: a theme guessing from the option ids would be a third place that
-/// has to know what a scope string looks like.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChoiceKind {
     Layout,
@@ -588,15 +450,6 @@ impl ChoiceKind {
     }
 }
 
-/// A strip of options worked from the pad, before mapping its buttons.
-///
-/// It has to be driven from the pad itself, and that is the whole difficulty.
-/// The daemon holds EVIOCGRAB for the duration of a session and republishing is
-/// stopped, so the front-end receives no controller input at all; a picker the
-/// theme navigates could only ever be worked from a keyboard. And nothing is
-/// mapped yet, so no gesture may name a button. Both constraints are answered
-/// the same way the wizard's skip is: push left/right on the raw axis to move,
-/// hold any button to accept.
 #[derive(Debug, Clone)]
 pub struct Chooser {
     pub player: u32,
@@ -610,9 +463,7 @@ pub struct Chooser {
     opening_held: BTreeSet<u16>,
     down: BTreeSet<u16>,
     down_at: BTreeMap<u16, f64>,
-    /// Per axis: which way it is currently pushed, -1, 0 or 1. Moving happens
-    /// on the transition *into* a direction, so a stick held over does not spin
-    /// the selection and a released one does not move it back.
+    // Per axis: -1, 0, or 1; move on direction transition, not held state.
     pushed: BTreeMap<u16, i32>,
 }
 
@@ -677,7 +528,6 @@ impl Chooser {
         true
     }
 
-    /// Offer one evdev event. True if the selection or state changed.
     pub fn feed(&mut self, event: Event, now: f64) -> bool {
         if self.confirmed {
             return false;
@@ -702,16 +552,13 @@ impl Chooser {
         self.down.remove(&event.code);
         let started = self.down_at.remove(&event.code);
         if self.opening_held.remove(&event.code) {
-            // The press that opened the picker, finally released.
             return false;
         }
         let Some(started) = started else { return false };
         if self.settling() {
             return false;
         }
-        // A tap does nothing on purpose. The button that claimed the slot is
-        // often still travelling when this appears, and a picker that accepts
-        // the first press anyone makes is a picker nobody gets to use.
+        // Only hold-confirms (taps are ignored to avoid mis-selection).
         if now - started >= SKIP_HOLD_SECONDS {
             self.confirmed = true;
             return true;
@@ -750,18 +597,13 @@ impl Chooser {
         let previous = self.pushed.get(&event.code).copied().unwrap_or(0);
         self.pushed.insert(event.code, direction);
         if direction == 0 || direction == previous {
-            // Deliberately *not* the wizard's re-arming rule, which needs the
-            // axis back inside AXIS_RELEASE of centre. An uncalibrated stick
-            // can rest at 36% deflection -- measured on the N64 adapter here --
-            // which never re-arms, and a picker that stops responding after one
-            // move is worse than one that occasionally moves twice.
+            // Don't use wizard's re-arm rule (occasional double-moves ok).
             return false;
         }
         self.move_by(direction)
     }
 }
 
-/// "Which controller is this?", as a strip of every layout padmap knows.
 pub fn layout_options(mapped: &BTreeSet<String>) -> Vec<Option_> {
     crate::layout::all()
         .iter()
@@ -784,22 +626,6 @@ fn console_label(layout_id: &str) -> String {
     format!("{name} games")
 }
 
-/// "Console or just this game?", asked with both answers already known.
-///
-/// The strip [`scope_options`] builds has to offer every console and a handful
-/// of recently played games, because it is reached from the controller setup
-/// screen, which knows nothing about what the user wants to play. Reached from
-/// a game in the library instead, both facts are in hand, so the question
-/// collapses to two entries.
-///
-/// Console first: it is the answer that is right more often, and the first
-/// entry is the one a hurried user confirms.
-///
-/// Empty when the console is unknown. Both entries are captured against the
-/// console's control set, so without one there is nothing coherent to offer --
-/// not even the game. Reachable in practice: the exporter writes a game key for
-/// every game but omits the console when the collection's core is not one
-/// padmap recognises.
 pub fn game_scope_options(
     console: &str,
     key: &str,
@@ -836,15 +662,6 @@ pub fn game_scope_options(
 /// A game offered by [`scope_options`]: console layout id, key, title.
 pub type RecentGame = (String, String, String);
 
-/// "What is this mapping for?", as a strip of scopes.
-///
-/// `default_layout` is the pad's best guess, drawn beside the "any game" entry
-/// only so the strip has a picture there; it is not a promise about which
-/// layout the wizard will walk, because that entry leads to the layout picker.
-///
-/// `recent` is newest first. That is the only way a per-game scope can be
-/// offered at all: the setup screen is reached from the front-end, never from
-/// inside a game, so nothing else here knows which game the user means.
 pub fn scope_options(
     scopes: &BTreeSet<String>,
     default_layout: &str,
@@ -870,22 +687,11 @@ pub fn scope_options(
         if key.is_empty() {
             continue;
         }
-        // Same rule as game_scope_options: padmap records every launch,
-        // including one whose core cannot be named -- deliberately, since a
-        // launch with an unknown core is exactly the one whose controls are
-        // most likely to have felt wrong. Offering it would draw the generic
-        // pad beside the entry and then walk whatever the pad's icon guesses,
-        // so the strip promises one controller and the wizard asks about
-        // another. That is precisely how a mapping ended up with cancel on an
-        // axis.
+        // Skip games with no console (they're often entries with unknown cores).
         if game_console.is_empty() {
             continue;
         }
-        // Marked seen only once the entry is actually offered. The same ROM
-        // appears in the recent list both with and without a console -- the
-        // launcher records every launch, including one whose core it cannot
-        // name -- and burning the key on the console-less sighting drops the
-        // usable one behind it.
+        // Skip duplicates (ROM may appear with and without console in recent list).
         if !seen.insert(key.as_str()) {
             continue;
         }
@@ -1040,8 +846,7 @@ mod tests {
 
     #[test]
     fn a_resting_axis_does_not_report_anything_at_all() {
-        // A resting axis streams events continuously; reporting them would bury
-        // the session in noise.
+        // Resting axes stream continuously; avoid noise.
         let axes: BTreeMap<u16, AxisSpan> = [(0x02, span(0, 255, 128))].into_iter().collect();
         let mut run = MappingRun::new(
             1,
@@ -1066,9 +871,7 @@ mod tests {
 
     #[test]
     fn an_axis_springing_back_through_centre_does_not_answer_the_next_prompt() {
-        // Release a d-pad wired to an analogue axis and it overshoots far
-        // enough to read as a deliberate push the other way. Pressing left then
-        // filled in both left and right.
+        // Axis overshoots centre when released, must not answer next control.
         let axes: BTreeMap<u16, AxisSpan> = [(ABS_X, span(0, 255, 128))].into_iter().collect();
         let dpad = layout::get("snes");
         let start = dpad
@@ -1080,8 +883,7 @@ mod tests {
         run.index = start;
 
         assert!(run.feed(Event::abs(ABS_X, 0), 0.0).advanced(), "full left");
-        // The overshoot arrives inside the capture gap and after it; neither
-        // may answer, because the axis has not been back to rest.
+        // Overshoot in gap and after; no answer until axis returns to rest.
         assert_eq!(run.feed(Event::abs(ABS_X, 255), 0.1), Outcome::Ignored);
         assert_eq!(run.feed(Event::abs(ABS_X, 255), 1.0), Outcome::Ignored);
         assert_eq!(run.index(), start + 1);
@@ -1089,9 +891,7 @@ mod tests {
 
     #[test]
     fn an_axis_released_inside_the_gap_is_still_re_armed() {
-        // A release takes about a tenth of the time the gap lasts, so this is
-        // where nearly every one of them lands. Dropping it leaves the axis
-        // disarmed with nothing left to re-arm it.
+        // Release usually lands inside gap; must still re-arm.
         let axes: BTreeMap<u16, AxisSpan> = [(ABS_X, span(0, 255, 128))].into_iter().collect();
         let dpad = layout::get("snes");
         let start = dpad
@@ -1197,8 +997,7 @@ mod tests {
         assert_eq!(options[0].id, "console:n64");
         assert_eq!(options[1].id, "game:n64/goldeneye");
         assert_eq!(options[1].label, "GoldenEye 007");
-        // Both draw the console's pad: a mapping for one N64 game is still a
-        // mapping of the N64 control set.
+        // Both draw the console pad.
         assert_eq!(options[0].layout, "n64");
         assert_eq!(options[1].layout, "n64");
     }
@@ -1260,8 +1059,7 @@ mod tests {
 
     #[test]
     fn deflection_is_measured_from_rest_not_from_the_declared_middle() {
-        // An analogue trigger rests at its minimum. Measuring from the midpoint
-        // reports an untouched trigger as fully deflected.
+        // Trigger at rest must read 0, not fully deflected.
         let trigger = span(0, 255, 0);
         assert_eq!(
             deflection(trigger, 0),

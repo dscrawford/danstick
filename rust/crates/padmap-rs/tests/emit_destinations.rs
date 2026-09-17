@@ -1,10 +1,4 @@
-//! `emit` writes where it is told.
-//!
-//! A caller that runs each game in an environment of its own -- its own state
-//! directory, its own `XDG_CONFIG_HOME` -- is not writing to the user's home,
-//! and two variants of one game are two configurations that must never see
-//! each other. Driven through the real binary, because the thing under test is
-//! the command line reaching `Destinations` at all.
+//! Emit writes where it is told; each game gets its own XDG directories.
 
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -25,9 +19,6 @@ fn emit(root: &Path, args: &[&str]) -> std::process::Output {
     let mut child = Command::new(env!("CARGO_BIN_EXE_padmap-rs"))
         .arg("emit")
         .args(args)
-        // Somewhere harmless for anything not overridden, so a flag that fails
-        // to reach `Destinations` writes into the sandbox rather than the
-        // developer's own config.
         .env("XDG_CONFIG_HOME", root.join("fallback-config"))
         .env("XDG_DATA_HOME", root.join("fallback-data"))
         .env("XDG_RUNTIME_DIR", root.join("fallback-run"))
@@ -86,7 +77,6 @@ fn every_destination_can_be_pointed_somewhere_else() {
         String::from_utf8_lossy(&out.stderr)
     );
 
-    // Every one of them, where it was told.
     let profile = std::fs::read_to_string(cemu.join("controller0.xml")).expect("Cemu profile");
     assert!(
         profile.contains("03000000000000000100000001000000"),
@@ -112,8 +102,7 @@ fn every_destination_can_be_pointed_somewhere_else() {
     );
     assert!(pads.contains("[GCPad2]"), "{pads}");
     let core = std::fs::read_to_string(dolphin.join("Dolphin.ini")).expect("Dolphin.ini");
-    // Two players seated, so the other two ports are emptied rather than left
-    // holding a controller from a previous session.
+    // Two players seated, so other ports are emptied from any previous session.
     assert!(
         core.contains("SIDevice0 = 6") && core.contains("SIDevice1 = 6"),
         "{core}"
@@ -130,8 +119,6 @@ fn every_destination_can_be_pointed_somewhere_else() {
     );
     assert!(!root.join("fallback-data").exists());
 
-    // The paths it reports are the ones it was given, so a caller can act on
-    // stdout rather than guessing where its own flags landed.
     let written = String::from_utf8_lossy(&out.stdout);
     for expected in [
         &cemu.join("controller0.xml"),
@@ -157,9 +144,7 @@ fn an_absent_flag_keeps_the_default_location() {
     let cemu = root.join("elsewhere/Cemu");
     std::fs::create_dir_all(&root).expect("mkdir");
 
-    // Only Cemu is redirected. The env file must still land under the
-    // runtime directory the environment names -- overriding one destination
-    // must not move the others.
+    // Only Cemu redirected; env file keeps default location.
     let out = emit(&root, &["--cemu-dir", cemu.to_str().expect("utf8")]);
     assert!(
         out.status.success(),

@@ -1,18 +1,5 @@
-//! One epoll set over every descriptor, and a tick that cannot land on the
-//! input path.
-//!
-//! The Python ran `_tick()` after every return from the selector, not every
-//! 20ms. With seven pads at ~169 events/s that is roughly 1200 ticks a second
-//! rather than 50 -- everything in it was time-gated or cheap, so it was fine,
-//! but the mental model was wrong by a factor of 24 and the next thing added to
-//! the tick would have been 24 times more expensive than whoever added it
-//! expected. That is how a quarter-second device scan ended up on the thread
-//! that forwards controller events.
-//!
-//! Here the tick is a `timerfd` in the same epoll set. It fires when the kernel
-//! says so, the expiry count says whether we fell behind, and the period is
-//! self-correcting because `TFD_TIMER_ABSTIME` keeps the next expiry on the
-//! original grid instead of drifting by each iteration's work.
+//! One epoll set over every descriptor. Tick is a timerfd (fires when kernel says, expiry count shows lag).
+//! TFD_TIMER_ABSTIME keeps period self-correcting (no drift per iteration).
 
 use std::mem::MaybeUninit;
 use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
@@ -25,30 +12,17 @@ use rustix::time::{Itimerspec, TimerfdClockId, TimerfdFlags, TimerfdTimerFlags, 
 pub enum Watched {
     /// A physical pad, by index into the republisher's list.
     Source(usize),
-    /// A clone's uinput node, which carries force feedback the other way.
     Clone(usize),
-    /// The periodic tick.
     Tick,
-    /// The daemon's listening socket.
     Listener,
-    /// A connected client, by its descriptor number.
     Client(i32),
-    /// A pad held open by an assignment session, by index into it.
     Session(usize),
-    /// An unseated pad being watched for someone holding a button on it, by
-    /// index into the seating list. Read but never grabbed.
     Seating(usize),
-    /// A pad's motion sensor, by the same index as its source.
     Motion(usize),
-    /// The DSU socket emulators ask for motion on.
     Dsu,
 }
 
-/// Low four bits of a token say which kind; the rest is the index.
-///
-/// Four rather than three: the sixth and seventh kinds arrived with motion,
-/// and a tag field that is exactly full is one that silently aliases the next
-/// time somebody adds a descriptor.
+// Low 4 bits: kind (exactly full; next descriptor addition would silently alias).
 const TAG_BITS: u32 = 4;
 const TAG_MASK: u64 = (1 << TAG_BITS) - 1;
 const TAG_SOURCE: u64 = 0;
@@ -67,7 +41,6 @@ impl Watched {
             Watched::Clone(index) => ((index as u64) << TAG_BITS) | TAG_CLONE,
             Watched::Tick => u64::MAX,
             Watched::Listener => TAG_LISTENER,
-            // A descriptor is non-negative; the cast is lossless.
             Watched::Client(fd) => ((fd as u64) << TAG_BITS) | TAG_CLIENT,
             Watched::Session(index) => ((index as u64) << TAG_BITS) | TAG_SESSION,
             Watched::Seating(index) => ((index as u64) << TAG_BITS) | TAG_SEATING,
@@ -94,11 +67,7 @@ impl Watched {
     }
 }
 
-/// How many descriptors one wakeup may report.
-///
-/// Four pads is two descriptors each plus the tick; nine. This is generous and
-/// costs half a kilobyte of stack, and a wakeup that fills it simply leaves the
-/// rest for the next one -- epoll is level-triggered here, so nothing is lost.
+// Four pads = 2 descriptors + tick = 9; generous 32 (level-triggered epoll).
 const MAX_READY: usize = 32;
 
 /// What one wakeup found, without allocating for it.
@@ -125,17 +94,10 @@ impl Ready {
 pub struct Reactor {
     epoll: OwnedFd,
     tick: OwnedFd,
-    /// A fixed buffer, reused: the loop allocates nothing per wakeup.
-    ///
-    /// Not a `Vec`. rustix reads a `&mut Vec`'s *length* as the epoll
-    /// `maxevents`, not its capacity, so a cleared Vec asks the kernel for zero
-    /// events and `epoll_wait` answers EINVAL -- which reads as "the loop is
-    /// broken" rather than "the buffer is empty".
+    // Fixed buffer reused (not Vec to avoid EINVAL on cleared Vec: rustix reads length, not capacity).
     raw: [MaybeUninit<epoll::Event>; MAX_READY],
 }
 
-// By hand: `rustix::event::epoll::Event` is not Debug, and the buffer is an
-// implementation detail anyway.
 impl std::fmt::Debug for Reactor {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Reactor").finish_non_exhaustive()
@@ -184,20 +146,12 @@ impl Reactor {
         )
     }
 
-    /// Stop servicing a descriptor.
-    ///
-    /// A dead node reports readable forever; left registered, the loop spins on
-    /// it for as long as the daemon runs.
+    /// Stop servicing a descriptor (dead nodes report readable forever).
     pub fn unwatch(&self, fd: BorrowedFd<'_>) -> rustix::io::Result<()> {
         epoll::delete(&self.epoll, fd)
     }
 
-    /// Block until something is readable.
-    ///
-    /// No timeout: the tick is a descriptor like any other, so there is nothing
-    /// to wake up *for* that is not in the set. That is the property worth
-    /// having -- a loop with a timeout has two ways to be woken and has to work
-    /// out which happened.
+    /// Block until something is readable (tick is a descriptor; no timeout needed).
     pub fn wait(&mut self) -> rustix::io::Result<Ready> {
         let mut ready = Ready {
             items: [Watched::Tick; MAX_READY],
@@ -211,10 +165,7 @@ impl Reactor {
         Ok(ready)
     }
 
-    /// Consume a tick and report how many periods it covered.
-    ///
-    /// More than one means the loop fell behind, which is the number worth
-    /// logging: it says the tick is late without needing a clock comparison.
+    /// Consume tick; >1 means loop fell behind.
     pub fn take_tick(&self) -> u64 {
         let mut buffer = [0u8; 8];
         match rustix::io::read(&self.tick, &mut buffer) {
@@ -272,8 +223,6 @@ mod tests {
 
     #[test]
     fn a_session_pad_and_a_republished_source_are_different_tokens() {
-        // Index 0 in a session and index 0 in the republisher are different
-        // descriptors, serviced by different code.
         assert_ne!(Watched::Session(0).token(), Watched::Source(0).token());
         assert_ne!(Watched::Seating(0).token(), Watched::Session(0).token());
         assert_ne!(Watched::Client(0).token(), Watched::Listener.token());
@@ -281,8 +230,6 @@ mod tests {
 
     #[test]
     fn a_source_and_its_clone_are_different_tokens() {
-        // They are the same index and must not be serviced by the same arm:
-        // one carries presses inbound, the other rumble outbound.
         assert_ne!(Watched::Source(3).token(), Watched::Clone(3).token());
     }
 
@@ -296,7 +243,6 @@ mod tests {
 
     #[test]
     fn a_late_loop_is_told_how_many_periods_it_missed() {
-        // The number that says the tick is behind, without comparing clocks.
         let reactor = Reactor::new(Duration::from_millis(2)).expect("a reactor");
         std::thread::sleep(Duration::from_millis(25));
         let expiries = reactor.take_tick();

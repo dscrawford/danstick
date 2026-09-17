@@ -1,21 +1,5 @@
 //! Discovery and identity for physical joypads.
-//!
-//! The central fact this module exists to work around: on multi-port adapters,
-//! several ports can be completely indistinguishable. The four ports of a
-//! Mayflash GameCube adapter share one USB interface and one HID device, and
-//! report identical name, phys, uniq, vid, pid, version and properties. Only
-//! their `inputN` ordinal differs, and that rides on a global counter which
-//! libudev sorts as a string.
-//!
-//! So there is deliberately no `Pad::stable_key()`. There is no stable key.
-//! Identity comes from the user pressing a button.
-//!
-//! The Python asked udev the same questions by running `udevadm info -q
-//! property -n <node>` as a subprocess, once per input device. On this machine
-//! that is 32 processes and 257-294ms, and it ran from the thread that forwards
-//! controller events -- the measured cause of the tail in docs/LATENCY.md. The
-//! answers come from libudev directly here, which is the same database the
-//! subprocess was printing.
+//! Multi-port adapters like Mayflash GameCube have indistinguishable ports; identity comes from button press.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -23,27 +7,12 @@ use std::path::{Path, PathBuf};
 use log::debug;
 use padmap_core::capability::{self, Mask};
 
-/// Virtual pads we publish are tagged with this phys prefix so that discovery
-/// never picks up our own output. Without it, restarting the daemon would grab
-/// its own pads and republish them, one layer deeper each time.
 pub const VIRTUAL_PHYS_PREFIX: &str = "padmap/";
 
 /// Test escape hatch: restrict discovery to one device by name.
-///
-/// Without it an isolated test daemon still finds the machine's real
-/// controllers and fights the live daemon for an exclusive grab on them.
 pub const ENV_ONLY: &str = "PADMAP_ONLY_DEVICE";
 
-/// Is this one of padmap's own clones?
-///
-/// Two tests, because either can be absent. The phys tag is the intended one,
-/// and the name is the fallback for a clone whose phys could not be set --
-/// which is every clone this crate creates, since evdev 0.13.2 encodes
-/// `UI_SET_PHYS` with the wrong payload size and the kernel refuses it.
-///
-/// Getting this wrong is not a cosmetic bug: discovery that does not recognise
-/// padmap's output grabs it and republishes it, one layer deeper on every
-/// restart.
+/// Is this one of padmap's own clones? Check both phys and name (phys may fail to set).
 pub fn is_padmap_clone(name: &str, phys: &str) -> bool {
     phys.starts_with(VIRTUAL_PHYS_PREFIX) || name.starts_with(crate::clone::VIRTUAL_PREFIX)
 }
@@ -58,19 +27,13 @@ pub struct Pad {
     pub vid: u16,
     pub pid: u16,
     pub syspath: PathBuf,
-    /// False once the `padmap hide` udev rules have cleared ID_INPUT_JOYSTICK:
-    /// padmap can still open and republish the pad, RetroArch cannot see it.
+    /// Cleared by `padmap hide` udev rules so RetroArch cannot see it.
     pub retroarch_visible: bool,
-    /// The controller's motion sensor, if the kernel publishes one.
-    ///
-    /// A separate device node, and **not** something padmap republishes: a
-    /// clone carries the axes its source's joypad node declares, and a gyro is
-    /// never among them. Anything that wants motion has to open this.
+    /// The controller's motion sensor (separate node, not republished by padmap).
     pub motion: Option<PathBuf>,
 }
 
 impl Pad {
-    /// `eventN`.
     pub fn event(&self) -> &str {
         self.path
             .file_name()
@@ -78,34 +41,17 @@ impl Pad {
             .unwrap_or("")
     }
 
-    /// The string RetroArch stores as this pad's phys.
-    ///
-    /// `udev_joypad.c:498-504` reads EVIOCGPHYS then appends EVIOCGUNIQ at
-    /// `pad->phys+physlen` with no separator. Reproduced so diagnostics can
-    /// show exactly what RetroArch would compare against.
+    /// phys + uniq with no separator (matches udev_joypad.c:498-504).
     pub fn retroarch_id(&self) -> String {
         format!("{}{}", self.phys, self.uniq)
     }
 }
 
 /// Would `PADMAP_ONLY_DEVICE` let a pad with this name through?
-///
-/// The filter below answers the same question for a list that already exists.
-/// This one is for a caller that has to decide *before* doing something --
-/// `triton::slots` sends a feature report to each slot to find out whether a
-/// controller is paired into it, and that is a write to real hardware, which
-/// is exactly what the switch exists to prevent.
 pub fn wanted_by_name(name: &str) -> bool {
     wanted_by(name, std::env::var(ENV_ONLY).ok().as_deref())
 }
 
-/// The same question, for a caller that already has the setting.
-///
-/// Separated so it can be tested without `std::env::set_var`, which is
-/// process-wide: a test that set it raced every other test calling
-/// `discover`, and the failure landed on whichever one lost rather than on
-/// the one at fault. That exact bug was removed from `runtime.rs` a few
-/// commits ago and walked straight back in here.
 pub fn wanted_by(name: &str, only: Option<&str>) -> bool {
     match only {
         Some(only) if !only.is_empty() => name.contains(only),
@@ -116,24 +62,12 @@ pub fn wanted_by(name: &str, only: Option<&str>) -> bool {
 /// What a caller wants out of [`discover`].
 #[derive(Debug, Clone, Copy)]
 pub struct Filter {
-    /// Include padmap's own clones. Off by default, for the reason above.
     pub include_virtual: bool,
-    /// Only the pads RetroArch can currently see, which is what pad-index
-    /// prediction needs. The two differ exactly when the hide rules are
-    /// installed.
     pub retroarch_only: bool,
-    /// Include controllers padmap drives itself, which the kernel publishes
-    /// no joypad for. On by default: they are controllers, and the whole
-    /// point of driving them is that they behave like any other.
-    ///
-    /// Off for `retroarch_only`, truthfully -- RetroArch cannot see a device
-    /// with no evdev node, and counting one would shift every pad index.
     pub include_undriven: bool,
 }
 
 impl Default for Filter {
-    /// Written out rather than derived, because one field's default is not
-    /// `false` and a derive would silently say it was.
     fn default() -> Self {
         Filter {
             include_virtual: false,
@@ -143,11 +77,7 @@ impl Default for Filter {
     }
 }
 
-/// Joypads, in the order RetroArch's udev driver would enumerate them.
-///
-/// libudev returns enumerate results sorted by syspath (verified against
-/// `udevadm trigger --dry-run`), and RetroArch assigns each the first vacant
-/// slot, so this ordering is what its pad indices would be.
+/// Joypads in RetroArch enumeration order (libudev sorts by syspath).
 pub fn discover(filter: Filter) -> std::io::Result<Vec<Pad>> {
     let mut enumerator = udev::Enumerator::new()?;
     enumerator.match_subsystem("input")?;
@@ -165,6 +95,7 @@ pub fn discover(filter: Filter) -> std::io::Result<Vec<Pad>> {
             continue;
         }
 
+        // Collect every accelerometer on the machine (each pad will check if one is its own).
         if property(&device, "ID_INPUT_ACCELEROMETER").as_deref() == Some("1") {
             accelerometers.push((
                 std::fs::canonicalize(device.syspath())
@@ -173,13 +104,8 @@ pub fn discover(filter: Filter) -> std::io::Result<Vec<Pad>> {
             ));
         }
 
-        // RetroArch's own filter, udev_joypad.c:1053.
         let visible = property(&device, "ID_INPUT_JOYSTICK").as_deref() == Some("1");
-        // padmap must not use ID_INPUT_JOYSTICK for its own discovery, because
-        // `padmap hide` deliberately clears it. Sharing the filter would mean
-        // installing the hide rules made every controller invisible to padmap
-        // too, so setup could never be run again -- unrecoverable without
-        // hand-removing the rules.
+        // padmap must not use ID_INPUT_JOYSTICK; `padmap hide` deliberately clears it.
         if !visible && !looks_like_joypad(&devnode) {
             continue;
         }
@@ -187,8 +113,6 @@ pub fn discover(filter: Filter) -> std::io::Result<Vec<Pad>> {
             continue;
         }
 
-        // The capability and identity attributes live on the parent `inputN`
-        // directory, not on the `eventN` node.
         let parent = device.parent();
         let owner = parent.as_ref().unwrap_or(&device);
 
@@ -208,7 +132,6 @@ pub fn discover(filter: Filter) -> std::io::Result<Vec<Pad>> {
             pid: hex_attribute(owner, "id/product"),
             retroarch_visible: visible,
             path: devnode,
-            // Filled in below: every accelerometer has to be seen first.
             motion: None,
         });
     }
@@ -219,10 +142,7 @@ pub fn discover(filter: Filter) -> std::io::Result<Vec<Pad>> {
 
     pads.sort_by(|left, right| left.syspath.cmp(&right.syspath));
 
-    // A 2026 Steam Controller has no joypad node the loop above could find --
-    // see `triton::slots`. Appended, not merged: the order above is
-    // RetroArch's enumeration order and these are not in it, so putting one in
-    // the middle would shift every pad below it.
+    // Steam Controllers have no joypad node; append them to preserve RetroArch's enumeration order.
     if filter.include_undriven && !filter.retroarch_only {
         pads.extend(crate::triton::slots(true));
     }
@@ -237,12 +157,6 @@ pub fn discover(filter: Filter) -> std::io::Result<Vec<Pad>> {
 }
 
 /// Every padmap clone the kernel is publishing, by name.
-///
-/// Read from sysfs rather than through [`discover`], and deliberately *not*
-/// subject to `PADMAP_ONLY_DEVICE`: that switch exists so padmap cannot open
-/// or grab hardware it was not told about, and a clone is padmap's own output.
-/// Filtering it out of a read-only listing protects nothing and makes the
-/// listing wrong -- a seated player whose node reads `null` looks unbound.
 pub fn clone_nodes() -> BTreeMap<String, PathBuf> {
     let mut found = BTreeMap::new();
     let Ok(entries) = std::fs::read_dir("/sys/class/input") else {
@@ -265,23 +179,8 @@ pub fn clone_nodes() -> BTreeMap<String, PathBuf> {
     found
 }
 
-/// The motion sensor belonging to a pad, given every accelerometer on the
-/// machine and where each one sits.
-///
-/// A controller with a gyro publishes it as a *separate* input device --
-/// hid-nintendo calls one "Nintendo Switch Pro Controller IMU",
-/// hid-playstation "DualSense Motion Sensors" -- sharing a parent with the
-/// joypad node but carrying no buttons. So the question "does this pad have
-/// motion" is answered by looking for a sibling, and the answer is a path
-/// rather than a flag because anything that wants the gyro has to open it.
-///
-/// Matched on the longest shared syspath prefix that is a real ancestor of
-/// both. A USB controller's two nodes hang off the same interface; matching on
-/// anything shorter would hand a pad the gyro of a different device on the
-/// same hub.
-///
-/// Pure, and takes the candidates as an argument, because there is no gyro pad
-/// on the machine this was written on and a rule nobody can test is a guess.
+/// Motion sensor belonging to a pad: matched by longest shared syspath prefix (ancestor).
+/// Pure; takes candidates as argument for testability.
 pub fn motion_sibling<'a>(
     pad: &Path,
     accelerometers: &'a [(PathBuf, PathBuf)],
@@ -289,19 +188,14 @@ pub fn motion_sibling<'a>(
     let mine = pad.parent()?;
     accelerometers
         .iter()
-        // Same parent directory: the two nodes of one controller sit side by
-        // side under its input device, or under the same HID interface.
+        // Two nodes sit side by side under input device or same HID interface.
         .filter(|(syspath, _)| syspath.parent() == Some(mine) || syspath.starts_with(mine))
         .map(|(_, devnode)| devnode.as_path())
         .next()
 }
 
-/// Pads that no static identifier can tell apart.
-///
-/// Used to explain to the user why press-to-activate is required rather than
-/// letting them think it is a stylistic choice.
+/// Pads that no static identifier can tell apart (used for explaining press-to-activate requirement).
 pub fn ambiguous_groups(pads: &[Pad]) -> Vec<Vec<&Pad>> {
-    /// Every static attribute a pad has. Four Mayflash ports agree on all five.
     type Identity<'a> = (&'a str, &'a str, &'a str, u16, u16);
 
     let mut groups: Vec<(Identity<'_>, Vec<&Pad>)> = Vec::new();
@@ -325,23 +219,14 @@ pub fn ambiguous_groups(pads: &[Pad]) -> Vec<Vec<&Pad>> {
         .collect()
 }
 
-/// Is this a joypad by capability, regardless of how udev tagged it?
-///
-/// From sysfs first. Opening every input node to ask two questions means
-/// closing every input node afterwards, and releasing a USB HID descriptor
-/// takes about 11ms while the driver tears down its URB -- measured at 390ms
-/// of a 400ms scan, in 36 calls to close. The bitmaps read here are the same
-/// ones udev's `input_id` builtin reads to decide ID_INPUT_JOYSTICK.
+/// Is this a joypad by capability? Check sysfs first (read bitmaps like udev's input_id builtin).
 fn looks_like_joypad(devnode: &Path) -> bool {
     match capability_verdict(devnode) {
         Some(verdict) => verdict,
-        // The files were not there, or were not bitmaps. Ask the device, which
-        // is what this used to do always.
         None => looks_like_joypad_by_opening(devnode),
     }
 }
 
-/// The sysfs answer, or `None` if it cannot be had.
 fn capability_verdict(devnode: &Path) -> Option<bool> {
     let name = devnode.file_name()?;
     let caps = Path::new("/sys/class/input")
@@ -382,6 +267,7 @@ fn property(device: &udev::Device, name: &str) -> Option<String> {
 ///
 /// `name`, `phys` and the id files sit on the `inputN` directory; a caller may
 /// hand us either that or the `eventN` child, and both have to answer.
+/// Sysfs attribute, walking up 4 levels to find it (name, phys, id files sit on inputN).
 fn attribute(device: &udev::Device, name: &str) -> Option<String> {
     let mut current = Some(device.clone());
     for _ in 0..4 {
@@ -404,21 +290,16 @@ fn hex_attribute(device: &udev::Device, name: &str) -> u16 {
 mod tests {
     #[test]
     fn a_pads_gyro_is_the_sibling_under_its_own_parent() {
-        // What hid-nintendo publishes: two input devices under one HID
-        // interface, one of them the IMU.
         let hid = PathBuf::from("/sys/devices/pci0000:00/usb1/1-2/1-2:1.0/0003:057E:2009.0001");
         let pad = hid.join("input/input20/event18");
         let imu = hid.join("input/input21/event19");
         let accelerometers = vec![(imu.clone(), PathBuf::from("/dev/input/event19"))];
-        // The pad's parent is input20; the IMU is under input21, so the match
-        // has to reach the interface rather than the immediate directory.
         assert_eq!(
             motion_sibling(&pad, &accelerometers),
             None,
             "input21 is not under input20, and must not be claimed by prefix alone"
         );
 
-        // Side by side under one input device, which is the other shape.
         let together = PathBuf::from("/sys/devices/pci0000:00/usb1/1-2/input/input20");
         let pad = together.join("event18");
         let accelerometers = vec![(
@@ -433,9 +314,6 @@ mod tests {
 
     #[test]
     fn a_gyro_on_a_different_device_is_not_claimed() {
-        // Two controllers on one hub. Handing the first pad the second's gyro
-        // would be worse than reporting none: a consumer would open it and
-        // read somebody else's wrist.
         let mine = PathBuf::from("/sys/devices/usb1/1-2/input/input20");
         let theirs = PathBuf::from("/sys/devices/usb1/1-3/input/input30");
         let accelerometers = vec![(theirs.join("event31"), PathBuf::from("/dev/input/event31"))];
@@ -478,17 +356,12 @@ mod tests {
 
     #[test]
     fn the_retroarch_id_concatenates_phys_and_uniq_with_no_separator() {
-        // Reproducing udev_joypad.c exactly, including the absence of a
-        // separator -- a diagnostic that inserts one compares against a string
-        // RetroArch never stores.
         let pad = pad("x", "usb-0000:00:14.0-3/input0", "ab:cd", 0, 0, "event1");
         assert_eq!(pad.retroarch_id(), "usb-0000:00:14.0-3/input0ab:cd");
     }
 
     #[test]
     fn four_identical_adapter_ports_group_together() {
-        // The Mayflash adapter: four ports, one USB interface, byte-identical
-        // in every attribute the kernel exposes.
         let pads: Vec<Pad> = (0..4)
             .map(|index| {
                 pad(
@@ -527,8 +400,6 @@ mod tests {
 
     #[test]
     fn a_clone_is_recognised_by_either_tag() {
-        // Either can be absent, and discovery that misses one grabs padmap's
-        // own output and republishes it, one layer deeper on every restart.
         assert!(is_padmap_clone("padmap Player 1", "padmap/p1"));
         assert!(
             is_padmap_clone("padmap Player 1", ""),
@@ -548,8 +419,6 @@ mod tests {
 
     #[test]
     fn the_virtual_prefix_is_what_the_clones_are_published_under() {
-        // If these two ever disagree, the daemon republishes its own output on
-        // restart, one layer deeper each time.
         assert_eq!(VIRTUAL_PHYS_PREFIX, "padmap/");
         assert!(crate::clone::virtual_phys(1).starts_with(VIRTUAL_PHYS_PREFIX));
     }

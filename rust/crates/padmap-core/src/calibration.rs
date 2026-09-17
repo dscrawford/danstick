@@ -1,46 +1,23 @@
 //! Where an axis rests, how far it actually travels, and its dead band.
-//!
-//! [`AxisCalibration::apply`] is the one piece of logic in this crate that runs
-//! per event: the republisher calls it for every `EV_ABS` passing through. It
-//! is deliberately branch-and-arithmetic only, with every allocation, lookup
-//! and validity check hoisted out to load time -- see [`AxisCalibration::fits`].
+//! Applied per-event; allocations and validity checks hoisted to load time.
 
 use serde::{Deserialize, Serialize};
 
-/// The width of the field an axis value travels in.
-///
-/// `input_event.value` is an `__s32`. A stored profile declaring a range of
-/// +-2^40 made `apply(150)` return 1099511627776, the write refused it, and the
-/// daemon exited mid-game with every player's controller going dead at once.
-/// Python raised `OverflowError` there, which is neither an `OSError` nor a
-/// `ValueError`, so every guard between the profile store and the uinput write
-/// missed it.
+/// i32 limits; constrains profile ranges to what uinput can write.
 pub const EVDEV_VALUE_MIN: i64 = -(1 << 31);
 pub const EVDEV_VALUE_MAX: i64 = (1 << 31) - 1;
 
-/// A measured axis.
-///
-/// `minimum`/`maximum` are the *declared* range from absinfo -- the output
-/// scale. `reach_min`/`reach_max` are what the stick was observed to actually
-/// produce, and fall back to the declared range when unmeasured.
-///
-/// Keeping those separate matters. An adapter can declare 0-255 while the
-/// physical stick only ever emits 160-255; scaling against the declared range
-/// then leaves almost no travel on one side, so the stick cannot go left at
-/// all. Scaling against the measured reach restores full movement both ways.
+/// Measured vs. declared range; measured reach restores full travel on limited sticks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AxisCalibration {
     pub center: i32,
-    // `min` and `max` on disk. The stored profile is user data that predates
-    // this port and outlives it, so the field names are the file's, not ours.
+    // Renamed from min/max for code clarity; stored profiles use old names.
     #[serde(rename = "min")]
     pub minimum: i32,
     #[serde(rename = "max")]
     pub maximum: i32,
-    /// Half-width of the dead band around centre, in raw units.
     #[serde(default)]
     pub flat: i32,
-    /// Observed extremes. `None` means "never measured, assume declared range".
     #[serde(default)]
     pub reach_min: Option<i32>,
     #[serde(default)]
@@ -70,33 +47,22 @@ impl AxisCalibration {
         self
     }
 
-    /// The bottom of the travel actually used, never above centre.
     pub fn low(&self) -> i64 {
         let value = i64::from(self.reach_min.unwrap_or(self.minimum));
         value.min(i64::from(self.center))
     }
 
-    /// The top of the travel actually used, never below centre.
     pub fn high(&self) -> i64 {
         let value = i64::from(self.reach_max.unwrap_or(self.maximum));
         value.max(i64::from(self.center))
     }
 
-    /// The declared midpoint, which is what a dead-banded reading becomes and
-    /// what a calibrated axis is seeded at when its clone is created.
+    /// Floor division: ranges straddling zero must seed on correct side of centre.
     pub fn midpoint(&self) -> i64 {
-        // Floor division, as Python's `//`: for a range straddling zero the two
-        // round different ways and the seed lands on the wrong side of centre.
         (i64::from(self.minimum) + i64::from(self.maximum)).div_euclid(2)
     }
 
-    /// Whether everything this calibration can emit is writable at all.
-    ///
-    /// Checked on the stored numbers rather than on each result, because the
-    /// stored numbers bound every result: [`apply`](Self::apply) clamps into
-    /// `minimum..=maximum`, and the only other value that leaves here is the
-    /// midpoint seed. So one check when a profile is read stands in for a check
-    /// on every event, and the hot path stays arithmetic.
+    /// Bounds-check at load time; hot path then stays arithmetic only.
     pub fn fits(&self) -> bool {
         let mut bounds = vec![
             i64::from(self.center),
@@ -111,11 +77,7 @@ impl AxisCalibration {
             .all(|value| (EVDEV_VALUE_MIN..=EVDEV_VALUE_MAX).contains(value))
     }
 
-    /// Rescale a raw reading so `center` maps to the declared midpoint.
-    ///
-    /// Piecewise linear either side of centre, scaled by measured reach, and
-    /// clamped so a stick that overshoots its calibration cannot exceed the
-    /// declared range.
+    /// Rescale to midpoint; piecewise linear scaled by measured reach, clamped to declared range.
     pub fn apply(&self, value: i32) -> i32 {
         let mid = self.midpoint();
         let value = i64::from(value);
@@ -126,17 +88,13 @@ impl AxisCalibration {
             return mid as i32;
         }
 
-        // Both the offset and the span are measured from the edge of the dead
-        // band. Taking the offset from there but the span from centre would
-        // scale every reading down by the band width, so a fully deflected
-        // stick would stop short of the declared extreme.
+        // Offset and span both from dead-band edge; span from centre would shorten travel.
         let out = if value < center {
             let edge = center - flat;
             let span = edge - self.low();
             if span <= 0 {
                 return mid as i32;
             }
-            // -1 at full reach, 0 at the band.
             let scaled = (value - edge) as f64 / span as f64;
             mid as f64 + scaled * (mid - i64::from(self.minimum)) as f64
         } else {
@@ -145,24 +103,15 @@ impl AxisCalibration {
             if span <= 0 {
                 return mid as i32;
             }
-            // 0 at the band, 1 at full reach.
             let scaled = (value - edge) as f64 / span as f64;
             mid as f64 + scaled * (i64::from(self.maximum) - mid) as f64
         };
 
-        // `f64::clamp` panics when min > max, and this runs per controller
-        // event: a profile whose declared range is inverted -- hand-edited, or
-        // an absinfo read off a lying adapter -- would unwind out of the
-        // forwarding path and take every player's controller with it. The
-        // Python wrote the same clamp as `max(minimum, min(maximum, out))`,
-        // which quietly answers `minimum` and keeps the daemon running. Do
-        // that, in that order.
+        // Clamp order: max then min, to handle inverted ranges gracefully.
         let clamped = out
             .min(f64::from(self.maximum))
             .max(f64::from(self.minimum));
-        // Ties to even, which is what Python's `round` does. The difference is
-        // one count on an axis, but a Rust port that disagrees with the Python
-        // on a recorded capture is indistinguishable from one that is wrong.
+        // Ties-to-even: matches Python round on recorded captures.
         clamped.round_ties_even() as i32
     }
 }
@@ -171,7 +120,6 @@ impl AxisCalibration {
 mod tests {
     use super::*;
 
-    /// A pad that already centres itself: nothing should move.
     #[test]
     fn a_true_centred_axis_passes_its_own_values_through() {
         let cal = AxisCalibration::new(128, 0, 255);
@@ -186,8 +134,6 @@ mod tests {
 
     #[test]
     fn a_worn_stick_resting_off_centre_is_pulled_back_to_the_middle() {
-        // The N64 adapter measured here: rests at 174 on a 0..255 axis whose
-        // nominal centre is 128. Uncorrected it reads permanently deflected.
         let cal = AxisCalibration::new(174, 0, 255);
         assert_eq!(cal.apply(174), 127);
         assert_eq!(cal.apply(0), 0, "full left still reaches the stop");
@@ -196,8 +142,6 @@ mod tests {
 
     #[test]
     fn both_halves_reach_their_stop_even_when_the_travel_is_lopsided() {
-        // 174 leaves 174 counts below and 81 above. Both must still map onto
-        // the full declared half-range or the stick cannot go one way.
         let cal = AxisCalibration::new(174, 0, 255);
         let left = cal.apply(0);
         let right = cal.apply(255);
@@ -217,9 +161,6 @@ mod tests {
 
     #[test]
     fn the_band_does_not_cost_the_stick_its_full_travel() {
-        // Taking the offset from the band edge but the span from centre would
-        // scale every reading down by the band width, and a fully deflected
-        // stick would stop short of the declared extreme.
         let cal = AxisCalibration::new(128, 0, 255).with_flat(20);
         assert_eq!(cal.apply(0), 0);
         assert_eq!(cal.apply(255), 255);
@@ -227,8 +168,6 @@ mod tests {
 
     #[test]
     fn measured_reach_restores_a_stick_that_never_emits_its_declared_range() {
-        // An adapter declaring 0..255 whose stick only ever produces 160..255.
-        // Against the declared range there is almost no travel to the left.
         let declared = AxisCalibration::new(200, 0, 255);
         let measured = AxisCalibration::new(200, 0, 255).with_reach(160, 255);
         assert!(
@@ -241,9 +180,6 @@ mod tests {
 
     #[test]
     fn reach_can_never_narrow_the_range_past_centre() {
-        // A nonsense profile where the measured reach sits entirely on one side
-        // of the recorded centre. `low`/`high` clamp to centre so `span` stays
-        // positive and the axis degrades to flat rather than inverting.
         let cal = AxisCalibration::new(128, 0, 255).with_reach(200, 240);
         assert_eq!(cal.low(), 128);
         assert_eq!(cal.high(), 240);
@@ -274,8 +210,7 @@ mod tests {
 
     #[test]
     fn the_midpoint_floors_the_way_python_did_even_across_zero() {
-        // Truncating division would put the seed on the wrong side of centre
-        // for a range that straddles zero.
+        // Truncating division seeds on wrong side of centre for ranges straddling zero.
         assert_eq!(AxisCalibration::new(0, -1, 0).midpoint(), -1);
         assert_eq!(AxisCalibration::new(0, -32768, 32767).midpoint(), -1);
         assert_eq!(AxisCalibration::new(0, 0, 255).midpoint(), 127);
@@ -291,7 +226,6 @@ mod tests {
 
     #[test]
     fn the_result_is_monotonic_across_the_whole_input_range() {
-        // A non-monotonic rescale is a stick that jumps backwards mid-travel.
         let cal = AxisCalibration::new(174, 0, 255)
             .with_flat(4)
             .with_reach(20, 250);
@@ -319,7 +253,6 @@ mod tests {
 
     #[test]
     fn a_range_evdev_cannot_carry_is_refused_before_it_reaches_a_write() {
-        // The +-2^40 profile that ended the daemon mid-game.
         let huge = AxisCalibration {
             center: 0,
             minimum: i32::MIN,
@@ -329,16 +262,12 @@ mod tests {
             reach_max: None,
         };
         assert!(huge.fits(), "the i32 extremes themselves are writable");
-        // Rust's i32 cannot hold 2^40 at all, which is the type system doing
-        // what `fits_evdev` had to do by hand -- but a profile can still carry
-        // the i32 extremes, and those must stay allowed.
         assert!(AxisCalibration::new(0, 0, 255).fits());
     }
 
     #[test]
     fn a_calibration_round_trips_through_the_python_json_shape() {
-        // `min`/`max`, because that is what a stored profile on disk says.
-        // Renaming either orphans every axis a user has already calibrated.
+        // Serializes as min/max to preserve stored profile compatibility.
         let raw = serde_json::json!({
             "center": 174, "min": 0, "max": 255,
             "flat": 4, "reach_min": 20, "reach_max": 250
@@ -361,47 +290,26 @@ mod tests {
     }
 }
 
-/// The dead band never narrower than this fraction of an axis's travel.
-///
-/// A stick that happens to sit perfectly still while being sampled would
-/// otherwise get a band of one unit, and then jitter forever in a game.
+/// Minimum dead band to prevent jitter from sampling noise.
 pub const MIN_FLAT_FRACTION: f64 = 0.04;
 
-/// Axes a hat lives on. Never calibrated: a hat has three values and no
-/// centre to measure.
+/// Hat axes; never calibrated.
 pub const SKIP_AXES: [u16; 8] = [0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17];
 
-/// The codes a trigger is conventionally reported on.
-///
-/// A shortcut, not the rule -- see [`calibratable`]. ABS_Z, ABS_RZ, ABS_GAS,
-/// ABS_BRAKE. Which is not the same as the codes a given machine's triggers
-/// are actually on.
+/// Conventional trigger axes (ABS_Z, ABS_RZ, ABS_GAS, ABS_BRAKE).
 pub const TRIGGER_AXES: [u16; 4] = [0x02, 0x05, 0x09, 0x0A];
 
-/// One axis as its driver declares it, which is what calibration starts from.
+/// One axis as its driver declares it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Declared {
     pub minimum: i32,
     pub maximum: i32,
-    /// Where it sits right now.
     pub value: i32,
-    /// The driver's own dead band, if it declares one.
     pub flat: i32,
 }
 
 impl Declared {
-    /// Is this worth centring?
-    ///
-    /// A trigger must not be. Calibration takes the resting value as the
-    /// centre and maps it to the middle of the declared range, so centring a
-    /// trigger makes it read half pressed while untouched and costs it half
-    /// its travel.
-    ///
-    /// The resting position decides, and the code list is only a shortcut: it
-    /// catches the conventional cases and does not catch the GameCube adapter
-    /// whose analogue triggers are on ABS_RX and ABS_RY -- stick codes --
-    /// resting at 24 of 0-255. A stick centres and a trigger does not, which
-    /// is the difference an axis number cannot carry.
+    /// Is this axis worth centring? Rest position decides; code list is a shortcut.
     pub fn calibratable(&self, code: u16) -> bool {
         if SKIP_AXES.contains(&code) || TRIGGER_AXES.contains(&code) {
             return false;
@@ -412,21 +320,14 @@ impl Declared {
         crate::sdl::AxisSpan::new(self.minimum, self.maximum, self.value).rests_centred()
     }
 
-    /// The calibration implied by watching this axis sit still.
-    ///
-    /// `observed` is the lowest and highest reading seen while the user was
-    /// asked to leave the pad alone; with none, the declared resting value
-    /// stands in for both.
+    /// Calibration from rest observation; floor division for Python compatibility.
     pub fn rest_calibration(&self, observed: Option<(i32, i32)>) -> AxisCalibration {
         let (low, high) = observed.unwrap_or((self.value, self.value));
         let travel = self.maximum - self.minimum;
         AxisCalibration {
-            // Floor division, as Python's `//` does it: the two write the same
-            // profile and a reader cannot tell which produced it.
             center: (low + high).div_euclid(2),
             minimum: self.minimum,
             maximum: self.maximum,
-            // Covers the observed wobble, never less than the floor.
             flat: (high - low)
                 .div_euclid(2)
                 .saturating_add(1)
@@ -439,24 +340,7 @@ impl Declared {
 }
 
 impl AxisCalibration {
-    /// Fold a measured sweep into a centre calibration.
-    ///
-    /// A direction has to clear the dead band before it counts as measured.
-    /// A reading inside the band is by definition indistinguishable from the
-    /// stick sitting still, and recording it as a reach makes [`apply`]
-    /// compute a span from the edge of the band that is zero or negative --
-    /// so that whole direction reads dead centre.
-    ///
-    /// Not a corner case. The sweep window opens at the axis's declared value
-    /// while the centre comes from the *measured* rest samples, so the two
-    /// disagree by however far the stick dithered while the user let go. An
-    /// axis that jitters up a couple of units and is then never touched
-    /// during the sweep ends one unit below its own centre, which a naive
-    /// `low < center` test records as a reach -- and full left reads dead
-    /// centre. The exact failure measuring reach exists to prevent, with the
-    /// user doing nothing wrong.
-    ///
-    /// [`apply`]: AxisCalibration::apply
+    /// Record sweep reach only beyond dead band; inside it is indistinguishable from rest.
     #[must_use]
     pub fn merge_reach(&self, observed: Option<(i32, i32)>) -> AxisCalibration {
         let (low, high) = observed.unwrap_or((self.center, self.center));

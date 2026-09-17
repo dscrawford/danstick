@@ -1,12 +1,5 @@
 //! Everything written to disk when the roster changes.
-//!
-//! The SDL database, the RetroArch autoconfig profiles, the launch override
-//! and its flags, and the emulator files -- regenerated whole on every
-//! accept and every republish rather than migrated. SDL keys its database on
-//! the device name, and padmap's virtual pads are named after the player
-//! slot, so a stored line describes "whatever was in slot 1 last time".
-//! Rewriting from the current assignment means the question of keeping it in
-//! step never arises.
+//! Regenerated whole on each accept/republish to keep in step.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -24,30 +17,20 @@ use padmap_input::clone::{self, IdentityMode};
 use padmap_input::pad::{self, Pad};
 use padmap_input::{artefacts, emulators, profiles, runtime, sdlprobe, triton};
 
-/// One player and the pad holding the slot.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Slot {
     pub player: u32,
     pub pad: Pad,
 }
 
-/// What a pad reports about itself, read once per write.
 #[derive(Debug, Clone, Default)]
 pub struct PadFacts {
     pub keys: Vec<u16>,
     pub axes: Vec<u16>,
     pub spans: BTreeMap<u16, AxisSpan>,
-    /// The GUID SDL computes for the physical controller, for carrying a
-    /// mapping over. `None` when the pad could not be opened, or has no evdev
-    /// node for SDL to have seen.
     pub physical_guid: Option<String>,
 }
 
-/// Open a pad without grabbing it and read what it declares.
-///
-/// Empty on failure, deliberately: a pad that cannot be opened right now gets
-/// no line rather than the daemon getting no further, and the republisher
-/// will say why when it tries.
 pub fn pad_facts(pad: &Pad) -> PadFacts {
     match clone::open_source(pad, false) {
         Ok(source) => {
@@ -66,12 +49,6 @@ pub fn pad_facts(pad: &Pad) -> PadFacts {
     }
 }
 
-/// What a clone for this pad advertises, in this identity mode.
-///
-/// Opens the device to read its ids, which is what mirroring means; the
-/// republisher does the same when it creates the clone, so the two answers
-/// agree. A pad that cannot be opened falls back to padmap's own identity --
-/// the daemon has to write *something* for a slot it is still holding.
 pub fn identity_of(pad: &Pad, player: u32, mode: IdentityMode) -> Identity {
     let padmap_own = Identity {
         bustype: 0x06,
@@ -104,21 +81,16 @@ pub fn identity_of(pad: &Pad, player: u32, mode: IdentityMode) -> Identity {
     }
 }
 
-/// The capture that applies, and the scope it came from.
 pub fn resolved(pad: &Pad, console: &str, game: &str) -> (String, padmap_core::profile::Mapping) {
     profiles::load(pad, None)
         .map(|profile| profile.resolve(console, game))
         .unwrap_or_default()
 }
 
-/// Whether this controller has been through the mapping wizard, under any
-/// scope. A profile can exist with no buttons -- calibration writes one -- so
-/// the presence of a profile is not the question.
 pub fn has_mapping(pad: &Pad) -> bool {
     profiles::load(pad, None).is_some_and(|profile| profile.has_bindings())
 }
 
-/// Which scopes this controller has a capture under.
 pub fn mapping_scopes(pad: &Pad) -> Vec<String> {
     profiles::load(pad, None)
         .map(|profile| {

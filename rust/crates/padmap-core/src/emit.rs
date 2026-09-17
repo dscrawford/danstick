@@ -1,10 +1,5 @@
-//! The files other programs actually read.
-//!
-//! Two consumers, two formats, and neither says anything when it reads one
-//! wrong: SDL silently never matches a mapping under a GUID it did not
-//! compute, and RetroArch happily binds a button that does not exist and still
-//! reports the pad as configured. So both are built here, from one capture, and
-//! pinned against artefacts the real software produced.
+//! Output formats: SDL gamecontroller database and RetroArch autoconfig profiles.
+//! Both built from one capture, pinned against real software artefacts.
 
 use std::collections::BTreeMap;
 
@@ -13,18 +8,14 @@ use crate::control::Control;
 use crate::fields::Fields;
 use crate::{layout, retroarch, sdl};
 
-/// Every virtual pad name starts with this.
 pub const VIRTUAL_PREFIX: &str = "padmap Player ";
-/// Comment marker for every line padmap writes into a shared file.
 pub const MARKER: &str = "# padmap";
-/// How many player slots padmap could ever name.
 pub const MAX_PLAYERS: u32 = 16;
 
 pub fn virtual_name(player: u32) -> String {
     format!("{VIRTUAL_PREFIX}{player}")
 }
 
-/// What a virtual pad advertises: bus, vendor, product, version.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Identity {
     pub bustype: u16,
@@ -33,34 +24,9 @@ pub struct Identity {
     pub version: u16,
 }
 
-/// The GUID SDL will compute for a player's virtual pad.
-///
-/// Every input is known in advance -- padmap creates the device -- so a mapping
-/// can be written before SDL has ever seen it.
-/// The version a clone with no particular player advertises.
 pub const PADMAP_VERSION: u16 = 0x0001;
 
-/// The version a player's clone advertises: the player number itself.
-///
-/// padmap is the layer that makes controllers work the same everywhere, so a
-/// consumer that cannot tell two of its pads apart is padmap's problem rather
-/// than the consumer's fault.
-///
-/// Ryujinx forces this. It builds its device id from the SDL GUID and blanks
-/// the name checksum -- "Remove the first 4 char of the guid (CRC part) to
-/// make it stable" -- and that checksum was the only field distinguishing
-/// padmap's pads. Four players collapsed to one id, leaving the binding to
-/// depend on SDL connection order.
-///
-/// The version is the field to move because it is the one SDL's own matching
-/// ignores. Measured: two pads identical but for their version got distinct
-/// GUIDs and *both* were still matched to "Xbox 360 Controller" from SDL's
-/// built-in database. Mirror mode keeps working and every consumer downstream
-/// now sees N distinct devices.
-///
-/// Nothing else keys on it -- RetroArch matches on name and vid/pid, a stored
-/// profile is filed under the *physical* pad's signature -- and padmap
-/// rewrites everything that does key on the GUID on the same pass.
+/// Version per player for unique GUID: SDL matches versions; Ryujinx blanks checksum.
 pub fn version_for(player: u32) -> u16 {
     if player == 0 {
         PADMAP_VERSION
@@ -79,19 +45,7 @@ pub fn virtual_guid(player: u32, identity: Identity) -> String {
     )
 }
 
-/// An autoconfig profile built from what the user pressed.
-///
-/// Deliberately *not* a copy of the physical pad's upstream libretro profile.
-/// That copy is right whenever the pad is in libretro's database and silently
-/// empty when it is not, and it can disagree with what the user mapped -- two
-/// sets of bindings for one controller, differing in ways nobody is told about.
-/// A capture the user performed wins over a database entry they never saw.
-///
-/// `layout_id` is resolved here rather than baked into the stored bindings, so
-/// a later correction to a console's key table reaches profiles captured before
-/// it. `scope` and `context` are for the reader: this file is regenerated at
-/// launch from whichever mapping won, and "why is player 1 bound like this" is
-/// otherwise unanswerable from the artefact alone.
+/// Autoconfig profile from user capture, not upstream database (may disagree).
 pub fn retroarch_profile(
     player: u32,
     identity: Identity,
@@ -114,9 +68,7 @@ pub fn retroarch_profile(
             format!(", replacing {source}.")
         }
     ));
-    // Named in the file because a console-specific key is invisible once
-    // emitted -- input_y_btn on an N64 pad looks like a mistake until you know
-    // which layout asked for it.
+    // Named here because console-specific keys are invisible when emitted.
     out.push(format!("# Layout: {} ({}).", resolved.label, resolved.id));
     out.push(format!(
         "# Mapping scope: {}{}",
@@ -143,8 +95,7 @@ pub fn retroarch_profile(
 
     out.extend(retroarch::lines(bindings, &resolved.retroarch_keys()));
 
-    // Sticks come from calibration, not from the button capture, and are the
-    // same on every pad padmap republishes.
+    // Sticks from calibration, identical on every padmap pad.
     out.push("input_l_x_plus_axis = \"+0\"".to_owned());
     out.push("input_l_x_minus_axis = \"-0\"".to_owned());
     out.push("input_l_y_plus_axis = \"+1\"".to_owned());
@@ -153,7 +104,6 @@ pub fn retroarch_profile(
     out.join("\n") + "\n"
 }
 
-/// One SDL database line for a player's virtual pad.
 pub fn sdl_line_for(
     player: u32,
     identity: Identity,
@@ -169,36 +119,19 @@ pub fn sdl_line_for(
     )
 }
 
-/// One SDL database line from plain field:target pairs.
-///
-/// Used for a pad with no capture at all, where the fields are a guess rather
-/// than something the user pressed.
+/// SDL line from fields directly (used when no capture available).
 pub fn sdl_line(guid: &str, name: &str, fields: &Fields) -> String {
     sdl::line(guid, name, fields, "Linux")
 }
 
-/// Rewrite the SDL database, replacing padmap's lines and keeping every other.
-///
-/// Rewritten rather than appended: a second line for the same GUID leaves SDL
-/// to pick one, and which is not something to rely on. Lines for devices padmap
-/// does not manage are left exactly as they are -- users map their own
-/// controllers in there too, and keeping those is the entire reason this
-/// rewrites rather than appending.
-///
-/// `existing` is `None` when the file could not be *read*, which is different
-/// from it being empty: a read that failed cannot tell "nothing here" from
-/// "something here I could not see", and publishing that difference is how a
-/// hand-written mapping is lost. The caller refuses the write in that case;
-/// this function is only ever handed a file it could read.
+/// Rewrite SDL database, replacing padmap's lines; keep user-mapped ones.
 pub fn rewrite_sdl_database(
     existing: &str,
     lines: &BTreeMap<u32, String>,
     notes: &BTreeMap<u32, String>,
     identity_for: impl Fn(u32) -> Identity,
 ) -> String {
-    // Every slot padmap could ever name, not just the ones being written: a
-    // controller that moved slots leaves a line behind under the old name, and
-    // SDL would go on matching it.
+    // Include every slot padmap could name to clean up moved controllers.
     let ours: Vec<String> = (1..=MAX_PLAYERS)
         .map(|player| virtual_guid(player, identity_for(player)))
         .collect();
@@ -210,15 +143,10 @@ pub fn rewrite_sdl_database(
             continue;
         }
         let fields: Vec<&str> = stripped.split(',').collect();
-        // A line whose GUID is one of ours is a previous generation.
         if ours.iter().any(|guid| guid == fields[0]) {
             continue;
         }
-        // ...and so is one bearing our *name* under a GUID we cannot
-        // recompute. A mirrored identity hashes to a GUID that depends on which
-        // controller was plugged in at the time, so a line for a pad since
-        // unplugged is not findable by GUID at all -- and would still match if
-        // that controller came back. The name is ours by construction.
+        // Drop our names under unrecognizable GUIDs (mirrored, since unplugged).
         if fields.len() > 1 && fields[1].starts_with(VIRTUAL_PREFIX) {
             continue;
         }
@@ -231,9 +159,7 @@ pub fn rewrite_sdl_database(
     ));
     for (player, line) in lines {
         if let Some(note) = notes.get(player) {
-            // Every comment padmap writes starts with MARKER, because the read
-            // above keeps any line it does not recognise -- a comment spelled
-            // differently would survive every rewrite and accumulate.
+            // All padmap comments start with MARKER to prevent accumulation.
             body.push(format!("{MARKER}: player {player} -- {note}"));
         }
         body.push(line.clone());
@@ -241,27 +167,10 @@ pub fn rewrite_sdl_database(
     body.join("\n") + "\n"
 }
 
-/// The environment a consumer should be launched with.
-///
-/// Some readers have no controller database of their own. Cemu loads no
-/// `gamecontrollerdb.txt` at all and only lists devices SDL already recognises
-/// as gamepads, so without this padmap's pads do not appear in it -- not
-/// misconfigured, absent. Ryujinx does have a database file and overwrites it
-/// from the internet on launch, so writing to that file is no better.
-///
-/// SDL reads this variable directly, ahead of everything else, and merges it
-/// with whatever else it knows. It is the one delivery mechanism no consumer
-/// can take away, which is why padmap uses it rather than asking each one
-/// nicely.
-///
-/// padmap is the abstraction layer. A consumer that cannot see a controller is
-/// padmap's problem to solve, not the user's to work around.
+/// Environment variable for mappings; SDL reads it before other sources.
 pub const SDL_CONFIG_ENV: &str = "SDL_GAMECONTROLLERCONFIG";
 
-/// Every mapping padmap publishes, as one value for [`SDL_CONFIG_ENV`].
-///
-/// Newline-separated, which is what SDL's own parser expects -- it reads the
-/// variable with the same reader it uses for a database file.
+/// All mappings as newline-separated value for SDL_GAMECONTROLLERCONFIG.
 pub fn sdl_config_value(lines: &BTreeMap<u32, String>) -> String {
     lines
         .values()
@@ -299,15 +208,11 @@ mod tests {
 
     #[test]
     fn a_virtual_pad_guid_matches_one_sdl_wrote_itself() {
-        // Pinned against the live pad, with padmap's own identity.
         assert_eq!(virtual_guid(1, PADMAP), "0600c9a7091200000100000001000000");
     }
 
     #[test]
     fn the_guid_depends_on_the_identity_the_pad_advertises() {
-        // By default the clone mirrors the source, so the GUID depends on the
-        // hardware; computing it from padmap's own ids writes a mapping SDL
-        // never matches.
         assert_ne!(virtual_guid(1, MIRRORED), virtual_guid(1, PADMAP));
     }
 
@@ -329,8 +234,6 @@ mod tests {
 
     #[test]
     fn a_profile_advertises_the_ids_the_pad_really_has() {
-        // A profile claiming different ids scores against itself in
-        // RetroArch's autoconfig match.
         let text = retroarch_profile(1, MIRRORED, &capture(), "", "", "", "");
         assert!(text.contains(&format!("input_vendor_id = \"{}\"", MIRRORED.vendor)));
         assert!(text.contains(&format!("input_product_id = \"{}\"", MIRRORED.product)));
@@ -338,8 +241,6 @@ mod tests {
 
     #[test]
     fn a_profile_says_which_layout_and_scope_produced_it() {
-        // A console-specific key is invisible once emitted: input_y_btn on an
-        // N64 pad looks like a mistake until you know which layout asked.
         let text = retroarch_profile(
             1,
             MIRRORED,
@@ -369,8 +270,6 @@ mod tests {
 
     #[test]
     fn every_profile_carries_the_left_stick() {
-        // Sticks come from calibration, not the capture, and are identical on
-        // every pad padmap publishes.
         let text = retroarch_profile(1, MIRRORED, &BTreeMap::new(), "", "", "", "");
         for axis in [
             "input_l_x_plus_axis = \"+0\"",
@@ -382,7 +281,6 @@ mod tests {
 
     #[test]
     fn a_rewrite_keeps_lines_padmap_does_not_own() {
-        // The entire reason this rewrites instead of appending.
         let existing = "030000005e040000e002000000000000,Someone's Xbox pad,a:b0,\n";
         let out = rewrite_sdl_database(existing, &BTreeMap::new(), &BTreeMap::new(), |_| PADMAP);
         assert!(out.contains("Someone's Xbox pad"));
@@ -397,9 +295,6 @@ mod tests {
 
     #[test]
     fn a_rewrite_drops_our_own_name_under_a_guid_we_cannot_recompute() {
-        // A mirrored identity hashes to a GUID that depends on which pad was
-        // plugged in, so a line for one since unplugged is unfindable by GUID
-        // -- and would match again if that controller came back.
         let stale = "0300ffff0000000000000000000000ff,padmap Player 3,a:b9,\n";
         let out = rewrite_sdl_database(stale, &BTreeMap::new(), &BTreeMap::new(), |_| PADMAP);
         assert!(!out.contains("a:b9"), "{out}");
@@ -407,8 +302,6 @@ mod tests {
 
     #[test]
     fn a_rewrite_drops_a_stale_slot_no_longer_being_written() {
-        // Every slot padmap could name, not just the ones in `lines`: a
-        // controller that moved slots leaves a line under the old name.
         let stale = format!("{},padmap Player 9,a:b9,\n", virtual_guid(9, PADMAP));
         let lines: BTreeMap<u32, String> = [(1, "aaa,padmap Player 1,a:b0,".to_owned())]
             .into_iter()
@@ -420,8 +313,6 @@ mod tests {
 
     #[test]
     fn padmaps_own_comments_do_not_accumulate_across_rewrites() {
-        // Anything the read does not recognise is kept, so a comment spelled
-        // differently would survive every rewrite forever.
         let lines: BTreeMap<u32, String> = [(1, "aaa,padmap Player 1,a:b0,".to_owned())]
             .into_iter()
             .collect();

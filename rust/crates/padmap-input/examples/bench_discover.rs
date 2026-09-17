@@ -1,6 +1,4 @@
 //! What a scan costs, and where.
-//!
-//! `cargo run --release -p padmap-input --example bench_discover`
 use padmap_input::pad::{discover, Filter};
 use std::time::{Duration, Instant};
 

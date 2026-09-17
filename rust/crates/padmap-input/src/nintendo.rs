@@ -1,20 +1,5 @@
-//! The Switch Pro Controller, over hidraw.
-//!
-//! A port of the decode in `src/padmap/hidraw.py`, established against the
-//! hardware with `tools/switchprobe.py` -- pressing A set byte 3 to 0x08,
-//! which is what the table below says.
-//!
-//! The pad powers up sending report **0x3f**, a cut-down report with no
-//! analogue data at all, and has to be asked for **0x30**. Every 0x3f is
-//! discarded by the report-id filter, so a pad stuck in simple mode delivers
-//! no input while looking perfectly healthy from every other angle: the node
-//! exists, the descriptor is live, reports are flowing, nothing raises and
-//! nothing is logged. The only visible symptom is that no button works.
-//!
-//! The mode request is an **output report**, written with `write`. That is the
-//! opposite of the Steam Controller next door, whose request is a *feature*
-//! report and needs an ioctl -- sending either one the other way succeeds and
-//! does nothing.
+//! Switch Pro Controller over hidraw. Powers up in report 0x3f (simple); must request 0x30 (full).
+//! Mode request is output report written via write(), not feature report (ioctl).
 
 use std::collections::BTreeMap;
 use std::io;
@@ -24,14 +9,6 @@ use std::path::{Path, PathBuf};
 use evdev::{AbsInfo, AbsoluteAxisCode, EventType, InputEvent, KeyCode};
 use log::warn;
 
-/// Drivers whose pads speak this protocol.
-///
-/// A driver name names a protocol; it is not a statement about one product.
-/// The previous version of this was `{(0x057E, 0x2009)}`, an allowlist of
-/// exactly one controller, and every other pad that needs hidraw -- a
-/// Joy-Con, an Online pad, a second Nintendo model bought later -- silently
-/// took the evdev path instead, where the node opens, grabs and watches
-/// without ever emitting an event.
 pub const HID_DRIVERS: [&str; 1] = ["nintendo"];
 
 /// INPUT: the standard full report, with sticks and buttons.
@@ -41,52 +18,38 @@ pub const REPORT_SIMPLE: u8 = 0x3F;
 /// OUTPUT subcommand: set the input report mode.
 const SUBCMD_REPORT_MODE: u8 = 0x03;
 
-/// How many 0x3f reports to tolerate before asking again.
-///
-/// The request at open is not reliable: a pad that has just finished
-/// associating over Bluetooth can drop it -- the write succeeds, the
-/// controller never acts on it, and the pad sends 0x3f forever. At the pad's
-/// ~67 reports a second this waits about a second and a half between
-/// attempts, long enough not to spam a controller mid-handshake and short
-/// enough that nobody gets as far as unpairing it.
+/// Retry threshold for 0x3f reports; ~67 reports/sec = 1.5s between attempts.
 pub const SIMPLE_REPORTS_BEFORE_RETRY: u32 = 100;
 
-/// Every subcommand carries a rumble frame whether or not it rumbles; some
-/// firmware ignores a request whose rumble bytes are all zero.
 const RUMBLE_NEUTRAL: [u8; 8] = [0x00, 0x01, 0x40, 0x40, 0x00, 0x01, 0x40, 0x40];
 
-/// Byte 3 of a full report. Nintendo's labels are mirrored against everyone
-/// else's, and `hid-nintendo` publishes by position -- so the button *labelled*
-/// A is BTN_EAST, which is what every stored mapping keys on.
+// Byte 3 of full report. Nintendo labels are mirrored; hid-nintendo publishes by position (button A = BTN_EAST).
 const BUTTONS_RIGHT: [(u8, KeyCode); 6] = [
-    (0x01, KeyCode::BTN_WEST),  // Y, the left face button
-    (0x02, KeyCode::BTN_NORTH), // X, the top
-    (0x04, KeyCode::BTN_SOUTH), // B, the bottom
-    (0x08, KeyCode::BTN_EAST),  // A, the right
-    (0x40, KeyCode::BTN_TR),    // R
-    (0x80, KeyCode::BTN_TR2),   // ZR
+    (0x01, KeyCode::BTN_WEST),
+    (0x02, KeyCode::BTN_NORTH),
+    (0x04, KeyCode::BTN_SOUTH),
+    (0x08, KeyCode::BTN_EAST),
+    (0x40, KeyCode::BTN_TR),
+    (0x80, KeyCode::BTN_TR2),
 ];
-/// Byte 4.
+// Byte 4.
 const BUTTONS_SHARED: [(u8, KeyCode); 6] = [
-    (0x01, KeyCode::BTN_SELECT), // Minus
-    (0x02, KeyCode::BTN_START),  // Plus
+    (0x01, KeyCode::BTN_SELECT),
+    (0x02, KeyCode::BTN_START),
     (0x04, KeyCode::BTN_THUMBR),
     (0x08, KeyCode::BTN_THUMBL),
-    (0x10, KeyCode::BTN_MODE), // Home
-    (0x20, KeyCode::BTN_Z),    // Capture
+    (0x10, KeyCode::BTN_MODE),
+    (0x20, KeyCode::BTN_Z),
 ];
-/// Byte 5. Its low nibble is the d-pad, published as a hat.
-const BUTTONS_LEFT: [(u8, KeyCode); 2] = [
-    (0x40, KeyCode::BTN_TL),  // L
-    (0x80, KeyCode::BTN_TL2), // ZL
-];
+// Byte 5; low nibble is d-pad, published as hat.
+const BUTTONS_LEFT: [(u8, KeyCode); 2] = [(0x40, KeyCode::BTN_TL), (0x80, KeyCode::BTN_TL2)];
 
 const DPAD_DOWN: u8 = 0x01;
 const DPAD_UP: u8 = 0x02;
 const DPAD_RIGHT: u8 = 0x04;
 const DPAD_LEFT: u8 = 0x08;
 
-/// Sticks are 12-bit. Published raw so a stored calibration stays meaningful.
+// Sticks are 12-bit, published raw (stored calibration stays meaningful).
 pub const STICK_MIN: i32 = 0;
 pub const STICK_MAX: i32 = 4095;
 const STICK_FUZZ: i32 = 16;
@@ -104,14 +67,7 @@ pub struct State {
     pub right_y: i32,
 }
 
-/// Decode one 0x30 report, or `None` if it is too short.
-///
-/// Y is inverted here rather than downstream: the controller reports it
-/// increasing *upwards*, evdev is the other way round like screen
-/// coordinates, and `hid-nintendo` does the same flip -- so a profile
-/// captured over USB through the kernel driver means the same thing when the
-/// pad comes back over Bluetooth. Published raw, the stick works and is
-/// upside down in every game, which is how it was reported.
+/// Decode one 0x30 report. Y is inverted here (controller reports up; evdev is down like screen).
 pub fn decode_state(data: &[u8]) -> Option<State> {
     if data.len() < 12 {
         return None;
@@ -134,10 +90,7 @@ pub fn decode_state(data: &[u8]) -> Option<State> {
     })
 }
 
-/// The d-pad's four bits as `(ABS_HAT0X, ABS_HAT0Y)`.
-///
-/// Opposite bits cancel -- which the hardware cannot physically do, but a
-/// stuck bit can.
+/// D-pad's four bits as (ABS_HAT0X, ABS_HAT0Y); opposite bits cancel (handles stuck bits).
 pub fn hat_for(left: u8) -> (i32, i32) {
     let bit = |mask: u8| i32::from(left & mask != 0);
     (
@@ -146,7 +99,7 @@ pub fn hat_for(left: u8) -> (i32, i32) {
     )
 }
 
-/// The 64-byte output report that asks for full mode.
+/// 64-byte output report requesting full mode (0x30).
 pub fn full_mode_packet(counter: u8) -> [u8; 64] {
     let mut packet = [0u8; 64];
     packet[0] = 0x01;
@@ -157,12 +110,7 @@ pub fn full_mode_packet(counter: u8) -> [u8; 64] {
     packet
 }
 
-/// User decisions about the hidraw path: `{"057e:2017": true}`.
-///
-/// The escape hatch that keeps [`HID_DRIVERS`] from being another allowlist.
-/// A pad the kernel binds to a driver padmap has never heard of, but which
-/// speaks this protocol, can be switched on here; one that matches the driver
-/// and is better off on evdev can be switched off. Neither needs a release.
+/// User decisions about hidraw path: `{"057e:2017": true}`. Booleans only (not 1 or "yes").
 pub fn parse_overrides(text: &str) -> BTreeMap<String, bool> {
     let Ok(raw) = serde_json::from_str::<serde_json::Value>(text) else {
         return BTreeMap::new();
@@ -172,9 +120,6 @@ pub fn parse_overrides(text: &str) -> BTreeMap<String, bool> {
     };
     object
         .iter()
-        // Booleans only. A `1` or a `"yes"` is someone guessing at the format,
-        // and guessing wrong should not silently switch a controller's whole
-        // input path.
         .filter_map(|(key, value)| value.as_bool().map(|on| (key.to_lowercase(), on)))
         .collect()
 }
@@ -188,9 +133,6 @@ pub struct Source {
     axes: BTreeMap<u16, i32>,
     hat: (i32, i32),
     counter: u8,
-    /// Consecutive 0x3f reports since the last usable one. Reset by a 0x30
-    /// rather than only counted up, so a pad that drops back into simple mode
-    /// later in the session is caught the same way as one that never left it.
     simple_seen: u32,
 }
 
@@ -220,11 +162,7 @@ impl Source {
         &self.path
     }
 
-    /// Ask for report 0x30, the one carrying sticks and buttons.
-    ///
-    /// An output report, so a plain `write`. The Steam Controller's equivalent
-    /// is a feature report and needs an ioctl; sending either the other way
-    /// succeeds and does nothing.
+    /// Ask for report 0x30. Output report via write(), unlike Steam Controller (ioctl).
     fn request_full_mode(&mut self) {
         let packet = full_mode_packet(self.counter);
         self.counter = self.counter.wrapping_add(1);
@@ -251,13 +189,10 @@ impl Source {
         }
     }
 
-    /// Every change since the last call.
     pub fn fetch_events(&mut self, out: &mut Vec<InputEvent>) -> io::Result<()> {
         let before = out.len();
         let mut buffer = [0u8; 362];
         let mut read_any = false;
-        // Bounded for the same reason the Steam Controller's loop is: this
-        // runs on the thread that forwards every player's input.
         const MAX_REPORTS_PER_WAKE: usize = 128;
         for _ in 0..MAX_REPORTS_PER_WAKE {
             match rustix::io::read(&self.fd, &mut buffer) {
@@ -298,9 +233,6 @@ impl Source {
         ] {
             for &(mask, key) in table {
                 let value = i32::from(byte & mask != 0);
-                // Absent counts as up, not as unknown: otherwise the first
-                // report of a session emits a key-up for every button that is
-                // not pressed.
                 if self.buttons.insert(key.code(), value).unwrap_or(0) != value {
                     out.push(InputEvent::new(EventType::KEY.0, key.code(), value));
                 }
@@ -332,10 +264,7 @@ impl Source {
             (AbsoluteAxisCode::ABS_RX, state.right_x),
             (AbsoluteAxisCode::ABS_RY, state.right_y),
         ] {
-            // Only past the fuzz: these jitter by a few counts every report,
-            // and forwarding that is a wake-up per axis per report for a pad
-            // sitting still on a table. First sight always counts, because the
-            // clone has to be told where the stick is.
+            // Only past fuzz: these jitter and sending it means a wakeup per axis.
             let changed = match self.axes.get(&axis.0) {
                 None => true,
                 Some(&previous) => (previous - value).abs() >= STICK_FUZZ,
@@ -347,7 +276,6 @@ impl Source {
         }
     }
 
-    /// What a clone of this pad is built from.
     pub fn capabilities(&self) -> (Vec<u16>, Vec<(u16, AbsInfo)>) {
         let keys = BUTTONS_RIGHT
             .iter()
@@ -397,7 +325,6 @@ impl AsFd for Source {
 }
 
 impl Source {
-    /// Decode one report directly, for tests that have no device to read from.
     #[doc(hidden)]
     pub fn decode_for_test(&mut self, report: &[u8], out: &mut Vec<InputEvent>) {
         self.decode(report, out);

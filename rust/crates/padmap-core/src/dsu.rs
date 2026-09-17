@@ -1,35 +1,12 @@
-//! The cemuhook DSU protocol, on the wire.
-//!
-//! Motion cannot ride padmap's virtual pad. A uinput node cannot set
-//! `EVIOCGUNIQ`, and SDL pairs a joystick with its sensor by comparing exactly
-//! that string (`GetSensor`, `SDL_sysjoystick.c`) -- two padmap clones both
-//! report `uniq = ""`, so with two players SDL hands player one's gyro to
-//! whichever pad it enumerated first. There is no flag for it; the ioctl does
-//! not exist.
-//!
-//! DSU is the road every emulator already supports: UDP on port 26760,
-//! addressing controllers by *slot*, which is padmap's player number.
-//!
-//! The layout is byte for byte from Citra's
-//! `src/input_common/helpers/udp_protocol.h` (GPL-2.0-or-later, 2018 Citra
-//! Emulator Project), whose `static_assert`s pin every size repeated here as a
-//! constant. Three things in it are easy to get wrong, and each has a test:
-//! `payload_length` counts the message type as well as the payload; the CRC
-//! covers the whole datagram with its own field zeroed; and the twelve bytes
-//! that open a `PadData` end in 1 where a `PortInfo` reply ends in 0.
-//!
-//! [`crate::motion`] owns the frame and the units.
+//! Cemuhook DSU protocol (UDP port 26760). Keys: payload_length includes type,
+//! CRC covers whole packet, PadData byte 11 is 1 (PortInfo: 0).
 
 use crate::motion::Motion;
 
 /// UDP port every DSU consumer defaults to.
 pub const PORT: u16 = 26760;
 
-/// Where a consumer on this machine finds padmap.
-///
-/// Loopback, and written into every config padmap generates: this is an
-/// unauthenticated protocol reporting what buttons somebody in the room is
-/// pressing, and there is no reason for it to leave the machine.
+/// Loopback (unauthenticated protocol, no reason to leave machine).
 pub const HOST: &str = "127.0.0.1";
 
 /// `PROTOCOL_VERSION`, `udp_protocol.h`.
@@ -40,28 +17,17 @@ pub const CLIENT_MAGIC: [u8; 4] = *b"DSUC";
 /// `SERVER_MAGIC` -- padmap answering.
 pub const SERVER_MAGIC: [u8; 4] = *b"DSUS";
 
-/// `MAX_PORTS`. Also padmap's player count, which is not a coincidence: both
-/// are four because that is what a living room has.
+/// MAX_PORTS; also padmap's player count (4 for a living room).
 pub const MAX_SLOTS: usize = 4;
 
-/// `sizeof(Header)`, asserted 20 upstream.
 pub const HEADER_BYTES: usize = 20;
-/// `sizeof(Response::PortInfo)`, asserted 12 upstream.
 pub const PORT_INFO_BYTES: usize = 12;
-/// `sizeof(Response::PadData)`, asserted 80 upstream.
 pub const PAD_DATA_BYTES: usize = 80;
-/// `MAX_PACKET_SIZE`, asserted equal to `sizeof(Message<PadData>)` upstream.
 pub const MAX_PACKET_BYTES: usize = HEADER_BYTES + PAD_DATA_BYTES;
 
-/// How long a subscription lasts without being renewed.
-///
-/// "The default timeout seems to be 5 seconds" -- `udp_protocol.h`, describing
-/// the servers its client was written against. A client that goes quiet for
-/// longer has exited, and padmap stops sending to it rather than filling a
-/// socket buffer nobody is reading.
+/// Subscription timeout; stop sending if client goes quiet.
 pub const SUBSCRIPTION_SECONDS: u64 = 5;
 
-/// `enum class Type`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
     Version = 0x0010_0000,
@@ -80,30 +46,22 @@ impl Kind {
     }
 }
 
-/// `enum class State`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Connected {
-    /// No controller in this slot.
     No = 0,
-    /// Reserved. padmap never sends this: a seat held by an absent pad is
-    /// reported disconnected, because a consumer that sees `Reserved` shows a
-    /// controller that cannot be moved.
+    /// Reserved (padmap never sends this; absent pad is disconnected).
     Reserved = 1,
     Yes = 2,
 }
 
-/// `enum class Model`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Model {
     None = 0,
-    /// Accelerometer but no gyroscope.
     PartialGyro = 1,
-    /// Both. What padmap reports for a pad it has motion for.
     FullGyro = 2,
     Generic = 3,
 }
 
-/// `enum class ConnectionType`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Link {
     None = 0,
@@ -111,7 +69,6 @@ pub enum Link {
     Bluetooth = 2,
 }
 
-/// `enum class Battery`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Battery {
     None = 0x00,
@@ -124,25 +81,17 @@ pub enum Battery {
     Charged = 0xEF,
 }
 
-/// One slot's identity: the twelve bytes that open both replies.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Port {
-    /// Zero-based. Player 1 is slot 0, which is the off-by-one that binds
-    /// player one's gyro to player two.
     pub slot: u8,
     pub connected: Connected,
     pub model: Model,
     pub link: Link,
-    /// Six bytes a consumer uses to tell one controller from another across a
-    /// reconnect. See [`mac_for_player`].
     pub mac: [u8; 6],
     pub battery: Battery,
 }
 
 impl Port {
-    /// An empty slot, which is what a consumer is told about a seat nobody
-    /// holds. Reporting nothing at all would leave a stale controller on
-    /// screen, because DSU has no "forget this slot" message.
     pub fn empty(slot: u8) -> Port {
         Port {
             slot,
@@ -154,11 +103,7 @@ impl Port {
         }
     }
 
-    /// The twelve bytes, with `is_pad_active` set as the caller says.
-    ///
-    /// `active` is the difference between the two uses: zero in a `PortInfo`
-    /// reply, where the byte is only padding, and one in a `PadData`, where it
-    /// says the sample that follows is real.
+    // Returns twelve bytes: byte 11 is 0 in PortInfo, 1 in PadData.
     fn bytes(&self, active: bool) -> [u8; PORT_INFO_BYTES] {
         let mut out = [0u8; PORT_INFO_BYTES];
         out[0] = self.slot;
@@ -172,46 +117,29 @@ impl Port {
     }
 }
 
-/// A stable six-byte address for a player.
-///
-/// Locally administered (bit 1 of the first octet) and unicast (bit 0 clear),
-/// so it cannot collide with a real NIC, then `padmap` in the middle and the
-/// player last. It has to be **stable across a reconnect**: a consumer
-/// subscribed by MAC address stops receiving the moment it changes, and a
-/// controller that went to sleep would come back as a different device.
+/// Stable MAC per player; locally administered unicast, won't collide with real NIC.
 pub fn mac_for_player(player: u32) -> [u8; 6] {
-    // 0x02 = locally administered, individual. 'p','m' for padmap.
-    [0x02, b'p', b'm', 0x00, 0x00, player as u8]
+    [0x02, b'p', b'm', 0x00, 0x00, player as u8] // 0x02: locally admin, unicast
 }
 
-/// What a client asked for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Request {
-    /// "What protocol do you speak?"
     Version,
-    /// "What is in these slots?" -- `slots[..count]`.
     PortInfo {
         slots: [u8; MAX_SLOTS],
         count: usize,
     },
-    /// "Send me samples", renewed every second or so for as long as it wants
-    /// them.
     PadData(Subscribe),
 }
 
-/// Which controllers a `PadData` subscription covers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Subscribe {
-    /// `RegisterFlags::AllPads`. Cemu and Ryujinx both send this.
     All,
-    /// `RegisterFlags::PadID`.
     Slot(u8),
-    /// `RegisterFlags::PadMACAddress`.
     Mac([u8; 6]),
 }
 
 impl Subscribe {
-    /// Whether this subscription wants samples for `port`.
     pub fn covers(&self, port: &Port) -> bool {
         match self {
             Subscribe::All => true,
@@ -221,11 +149,8 @@ impl Subscribe {
     }
 }
 
-/// A parsed client datagram.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Incoming {
-    /// The client's own id, echoed back in nothing -- padmap sends its own.
-    /// Kept because a client that changes it has restarted.
     pub client_id: u32,
     pub request: Request,
 }
@@ -238,17 +163,7 @@ fn u32_at(bytes: &[u8], at: usize) -> u32 {
     u32::from_le_bytes([bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]])
 }
 
-/// Parse one datagram from a consumer, or `None` if it is not one.
-///
-/// Every field is checked before it is used, and a datagram that fails any
-/// check is dropped rather than answered. This is a UDP socket on localhost
-/// with no authentication: anything on the machine can send to it, and the
-/// only defence against a malformed packet is that nothing here indexes past
-/// what it has measured.
-///
-/// The CRC is **not** required to match. Some clients send zero, and refusing
-/// them would mean padmap silently never answers an emulator that works with
-/// every other DSU server. It is checked when non-zero.
+/// Parse client datagram. CRC checked only when non-zero (some clients send 0).
 pub fn parse_request(datagram: &[u8]) -> Option<Incoming> {
     if datagram.len() < HEADER_BYTES {
         return None;
@@ -259,16 +174,14 @@ pub fn parse_request(datagram: &[u8]) -> Option<Incoming> {
     if u16_at(datagram, 4) != PROTOCOL_VERSION {
         return None;
     }
-    // The length field counts the type and the payload, and the datagram may
-    // be longer than it claims -- a client is free to pad. Shorter is a lie.
+    // Length counts type and payload; datagram can be longer (padding ok), shorter is lie.
     let claimed = u16_at(datagram, 6) as usize;
     if claimed < 4 || datagram.len() < HEADER_BYTES - 4 + claimed {
         return None;
     }
     let crc = u32_at(datagram, 8);
     if crc != 0 {
-        // Over everything the client sent, not the first hundred bytes: a
-        // client that pads its datagram computed its CRC over the padding.
+        // CRC over actual datagram length (client's padding is included in their CRC).
         let mut copy = datagram.to_vec();
         copy[8..12].fill(0);
         if crc32(&copy) != crc {
@@ -284,9 +197,7 @@ pub fn parse_request(datagram: &[u8]) -> Option<Incoming> {
             if body.len() < 4 {
                 return None;
             }
-            // A count larger than the slots that follow is the shape of a
-            // hostile packet; clamp to what is actually there rather than
-            // trusting the field.
+            // Clamp count to prevent hostile packets from over-reading.
             let asked = u32_at(body, 0) as usize;
             let count = asked.min(MAX_SLOTS).min(body.len() - 4);
             let mut slots = [0u8; MAX_SLOTS];
@@ -313,12 +224,11 @@ pub fn parse_request(datagram: &[u8]) -> Option<Incoming> {
     Some(Incoming { client_id, request })
 }
 
-/// Wrap a payload in a server header, CRC and all.
 fn message(kind: Kind, server_id: u32, payload: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(HEADER_BYTES + payload.len());
     out.extend_from_slice(&SERVER_MAGIC);
     out.extend_from_slice(&PROTOCOL_VERSION.to_le_bytes());
-    // Four more than the payload: the type counts towards the length.
+    // Length includes type field (4 bytes).
     out.extend_from_slice(&((payload.len() as u16 + 4).to_le_bytes()));
     out.extend_from_slice(&0u32.to_le_bytes());
     out.extend_from_slice(&server_id.to_le_bytes());
@@ -329,17 +239,14 @@ fn message(kind: Kind, server_id: u32, payload: &[u8]) -> Vec<u8> {
     out
 }
 
-/// "I speak 1001."
 pub fn version_reply(server_id: u32) -> Vec<u8> {
     message(Kind::Version, server_id, &PROTOCOL_VERSION.to_le_bytes())
 }
 
-/// "This is what is in that slot."
 pub fn port_reply(server_id: u32, port: &Port) -> Vec<u8> {
     message(Kind::PortInfo, server_id, &port.bytes(false))
 }
 
-/// One motion sample, with the pad state that came with it.
 pub fn pad_reply(server_id: u32, port: &Port, counter: u32, pad: &Pad) -> Vec<u8> {
     let mut body = Vec::with_capacity(PAD_DATA_BYTES);
     body.extend_from_slice(&port.bytes(true));
@@ -369,8 +276,6 @@ pub fn pad_reply(server_id: u32, port: &Port, counter: u32, pad: &Pad) -> Vec<u8
     message(Kind::PadData, server_id, &body)
 }
 
-/// A finger on a touchpad. padmap sends neither down; the field exists because
-/// the packet has a fixed size and a consumer parses past it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Touch {
     pub down: bool,
@@ -379,25 +284,15 @@ pub struct Touch {
     pub y: u16,
 }
 
-/// Everything about a controller a `PadData` carries.
-///
-/// The buttons and sticks are here because the packet has room for them and a
-/// consumer that reads padmap as a DSU *controller* rather than only a motion
-/// source then works. Cemu and Ryujinx take only the motion; Dolphin's DSU
-/// backend exposes all of it.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Pad {
-    /// `digital_button`, the bitfield named in `udp_protocol.h`.
     pub buttons: u16,
-    /// The guide button, which sits outside the bitfield.
     pub home: u8,
-    /// A touchpad pressed rather than touched.
     pub touch_click: u8,
     pub left_x: u8,
     pub left_y: u8,
     pub right_x: u8,
     pub right_y: u8,
-    /// `AnalogButton`, in its declared order -- see [`ANALOG_ORDER`].
     pub analog: [u8; 12],
     pub touch: [Touch; 2],
     pub motion: Motion,
@@ -409,9 +304,7 @@ impl Default for Pad {
             buttons: 0,
             home: 0,
             touch_click: 0,
-            // A stick at rest is the middle of a u8 range, not zero. Sending
-            // zero is a stick held hard left and up, which walks a character
-            // into a wall for as long as the emulator is listening.
+            // Stick at rest is CENTRE, not 0 (which is hard left+up).
             left_x: CENTRE,
             left_y: CENTRE,
             right_x: CENTRE,
@@ -426,8 +319,7 @@ impl Default for Pad {
 /// Where a stick rests in DSU's `u8` range.
 pub const CENTRE: u8 = 128;
 
-/// Bit positions in `digital_button`, from the union `udp_protocol.h` spells
-/// out in a comment. The names are the DualShock's, because the format is.
+// Bit positions from udp_protocol.h; DualShock naming.
 pub mod button {
     pub const SHARE: u16 = 1 << 0;
     pub const L3: u16 = 1 << 1;
@@ -447,10 +339,7 @@ pub mod button {
     pub const SQUARE: u16 = 1 << 15;
 }
 
-/// The order of `AnalogButton`'s twelve bytes, as indices into [`Pad::analog`].
-///
-/// Declared here because the order is not the bit order above and writing a
-/// trigger into the d-pad's byte is silent.
+// AnalogButton indices (not same as bit order; wrong index is silent failure).
 pub mod analog {
     pub const DPAD_LEFT: usize = 0;
     pub const DPAD_DOWN: usize = 1;
@@ -466,7 +355,6 @@ pub mod analog {
     pub const L2: usize = 11;
 }
 
-/// The declared order, for tests and documentation.
 pub const ANALOG_ORDER: [&str; 12] = [
     "dpad_left",
     "dpad_down",
@@ -482,17 +370,13 @@ pub const ANALOG_ORDER: [&str; 12] = [
     "l2",
 ];
 
-/// CRC-32/ISO-HDLC, the one `boost::crc_32_type` computes.
-///
-/// Bitwise rather than table-driven: a DSU packet is a hundred bytes at a
-/// hundred hertz, so this is a few microseconds a second, and a 1KiB table
-/// would be a thing to get wrong for no measurable return.
+/// CRC-32/ISO-HDLC (bitwise, not table-driven: negligible overhead).
 pub fn crc32(bytes: &[u8]) -> u32 {
     let mut crc = 0xFFFF_FFFFu32;
     for &byte in bytes {
         crc ^= byte as u32;
         for _ in 0..8 {
-            // The reflected polynomial, 0x04C11DB7 bit-reversed.
+            // Reflected polynomial (0x04C11DB7 bit-reversed).
             crc = (crc >> 1) ^ (0xEDB8_8320 & (0u32.wrapping_sub(crc & 1)));
         }
     }
@@ -519,7 +403,7 @@ mod tests {
         assert_eq!(packet.len(), HEADER_BYTES + 2);
         assert_eq!(&packet[0..4], b"DSUS");
         assert_eq!(u16_at(&packet, 4), PROTOCOL_VERSION);
-        // Two bytes of payload plus the four-byte type.
+        // Length = payload (2) + type (4).
         assert_eq!(u16_at(&packet, 6), 6);
         assert_eq!(u32_at(&packet, 12), 7);
         assert_eq!(u32_at(&packet, 16), Kind::Version as u32);
@@ -538,9 +422,7 @@ mod tests {
 
     #[test]
     fn a_pad_reply_is_exactly_a_hundred_bytes() {
-        // MAX_PACKET_SIZE upstream, and the static_assert that it equals
-        // sizeof(Message<PadData>). A client reads a fixed-size struct off the
-        // wire: one byte out and every field after it is garbage.
+        // Client reads fixed-size struct; off by one = garbage.
         let port = Port {
             slot: 1,
             connected: Connected::Yes,
@@ -556,9 +438,7 @@ mod tests {
 
     #[test]
     fn the_motion_block_sits_where_the_struct_says() {
-        // Offsets inside PadData: info 0..12, counter 12, buttons 16, home 18,
-        // touch_click 19, sticks 20..24, analog 24..36, touch 36..48,
-        // timestamp 48, accel 56, gyro 68.
+        // PadData layout: motion at offset 48+ (timestamp, accel, gyro).
         let pad = Pad {
             motion: Motion {
                 accel: [1.0, 2.0, 3.0],
@@ -635,8 +515,7 @@ mod tests {
 
     #[test]
     fn a_port_request_claiming_more_slots_than_it_carries_is_clamped() {
-        // Not rejected: a client that asks for four and sends two is asking
-        // about two. Trusting the count would read past the datagram.
+        // Clamp to actual slots (don't trust count, don't read past datagram).
         let packet = client_packet(Kind::PortInfo, &[255, 255, 255, 255, 0, 1]);
         let got = parse_request(&packet).expect("a clamped port request");
         assert_eq!(
@@ -678,8 +557,6 @@ mod tests {
 
     #[test]
     fn nothing_hostile_gets_past_the_header() {
-        // Every one of these arrived on a socket anything on the machine can
-        // write to. None may index past what it measured.
         assert!(parse_request(&[]).is_none());
         assert!(parse_request(&[0; 19]).is_none());
         let mut wrong_magic = client_packet(Kind::Version, &[]);
@@ -688,15 +565,12 @@ mod tests {
         let mut wrong_version = client_packet(Kind::Version, &[]);
         wrong_version[4..6].copy_from_slice(&1000u16.to_le_bytes());
         assert!(parse_request(&wrong_version).is_none());
-        // A type padmap does not implement.
         let mut wrong_kind = client_packet(Kind::Version, &[]);
         wrong_kind[16..20].copy_from_slice(&0x0010_0009u32.to_le_bytes());
         wrong_kind[8..12].fill(0);
         assert!(parse_request(&wrong_kind).is_none());
-        // A PadData request with no body.
         let short = client_packet(Kind::PadData, &[0, 0]);
         assert!(parse_request(&short).is_none());
-        // A length field longer than the datagram.
         let mut lying = client_packet(Kind::Version, &[]);
         lying[6..8].copy_from_slice(&600u16.to_le_bytes());
         lying[8..12].fill(0);
@@ -719,9 +593,7 @@ mod tests {
 
     #[test]
     fn a_players_address_is_locally_administered_and_stable() {
-        // Stable, because a client that subscribed by MAC stops receiving the
-        // moment it changes -- a pad that slept would come back as a device
-        // the emulator has never heard of.
+        // MAC must be stable across reconnect (sleeping pad = new device).
         for player in 1..=4u32 {
             let mac = mac_for_player(player);
             assert_eq!(mac, mac_for_player(player));

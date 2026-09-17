@@ -1,11 +1,5 @@
 //! The daemon proper: one process, one loop, every long-lived thing.
-//!
-//! See the crate note for the invariant. Concretely, every path from the
-//! outside world into this file is guarded: a command is dispatched under
-//! `catch_unwind` and answered with an error event if it fails; the tick is
-//! guarded the same way, rationed so a fault that repeats fifty times a second
-//! cannot fill a disk with its own report; and nothing a client sends, no
-//! device going away, and no file on disk may reach a `panic` that gets out.
+//! Command dispatch and the tick are guarded against panics.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Read, Write};
@@ -71,12 +65,7 @@ pub enum StartError {
     Reactor(rustix::io::Errno),
 }
 
-/// A slow client must not be dropped: a front-end busy drawing a frame stops
-/// reading for a moment, and the protocol is built for a client to miss an
-/// event and re-sync from the next `state`. So an event that will not fit the
-/// socket right now is buffered rather than written half-way -- a partial
-/// write would corrupt the framing -- and drained on the next tick. Only a
-/// client that has fallen this far behind is genuinely gone.
+/// Slow client buffer: dropped only after exceeding this backlog.
 const MAX_PENDING: usize = 8 * 1024 * 1024;
 
 struct Client {
@@ -107,13 +96,7 @@ pub struct Server {
     state: &'static str,
     session: Option<Session>,
     slots_assigned: Vec<Slot>,
-    /// Seats whose controller is not here right now.
-    ///
-    /// A wireless pad that sleeps loses its node; its owner turned it off,
-    /// they did not give up their seat. Held apart from `slots_assigned`
-    /// because a `Slot` carries a pad and these have none -- but they are
-    /// saved, counted when finding the next free seat, and drawn by a
-    /// front-end as `published: false`.
+    /// Away: seated but offline; kept separate because no device node.
     away: Vec<assignments::Assignment>,
     republisher: Option<Republisher>,
     /// The DSU server, when the port was free. `None` is a daemon that works
@@ -128,8 +111,7 @@ pub struct Server {
     calibration: Option<CalibrationRun>,
     mapping: Option<Modal<MappingRun>>,
     choice: Option<Modal<Chooser>>,
-    /// Which scope the wizard that a picker is about to start will file its
-    /// capture under. "" is this controller's default.
+    /// Pending scope: "" is default.
     pending_scope: String,
     sdl_lines: Vec<String>,
     mode: IdentityMode,
@@ -160,10 +142,7 @@ impl std::fmt::Debug for Server {
     }
 }
 
-/// A device scan, run at most once per tick and never reused across ticks.
-///
-/// Both pollers need the full pad list on the tick a controller arrives, and
-/// discovery is the call this loop has spent the most effort avoiding.
+/// Device scan: lazy-loaded once per tick.
 #[derive(Default)]
 struct Scan {
     pads: Option<Vec<Pad>>,
@@ -349,9 +328,7 @@ impl Server {
             return;
         }
         let pads = discover();
-        // By node, then by identity: a wireless pad that slept and woke comes
-        // back on a different event number, and its owner should not have to
-        // re-seat it for that.
+        // Match by node, then by identity for wireless pads that change event numbers.
         let (found, missing) = assignments::resolve(&saved, &pads);
         let restored: Vec<Slot> = found
             .into_iter()
@@ -379,8 +356,7 @@ impl Server {
             .max()
             .unwrap_or(4);
         self.slots_assigned = restored;
-        // Coming up idle is a state the user can fix from the setup screen;
-        // not coming up is not.
+        // Idle is fixable by user; not coming up at all is not.
         match self.start_republisher() {
             Ok(()) => {
                 self.state = STATE_READY;
@@ -526,10 +502,7 @@ impl Server {
         if let Some(client) = self.clients.remove(&fd) {
             let _ = self.reactor.unwatch(client.stream.as_fd());
         }
-        // An assignment session holds every pad. If the front-end that
-        // opened it goes away -- crashed, killed, quit without cancel --
-        // nothing would ever release those grabs, and every controller on the
-        // machine stays dead until the daemon is restarted.
+        // Session holds every pad; must cancel if last client drops.
         if self.clients.is_empty() && self.session.is_some() {
             info!("last client disconnected mid-session; releasing pads");
             self.cancel();
@@ -611,8 +584,6 @@ impl Server {
         let result = catch_unwind(AssertUnwindSafe(|| match parsed {
             Ok(command) => {
                 self.dispatch(fd, command);
-                // A wizard opens on a command, and the press answering its
-                // first prompt can arrive before the next tick.
                 self.sync_republish_pause();
                 None
             }
@@ -680,8 +651,7 @@ impl Server {
                     self.seating
                         .open(players.clamp(1, i64::from(u16::MAX)) as u32);
                     info!("seating open: {} seat(s)", self.seating.seats());
-                    // Watch straight away rather than waiting for the next
-                    // scan: somebody is holding a pad now.
+                    // Watch immediately: user may be holding a pad now.
                     self.refresh_seating(&mut Scan::default());
                 } else {
                     self.close_seating();
@@ -693,8 +663,7 @@ impl Server {
             Command::Status => {
                 let state = self.state_event();
                 self.send(fd, &state);
-                // Every connect, not only after a capture: an SDL client reads
-                // its database once at startup. Re-sending is idempotent.
+                // Always send SDL lines: clients load database once at startup.
                 let lines = events::sdl_mapping(&self.sdl_lines);
                 self.send(fd, &lines);
             }
@@ -704,8 +673,7 @@ impl Server {
     // -- the session ------------------------------------------------------
 
     fn begin(&mut self, players: u32) {
-        // Republishing grabs the physical pads, so it has to stop before the
-        // session can open them; otherwise every press would be invisible.
+        // Stop republishing: session needs exclusive access to pads.
         self.stop_republisher();
         self.end_session();
 
@@ -717,8 +685,7 @@ impl Server {
         // Re-read so an icon correction takes effect on the next setup.
         self.icon_overrides = runtime::load_icon_overrides();
 
-        // Seating reads the unseated pads ungrabbed; a session is about to
-        // grab every one of them and rewrite the roster, so it lets go first.
+        // Seating must release pads before session grabs them.
         for source in self.seating.sources() {
             let _ = self.reactor.unwatch(source.as_fd());
         }
@@ -726,9 +693,7 @@ impl Server {
         let session = match Session::open(pads) {
             Ok(session) => session,
             Err(error) => {
-                // Put back whatever was on the air before: failing here must
-                // not be a more expensive way to lose your controllers than
-                // never having asked.
+                // Failure: resume republishing so the controllers still work.
                 self.broadcast(&events::error(error.to_string()));
                 self.resume_republishing();
                 let state = self.state_event();
@@ -746,10 +711,7 @@ impl Server {
         self.session = Some(session);
         self.calibration = None;
         self.choice = None;
-        // And the wizard. Without this a capture in flight survived into the
-        // new session holding a pad from the closed one, and the tick returns
-        // early while a mapping is open -- so for the whole of the next
-        // session no hold could claim a slot and confirm never fired.
+        // Clear the wizard to avoid stale input events on the old pad.
         self.mapping = None;
         // `players` is advisory: the session ends on the confirm gesture.
         self.slots = players;
@@ -846,11 +808,7 @@ impl Server {
         self.slots_assigned = claims;
         self.end_session();
         self.save_assignments();
-        // The SDL lines and every other file, then the clones. Guarded: a
-        // controller unplugged between the last claim and the confirm hold
-        // makes the clone fail, and that used to escape *after* the state
-        // file was written -- the setup screen waited forever and the daemon
-        // exited.
+        // Write state before starting clones: unplugging mid-clone should not corrupt state.
         if let Err(error) = self.start_republisher() {
             warn!("could not start republishing: {error}");
             self.broadcast(&events::error(format!(
@@ -975,9 +933,7 @@ impl Server {
             .collect();
         let name = clean(&pad.name);
         if axes.is_empty() {
-            // Nothing to centre -- a d-pad-only pad is already correct. Skip
-            // straight to the icon step: the profile still needs writing so
-            // this pad counts as configured.
+            // D-pad only: skip to icon step but still write profile.
             publish::store_calibration(&pad, BTreeMap::new());
             let mut run = CalibrationRun::new(
                 player,
@@ -999,8 +955,7 @@ impl Server {
         }
         let run = CalibrationRun::new(player, pad.path.display().to_string(), axes, now());
         self.calibration = Some(run);
-        // The button that opened this is very likely still down; it must not
-        // resume a confirm hold later.
+        // Clear the button that opened calibration.
         self.confirm.clear();
         self.emit_calibration();
     }
@@ -1050,8 +1005,7 @@ impl Server {
     /// Leave the modal flow and hand input back to claim detection.
     fn finish_calibration(&mut self) {
         let run = self.calibration.take();
-        // A button held while choosing an icon would otherwise be sitting in
-        // the confirm tracker and fire the moment normal handling resumes.
+        // Clear held buttons so they don't fire confirm after modal ends.
         self.confirm.clear();
         self.last_confirm = 0.0;
         let player = run.map(|r| r.player).unwrap_or(0);
@@ -1073,8 +1027,7 @@ impl Server {
         };
         let axes = self.absolute_ranges(index);
         let held = self.held_keys(index);
-        // Start on the best guess. A stored layout wins: it is what the user
-        // chose last time.
+        // Start with stored layout or guess by icon.
         let stored = publish::stored_layout(&pad);
         let guess = if stored.is_empty() {
             publish::icon_for(&pad, &self.icon_overrides).to_owned()
@@ -1156,8 +1109,7 @@ impl Server {
             .unwrap_or_default();
         let options = capture::game_scope_options(console, key, title, &scopes);
         if options.is_empty() {
-            // A mapping filed under a console padmap cannot name is one the
-            // launcher will never look for.
+            // Unknown console: launcher won't look for mappings under it.
             self.broadcast(&events::error("no console known for this game"));
             return;
         }
@@ -1201,10 +1153,7 @@ impl Server {
             self.begin_mapping(player, &chosen, &scope);
             return;
         }
-        // A scope answer. Every scope but the default names a console, and
-        // the console *is* the control set, so the layout question is
-        // skipped. The default scope is the exception: "any game" says
-        // nothing about the shape of the controller, so the picker runs.
+        // Named scope → skip layout picker. Default scope → run picker for shape.
         self.pending_scope = chosen.clone();
         if chosen == scope::UNIVERSAL {
             self.begin_layout_choice(player);
@@ -1231,9 +1180,7 @@ impl Server {
             )));
             return;
         };
-        // Check the wizard can actually open *before* throwing anything
-        // away. Deleting first and finding no session to map in leaves the
-        // controller with no configuration and no way to make one.
+        // Verify session is open before deleting config (can't make new one if it's not).
         let open = self
             .session
             .as_ref()
@@ -1271,8 +1218,7 @@ impl Server {
                 return;
             }
         };
-        // An explicit request always wins; failing that, the same answer the
-        // UI already draws, so the icon and the wizard cannot disagree.
+        // Use explicit layout or default to icon.
         let chosen = if layout_id.is_empty() {
             publish::icon_for(&pad, &self.icon_overrides).to_owned()
         } else {
@@ -1289,7 +1235,6 @@ impl Server {
         let axes = self.absolute_ranges(index);
         let held = self.held_keys(index);
         let run = MappingRun::new(player, layout, keys, scope.to_owned(), axes, held);
-        // Consumed: the pending scope belongs to the run now.
         self.pending_scope.clear();
         self.confirm.clear();
         info!(
@@ -1318,10 +1263,7 @@ impl Server {
     }
 
     /// Leave the modal flow, keeping what was captured if asked.
-    ///
-    /// Abandoning halfway keeps nothing: a partial mapping is worse than
-    /// none, because the pad then counts as configured and is never offered
-    /// again, leaving half its buttons dead with no indication why.
+    /// Partial mappings are never saved (pad would count as configured).
     fn finish_mapping(&mut self, store: bool) {
         let modal = self.mapping.take();
         self.confirm.clear();
@@ -1404,8 +1346,7 @@ impl Server {
                 return;
             }
         };
-        // The axes the pad declares, for a blanket deadzone to land on. From
-        // the running clone when there is one; opening the node otherwise.
+        // Get axes from running clone or by opening the node.
         let declared: Vec<u16> = self
             .republisher
             .as_ref()
@@ -1444,9 +1385,7 @@ impl Server {
             return;
         }
         info!("tuned {}: {tuning:?}", clean(&pad.name));
-        // Swapped into the running clone rather than rebuilt: a rebuilt
-        // clone is a device that vanishes and returns, which a game in
-        // progress sees as a disconnect.
+        // Swap into running clone; rebuild would disconnect games.
         if let Some(republisher) = self.republisher.as_mut() {
             if let Some(index) = republisher
                 .pads
@@ -1488,8 +1427,7 @@ impl Server {
             return;
         };
         if claimed {
-            // Claimed pads still have to be drained; forwarding their presses
-            // is what the confirm gesture is built out of.
+            // Drain claimed pads: presses feed the confirm gesture.
             if let Some(path) = &pad_path {
                 let path = path.display().to_string();
                 for event in raw.iter().filter(|e| e.is_press_or_release()) {
@@ -1541,10 +1479,7 @@ impl Server {
                         self.finish_mapping(true);
                     }
                 } else if modal.run.conflict().is_some() && modal.run.conflict() != before {
-                    // A refused press records nothing, so the ordinary path
-                    // sends nothing and the screen sits exactly as it did --
-                    // which is what "it doesn't accept it" looks like from
-                    // the sofa.
+                    // Show conflict state even if the press was refused.
                     let update = events::mapping(&modal.run);
                     self.broadcast(&update);
                 }
@@ -1571,9 +1506,7 @@ impl Server {
         if !self.seating.is_open() {
             return;
         }
-        // A session owns every pad while it is open -- it holds EVIOCGRAB on
-        // them and is about to rewrite the whole roster. Reading underneath it
-        // would claim a seat the user is in the middle of assigning.
+        // Don't read pads during a session: user is assigning seats.
         if self.state == STATE_ASSIGNING {
             if !self.seating.pads().is_empty() {
                 for source in self.seating.sources() {
@@ -1589,14 +1522,12 @@ impl Server {
             .map(|slot| slot.pad.path.clone())
             .collect();
         let wanted = self.seating.wanted(scan.pads(), &seated);
-        // Unwatch first: `refresh` closes the old descriptors, and epoll must
-        // be told before a number it is holding is closed and reused.
+        // Unwatch before refreshing to let epoll drop old descriptors.
         for source in self.seating.sources() {
             let _ = self.reactor.unwatch(source.as_fd());
         }
         if !self.seating.refresh(wanted) {
-            // Unchanged, so the descriptors above are the same ones: put them
-            // back.
+            // Unchanged: re-watch the same descriptors.
             for (index, source) in self.seating.sources().iter().enumerate() {
                 let _ = self.reactor.watch(source.as_fd(), Watched::Seating(index));
             }
@@ -1645,8 +1576,7 @@ impl Server {
             self.attached
                 .live
                 .insert(profiles::signature_of(&pad), player);
-            // The same events a session's claim emits, so a front-end draws
-            // this exactly as it draws a seat taken on the setup screen.
+            // Same event as session claims so front-end draws it identically.
             let event = events::claim(
                 player,
                 &clean(&pad.name),
@@ -1655,9 +1585,7 @@ impl Server {
                 profiles::is_known(&pad, None),
             );
             self.broadcast(&event);
-            // Republish and rewrite every consumer's config, exactly as
-            // `accept` does -- the point is that the pad works now, not that
-            // it is written down.
+            // Republish, like accept does.
             if let Err(error) = self.start_republisher() {
                 warn!(
                     "seating: could not republish after {} joined: {error}",
@@ -1673,8 +1601,7 @@ impl Server {
             self.broadcast(&announced);
             let state = self.state_event();
             self.broadcast(&state);
-            // The pad is seated now, so it stops being watched here and the
-            // republisher takes it.
+            // Pad is seated now; republisher takes over watching it.
             self.seating.reset();
             self.refresh_seating(&mut Scan::default());
         }
@@ -1687,8 +1614,7 @@ impl Server {
         let pumped = republisher.forward(index);
         let gone = pumped.gone;
         if gone {
-            // A dead node reports readable forever; left registered, the loop
-            // spins on it for as long as the daemon runs.
+            // Dead node stays readable: unwatch before descriptor is reused.
             if let Some(vpad) = republisher.pads.get(index) {
                 let _ = self.reactor.unwatch(vpad.source.as_fd());
             }
@@ -1703,9 +1629,7 @@ impl Server {
             return;
         };
         if republisher.read_motion(index).gone {
-            // A dead node stays readable for ever: out of the epoll set
-            // first, while the descriptor is still there to name it, then
-            // dropped.
+            // Dead sensor: unwatch, then drop.
             if let Some(sensor) = republisher
                 .pads
                 .get(index)
@@ -1767,12 +1691,10 @@ impl Server {
     // -- the tick ---------------------------------------------------------
 
     fn guarded_tick(&mut self) {
-        // No *device* may end the process either. The tick probes hidraw
-        // nodes, opens devices and parses profiles, and a fault here costs
-        // every player's clone at once, mid-game.
+        // Guard: a device fault mid-game would lose every player's clone.
         if let Err(panic) = catch_unwind(AssertUnwindSafe(|| self.tick())) {
             self.tick_failures += 1;
-            // Rationed: a tick that fails permanently fails 50 times a second.
+            // Log only on 1st, 100th, and every 1000th failure to avoid spam.
             if self.tick_failures == 1
                 || self.tick_failures == 100
                 || self.tick_failures.is_multiple_of(1000)
@@ -1788,28 +1710,19 @@ impl Server {
     }
 
     fn tick(&mut self) {
-        // Drain any client that fell behind, before anything new is queued.
         self.flush_all();
-        // Read every client here too, not only when epoll reports it. The one
-        // loop already wakes on a 20ms tick, so a command waits at most that
-        // long, and a client is never left unread because a wakeup for its
-        // descriptor was missed -- which is the difference between a front-end
-        // whose next button works and one that has silently gone deaf.
+        // Poll all clients every tick, not just when epoll reports them.
         for fd in self.clients.keys().copied().collect::<Vec<_>>() {
             self.on_client_read(fd);
         }
         let mut scan = Scan::default();
-        // Announcing is never modal and is allowed during a game, and a
-        // consumer should hear about a controller the moment it arrives.
+        // Polling is not modal; allowed during a game.
         self.poll_controller_changes(&mut scan);
         self.poll_new_controllers(&mut scan);
-        // Before any early return: the modal flows below each end in one,
-        // and a pause applied only on the paths that fall through would be
-        // applied exactly never.
+        // Sync pause before early returns, or modal flows won't pause.
         self.sync_republish_pause();
         self.reap_dead_pads();
-        // Releases a debounce held back: at most one tick late on top of the
-        // window, and the DSU picture follows.
+        // Flush motion debounce so DSU sees it this tick.
         if let Some(republisher) = self.republisher.as_mut() {
             republisher.flush_debounce();
         }
@@ -1821,8 +1734,7 @@ impl Server {
         if self.session.is_none() {
             return;
         }
-        // Mapping and the pickers are modal: every prompt is answered with a
-        // press, and those must not also claim slots or trip the confirm.
+        // Modal flows: don't allow claims or confirm while running.
         if self.choice.is_some() || self.mapping.is_some() {
             return;
         }
@@ -1906,11 +1818,7 @@ impl Server {
             let axes = profiles::load(&slot.pad, None)
                 .map(|profile| profile.axes)
                 .unwrap_or_default();
-            // One pad that cannot be opened must not cost the others theirs.
-            // A wireless controller that has gone to sleep has no device node,
-            // and taking the whole roster down with it left a four-player
-            // machine with no virtual pads at all -- for a pad that was merely
-            // switched off. The seat is kept; see `players_payload`.
+            // One pad failure doesn't take down others; offline pads keep their seat.
             let tuning = publish::tuning_for(&slot.pad);
             match clone::create(&slot.pad, slot.player, self.mode, &axes, tuning, true) {
                 Ok(vpad) => vpads.push(vpad),
@@ -1923,9 +1831,7 @@ impl Server {
                 }
             }
         }
-        // Only when nothing at all could be published is this a failure worth
-        // telling a caller about: there is then no clone on the air and
-        // `accept` has something to report.
+        // Failure only if no clones at all were published.
         if vpads.is_empty() {
             if let Some(error) = first_failure {
                 return Err(error);
@@ -1972,14 +1878,10 @@ impl Server {
                 .collect::<Vec<_>>()
         );
         self.republisher = Some(republisher);
-        // A fresh Republisher starts forwarding, and this runs *during* a
-        // mapping; carrying the pause across the restart is the difference
-        // between it holding for the whole wizard and until the first thing
-        // that republishes.
+        // Carry pause across restart: keeps wizard's pause for whole duration.
         self.sync_republish_pause();
 
-        // Regenerate the profiles the *launcher* would, not context-free
-        // ones: the last game is the only context this side knows.
+        // Context-aware profiles using the last game.
         let last = runtime::read_recent_games().into_iter().next();
         let written = publish::write_all(
             &self.slots_assigned,
@@ -1989,9 +1891,7 @@ impl Server {
             &self.launch_args_path,
             last.as_ref(),
         );
-        // Writing the file is not enough: a front-end loads its SDL database
-        // once and never looks again, so the lines are handed over for
-        // SDL_GameControllerAddMapping.
+        // Also pass SDL lines since front-end loads database only once.
         self.sdl_lines = written.sdl_lines;
         let lines = events::sdl_mapping(&self.sdl_lines);
         self.broadcast(&lines);
@@ -2041,21 +1941,14 @@ impl Server {
         }
     }
 
-    /// Re-open a pad whose device was replaced under us.
-    ///
-    /// A Bluetooth controller that drops and reconnects comes back as a new
-    /// device; the descriptor we hold stops being readable and nothing
-    /// errors. Restarting the republisher rebuilds from the stored
-    /// assignments.
+    /// Re-open a pad whose device was replaced under us (e.g., Bluetooth reconnect).
     fn republish_if_stale(&mut self) {
         let clock = now();
         if clock - self.last_stale_check < STALE_CHECK_SECONDS {
             return;
         }
         self.last_stale_check = clock;
-        // The pad's device node, not `Source::path` -- that is the *phys*
-        // string, which never exists on disk, so every pad looked stale and
-        // the daemon rebuilt every clone every two seconds.
+        // Check device path, not phys (which never exists on disk).
         let stale: Vec<(u32, String)> = match &self.republisher {
             Some(republisher) => republisher
                 .pads
@@ -2071,8 +1964,7 @@ impl Server {
         for (player, path) in &stale {
             warn!("player {player}: {path} is gone; reopening");
         }
-        // Whoever came back may have come back elsewhere: re-resolve each
-        // assignment against what is plugged in now.
+        // Re-resolve assignments in case a pad came back at a different path.
         let pads = discover();
         for slot in &mut self.slots_assigned {
             if !slot.pad.path.exists() {
@@ -2086,8 +1978,7 @@ impl Server {
             }
         }
         if let Err(error) = self.start_republisher() {
-            // The pad may be mid-reconnect and not back yet. Next poll
-            // retries; dying here would take every other player's controller.
+            // Not fatal: next poll retries.
             warn!("could not reopen after a reconnect ({error}); will retry");
         }
     }
@@ -2109,8 +2000,7 @@ impl Server {
         self.last_attach_scan = clock;
         self.last_attach_nodes = Some(nodes);
 
-        // A session owns every pad while it is open; attaching underneath it
-        // would claim a slot the user is in the middle of assigning.
+        // Don't attach mid-assignment: session owns the pads.
         if self.state == STATE_ASSIGNING {
             return;
         }
@@ -2167,8 +2057,7 @@ impl Server {
             return;
         };
         info!("player {player}: {} unplugged", clean(&gone.name));
-        // The slot is not freed: a Bluetooth pad that drops for four seconds
-        // and comes back must come back as the same player.
+        // Keep the seat: Bluetooth pad may reconnect shortly.
         let event = self.controller_event(announce::ACTION_REMOVED, player, &gone, "");
         self.broadcast(&event);
     }
@@ -2176,9 +2065,7 @@ impl Server {
     /// Attach a controller that has a mapping, and say so either way.
     fn announce_arrival(&mut self, pad: Pad) {
         let signature = profiles::signature_of(&pad);
-        // A seat this controller left is still its own. Matched the way
-        // `assignments::resolve` matches, so a pad that woke on a different
-        // node comes home rather than taking a new seat beside its old one.
+        // Check away list first: pad returning to its old seat.
         if let Some(at) = self.away.iter().position(|entry| {
             entry.name == pad.name
                 && entry.vid == pad.vid
@@ -2200,7 +2087,7 @@ impl Server {
             .iter()
             .find(|slot| profiles::signature_of(&slot.pad) == signature)
         {
-            // A reconnect, not a new player.
+            // Reconnect to existing player.
             let player = existing.player;
             self.attached.live.insert(signature, player);
             self.rebuild_for_attach(player, &pad);
@@ -2245,13 +2132,11 @@ impl Server {
             self.attached.attempts.remove(&signature);
             return;
         }
-        // Undo it: a slot claimed for a controller with no clone would have
-        // the next arrival take player 3 while player 2 does not exist.
+        // Rollback: claimed seat but failed to open clone.
         self.slots_assigned.retain(|slot| slot.player != player);
         self.attached.live.remove(&signature);
         if !self.attached.failed(&signature) {
-            // Come straight back: the usual cause is a udev ACL that has not
-            // landed yet, and it lands in milliseconds.
+            // Retry immediately: likely a udev ACL not yet applied.
             self.last_attach_nodes = None;
             return;
         }
@@ -2269,12 +2154,10 @@ impl Server {
         self.broadcast(&event);
     }
 
-    /// Republish, then announce the pad that is now live -- in that order,
-    /// because the event names the clone's node.
+    /// Republish, then announce the pad that is now live -- order matters (event names clone node).
     fn rebuild_for_attach(&mut self, player: u32, pad: &Pad) -> bool {
         if let Err(error) = self.start_republisher() {
-            // Never fatal: losing every other player's clone because a fifth
-            // controller could not be opened would take a working game down.
+            // Not fatal: don't lose other players' clones for one failure.
             warn!(
                 "could not republish after {} attached: {error}",
                 clean(&pad.name)
@@ -2290,15 +2173,14 @@ impl Server {
         true
     }
 
-    /// Build the message, filling in whatever the republisher knows.
+    /// Build a controller event message, gathering live state from republisher.
     fn controller_event(&mut self, action: &str, player: u32, pad: &Pad, reason: &str) -> Value {
         let last = runtime::read_recent_games().into_iter().next();
         let console = last.as_ref().map(|g| g.console.clone()).unwrap_or_default();
         let game = last.as_ref().map(|g| g.key.clone()).unwrap_or_default();
         let title = last.as_ref().map(|g| g.title.clone()).unwrap_or_default();
 
-        // Indices come from the *clones*, because that is what RetroArch
-        // enumerates -- the physical pads are hidden.
+        // Use clone indices (what RetroArch enumerates), not physical pads.
         let mut live: BTreeMap<u32, (String, emit::Identity)> = BTreeMap::new();
         if let Some(republisher) = self.republisher.as_mut() {
             for vpad in &mut republisher.pads {
@@ -2396,10 +2278,7 @@ impl Server {
         if self.state == STATE_ASSIGNING {
             return Some("a session is already open");
         }
-        // A *settled* client, not merely a connected socket: `ensure-daemon`
-        // connects for milliseconds to read status, and counting those meant
-        // grabbing every pad to display a screen on a front-end that was not
-        // running.
+        // Require a settled client (not just a status query).
         let clock = now();
         if !self
             .clients
@@ -2421,17 +2300,13 @@ impl Server {
             return;
         }
         self.last_pad_scan = clock;
-        // Nothing plugged or unplugged since the last look? Then a full scan
-        // could discover nothing, and a full scan is expensive on the thread
-        // that forwards controller events.
+        // Skip if no device changes: full scan is expensive.
         let nodes = hotplug::event_nodes();
         let stamp = stamp_of(&self.prompted_path);
         if self.last_scan_signature.as_ref() == Some(&(nodes.clone(), stamp)) {
             return;
         }
-        // Ask first whether setup could open at all, because everything
-        // below is expensive and this is not. Deliberately without recording
-        // the signature: being blocked is temporary.
+        // Check blockers before expensive work; don't record if blocked (temporary).
         if self.autosetup_blocked().is_some() {
             return;
         }
@@ -2451,8 +2326,7 @@ impl Server {
         }
         let mut names: Vec<String> = fresh.values().map(|pad| clean(&pad.name)).collect();
         names.sort();
-        // Mark before starting: if begin fails, the user still gets to reach
-        // setup by hand rather than being re-prompted every second.
+        // Mark as prompted before starting: if begin fails, don't re-prompt.
         self.prompted.extend(fresh.into_keys());
         self.save_prompted();
         info!(
@@ -2473,10 +2347,9 @@ impl Server {
 
     fn save_prompted(&mut self) {
         if let Err(error) = runtime::write_prompted(&self.prompted_path, &self.prompted) {
-            // Not fatal: the worst case is offering setup again next launch.
             warn!("could not record prompted controllers: {error}");
         }
-        // Our own write is not a change to react to.
+        // Update stamp so we don't re-read our own write.
         self.prompted_stamp = stamp_of(&self.prompted_path);
     }
 
@@ -2538,9 +2411,7 @@ impl Server {
     }
 
     fn save_assignments(&self) {
-        // The away seats go back too. Writing only the pads that are here
-        // would erase a seat because its controller was asleep when something
-        // else happened to save -- the same loss as never keeping it.
+        // Include away seats too: don't erase an offline pad's seat.
         let mut entries: Vec<assignments::Assignment> = self
             .slots_assigned
             .iter()

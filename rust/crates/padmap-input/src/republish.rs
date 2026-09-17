@@ -1,17 +1,5 @@
-//! Pump events between physical pads and their clones.
-//!
-//! Two directions. Presses travel source -> clone; force feedback travels the
-//! other way, because the uinput node is what a game uploads effects to and
-//! only the physical device can play them.
-//!
-//! Forwarding is done a *frame* at a time. The kernel separates packets of
-//! simultaneous changes with `SYN_REPORT`, and half a frame is not a smaller
-//! truth -- publishing `ABS_X, SYN_REPORT` when the source said `ABS_X, ABS_Y,
-//! SYN_REPORT` turns a diagonal into an axis-aligned move. So a frame is
-//! written whole, in one `write(2)`, and a trailing partial frame is held until
-//! its terminator arrives. That also happens to be the cheap way round: the
-//! Python issued two syscalls *per event* (python-evdev does an `fcntl` before
-//! every write), where this issues one per frame.
+//! Pump events between physical pads and their clones (presses source->clone, force feedback reverse).
+//! Forwarding is done a frame at a time (SYN_REPORT is the terminator; one write(2) per frame).
 
 use std::io::ErrorKind;
 use std::time::Instant;
@@ -22,8 +10,6 @@ use padmap_core::tuning::{Debouncer, Tuning};
 
 use crate::clone::{forwarded, VirtualPad};
 
-/// Frames larger than this do not come off a gamepad; the buffer grows if one
-/// ever does, and this only decides where it starts.
 const FRAME_HINT: usize = 64;
 
 /// What a pump found.
@@ -40,10 +26,8 @@ pub struct Pumped {
 pub struct Republisher {
     pub pads: Vec<VirtualPad>,
     paused: bool,
-    /// Reused between calls so the hot path allocates nothing.
     frame: Vec<InputEvent>,
     pending: Vec<InputEvent>,
-    /// The debouncers' clock starts here.
     started: Instant,
 }
 
@@ -58,7 +42,6 @@ impl Republisher {
         }
     }
 
-    /// Milliseconds since this republisher started: the debouncers' clock.
     fn now_ms(&self) -> u64 {
         self.started.elapsed().as_millis() as u64
     }
@@ -67,24 +50,7 @@ impl Republisher {
         self.paused
     }
 
-    /// Stop or resume forwarding presses to the clones.
-    ///
-    /// A mapping or calibration wizard reads the *physical* pad directly, and
-    /// the daemon holds EVIOCGRAB so the front-end cannot see it. That is only
-    /// half the story: the same pad is also being republished, and the clone is
-    /// exactly what the front-end *does* watch. So every press the wizard asked
-    /// for was also delivered to the UI, and a wizard that says "press B" had
-    /// its answer read as "go back" -- the step cancelled itself with the button
-    /// it requested.
-    ///
-    /// Pausing rather than stopping, because stopping destroys the uinput nodes:
-    /// the front-end would see every controller disconnect when the wizard
-    /// opened and reappear when it closed, which reshuffles SDL's joystick
-    /// indices mid-configuration.
-    ///
-    /// Sources are still drained while paused. An unread evdev node does not go
-    /// quiet, it fills, and the backlog would arrive in a burst the moment the
-    /// wizard closed.
+    /// Stop or resume forwarding presses. Pause (not stop) to keep uinput nodes intact.
     pub fn set_paused(&mut self, paused: bool) {
         if paused == self.paused {
             return;
@@ -95,26 +61,15 @@ impl Republisher {
         }
     }
 
-    /// Let go of anything held, on the clone, before we stop forwarding.
-    ///
-    /// Otherwise a button held as the wizard opens stays held forever: the press
-    /// was forwarded, the release lands during the pause and is dropped, and the
-    /// clone is left with a key that is down with nothing to lift it. That is
-    /// the shape of the stuck-input bug that made exiting a game immediately
-    /// launch another one.
+    /// Release all held keys to avoid stuck input when pause begins.
     fn release_all(&mut self) {
         for vpad in &mut self.pads {
-            // The DSU picture is the same pad seen by a different consumer,
-            // and needs the same release.
             vpad.tracker.release_all();
             let held = vpad.source.held_keys();
             let mut frame: Vec<InputEvent> = held
                 .iter()
                 .map(|&code| InputEvent::new(EventType::KEY.0, code, 0))
                 .collect();
-            // A release the debouncer is still holding: the source no longer
-            // shows the key held, so `held_keys` would not lift it, and
-            // nothing else will while we are paused.
             frame.extend(vpad.held_releases());
             if frame.is_empty() {
                 continue;
@@ -139,21 +94,11 @@ impl Republisher {
             return out;
         }
 
-        // Not cleared: a partial frame from the last read is still here, raw,
-        // waiting for its terminator.
         let before = self.pending.len();
         match vpad.source.fetch_events(&mut self.pending) {
             Ok(()) => {}
             Err(error) if error.kind() == ErrorKind::WouldBlock => return out,
             Err(error) => {
-                // ENODEV, once, and then never again for this pad.
-                //
-                // The Python logged on every call and a dead node stays
-                // readable forever, so the selector woke on it continuously and
-                // wrote a line each time: 114 million lines, 3.1GB, the whole
-                // tmpfs, and then everything that needed to write there failed.
-                // The visible symptom was a game exiting instantly with code 1,
-                // which points nowhere near a disconnected controller.
                 warn!(
                     "player {}: source disappeared ({error}), dropping the clone",
                     vpad.player
@@ -165,8 +110,6 @@ impl Republisher {
         }
         out.events = self.pending.len() - before;
 
-        // Drained above whether or not we are paused, then discarded here --
-        // that is the whole point of the pause.
         if self.paused {
             self.pending.clear();
             return out;
@@ -175,9 +118,7 @@ impl Republisher {
         self.frame.clear();
         let mut emitted_any = false;
         let now_ms = self.started.elapsed().as_millis() as u64;
-        // Only whole frames. A trailing partial stays in `pending`, *raw*, for
-        // the next read to finish -- shaping it now and again then would
-        // calibrate it twice and debounce it twice.
+        // Only whole frames; trailing partial stays raw for next read.
         let complete = self
             .pending
             .iter()
@@ -189,15 +130,10 @@ impl Republisher {
                 continue;
             }
             if event.event_type() == EventType::SYNCHRONIZATION {
-                // A frame that tuning emptied is a bare SYN_REPORT, which the
-                // kernel drops on write and would count as a dropped event.
                 if self.frame.is_empty() {
                     continue;
                 }
                 self.frame.push(event);
-                // A whole packet, and never less than one. Writing a partial
-                // frame publishes a torn reading -- a diagonal as an
-                // axis-aligned move -- which no consumer can detect.
                 match vpad.clone.emit(&self.frame) {
                     Ok(()) => {
                         out.frames += 1;
@@ -208,9 +144,6 @@ impl Republisher {
                 self.frame.clear();
                 continue;
             }
-            // Calibration, then the user's tuning. An event the tuning drops
-            // or holds back is not in the frame, and the DSU picture is fed
-            // what the clone is, so the two never differ.
             let Some(shaped) = vpad.shape(event, now_ms) else {
                 continue;
             };
@@ -218,32 +151,17 @@ impl Republisher {
                 .apply(shaped.event_type().0, shaped.code(), shaped.value());
             self.frame.push(shaped);
         }
-        // Whatever arrived after the last terminator is still in `pending`,
-        // untouched, for the next read. The kernel never splits a frame across
-        // a read boundary, so it is only non-empty when the device genuinely
-        // has more to say.
         debug_assert!(self.frame.is_empty());
         if emitted_any {
             vpad.note_forwarding();
         }
-        // A Steam Controller's gyro rides in the reports just drained, so it
-        // is folded in here rather than on a descriptor of its own.
         if let Some(sample) = vpad.source.motion() {
             vpad.tracker.set_motion(sample);
         }
         out
     }
 
-    /// Service a motion sensor reported readable.
-    ///
-    /// Separate from `forward` because it is a separate descriptor: a gyro
-    /// node emits at its own rate, faster than the buttons and independently
-    /// of them, and a pad held perfectly still still reports gravity.
-    ///
-    /// `gone` says the sensor's device has vanished. It is left in place for
-    /// the caller to unwatch first -- epoll is keyed on the descriptor, and a
-    /// sensor dropped before it is unregistered leaves nothing to unregister
-    /// with -- and then dropped with [`Republisher::drop_sensor`].
+    /// Service a motion sensor (separate descriptor emitting at its own rate).
     pub fn read_motion(&mut self, index: usize) -> Pumped {
         let mut out = Pumped::default();
         let Some(vpad) = self.pads.get_mut(index) else {
@@ -270,13 +188,7 @@ impl Republisher {
         out
     }
 
-    /// Change one pad's tuning without rebuilding its clone.
-    ///
-    /// A rebuild is a device that disappears and reappears, which every
-    /// consumer sees as a disconnect mid-game. The tuning is read per event,
-    /// so swapping it in place is enough -- after delivering any release the
-    /// old debouncer was still holding, or a shorter window would leave it
-    /// held for ever.
+    /// Change one pad's tuning without rebuilding its clone (keeps uinput node intact).
     pub fn retune(&mut self, index: usize, tuning: Tuning) {
         let Some(vpad) = self.pads.get_mut(index) else {
             return;
@@ -296,11 +208,6 @@ impl Republisher {
     }
 
     /// Deliver every release the debouncers have finished holding.
-    ///
-    /// Called from the tick, so a release arrives at most one tick late on
-    /// top of its window. Paused pads are skipped: their releases were
-    /// delivered when the pause began, and anything held since is a press
-    /// the pause exists to withhold.
     pub fn flush_debounce(&mut self) {
         if self.paused {
             return;
@@ -324,11 +231,7 @@ impl Republisher {
         }
     }
 
-    /// Let go of a sensor whose device has gone.
-    ///
-    /// Not fatal to the pad: the buttons live on a different node and may
-    /// well still be there, and a controller that works without its gyro
-    /// beats one that disappears.
+    /// Let go of a sensor whose device has gone (buttons live on different node).
     pub fn drop_sensor(&mut self, index: usize) {
         if let Some(vpad) = self.pads.get_mut(index) {
             if vpad.sensor.take().is_some() {
@@ -340,15 +243,7 @@ impl Republisher {
         }
     }
 
-    /// Proxy rumble from a clone back to its physical pad.
-    ///
-    /// Only an evdev source can play an effect. A pad read over hidraw has no
-    /// EVIOCSFF, and saying so here is the point of returning a result rather
-    /// than swallowing it: the Python called `source.write(...)` unconditionally
-    /// inside an `except OSError`, and on a hidraw source that is an
-    /// `AttributeError` -- not an `OSError` -- which would have escaped the
-    /// selector loop and ended the daemon. It was unreachable only because the
-    /// clone was built with no EV_FF, so the kernel never delivered one.
+    /// Proxy rumble from a clone back to its physical pad (only evdev sources support EVIOCSFF).
     pub fn feedback(&mut self, index: usize) {
         let Some(vpad) = self.pads.get_mut(index) else {
             return;
@@ -372,11 +267,7 @@ impl Republisher {
         }
     }
 
-    /// Source descriptors whose pad has gone, for the caller to unregister.
-    ///
-    /// The republisher cannot do it itself -- the epoll set belongs to the loop.
-    /// Left registered, a dead node reports readable forever and the loop spins
-    /// on it for as long as the daemon runs.
+    /// Source descriptors whose pad has gone (for caller to unregister from epoll).
     pub fn dead(&self) -> Vec<usize> {
         self.pads
             .iter()
@@ -399,8 +290,6 @@ mod tests {
 
     #[test]
     fn a_frame_is_everything_up_to_and_including_its_terminator() {
-        // Not a behaviour test of the pump -- that needs a device -- but of the
-        // rule it implements, stated where a reader will look for it.
         let frame = [
             InputEvent::new(EventType::ABSOLUTE.0, 0, 10),
             InputEvent::new(EventType::ABSOLUTE.0, 1, 20),

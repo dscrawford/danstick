@@ -1,25 +1,5 @@
-//! What a user sets for a controller that misbehaves.
-//!
-//! Calibration measures where a stick rests and corrects for it. That is
-//! enough for a stick that rests off-centre and stays put; it is not enough
-//! for one that wanders, a button whose switch bounces, or a trigger that
-//! reports noise it was never touched to make. Those need something the user
-//! *sets*, because no measurement says how much drift a person is prepared to
-//! put up with.
-//!
-//! Three knobs, all applied in transit so every consumer benefits at once:
-//!
-//! * **deadzone**, per axis, as a fraction of its travel. Around the middle
-//!   for a stick and above the minimum for a trigger; inside it reads as
-//!   untouched, and outside is rescaled so full deflection still reaches the
-//!   end. Applied *after* calibration, so it is a band around the corrected
-//!   centre.
-//! * **debounce**, in milliseconds, for every button. A release is held
-//!   back for that long, and a press arriving inside the window cancels it
-//!   -- which is what a bouncing switch produces, a release-and-press pair
-//!   a few milliseconds apart that a game reads as a double tap.
-//! * **ignore**, for an axis or button that is simply broken. Its events are
-//!   dropped, which beats a trigger that fires on its own.
+//! User tuning: deadzone, debounce, ignore for misbehaving controllers.
+//! Debounce holds releases back to collapse switch bounces.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -27,23 +7,16 @@ use serde::{Deserialize, Serialize};
 
 use crate::calibration::Declared;
 
-/// The longest debounce worth having. A release held back for longer than
-/// this is a button that feels broken in a different way.
 pub const MAX_DEBOUNCE_MS: u32 = 500;
 
-/// A user's settings for one controller.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Tuning {
-    /// ABS code -> fraction of travel, 0..=1, that reads as rest.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub deadzone: BTreeMap<u16, f32>,
-    /// Milliseconds a release is held back, for every button. 0 is off.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub debounce_ms: u32,
-    /// ABS codes whose events are dropped.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub ignore_axes: BTreeSet<u16>,
-    /// Key codes whose events are dropped.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub ignore_buttons: BTreeSet<u16>,
 }
@@ -53,21 +26,15 @@ fn is_zero(value: &u32) -> bool {
 }
 
 impl Tuning {
-    /// Nothing set, which is what every controller starts with.
     pub fn is_default(&self) -> bool {
         *self == Tuning::default()
     }
 
-    /// Whether this tuning changes anything about ABS events.
     pub fn shapes_axes(&self) -> bool {
         !self.deadzone.is_empty() || !self.ignore_axes.is_empty()
     }
 
-    /// The deadzone for one axis, clamped to what makes sense.
-    ///
-    /// A fraction of 1 or more is an axis that can never leave rest, which is
-    /// `ignore` spelled badly; it is capped just short so the axis still
-    /// reaches its ends when slammed.
+    /// Deadzone clamped to 0.95; 1.0+ would disable the axis.
     pub fn deadzone_for(&self, code: u16) -> f32 {
         self.deadzone
             .get(&code)
@@ -77,10 +44,7 @@ impl Tuning {
             .unwrap_or(0.0)
     }
 
-    /// Set every knob that is `Some`, leaving the rest as they were.
-    ///
-    /// A front-end sends only the field a slider moved; a `None` is "not
-    /// mentioned", not "back to default". Resetting is [`Tuning::default`].
+    /// Merge changes: `None` means "not mentioned", not "reset to default".
     pub fn merged(&self, change: &Change) -> Tuning {
         let mut out = self.clone();
         for (code, fraction) in &change.deadzone {
@@ -102,11 +66,7 @@ impl Tuning {
         out
     }
 
-    /// One ABS value, with this axis's deadzone applied.
-    ///
-    /// `declared` says where the axis rests, which decides whether the band
-    /// sits around the middle or above the minimum. `None` when the event
-    /// should be dropped.
+    /// Apply deadzone; rest position decides if band is centered or above minimum.
     pub fn shape_axis(&self, code: u16, value: i32, declared: Option<&Declared>) -> Option<i32> {
         if self.ignore_axes.contains(&code) {
             return None;
@@ -131,16 +91,12 @@ impl Tuning {
     }
 }
 
-/// A stick axis: one that rests near the middle of its travel.
-///
-/// `Declared::calibratable` says so for the standard stick codes, but refuses
-/// the trigger codes outright -- and the Mayflash GameCube adapter has its
-/// C-stick on those. The rest position is what decides, whatever the code.
+/// Rest position near middle: check axis span, not just code.
 fn rests_centred(declared: &Declared, _code: u16) -> bool {
     crate::sdl::AxisSpan::new(declared.minimum, declared.maximum, declared.value).rests_centred()
 }
 
-/// A band around the middle, with the outside rescaled to keep the ends.
+/// Band around middle; outside rescaled to reach full ends.
 fn centred_band(value: i32, declared: &Declared, fraction: f32) -> i32 {
     let low = f64::from(declared.minimum);
     let high = f64::from(declared.maximum);
@@ -150,8 +106,7 @@ fn centred_band(value: i32, declared: &Declared, fraction: f32) -> i32 {
     let value = f64::from(value).clamp(low, high);
     let offset = value - mid;
     if offset.abs() <= dead {
-        // The same middle `AxisCalibration::midpoint` lands on: integer
-        // division, so -32768..32767 rests at 0 and not at -1.
+        // Integer division midpoint (matches AxisCalibration::midpoint).
         return ((i64::from(declared.minimum) + i64::from(declared.maximum)) / 2) as i32;
     }
     let live = half - dead;
@@ -164,7 +119,7 @@ fn centred_band(value: i32, declared: &Declared, fraction: f32) -> i32 {
     out.round().clamp(low, high) as i32
 }
 
-/// A band above the minimum, for a trigger that never quite lets go.
+/// Band above minimum for triggers; outside rescaled to full span.
 fn trigger_band(value: i32, declared: &Declared, fraction: f32) -> i32 {
     let low = f64::from(declared.minimum);
     let high = f64::from(declared.maximum);
@@ -179,26 +134,19 @@ fn trigger_band(value: i32, declared: &Declared, fraction: f32) -> i32 {
     out.round().clamp(low, high) as i32
 }
 
-/// A partial update: only what a caller mentioned.
+/// Partial update with only mentioned fields.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Change {
-    /// Axis -> fraction. Zero or less removes that axis's band.
     pub deadzone: BTreeMap<u16, f32>,
     pub debounce_ms: Option<u32>,
     pub ignore_axes: Option<BTreeSet<u16>>,
     pub ignore_buttons: Option<BTreeSet<u16>>,
 }
 
-/// The axes a blanket deadzone applies to: `ABS_X` through `ABS_RZ`. Hats
-/// are digital and everything above them is a throttle or a wheel.
+/// Blanket deadzone applies to ABS_X through ABS_RZ (stick and trigger axes).
 pub const BLANKET_AXES: [u16; 6] = [0, 1, 2, 3, 4, 5];
 
-/// A `tune` request, as it arrives over the socket or from the CLI.
-///
-/// Every field is optional and only what is present is changed, except
-/// `reset`, which starts from nothing first. `deadzone` may be one number,
-/// meaning every stick and trigger the pad has, or an object of axis code
-/// to fraction.
+/// Tune request from socket/CLI; optional fields, reset starts from nothing.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Request {
     pub reset: bool,
@@ -210,15 +158,11 @@ pub struct Request {
 }
 
 impl Request {
-    /// Whether this asks for anything at all.
     pub fn is_empty(&self) -> bool {
         *self == Request::default()
     }
 
-    /// Read one off a JSON message, refusing anything that is not what it
-    /// claims to be: a deadzone that is a string, a negative debounce, a code
-    /// past what evdev has. Refused rather than guessed, because a setting
-    /// misread is a controller that behaves strangely for no visible reason.
+    /// Parse JSON, refusing invalid types rather than guessing.
     pub fn from_json(message: &serde_json::Value) -> Result<Request, String> {
         use serde_json::Value;
         let mut out = Request {
@@ -257,7 +201,7 @@ impl Request {
         Ok(out)
     }
 
-    /// The same request as a message, for a CLI to send to the daemon.
+    /// Serialize for CLI to send to daemon.
     pub fn to_json(&self) -> serde_json::Value {
         let mut out = serde_json::Map::new();
         if self.reset {
@@ -291,11 +235,7 @@ impl Request {
         out.into()
     }
 
-    /// What this asks to change, given the axes the pad declares.
-    ///
-    /// A blanket deadzone lands on every declared axis in [`BLANKET_AXES`];
-    /// a per-axis one is taken as given, so a code the pad does not have is
-    /// stored and simply never fires.
+    /// Compute change for declared axes; blanket deadzone applies to BLANKET_AXES.
     pub fn change_for(&self, declared_axes: &[u16]) -> Change {
         let mut deadzone = BTreeMap::new();
         if let Some(all) = self.deadzone_all {
@@ -314,8 +254,7 @@ impl Request {
         }
     }
 
-    /// The tuning after this request: from nothing if `reset`, else from
-    /// what was there.
+    /// Apply request; reset first if requested, else from existing.
     pub fn apply(&self, existing: &Tuning, declared_axes: &[u16]) -> Tuning {
         let base = if self.reset {
             Tuning::default()
@@ -359,18 +298,10 @@ fn codes(raw: Option<&serde_json::Value>, field: &str) -> Result<Option<BTreeSet
     }
 }
 
-/// Holds releases back so a bouncing switch reads as one press.
-///
-/// A press is passed through at once. A release is kept until `window_ms`
-/// has passed; a press for the same key inside that window cancels it and
-/// emits nothing, because the clone still shows the key held. The cost is
-/// that every genuine release arrives late by the window, which is why the
-/// window is a few tens of milliseconds and never more than
-/// [`MAX_DEBOUNCE_MS`].
+/// Hold releases back to collapse switch bounces into one press.
 #[derive(Debug, Clone, Default)]
 pub struct Debouncer {
     window_ms: u64,
-    /// Key -> when its pending release is due, in the caller's milliseconds.
     pending: BTreeMap<u16, u64>,
 }
 
@@ -382,34 +313,28 @@ impl Debouncer {
         }
     }
 
-    /// Whether anything is being held back.
     pub fn is_holding(&self) -> bool {
         !self.pending.is_empty()
     }
 
-    /// One key event. `Some(value)` to pass it on now, `None` to swallow it.
-    ///
-    /// `now_ms` is any monotonic millisecond clock.
+    /// Process one key; press always through, release held back by window_ms.
     pub fn key(&mut self, code: u16, value: i32, now_ms: u64) -> Option<i32> {
         if self.window_ms == 0 {
             return Some(value);
         }
         if value == 0 {
-            // Held back. A second release for a key already pending -- a
-            // driver repeating itself -- restarts nothing; the first deadline
-            // stands, so a stream of releases cannot hold a key for ever.
+            // Release held; repeated releases don't extend the deadline.
             self.pending.entry(code).or_insert(now_ms + self.window_ms);
             return None;
         }
-        // A press. If a release was pending, this is the bounce: the clone
-        // never saw the release, so it must not see this press either.
+        // Press: if release pending, it's a bounce; don't emit either.
         if self.pending.remove(&code).is_some() {
             return None;
         }
         Some(value)
     }
 
-    /// Every release whose window has passed, in code order.
+    /// Releases whose window has passed.
     pub fn due(&mut self, now_ms: u64) -> Vec<u16> {
         let due: Vec<u16> = self
             .pending
@@ -423,9 +348,7 @@ impl Debouncer {
         due
     }
 
-    /// Every release still pending, released now. For a pause, or a pad
-    /// going away: a release held back with nothing left to deliver it is a
-    /// key stuck down for ever.
+    /// All pending releases now; prevents stuck keys on pause or disconnect.
     pub fn drain(&mut self) -> Vec<u16> {
         let all: Vec<u16> = self.pending.keys().copied().collect();
         self.pending.clear();
@@ -465,7 +388,6 @@ mod tests {
     #[test]
     fn inside_the_band_a_stick_reads_as_untouched() {
         let tuning = with_deadzone(0, 0.2);
-        // 20% of 32768 is 6553.
         assert_eq!(tuning.shape_axis(0, 3000, Some(&stick())), Some(0));
         assert_eq!(tuning.shape_axis(0, -6000, Some(&stick())), Some(0));
         assert_eq!(tuning.shape_axis(0, 0, Some(&stick())), Some(0));
@@ -473,12 +395,9 @@ mod tests {
 
     #[test]
     fn outside_the_band_a_stick_still_reaches_its_ends() {
-        // A deadzone that shortened the travel would be a character that
-        // cannot run. The live part is stretched back over the whole range.
         let tuning = with_deadzone(0, 0.2);
         assert_eq!(tuning.shape_axis(0, 32767, Some(&stick())), Some(32767));
         assert_eq!(tuning.shape_axis(0, -32768, Some(&stick())), Some(-32768));
-        // Just past the band is just past the middle.
         let just_out = tuning.shape_axis(0, 6700, Some(&stick())).expect("a value");
         assert!(just_out > 0 && just_out < 1000, "{just_out}");
     }
@@ -496,8 +415,6 @@ mod tests {
 
     #[test]
     fn a_trigger_band_sits_above_the_minimum_not_around_the_middle() {
-        // A trigger rests at its minimum. A band around the middle would
-        // leave the noise it was set for and eat the middle of the pull.
         let tuning = with_deadzone(2, 0.1);
         assert_eq!(tuning.shape_axis(2, 20, Some(&trigger())), Some(0));
         assert_eq!(tuning.shape_axis(2, 0, Some(&trigger())), Some(0));
@@ -510,8 +427,6 @@ mod tests {
 
     #[test]
     fn a_stick_on_the_trigger_codes_is_still_a_stick() {
-        // The Mayflash C-stick: ABS_Z, resting at 131 of 0..255. The code says
-        // trigger; the rest position says stick, and the rest position wins.
         let c_stick = Declared {
             minimum: 0,
             maximum: 255,
@@ -544,9 +459,6 @@ mod tests {
 
     #[test]
     fn a_band_of_one_or_more_is_capped_rather_than_eating_the_axis() {
-        // A fraction of 1 is an axis that can never move; NaN is a division
-        // that reaches the clone as garbage. Both come from a hand-edited
-        // file, and both are capped.
         for silly in [1.0, 5.0, f32::NAN, f32::INFINITY] {
             let tuning = with_deadzone(0, silly);
             assert_eq!(tuning.shape_axis(0, 32767, Some(&stick())), Some(32767));
@@ -599,7 +511,6 @@ mod tests {
 
     #[test]
     fn the_file_shape_omits_what_is_not_set() {
-        // A profile with nothing tuned should not grow four keys of noise.
         let text = serde_json::to_string(&Tuning::default()).expect("serialises");
         assert_eq!(text, "{}");
         let back: Tuning = serde_json::from_str("{}").expect("parses");
@@ -612,8 +523,6 @@ mod tests {
         assert_eq!(tuned.debounce_ms, 30);
         assert!(tuned.ignores_button(311));
     }
-
-    // --- debounce ---------------------------------------------------------
 
     #[test]
     fn a_press_passes_straight_through() {
@@ -635,16 +544,12 @@ mod tests {
 
     #[test]
     fn a_bounce_inside_the_window_collapses_to_one_press() {
-        // Release then press 5ms apart is what a worn switch produces. The
-        // clone saw the press and never the release, so the second press must
-        // not reach it either -- a press on a key already down is a repeat.
         let mut debouncer = Debouncer::new(30);
         assert_eq!(debouncer.key(0x130, 1, 1000), Some(1));
         assert_eq!(debouncer.key(0x130, 0, 1100), None);
         assert_eq!(debouncer.key(0x130, 1, 1105), None, "the bounce");
         assert!(!debouncer.is_holding(), "the release was cancelled");
         assert!(debouncer.due(2000).is_empty());
-        // And the real release later goes through as normal.
         assert_eq!(debouncer.key(0x130, 0, 1500), None);
         assert_eq!(debouncer.due(1530), vec![0x130]);
     }
@@ -658,8 +563,6 @@ mod tests {
 
     #[test]
     fn repeated_releases_do_not_push_the_deadline_out() {
-        // A driver that repeats a release every 8ms would otherwise hold the
-        // key for as long as it kept repeating.
         let mut debouncer = Debouncer::new(30);
         debouncer.key(0x130, 0, 1000);
         debouncer.key(0x130, 0, 1020);

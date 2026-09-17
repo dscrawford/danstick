@@ -31,8 +31,11 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
 [profile.release]
+# Inlining across crate boundaries is most of what makes forwarding cheap.
 lto = "thin"
 codegen-units = 1
+# Unwind, not a daemon's reflex abort: losing the process loses every
+# player's uinput node mid-game. Dispatch and the tick catch_unwind.
 panic = "unwind"
 
 [profile.bench]
