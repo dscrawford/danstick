@@ -5,6 +5,7 @@ pub mod assignments;
 pub mod clone;
 pub mod emulators;
 pub mod fakepad;
+pub mod isolate;
 pub mod lizard;
 pub mod motion;
 pub mod nintendo;

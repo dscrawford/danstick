@@ -14,7 +14,17 @@ use std::path::PathBuf;
 mod commands;
 
 use padmap_input::{
-    artefacts, assignments, clone, emulators, lizard, pad, profiles, reactor, republish, runtime,
+    artefacts,
+    assignments,
+    clone,
+    emulators,
+    isolate,
+    lizard,
+    pad,
+    profiles,
+    reactor,
+    republish,
+    runtime,
     triton,
 };
 
@@ -183,6 +193,16 @@ fn cmd_emit(args: &[String]) -> Result<()> {
     Ok(())
 }
 
+/// Whether bwrap is on PATH. Without it there is no sandbox to run in, and a
+/// game that starts seeing too many pads beats one that does not start.
+fn which_bwrap() -> Option<std::path::PathBuf> {
+    std::env::var_os("PATH").and_then(|paths| {
+        std::env::split_paths(&paths)
+            .map(|dir| dir.join("bwrap"))
+            .find(|candidate| candidate.is_file())
+    })
+}
+
 fn cmd_exec(args: Vec<String>) -> Result<()> {
     let args: Vec<String> = args.into_iter().skip_while(|arg| arg == "--").collect();
     let Some((program, rest)) = args.split_first() else {
@@ -202,8 +222,36 @@ fn cmd_exec(args: Vec<String>) -> Result<()> {
         }
     };
 
-    let mut command = std::process::Command::new(program);
-    command.args(rest);
+    // padmap's pads and nothing else. Every consumer is meant to read the
+    // clones -- the mapping, the player order, the motion and the remapping
+    // all live there -- and nothing stopped a game from opening the physical
+    // pad as well and binding whichever SDL saw first. See `isolate`.
+    //
+    // PADMAP_NO_ISOLATE=1 turns it off, for somebody who has to reach a
+    // controller padmap has not republished.
+    let mut argv: Vec<String> = std::iter::once(program.clone()).chain(rest.iter().cloned()).collect();
+    if std::env::var("PADMAP_NO_ISOLATE").unwrap_or_default() != "1" {
+        let raw: Vec<std::path::PathBuf> = pad::discover(pad::Filter::default())
+            .map(|pads| pads.into_iter().map(|pad| pad.path).collect())
+            .unwrap_or_default();
+        let plan = isolate::plan(&isolate::event_nodes(), &raw, &isolate::hidraw_nodes());
+        if !plan.worth_it() {
+            // No clone published: hiding this game's controllers would leave
+            // it with none at all, which is worse than the problem.
+            info!("no virtual pads published; {program} will see the controllers as they are");
+        } else if which_bwrap().is_none() {
+            warn!("bwrap is not here; {program} will see the physical pads as well as padmap's");
+        } else {
+            info!(
+                "{program} sees {} input node(s): padmap's pads, the keyboard and the mouse",
+                plan.keep.len()
+            );
+            argv = isolate::bwrap_argv(&plan, &argv, "bwrap");
+        }
+    }
+
+    let mut command = std::process::Command::new(&argv[0]);
+    command.args(&argv[1..]);
     if !value.is_empty() {
         command.env(emulators::CONFIG_ENV, value);
     }

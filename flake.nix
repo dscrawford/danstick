@@ -95,8 +95,16 @@
           version = "0.1.0";
           src = ./rust;
           cargoLock.lockFile = ./rust/Cargo.lock;
-          nativeBuildInputs = rustNativeBuildInputs;
+          nativeBuildInputs = rustNativeBuildInputs ++ [ pkgs.makeWrapper ];
           buildInputs = rustBuildInputs;
+          # `exec` starts a game in a sandbox where only padmap's pads are
+          # visible, and bubblewrap is what makes one. A launcher's own
+          # environment has no reason to carry it, so it is carried here --
+          # without it `exec` says so and runs the game unsandboxed.
+          postInstall = ''
+            wrapProgram $out/bin/padmap-rs \
+              --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.bubblewrap ]}
+          '';
         };
       in
       {
