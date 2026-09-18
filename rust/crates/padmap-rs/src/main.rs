@@ -14,18 +14,8 @@ use std::path::PathBuf;
 mod commands;
 
 use padmap_input::{
-    artefacts,
-    assignments,
-    clone,
-    emulators,
-    isolate,
-    lizard,
-    pad,
-    profiles,
-    reactor,
-    republish,
-    runtime,
-    triton,
+    artefacts, assignments, clone, emulators, isolate, lizard, pad, profiles, reactor, republish,
+    runtime, triton,
 };
 
 const TICK: Duration = Duration::from_millis(20);
@@ -229,7 +219,9 @@ fn cmd_exec(args: Vec<String>) -> Result<()> {
     //
     // PADMAP_NO_ISOLATE=1 turns it off, for somebody who has to reach a
     // controller padmap has not republished.
-    let mut argv: Vec<String> = std::iter::once(program.clone()).chain(rest.iter().cloned()).collect();
+    let mut argv: Vec<String> = std::iter::once(program.clone())
+        .chain(rest.iter().cloned())
+        .collect();
     if std::env::var("PADMAP_NO_ISOLATE").unwrap_or_default() != "1" {
         let raw: Vec<std::path::PathBuf> = pad::discover(pad::Filter::default())
             .map(|pads| pads.into_iter().map(|pad| pad.path).collect())

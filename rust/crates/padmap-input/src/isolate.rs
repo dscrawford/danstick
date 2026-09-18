@@ -114,8 +114,9 @@ pub fn event_nodes() -> Vec<(PathBuf, String)> {
         if !node.starts_with("event") {
             continue;
         }
-        let reported = std::fs::read_to_string(Path::new("/sys/class/input").join(node).join("device/name"))
-            .unwrap_or_default();
+        let reported =
+            std::fs::read_to_string(Path::new("/sys/class/input").join(node).join("device/name"))
+                .unwrap_or_default();
         out.push((entry.path(), reported.trim().to_owned()));
     }
     out
@@ -216,7 +217,11 @@ mod tests {
             keep: vec![PathBuf::from("/dev/input/event9")],
             cover: vec![PathBuf::from("/dev/hidraw2")],
         };
-        let argv = bwrap_argv(&plan, &["dolphin-emu".to_owned(), "game.rvz".to_owned()], "bwrap");
+        let argv = bwrap_argv(
+            &plan,
+            &["dolphin-emu".to_owned(), "game.rvz".to_owned()],
+            "bwrap",
+        );
         let line = argv.join(" ");
         assert!(line.starts_with("bwrap --die-with-parent --dev-bind / / --tmpfs /dev/input"));
         assert!(line.contains("--dev-bind /dev/input/event9 /dev/input/event9"));
