@@ -25,6 +25,8 @@ pub struct Pumped {
 pub struct Republisher {
     pub pads: Vec<VirtualPad>,
     paused: bool,
+    /// Per pad: its presses are being read by a modal flow, not forwarded.
+    held_back: Vec<bool>,
     frame: Vec<InputEvent>,
     pending: Vec<InputEvent>,
     started: Instant,
@@ -33,6 +35,7 @@ pub struct Republisher {
 impl Republisher {
     pub fn new(pads: Vec<VirtualPad>) -> Self {
         Republisher {
+            held_back: vec![false; pads.len()],
             pads,
             paused: false,
             frame: Vec::with_capacity(FRAME_HINT),
@@ -60,32 +63,58 @@ impl Republisher {
         }
     }
 
+    pub fn held_back(&self, index: usize) -> bool {
+        self.held_back.get(index).copied().unwrap_or(false)
+    }
+
+    /// Keep one pad's presses from its clone while a modal flow reads them; everyone else plays on.
+    pub fn hold_back(&mut self, index: usize, held: bool) {
+        let Some(slot) = self.held_back.get_mut(index) else {
+            return;
+        };
+        if *slot == held {
+            return;
+        }
+        *slot = held;
+        if held {
+            self.release_pad(index);
+        }
+    }
+
     /// Release all held keys to avoid stuck input when pause begins.
     fn release_all(&mut self) {
-        for vpad in &mut self.pads {
-            vpad.tracker.release_all();
-            let held = vpad.source.held_keys();
-            let mut frame: Vec<InputEvent> = held
-                .iter()
-                .map(|&code| InputEvent::new(EventType::KEY.0, code, 0))
-                .collect();
-            frame.extend(vpad.held_releases());
-            if frame.is_empty() {
-                continue;
-            }
-            frame.push(InputEvent::new(EventType::SYNCHRONIZATION.0, 0, 0));
-            if let Err(error) = vpad.clone.emit(&frame) {
-                warn!(
-                    "player {}: could not release held keys: {error}",
-                    vpad.player
-                );
-            }
+        for index in 0..self.pads.len() {
+            self.release_pad(index);
+        }
+    }
+
+    fn release_pad(&mut self, index: usize) {
+        let Some(vpad) = self.pads.get_mut(index) else {
+            return;
+        };
+        vpad.tracker.release_all();
+        let held = vpad.source.held_keys();
+        let mut frame: Vec<InputEvent> = held
+            .iter()
+            .map(|&code| InputEvent::new(EventType::KEY.0, code, 0))
+            .collect();
+        frame.extend(vpad.held_releases());
+        if frame.is_empty() {
+            return;
+        }
+        frame.push(InputEvent::new(EventType::SYNCHRONIZATION.0, 0, 0));
+        if let Err(error) = vpad.clone.emit(&frame) {
+            warn!(
+                "player {}: could not release held keys: {error}",
+                vpad.player
+            );
         }
     }
 
     /// Service one pad reported readable, forwarding whole frames.
     pub fn forward(&mut self, index: usize) -> Pumped {
         let mut out = Pumped::default();
+        let held_back = self.held_back(index);
         let Some(vpad) = self.pads.get_mut(index) else {
             return out;
         };
@@ -109,7 +138,7 @@ impl Republisher {
         }
         out.events = self.pending.len() - before;
 
-        if self.paused {
+        if self.paused || held_back {
             self.pending.clear();
             return out;
         }
@@ -192,7 +221,8 @@ impl Republisher {
             return;
         };
         let mut frame = vpad.held_releases();
-        if !frame.is_empty() && !self.paused {
+        if !frame.is_empty() && !self.paused && !self.held_back.get(index).copied().unwrap_or(false)
+        {
             for event in &frame {
                 vpad.tracker.apply(event.event_type().0, event.code(), 0);
             }
@@ -211,8 +241,8 @@ impl Republisher {
             return;
         }
         let now_ms = self.now_ms();
-        for vpad in &mut self.pads {
-            if vpad.gone {
+        for (index, vpad) in self.pads.iter_mut().enumerate() {
+            if vpad.gone || self.held_back.get(index).copied().unwrap_or(false) {
                 continue;
             }
             let mut frame = vpad.due_releases(now_ms);

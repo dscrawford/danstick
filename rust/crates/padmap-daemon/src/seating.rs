@@ -13,6 +13,9 @@ pub struct Seating {
     open: bool,
     pads: Vec<Pad>,
     sources: Vec<Source>,
+    /// The pads last asked for, opened or not: a pad that cannot be opened
+    /// must not look like a change on every tick.
+    wanted: Vec<PathBuf>,
     assigner: Assigner,
     buffer: Vec<evdev::InputEvent>,
 }
@@ -41,6 +44,7 @@ impl Seating {
         self.open = false;
         self.pads.clear();
         self.sources.clear();
+        self.wanted.clear();
         self.assigner.reset();
     }
 
@@ -60,12 +64,22 @@ impl Seating {
             .collect()
     }
 
+    /// Whether [`refresh`] would change the set, measured against what was last
+    /// asked for: a pad that cannot be opened must not differ forever.
+    pub fn would_change(&self, wanted: &[Pad]) -> bool {
+        self.wanted.len() != wanted.len()
+            || self
+                .wanted
+                .iter()
+                .zip(wanted)
+                .any(|(current, next)| *current != next.path)
+    }
+
     pub fn refresh(&mut self, wanted: Vec<Pad>) -> bool {
-        let current: Vec<PathBuf> = self.pads.iter().map(|pad| pad.path.clone()).collect();
-        let next: Vec<PathBuf> = wanted.iter().map(|pad| pad.path.clone()).collect();
-        if current == next {
+        if !self.would_change(&wanted) {
             return false;
         }
+        self.wanted = wanted.iter().map(|pad| pad.path.clone()).collect();
         self.pads.clear();
         self.sources.clear();
         self.assigner.reset();
@@ -171,5 +185,34 @@ mod tests {
         let mut seating = Seating::default();
         seating.open(0);
         assert_eq!(seating.seats(), 1);
+    }
+
+    #[test]
+    fn the_same_set_of_pads_is_not_a_change() {
+        let mut seating = Seating::default();
+        seating.open(4);
+        // Nodes no machine has, so nothing opens here or on a build machine.
+        let present = [pad("event90001"), pad("event90002")];
+        assert!(
+            seating.would_change(&present),
+            "an empty seating must open the present pads"
+        );
+        seating.refresh(present.to_vec());
+        assert!(
+            !seating.would_change(&present),
+            "the same set must not churn the watch list every tick"
+        );
+        assert!(
+            seating.would_change(&present[..1]),
+            "a pad leaving is a change"
+        );
+        assert!(
+            seating.pads().is_empty(),
+            "these nodes do not exist, so none of them opened"
+        );
+        assert!(
+            !seating.refresh(present.to_vec()),
+            "a pad that cannot be opened must not be reopened every tick"
+        );
     }
 }

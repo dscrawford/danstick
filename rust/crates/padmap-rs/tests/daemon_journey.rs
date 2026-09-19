@@ -50,6 +50,20 @@ const TUNER: PadId = PadId {
     pid: 0x0007,
     only: "RSTESTTUNER",
 };
+const REBIND: PadId = PadId {
+    name: "PADMAP RSTESTREBIND one",
+    pid: 0x0008,
+    only: "RSTESTREBIND",
+};
+const MIRRORED: PadId = PadId {
+    name: "PADMAP RSTESTMIRROR pad",
+    pid: 0x000a,
+    only: "RSTESTMIRROR",
+};
+/// Steam's virtual gamepad, by id; the name only has to pass the test filter.
+const MIRROR_NAME: &str = "PADMAP RSTESTMIRROR X-Box 360 pad 0";
+const MIRROR_VID: u16 = 0x28de;
+const MIRROR_PID: u16 = 0x11ff;
 
 fn signature(id: PadId) -> String {
     format!("{PAD_VID:04x}:{:04x}:{}", id.pid, id.name)
@@ -70,22 +84,26 @@ struct LiveGuard {
 
 impl LiveGuard {
     fn new(id: PadId) -> LiveGuard {
+        LiveGuard::for_signature(signature(id))
+    }
+
+    fn for_signature(signature: String) -> LiveGuard {
         let base = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_owned());
         let path = Path::new(&base).join("padmap").join("prompted");
         let existing = std::fs::read_to_string(&path).unwrap_or_default();
         let mut added = false;
-        if !existing.lines().any(|line| line.trim() == signature(id)) {
+        if !existing.lines().any(|line| line.trim() == signature) {
             if let Some(parent) = path.parent() {
                 let _ = std::fs::create_dir_all(parent);
             }
-            if std::fs::write(&path, format!("{existing}{}\n", signature(id))).is_ok() {
+            if std::fs::write(&path, format!("{existing}{signature}\n")).is_ok() {
                 added = true;
             }
         }
         LiveGuard {
             path,
             added,
-            signature: signature(id),
+            signature,
         }
     }
 }
@@ -113,6 +131,10 @@ struct TestPad {
 
 impl TestPad {
     fn new(id: PadId) -> TestPad {
+        TestPad::with_id(id.name, PAD_VID, id.pid)
+    }
+
+    fn with_id(name: &str, vid: u16, pid: u16) -> TestPad {
         let mut keys = AttributeSet::<KeyCode>::new();
         for code in FIRST_KEY..FIRST_KEY + KEY_COUNT {
             keys.insert(KeyCode::new(code));
@@ -121,8 +143,8 @@ impl TestPad {
         let hat = AbsInfo::new(0, -1, 1, 0, 0, 0);
         let device = VirtualDevice::builder()
             .expect("uinput")
-            .name(id.name)
-            .input_id(InputId::new(BusType::BUS_USB, PAD_VID, id.pid, 1))
+            .name(name)
+            .input_id(InputId::new(BusType::BUS_USB, vid, pid, 1))
             .with_keys(&keys)
             .expect("keys")
             .with_absolute_axis(&UinputAbsSetup::new(AbsoluteAxisCode::ABS_X, stick))
@@ -852,5 +874,236 @@ fn a_tune_command_is_saved_and_applied_live() {
 
     drop(daemon);
     drop(pad);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+// Request: finishing a rebind from the pad, and doing it with no session open.
+#[test]
+fn a_seated_pad_is_rebound_and_finished_from_the_pad_with_no_session() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let _guard = LiveGuard::new(REBIND);
+    let root = std::env::temp_dir().join(format!("padmap-rebind-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let mut pad = TestPad::new(REBIND);
+    let mut daemon = Daemon::start(&root, REBIND);
+
+    // Seat the pad through a session, then accept: the daemon grabs and keeps
+    // it, so it is genuinely seated when the session closes.
+    daemon.send(serde_json::json!({"cmd": "begin", "players": 1}));
+    daemon
+        .wait_for("state", |e| e["state"] == "assigning", 6.0)
+        .expect("assigning");
+    pad.hold(FIRST_KEY, 0.6);
+    daemon
+        .wait_for("claim", |e| e["player"] == 1, 6.0)
+        .expect("a hold claims the seat");
+    pad.hold(FIRST_KEY + 1, 1.1);
+    daemon
+        .wait_for("accepted", |_| true, 6.0)
+        .expect("a second hold confirms and closes the session");
+    daemon
+        .wait_for("state", |e| e["state"] == "ready", 6.0)
+        .expect("ready, and no session open");
+    std::thread::sleep(Duration::from_millis(300));
+
+    // Rebinding needs no session: map is legal with the daemon idle-but-ready.
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "map", "player": 1, "layout": "snes"}));
+    let walking = daemon
+        .wait_for("mapping", |e| e["done"] == false, 6.0)
+        .expect("the wizard opened without a session");
+    assert_eq!(walking["player"], 1);
+    assert_eq!(walking["layout"]["id"], "snes");
+    assert_eq!(
+        walking["captured"],
+        serde_json::json!({}),
+        "nothing stored yet"
+    );
+    assert!(
+        !daemon
+            .events
+            .iter()
+            .any(|e| e["event"] == "state" && e["state"] == "assigning"),
+        "a session was opened behind the scenes"
+    );
+    assert!(
+        daemon.last("pads").is_none(),
+        "a session announced its pads"
+    );
+
+    // Bind two controls by tapping.
+    pad.tap(FIRST_KEY + 4);
+    daemon.pump(0.5);
+    pad.tap(FIRST_KEY + 5);
+    let two = daemon
+        .wait_for("mapping", |e| e["index"] == 2, 6.0)
+        .expect("two controls bound");
+    assert_eq!(two["captured"].as_object().map(|c| c.len()), Some(2));
+    std::thread::sleep(Duration::from_millis(400));
+
+    // Long-hold A: the finish ring fills, and holding on ends the run with no release.
+    daemon.events.clear();
+    pad.emit(EventType::KEY.0, FIRST_KEY + 2, 1);
+    daemon.pump(1.2);
+    let filling = daemon
+        .last("finish")
+        .expect("a finish ring is drawn")
+        .clone();
+    let fraction = filling["frac"].as_f64().expect("frac");
+    assert!(
+        fraction > 0.2 && fraction < 0.95,
+        "half-filled ring, got {filling}"
+    );
+    assert_eq!(filling["player"], 1);
+    let finished = daemon
+        .wait_for("mapping", |e| e["done"] == true, 6.0)
+        .expect("the hold finished the wizard without a release");
+    assert_eq!(finished["stored"], true, "{finished}");
+    assert!(
+        daemon
+            .events
+            .iter()
+            .any(|e| e["event"] == "finish" && e["frac"] == 1.0),
+        "the ring is shown full before the wizard closes"
+    );
+    pad.emit(EventType::KEY.0, FIRST_KEY + 2, 0);
+    daemon.pump(0.3);
+
+    // Exactly what was bound is on disk; the daemon never left ready.
+    let stored: Value = serde_json::from_str(
+        &std::fs::read_to_string(
+            std::fs::read_dir(&daemon.profiles)
+                .expect("profiles")
+                .flatten()
+                .find(|entry| entry.file_name().to_string_lossy().contains("one"))
+                .expect("player 1's profile")
+                .path(),
+        )
+        .expect("read"),
+    )
+    .expect("json");
+    let buttons = stored["mappings"][""]["buttons"]
+        .as_object()
+        .expect("buttons");
+    assert_eq!(
+        buttons.len(),
+        2,
+        "an early finish keeps what was bound: {stored}"
+    );
+    let state = daemon.last("state").expect("state").clone();
+    assert_eq!(state["state"], "ready", "no session was ever opened");
+    assert_eq!(state["players"][0]["configured"], true);
+
+    // A second run is seeded from the stored capture and guards it.
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "map", "player": 1, "layout": "snes"}));
+    let seeded = daemon
+        .wait_for("mapping", |e| e["done"] == false, 6.0)
+        .expect("the wizard opened again");
+    assert_eq!(
+        seeded["captured"].as_object().map(|c| c.len()),
+        Some(2),
+        "the run is seeded from the stored capture: {seeded}"
+    );
+    pad.tap(FIRST_KEY + 5);
+    let conflict = daemon
+        .wait_for("mapping", |e| e["conflict"] != "", 6.0)
+        .expect("the second control's stored input is defended across runs");
+    assert_eq!(conflict["index"], 0, "a refused press does not advance");
+    daemon.send(serde_json::json!({"cmd": "cancel"}));
+    daemon
+        .wait_for("mapping", |e| e["done"] == true, 6.0)
+        .expect("cancel closes the wizard");
+    daemon
+        .wait_for("state", |e| e["state"] == "ready", 6.0)
+        .expect("still ready, still no session");
+
+    drop(daemon);
+    drop(pad);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+// Request: one physical controller is one pad -- Steam's mirror is dropped, and said so.
+#[test]
+fn steams_mirror_is_listed_as_dropped_beside_the_pad_it_mirrors() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let _guards = (
+        LiveGuard::new(MIRRORED),
+        LiveGuard::for_signature(format!("{MIRROR_VID:04x}:{MIRROR_PID:04x}:{MIRROR_NAME}")),
+    );
+    let root = std::env::temp_dir().join(format!("padmap-mirror-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let list = |json: bool| -> String {
+        let mut args = vec!["list"];
+        if json {
+            args.push("--json");
+        }
+        let output = Command::new(env!("CARGO_BIN_EXE_padmap-rs"))
+            .args(&args)
+            .env("XDG_RUNTIME_DIR", root.join("run"))
+            .env("XDG_CONFIG_HOME", root.join("config"))
+            .env("XDG_DATA_HOME", root.join("data"))
+            .env("PADMAP_PROFILE_DIR", root.join("devices"))
+            .env("PADMAP_ONLY_DEVICE", MIRRORED.only)
+            .output()
+            .expect("list");
+        assert!(output.status.success(), "{output:?}");
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    };
+
+    let mirror = TestPad::with_id(MIRROR_NAME, MIRROR_VID, MIRROR_PID);
+    let real = TestPad::new(MIRRORED);
+    std::thread::sleep(Duration::from_millis(300));
+
+    let entries: Value = serde_json::from_str(&list(true)).expect("valid JSON");
+    let entries = entries.as_array().expect("an array");
+    assert_eq!(entries.len(), 2, "{entries:?}");
+    let kept: Vec<&Value> = entries.iter().filter(|e| e["dropped"].is_null()).collect();
+    assert_eq!(kept.len(), 1, "only the real pad is offered: {entries:?}");
+    assert_eq!(kept[0]["controller"]["name"], MIRRORED.name);
+    let dropped = entries
+        .iter()
+        .find(|e| !e["dropped"].is_null())
+        .expect("the mirror is listed, not vanished");
+    assert_eq!(dropped["controller"]["name"], MIRROR_NAME);
+    assert_eq!(dropped["controller"]["vid"], "28de");
+    assert_eq!(dropped["controller"]["pid"], "11ff");
+    assert!(dropped["player"].is_null() && dropped["virtual"].is_null());
+    assert!(
+        dropped["dropped"]
+            .as_str()
+            .expect("a reason")
+            .contains("mirrors"),
+        "{dropped}"
+    );
+    let prose = list(false);
+    assert!(prose.contains("Left out, on purpose:"), "{prose}");
+    assert!(prose.contains(MIRROR_NAME), "{prose}");
+
+    drop(real);
+    std::thread::sleep(Duration::from_millis(500));
+    let entries: Value = serde_json::from_str(&list(true)).expect("valid JSON");
+    let entries = entries.as_array().expect("an array");
+    assert_eq!(
+        entries.len(),
+        1,
+        "alone, the mirror is a controller: {entries:?}"
+    );
+    assert!(entries[0]["dropped"].is_null());
+    assert_eq!(entries[0]["controller"]["name"], MIRROR_NAME);
+    assert!(
+        !list(false).contains("Left out"),
+        "nothing dropped when nothing is mirrored"
+    );
+
+    drop(mirror);
     let _ = std::fs::remove_dir_all(&root);
 }

@@ -12,13 +12,13 @@ use std::sync::Arc;
 
 use log::{debug, info, warn};
 use padmap_core::announce;
-use padmap_core::capture::{self, Chooser, MappingRun};
+use padmap_core::capture::{self, Chooser, MappingRun, Outcome};
 use padmap_core::command::{Command, Refused};
 use padmap_core::state::{PlayerState, STATE_ASSIGNING, STATE_IDLE, STATE_READY};
 use padmap_core::tuning::Request;
 use padmap_core::wire::{self, LineReader};
 use padmap_core::{emit, scope};
-use padmap_input::clone::{self, IdentityMode};
+use padmap_input::clone::{self, IdentityMode, Source};
 use padmap_input::pad::{self, Pad};
 use padmap_input::reactor::{Reactor, Watched};
 use padmap_input::republish::Republisher;
@@ -72,6 +72,21 @@ struct Modal<T> {
     pad_path: PathBuf,
 }
 
+/// One pad opened and grabbed on its own, for a modal flow with no session.
+struct Solo {
+    pad: Pad,
+    source: Source,
+    buffer: Vec<evdev::InputEvent>,
+}
+
+/// Where a modal flow's pad is open right now.
+#[derive(Debug, Clone, Copy)]
+enum Opened {
+    Session(usize),
+    Published(usize),
+    Solo,
+}
+
 pub struct Server {
     pub socket_path: PathBuf,
     pub state_path: PathBuf,
@@ -98,6 +113,9 @@ pub struct Server {
     calibration: Option<CalibrationRun>,
     mapping: Option<Modal<MappingRun>>,
     choice: Option<Modal<Chooser>>,
+    solo: Option<Solo>,
+    last_finish: f64,
+    scratch: Vec<evdev::InputEvent>,
     pending_scope: String,
     sdl_lines: Vec<String>,
     mode: IdentityMode,
@@ -207,6 +225,9 @@ impl Server {
             calibration: None,
             mapping: None,
             choice: None,
+            solo: None,
+            last_finish: 0.0,
+            scratch: Vec::with_capacity(64),
             pending_scope: String::new(),
             sdl_lines: Vec::new(),
             mode: IdentityMode::from_env(),
@@ -354,6 +375,7 @@ impl Server {
                     Watched::Listener => self.on_accept(),
                     Watched::Client(fd) => self.on_client_read(fd),
                     Watched::Session(index) => self.on_session_read(index),
+                    Watched::Solo => self.on_solo_read(),
                     Watched::Seating(index) => self.on_seating_read(index),
                     Watched::Source(index) => self.on_source_read(index),
                     Watched::Motion(index) => self.on_motion_read(index),
@@ -375,6 +397,7 @@ impl Server {
     pub fn close(&mut self) {
         self.close_seating();
         self.end_session();
+        self.release_solo();
         self.stop_republisher();
         let fds: Vec<i32> = self.clients.keys().copied().collect();
         for fd in fds {
@@ -463,8 +486,8 @@ impl Server {
         if let Some(client) = self.clients.remove(&fd) {
             let _ = self.reactor.unwatch(client.stream.as_fd());
         }
-        // Session holds every pad; must cancel if last client drops.
-        if self.clients.is_empty() && self.session.is_some() {
+        // A session holds every pad and a modal flow holds one; neither may outlive its client.
+        if self.clients.is_empty() && (self.session.is_some() || self.modal_open()) {
             info!("last client disconnected mid-session; releasing pads");
             self.cancel();
         }
@@ -618,6 +641,7 @@ impl Server {
     }
 
     fn begin(&mut self, players: u32) {
+        self.release_solo();
         self.stop_republisher();
         self.end_session();
 
@@ -799,19 +823,113 @@ impl Server {
         Ok((pad, index))
     }
 
-    fn held_keys(&mut self, index: usize) -> BTreeSet<u16> {
-        self.session
-            .as_mut()
-            .and_then(|session| session.source_mut(index))
+    /// A player's pad, open for a modal flow: in the session if one is open,
+    /// otherwise through its clone's source, otherwise grabbed on its own.
+    fn modal_pad(&mut self, player: u32, what: &str) -> Result<(Pad, Opened), Value> {
+        if self.session.is_some() {
+            return self
+                .session_pad(player, what)
+                .map(|(pad, index)| (pad, Opened::Session(index)));
+        }
+        let Some(pad) = self.pad_for_player(player) else {
+            return Err(events::error(format!(
+                "no controller assigned to player {player}"
+            )));
+        };
+        let published = self.republisher.as_ref().and_then(|republisher| {
+            republisher
+                .pads
+                .iter()
+                .position(|vpad| vpad.pad.path == pad.path && !vpad.gone)
+        });
+        if let Some(index) = published {
+            return Ok((pad, Opened::Published(index)));
+        }
+        if self
+            .solo
+            .as_ref()
+            .is_some_and(|solo| solo.pad.path == pad.path)
+        {
+            return Ok((pad, Opened::Solo));
+        }
+        self.release_solo();
+        let source = clone::open_source(&pad, true).map_err(|error| {
+            events::error(format!(
+                "{what}: could not open {}: {error}",
+                clean(&pad.name)
+            ))
+        })?;
+        if let Err(error) = self.reactor.watch(source.as_fd(), Watched::Solo) {
+            return Err(events::error(format!(
+                "{what}: could not watch {}: {error}",
+                clean(&pad.name)
+            )));
+        }
+        info!(
+            "player {player}: {} grabbed on its own for {what}",
+            clean(&pad.name)
+        );
+        self.solo = Some(Solo {
+            pad: pad.clone(),
+            source,
+            buffer: Vec::with_capacity(64),
+        });
+        Ok((pad, Opened::Solo))
+    }
+
+    fn opened_source(&mut self, opened: Opened) -> Option<&mut Source> {
+        match opened {
+            Opened::Session(index) => self
+                .session
+                .as_mut()
+                .and_then(|session| session.source_mut(index)),
+            Opened::Published(index) => self
+                .republisher
+                .as_mut()
+                .and_then(|republisher| republisher.pads.get_mut(index))
+                .map(|vpad| &mut vpad.source),
+            Opened::Solo => self.solo.as_mut().map(|solo| &mut solo.source),
+        }
+    }
+
+    fn modal_open(&self) -> bool {
+        self.mapping.is_some() || self.choice.is_some() || self.calibration.is_some()
+    }
+
+    /// The pads modal flows are reading right now.
+    fn modal_paths(&self) -> Vec<PathBuf> {
+        let mut paths = Vec::with_capacity(3);
+        if let Some(modal) = &self.mapping {
+            paths.push(modal.pad_path.clone());
+        }
+        if let Some(modal) = &self.choice {
+            paths.push(modal.pad_path.clone());
+        }
+        if let Some(run) = &self.calibration {
+            paths.push(PathBuf::from(&run.pad_path));
+        }
+        paths
+    }
+
+    /// Let go of a pad grabbed on its own; dropping the descriptor ungrabs it.
+    fn release_solo(&mut self) {
+        let Some(solo) = self.solo.take() else {
+            return;
+        };
+        let _ = self.reactor.unwatch(solo.source.as_fd());
+        info!("{} released", clean(&solo.pad.name));
+        drop(solo);
+    }
+
+    fn held_keys(&mut self, opened: Opened) -> BTreeSet<u16> {
+        self.opened_source(opened)
             .map(|source| source.held_keys().into_iter().collect())
             .unwrap_or_default()
     }
 
     /// Get axis ranges and resting positions.
-    fn absolute_ranges(&mut self, index: usize) -> BTreeMap<u16, padmap_core::sdl::AxisSpan> {
-        self.session
-            .as_mut()
-            .and_then(|session| session.source_mut(index))
+    fn absolute_ranges(&mut self, opened: Opened) -> BTreeMap<u16, padmap_core::sdl::AxisSpan> {
+        self.opened_source(opened)
             .map(|source| source.axis_spans())
             .unwrap_or_default()
             .into_iter()
@@ -830,7 +948,7 @@ impl Server {
     }
 
     fn begin_calibration(&mut self, player: u32) {
-        let (pad, index) = match self.session_pad(player, "calibration") {
+        let (pad, opened) = match self.modal_pad(player, "calibration") {
             Ok(found) => found,
             Err(event) => {
                 self.broadcast(&event);
@@ -838,9 +956,7 @@ impl Server {
             }
         };
         let declared = self
-            .session
-            .as_mut()
-            .and_then(|session| session.source_mut(index))
+            .opened_source(opened)
             .map(|source| source.declared_axes())
             .unwrap_or_default();
         let axes: BTreeMap<u16, padmap_core::calibration::Declared> = declared
@@ -927,15 +1043,15 @@ impl Server {
     }
 
     fn begin_layout_choice(&mut self, player: u32) {
-        let (pad, index) = match self.session_pad(player, "choosing a layout") {
+        let (pad, opened) = match self.modal_pad(player, "choosing a layout") {
             Ok(found) => found,
             Err(event) => {
                 self.broadcast(&event);
                 return;
             }
         };
-        let axes = self.absolute_ranges(index);
-        let held = self.held_keys(index);
+        let axes = self.absolute_ranges(opened);
+        let held = self.held_keys(opened);
         let stored = publish::stored_layout(&pad);
         let guess = if stored.is_empty() {
             publish::icon_for(&pad, &self.icon_overrides).to_owned()
@@ -961,7 +1077,7 @@ impl Server {
     }
 
     fn begin_scope_choice(&mut self, player: u32) {
-        let (pad, index) = match self.session_pad(player, "choosing a scope") {
+        let (pad, opened) = match self.modal_pad(player, "choosing a scope") {
             Ok(found) => found,
             Err(event) => {
                 self.broadcast(&event);
@@ -982,8 +1098,8 @@ impl Server {
             .map(|game| (game.console, game.key, game.title))
             .collect();
         let options = capture::scope_options(&scopes, &guess, &recent);
-        let axes = self.absolute_ranges(index);
-        let held = self.held_keys(index);
+        let axes = self.absolute_ranges(opened);
+        let held = self.held_keys(opened);
         self.pending_scope.clear();
         let chooser = Chooser::new(
             player,
@@ -1002,7 +1118,7 @@ impl Server {
     }
 
     fn begin_game_scope_choice(&mut self, player: u32, console: &str, key: &str, title: &str) {
-        let (pad, index) = match self.session_pad(player, "mapping") {
+        let (pad, opened) = match self.modal_pad(player, "mapping") {
             Ok(found) => found,
             Err(event) => {
                 self.broadcast(&event);
@@ -1017,8 +1133,8 @@ impl Server {
             self.broadcast(&events::error("no console known for this game"));
             return;
         }
-        let axes = self.absolute_ranges(index);
-        let held = self.held_keys(index);
+        let axes = self.absolute_ranges(opened);
+        let held = self.held_keys(opened);
         self.pending_scope.clear();
         let chooser = Chooser::new(
             player,
@@ -1080,16 +1196,6 @@ impl Server {
             )));
             return;
         };
-        let open = self
-            .session
-            .as_ref()
-            .is_some_and(|session| session.index_of(&pad.path).is_some());
-        if !open {
-            self.broadcast(&events::error(
-                "resetting a controller needs an open session",
-            ));
-            return;
-        }
         let removed = profiles::forget(&pad, None);
         let signature = profiles::signature_of(&pad);
         if self.prompted.remove(&signature) {
@@ -1108,7 +1214,7 @@ impl Server {
     }
 
     fn begin_mapping(&mut self, player: u32, layout_id: &str, scope: &str) {
-        let (pad, index) = match self.session_pad(player, "mapping") {
+        let (pad, opened) = match self.modal_pad(player, "mapping") {
             Ok(found) => found,
             Err(event) => {
                 self.broadcast(&event);
@@ -1122,21 +1228,27 @@ impl Server {
         };
         let layout = padmap_core::layout::for_icon(&chosen);
         let mut keys: Vec<u16> = self
-            .session
-            .as_mut()
-            .and_then(|session| session.source_mut(index))
+            .opened_source(opened)
             .map(|source| source.capabilities().0)
             .unwrap_or_default();
         keys.sort_unstable();
-        let axes = self.absolute_ranges(index);
-        let held = self.held_keys(index);
-        let run = MappingRun::new(player, layout, keys, scope.to_owned(), axes, held);
+        let axes = self.absolute_ranges(opened);
+        let held = self.held_keys(opened);
+        let stored = publish::stored_mapping(&pad, scope, &layout.id);
+        let run =
+            MappingRun::new(player, layout, keys, scope.to_owned(), axes, held).seeded(&stored);
         self.pending_scope.clear();
         self.confirm.clear();
+        self.last_finish = 0.0;
         info!(
-            "mapping {} as {} for scope {scope:?}",
+            "mapping {} as {} for scope {scope:?}{}",
             clean(&pad.name),
-            layout.id
+            layout.id,
+            if stored.is_empty() {
+                String::new()
+            } else {
+                format!(", starting from {} stored control(s)", stored.len())
+            }
         );
         self.broadcast(&events::mapping(&run));
         self.mapping = Some(Modal {
@@ -1163,6 +1275,12 @@ impl Server {
         self.confirm.clear();
         self.last_confirm = 0.0;
         self.pending_scope.clear();
+        if self.last_finish != 0.0 {
+            self.last_finish = 0.0;
+            if let Some(modal) = &modal {
+                self.broadcast(&events::finish(modal.run.player, 0.0));
+            }
+        }
         if let Some(modal) = &modal {
             if store && !modal.run.bindings().is_empty() {
                 if let Some(pad) = self.pad_for_player(modal.run.player) {
@@ -1354,7 +1472,9 @@ impl Server {
             if modal.pad_path == pad_path {
                 let before = modal.run.conflict();
                 let outcome = modal.run.feed(capture_event, clock);
-                if outcome.advanced() {
+                if outcome == Outcome::Finished {
+                    self.finish_by_hold();
+                } else if outcome.advanced() {
                     let update = events::mapping(&modal.run);
                     let finished = modal.run.finished();
                     self.broadcast(&update);
@@ -1366,6 +1486,107 @@ impl Server {
                     self.broadcast(&update);
                 }
             }
+        }
+    }
+
+    /// The finish hold reached its tier: the ring is full, keep what is bound.
+    fn finish_by_hold(&mut self) {
+        let Some(player) = self.mapping.as_ref().map(|modal| modal.run.player) else {
+            return;
+        };
+        info!("player {player}: finished the wizard from the pad");
+        self.last_finish = 1.0;
+        self.broadcast(&events::finish(player, 1.0));
+        self.last_finish = 0.0;
+        self.finish_mapping(true);
+    }
+
+    /// Time passing under the wizard: the finish hold fills, and ends the run when full.
+    fn tick_mapping(&mut self, clock: f64) {
+        let Some(modal) = self.mapping.as_mut() else {
+            return;
+        };
+        if modal.run.tick(clock) == Outcome::Finished {
+            self.finish_by_hold();
+            return;
+        }
+        let player = modal.run.player;
+        let fraction = modal.run.finish_hold(clock).unwrap_or(0.0);
+        if fraction != self.last_finish {
+            self.last_finish = fraction;
+            self.broadcast(&events::finish(player, fraction));
+        }
+    }
+
+    fn on_solo_read(&mut self) {
+        let clock = now();
+        let (path, raw) = {
+            let Some(solo) = self.solo.as_mut() else {
+                return;
+            };
+            solo.buffer.clear();
+            match solo.source.fetch_events(&mut solo.buffer) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => return,
+                Err(error) => {
+                    warn!(
+                        "{} went away under a modal flow ({error}); ending it",
+                        clean(&solo.pad.name)
+                    );
+                    self.release_solo();
+                    self.end_modals();
+                    return;
+                }
+            }
+            (solo.pad.path.clone(), raw_events(&solo.buffer))
+        };
+        for event in raw {
+            self.feed_modal(&path, event, clock);
+        }
+    }
+
+    /// A published pad under a modal flow: its presses go to the flow, not to its clone.
+    fn read_published_for_modal(&mut self, index: usize) {
+        let clock = now();
+        let (path, raw) = {
+            let Some(republisher) = self.republisher.as_mut() else {
+                return;
+            };
+            let Some(vpad) = republisher.pads.get_mut(index) else {
+                return;
+            };
+            self.scratch.clear();
+            match vpad.source.fetch_events(&mut self.scratch) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => return,
+                Err(error) => {
+                    warn!(
+                        "player {}: source disappeared under a modal flow ({error})",
+                        vpad.player
+                    );
+                    vpad.gone = true;
+                    let _ = self.reactor.unwatch(vpad.source.as_fd());
+                    self.end_modals();
+                    return;
+                }
+            }
+            (vpad.pad.path.clone(), raw_events(&self.scratch))
+        };
+        for event in raw {
+            self.feed_modal(&path, event, clock);
+        }
+    }
+
+    /// End every modal flow without keeping anything, as `cancel` does.
+    fn end_modals(&mut self) {
+        if self.choice.is_some() {
+            self.end_layout_choice();
+        }
+        if self.mapping.is_some() {
+            self.finish_mapping(false);
+        }
+        if self.calibration.is_some() {
+            self.finish_calibration();
         }
     }
 
@@ -1400,15 +1621,15 @@ impl Server {
             .map(|slot| slot.pad.path.clone())
             .collect();
         let wanted = self.seating.wanted(scan.pads(), &seated);
+        // Only touch epoll when the set actually changes; the unwatch/rewatch
+        // churn otherwise ran every tick for no reason.
+        if !self.seating.would_change(&wanted) {
+            return;
+        }
         for source in self.seating.sources() {
             let _ = self.reactor.unwatch(source.as_fd());
         }
-        if !self.seating.refresh(wanted) {
-            for (index, source) in self.seating.sources().iter().enumerate() {
-                let _ = self.reactor.watch(source.as_fd(), Watched::Seating(index));
-            }
-            return;
-        }
+        self.seating.refresh(wanted);
         for (index, source) in self.seating.sources().iter().enumerate() {
             if let Err(error) = self.reactor.watch(source.as_fd(), Watched::Seating(index)) {
                 warn!("seating: could not watch pad {index}: {error}");
@@ -1478,6 +1699,14 @@ impl Server {
     }
 
     fn on_source_read(&mut self, index: usize) {
+        if self
+            .republisher
+            .as_ref()
+            .is_some_and(|republisher| republisher.held_back(index))
+        {
+            self.read_published_for_modal(index);
+            return;
+        }
         let Some(republisher) = self.republisher.as_mut() else {
             return;
         };
@@ -1590,18 +1819,18 @@ impl Server {
         self.refresh_seating(&mut scan);
         self.tick_seating();
 
-        if self.session.is_none() {
-            return;
-        }
-        if self.choice.is_some() || self.mapping.is_some() {
-            return;
-        }
-        if self.calibration.is_some() {
+        let clock = now();
+        self.tick_mapping(clock);
+        if self.choice.is_none() && self.mapping.is_none() && self.calibration.is_some() {
             self.tick_calibration();
+        }
+        if self.solo.is_some() && !self.modal_open() {
+            self.release_solo();
+        }
+        if self.session.is_none() || self.modal_open() {
             return;
         }
 
-        let clock = now();
         let (before, ticked) = {
             let Some(session) = self.session.as_mut() else {
                 return;
@@ -1768,10 +1997,14 @@ impl Server {
         republisher.close();
     }
 
+    /// Only the pad a modal flow is reading is held back from its clone; everyone else plays on.
     fn sync_republish_pause(&mut self) {
-        let modal = self.mapping.is_some() || self.calibration.is_some() || self.choice.is_some();
+        let paths = self.modal_paths();
         if let Some(republisher) = self.republisher.as_mut() {
-            republisher.set_paused(modal);
+            for index in 0..republisher.pads.len() {
+                let held = paths.contains(&republisher.pads[index].pad.path);
+                republisher.hold_back(index, held);
+            }
         }
     }
 
@@ -2102,6 +2335,9 @@ impl Server {
         if self.state == STATE_ASSIGNING {
             return Some("a session is already open");
         }
+        if self.modal_open() {
+            return Some("a controller is being set up");
+        }
         let clock = now();
         if !self
             .clients
@@ -2240,6 +2476,17 @@ impl Server {
 
 fn as_player(player: i64) -> u32 {
     u32::try_from(player).unwrap_or(0)
+}
+
+fn raw_events(events: &[evdev::InputEvent]) -> Vec<Raw> {
+    events
+        .iter()
+        .map(|event| Raw {
+            kind: event.event_type().0,
+            code: event.code(),
+            value: event.value(),
+        })
+        .collect()
 }
 
 fn stamp_of(path: &Path) -> i128 {

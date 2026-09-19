@@ -767,3 +767,64 @@ fn an_ignored_button_and_axis_never_reach_the_clone() {
     );
     republisher.close();
 }
+
+#[test]
+fn holding_one_pad_back_leaves_the_others_forwarding() {
+    needs_uinput!();
+    let mut source_a = spawn_source();
+    let found_a = find(&mut source_a).expect("discover a");
+    let mut source_b = spawn_source();
+    let found_b = find(&mut source_b).expect("discover b");
+    assert_ne!(found_a.path, found_b.path, "two distinct source pads");
+
+    let mut republisher =
+        republish::Republisher::new(vec![clone_of(&found_a, 1), clone_of(&found_b, 2)]);
+    let _ = republisher.forward(0);
+    let _ = republisher.forward(1);
+
+    // Hold pad 0 back, as a session-less rebind of player 1 would.
+    republisher.hold_back(0, true);
+    assert!(republisher.held_back(0));
+    assert!(!republisher.held_back(1));
+    assert!(
+        !republisher.paused(),
+        "only one pad is held, not the whole stream"
+    );
+
+    for source in [&mut source_a, &mut source_b] {
+        source
+            .emit(&[
+                InputEvent::new(EventType::KEY.0, KeyCode::BTN_SOUTH.code(), 1),
+                InputEvent::new(EventType::SYNCHRONIZATION.0, 0, 0),
+            ])
+            .expect("emit");
+    }
+    std::thread::sleep(Duration::from_millis(60));
+
+    let held = republisher.forward(0);
+    let playing = republisher.forward(1);
+    assert_eq!(
+        held.frames, 0,
+        "the held-back pad forwarded a press to its clone"
+    );
+    assert!(
+        playing.frames > 0,
+        "the other pad stopped forwarding while its neighbour was rebound"
+    );
+
+    // Letting go resumes forwarding for the held pad.
+    republisher.hold_back(0, false);
+    assert!(!republisher.held_back(0));
+    source_a
+        .emit(&[
+            InputEvent::new(EventType::KEY.0, KeyCode::BTN_EAST.code(), 1),
+            InputEvent::new(EventType::SYNCHRONIZATION.0, 0, 0),
+        ])
+        .expect("emit");
+    std::thread::sleep(Duration::from_millis(60));
+    assert!(
+        republisher.forward(0).frames > 0,
+        "the pad never resumed forwarding after the rebind ended"
+    );
+    republisher.close();
+}

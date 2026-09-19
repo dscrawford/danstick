@@ -19,9 +19,11 @@ pub enum Watched {
     Seating(usize),
     Motion(usize),
     Dsu,
+    /// One pad opened on its own for a modal flow with no session.
+    Solo,
 }
 
-// Low 4 bits: kind (exactly full; next descriptor addition would silently alias).
+// Low 4 bits: kind; tags 0..=8 are taken, so 16 is the ceiling before aliasing.
 const TAG_BITS: u32 = 4;
 const TAG_MASK: u64 = (1 << TAG_BITS) - 1;
 const TAG_SOURCE: u64 = 0;
@@ -32,6 +34,7 @@ const TAG_SESSION: u64 = 4;
 const TAG_SEATING: u64 = 5;
 const TAG_MOTION: u64 = 6;
 const TAG_DSU: u64 = 7;
+const TAG_SOLO: u64 = 8;
 
 impl Watched {
     fn token(self) -> u64 {
@@ -45,6 +48,7 @@ impl Watched {
             Watched::Seating(index) => ((index as u64) << TAG_BITS) | TAG_SEATING,
             Watched::Motion(index) => ((index as u64) << TAG_BITS) | TAG_MOTION,
             Watched::Dsu => TAG_DSU,
+            Watched::Solo => TAG_SOLO,
         }
     }
 
@@ -61,6 +65,7 @@ impl Watched {
             TAG_SEATING => Watched::Seating(index),
             TAG_MOTION => Watched::Motion(index),
             TAG_DSU => Watched::Dsu,
+            TAG_SOLO => Watched::Solo,
             _ => Watched::Source(index),
         }
     }
