@@ -229,3 +229,52 @@ not these events.
 * A failed republish is not fatal and produces no `added` event.
 
 All of these are checked by `tests/check_controller_events.py`.
+
+## The `finish` event, and a rebind that keeps what it has
+
+The mapping wizard has three meanings for the A/South button, told apart by how
+long it is held:
+
+| gesture | seconds | meaning |
+|---|---|---|
+| tap | < 0.8 | bind the current control |
+| short hold | 0.8 | skip the current control (`SKIP_HOLD_SECONDS`) |
+| long hold | 2.0 | finish: end the run and keep what is bound (`FINISH_HOLD_SECONDS`) |
+
+The long hold emits a `finish` event as it fills, so a front-end can draw it as
+a ring filling beside the progress bar:
+
+```json
+{"event": "finish", "player": 1, "frac": 0.42}
+```
+
+`frac` runs 0 to 1. It reaches `1.0` once, when the run ends, and then a
+`mapping` with `"done": true, "stored": true` follows. Releasing the button
+before the tier resets `frac` to `0`. The gesture is the daemon's, not a
+key: no button leaves the wizard from a keyboard the person at the television
+does not have.
+
+A run does **not** start empty. It is seeded from the capture already stored
+for that pad and scope, so the conflict guard -- which refuses an input another
+control holds and names the holder -- holds across runs. A partial remap
+followed by an early finish therefore leaves a whole mapping: the controls not
+touched keep their stored bindings, and no two controls end up sharing an
+input. `forget` is still the way to start from nothing.
+
+## Mapping, choosing a layout, and calibrating without a session
+
+`map`, `choose_layout`, `choose_scope`, `map_for_game` and `calibrate` are legal
+with **no session open**. They grab only the named player's pad for the run and
+release it when the run ends; everyone else keeps playing, their controllers
+never stopped. The events are unchanged: the same `mapping` steps, the same
+`conflict`, the same `layout_choice`, the same `calibration`, the same `done`.
+
+When a session is open these commands still use it, as before. `begin` remains
+the way to reassign seats for the whole room, which is a session because it
+grabs every pad.
+
+**One pad this cannot grab.** A triton pad (the 2026 Steam Controller, driven
+through the puck) cannot be grabbed at all -- `Source::grab` is a no-op for it.
+Its presses therefore reach whatever has focus during a run, in addition to the
+wizard. A front-end should ignore that pad's own SDL events while its rebind is
+open. Every other pad is grabbed for the duration and reaches only the wizard.
