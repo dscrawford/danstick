@@ -254,7 +254,8 @@ fn cmd_exec(args: Vec<String>) -> Result<()> {
 }
 
 fn cmd_list() -> Result<()> {
-    let pads = pad::discover(pad::Filter::default()).context("enumerating input devices")?;
+    let found = pad::discover_all(pad::Filter::default()).context("enumerating input devices")?;
+    let pads = found.pads;
     if pads.is_empty() {
         println!("No joypads found.");
         report_dormant();
@@ -292,6 +293,7 @@ fn cmd_list() -> Result<()> {
         println!("rules (ID_INPUT_JOYSTICK cleared). padmap can still republish");
         println!("them; RetroArch sees only the virtual pads.");
     }
+    report_dropped(&found.dropped);
 
     report_dormant();
 
@@ -307,6 +309,21 @@ fn cmd_list() -> Result<()> {
         println!("assignment is done by pressing a button.");
     }
     Ok(())
+}
+
+/// Say what discovery left out, so a pad that vanished did not vanish silently.
+fn report_dropped(dropped: &[pad::Dropped]) {
+    if dropped.is_empty() {
+        return;
+    }
+    println!("\nLeft out, on purpose:");
+    for entry in dropped {
+        println!(
+            "  {} ({:04x}:{:04x})",
+            entry.pad.name, entry.pad.vid, entry.pad.pid
+        );
+        println!("        {}   {}", entry.pad.path.display(), entry.reason);
+    }
 }
 
 /// Report dormant controllers the kernel isn't driving as joypads.
@@ -526,6 +543,7 @@ fn cmd_run() -> Result<()> {
                 reactor::Watched::Listener
                 | reactor::Watched::Client(_)
                 | reactor::Watched::Session(_)
+                | reactor::Watched::Solo
                 | reactor::Watched::Seating(_) => {}
             }
         }

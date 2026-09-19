@@ -46,6 +46,52 @@ impl Pad {
     }
 }
 
+/// Steam Input's virtual gamepad: a mirror of a pad Steam is driving, by id.
+pub fn is_steam_virtual(pad: &Pad) -> bool {
+    (pad.vid, pad.pid) == padmap_core::icons::STEAM_VIRTUAL_ID
+}
+
+pub const REASON_STEAM_MIRROR: &str =
+    "Steam's virtual gamepad mirrors a controller padmap already reads";
+
+/// A node discovery found and chose not to offer, with the reason.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Dropped {
+    pub pad: Pad,
+    pub reason: &'static str,
+}
+
+/// What discovery found: the pads offered, and the nodes left out.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Discovery {
+    pub pads: Vec<Pad>,
+    pub dropped: Vec<Dropped>,
+}
+
+/// One physical controller is one pad: Steam's mirror goes when the pad it mirrors is here.
+///
+/// The mirror is kept when it is the only pad, since a controller Steam alone
+/// can drive is still a controller.
+pub fn without_steam_mirrors(pads: Vec<Pad>) -> Discovery {
+    if !pads.iter().any(|pad| !is_steam_virtual(pad)) {
+        return Discovery {
+            pads,
+            dropped: Vec::new(),
+        };
+    }
+    let (mirrors, pads): (Vec<Pad>, Vec<Pad>) = pads.into_iter().partition(is_steam_virtual);
+    Discovery {
+        pads,
+        dropped: mirrors
+            .into_iter()
+            .map(|pad| Dropped {
+                pad,
+                reason: REASON_STEAM_MIRROR,
+            })
+            .collect(),
+    }
+}
+
 /// Would `PADMAP_ONLY_DEVICE` let a pad with this name through?
 pub fn wanted_by_name(name: &str) -> bool {
     wanted_by(name, std::env::var(ENV_ONLY).ok().as_deref())
@@ -78,6 +124,11 @@ impl Default for Filter {
 
 /// Joypads in RetroArch enumeration order (libudev sorts by syspath).
 pub fn discover(filter: Filter) -> std::io::Result<Vec<Pad>> {
+    discover_all(filter).map(|found| found.pads)
+}
+
+/// [`discover`], keeping what was dropped so a caller can say so.
+pub fn discover_all(filter: Filter) -> std::io::Result<Discovery> {
     let mut enumerator = udev::Enumerator::new()?;
     enumerator.match_subsystem("input")?;
 
@@ -147,7 +198,16 @@ pub fn discover(filter: Filter) -> std::io::Result<Vec<Pad>> {
             debug!("{ENV_ONLY} is set: {} pad(s) after filtering", pads.len());
         }
     }
-    Ok(pads)
+    let found = without_steam_mirrors(pads);
+    for dropped in &found.dropped {
+        debug!(
+            "{} ({}) left out: {}",
+            dropped.pad.name,
+            dropped.pad.event(),
+            dropped.reason
+        );
+    }
+    Ok(found)
 }
 
 /// Every padmap clone the kernel is publishing, by name.
@@ -403,6 +463,68 @@ mod tests {
         ));
         assert!(!is_padmap_clone("padmap latency source", ""), "not a clone");
         assert!(!is_padmap_clone("", ""));
+    }
+
+    #[test]
+    fn steams_mirror_goes_when_any_other_pad_is_here() {
+        use crate::fakepad::{STEAM_VIRTUAL, XBOX_360};
+        let found =
+            without_steam_mirrors(vec![STEAM_VIRTUAL.pad("event25"), XBOX_360.pad("event24")]);
+        assert_eq!(found.pads, vec![XBOX_360.pad("event24")]);
+        assert_eq!(found.dropped.len(), 1);
+        assert_eq!(found.dropped[0].pad, STEAM_VIRTUAL.pad("event25"));
+        assert_eq!(found.dropped[0].reason, REASON_STEAM_MIRROR);
+    }
+
+    #[test]
+    fn steams_mirror_goes_beside_a_puck_slot_too() {
+        use crate::fakepad::STEAM_VIRTUAL;
+        let puck = pad(
+            "Steam Controller",
+            "",
+            "u/0003:28DE:1304.0007",
+            0x28DE,
+            0x1304,
+            "event0",
+        );
+        let found = without_steam_mirrors(vec![puck.clone(), STEAM_VIRTUAL.pad("event25")]);
+        assert_eq!(found.pads, vec![puck]);
+        assert_eq!(found.dropped.len(), 1);
+    }
+
+    #[test]
+    fn steams_mirror_stays_when_it_stands_alone() {
+        use crate::fakepad::STEAM_VIRTUAL;
+        let alone = vec![STEAM_VIRTUAL.pad("event25")];
+        let found = without_steam_mirrors(alone.clone());
+        assert_eq!(found.pads, alone);
+        assert!(found.dropped.is_empty());
+
+        let two = vec![STEAM_VIRTUAL.pad("event25"), STEAM_VIRTUAL.pad("event26")];
+        let found = without_steam_mirrors(two.clone());
+        assert_eq!(
+            found.pads, two,
+            "two mirrors and nothing else are still pads"
+        );
+        assert!(found.dropped.is_empty());
+    }
+
+    #[test]
+    fn a_room_with_no_mirror_is_left_exactly_as_it_was() {
+        use crate::fakepad::{MAYFLASH_GAMECUBE, XBOX_360};
+        let pads = vec![XBOX_360.pad("event3"), MAYFLASH_GAMECUBE.pad("event4")];
+        let found = without_steam_mirrors(pads.clone());
+        assert_eq!(found.pads, pads);
+        assert!(found.dropped.is_empty());
+        assert!(without_steam_mirrors(Vec::new()).pads.is_empty());
+    }
+
+    #[test]
+    fn the_mirror_is_known_by_its_id_and_not_by_the_name_it_borrows() {
+        use crate::fakepad::{STEAM_VIRTUAL, XBOX_360};
+        assert!(is_steam_virtual(&STEAM_VIRTUAL.pad("event1")));
+        assert!(!is_steam_virtual(&XBOX_360.pad("event2")));
+        assert_eq!(STEAM_VIRTUAL.name, XBOX_360.name.to_owned() + " 0");
     }
 
     #[test]

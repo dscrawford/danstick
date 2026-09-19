@@ -19,20 +19,43 @@ pub fn discover() -> Result<Vec<Pad>> {
     pad::discover(pad::Filter::default()).context("enumerating input devices")
 }
 
+/// The `controller` object of one `list --json` entry: the `controller` event's vocabulary.
+fn controller_json(pad: &Pad) -> serde_json::Value {
+    let facts = publish::pad_facts(pad);
+    serde_json::json!({
+        "name": pad.name,
+        "path": pad.path.display().to_string(),
+        "vid": format!("{:04x}", pad.vid),
+        "pid": format!("{:04x}", pad.pid),
+        "phys": pad.phys,
+        "uniq": pad.uniq,
+        "signature": profiles::signature_of(pad),
+        "configured": publish::has_mapping(pad),
+        "autobound": padmap_core::standard::is_standard(&facts.keys),
+        "retroarch_visible": pad.retroarch_visible,
+        "motion": pad.motion.is_some(),
+        "motion_node": pad.motion.as_ref().map(|path| path.display().to_string()),
+        "tuning": serde_json::to_value(publish::tuning_for(pad)).unwrap_or(serde_json::json!({})),
+    })
+}
+
 /// List plugged-in controllers as JSON, without needing a daemon.
+///
+/// A node discovery left out is still listed, last, with `"dropped"` naming
+/// the reason and no player or virtual pad; a consumer counting controllers
+/// filters on `.dropped == null`.
 pub fn cmd_list_json() -> Result<()> {
     use serde_json::json;
 
-    let pads = pad::discover(pad::Filter::default())?;
+    let found = pad::discover_all(pad::Filter::default())?;
+    let pads = &found.pads;
     let clones = pad::clone_nodes();
     let saved = assignments::load(&runtime::assignments_path()).unwrap_or_default();
     let order = publish::visible_order();
     let mode = IdentityMode::from_env();
 
     let mut entries = Vec::new();
-    for pad in &pads {
-        let facts = publish::pad_facts(pad);
-        let autobound = padmap_core::standard::is_standard(&facts.keys);
+    for pad in pads {
         let player = saved
             .iter()
             .find(|entry| entry.path == pad.path)
@@ -57,21 +80,7 @@ pub fn cmd_list_json() -> Result<()> {
         });
         entries.push(json!({
             "player": player,
-            "controller": {
-                "name": pad.name,
-                "path": pad.path.display().to_string(),
-                "vid": format!("{:04x}", pad.vid),
-                "pid": format!("{:04x}", pad.pid),
-                "phys": pad.phys,
-                "uniq": pad.uniq,
-                "signature": profiles::signature_of(pad),
-                "configured": publish::has_mapping(pad),
-                "autobound": autobound,
-                "retroarch_visible": pad.retroarch_visible,
-                "motion": pad.motion.is_some(),
-                "motion_node": pad.motion.as_ref().map(|path| path.display().to_string()),
-                "tuning": serde_json::to_value(publish::tuning_for(pad)).unwrap_or(serde_json::json!({})),
-            },
+            "controller": controller_json(pad),
             "virtual": virtual_pad,
         }));
     }
@@ -81,6 +90,14 @@ pub fn cmd_list_json() -> Result<()> {
             .map(|player| (0, player))
             .unwrap_or((1, 0))
     });
+    for dropped in &found.dropped {
+        entries.push(json!({
+            "player": null,
+            "controller": controller_json(&dropped.pad),
+            "virtual": null,
+            "dropped": dropped.reason,
+        }));
+    }
     println!("{}", serde_json::to_string_pretty(&entries)?);
     Ok(())
 }

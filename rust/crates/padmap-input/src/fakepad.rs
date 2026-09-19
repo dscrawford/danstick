@@ -112,6 +112,29 @@ pub const XBOX_360: Fixture = Fixture {
     dpad_is_hat: true,
 };
 
+/// Steam Input's virtual gamepad: what Steam publishes for an application it
+/// launches while it is handling a controller on that application's behalf.
+///
+/// One physical press arrives here and on the pad it mirrors, which is why
+/// discovery drops it (`pad::without_steam_mirrors`). It borrows xpad's name
+/// and table with a trailing index, and is only ever told apart by id.
+pub const STEAM_VIRTUAL: Fixture = Fixture {
+    name: "Microsoft X-Box 360 pad 0",
+    vid: 0x28DE,
+    pid: 0x11FF,
+    bustype: BUS_USB,
+    source: "the id is icons::STEAM_VIRTUAL_ID (28de:11ff), Steam's uinput \
+             gamepad since the Steam Input rewrite; the name and the button \
+             table are xpad's Xbox 360 entry with Steam's slot index appended. \
+             A live recording beside a puck is still owed (docs/requests/\
+             one-controller-one-pad.md)",
+    emits_scan: false,
+    scancodes: &[],
+    buttons: XBOX_360.buttons,
+    axes: XBOX_360.axes,
+    dpad_is_hat: true,
+};
+
 /// Same driver as 360, but triggers are 0..1023 instead of 0..255 (wrong by 4x if confused).
 pub const XBOX_SERIES_X: Fixture = Fixture {
     name: "Microsoft Xbox Series S|X Controller",
@@ -229,6 +252,21 @@ impl Fixture {
             .map(|(_, usage)| *usage)
     }
 
+    /// This controller as discovery would report it, at `/dev/input/{event}`.
+    pub fn pad(&self, event: &str) -> crate::pad::Pad {
+        crate::pad::Pad {
+            path: std::path::PathBuf::from(format!("/dev/input/{event}")),
+            name: self.name.to_owned(),
+            phys: String::new(),
+            uniq: String::new(),
+            vid: self.vid,
+            pid: self.pid,
+            syspath: std::path::PathBuf::from(format!("/sys/devices/virtual/input/{event}")),
+            retroarch_visible: true,
+            motion: None,
+        }
+    }
+
     /// Every key code this pad declares, sorted as the kernel reports them.
     pub fn key_codes(&self) -> Vec<u16> {
         let mut codes: Vec<u16> = self.buttons.iter().map(|(_, code)| *code).collect();
@@ -301,6 +339,17 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn steams_mirror_is_an_xbox_pad_under_a_valve_id() {
+        assert_eq!((STEAM_VIRTUAL.vid, STEAM_VIRTUAL.pid), (0x28DE, 0x11FF));
+        assert_eq!(STEAM_VIRTUAL.buttons, XBOX_360.buttons);
+        assert_eq!(STEAM_VIRTUAL.axes, XBOX_360.axes);
+        assert!(STEAM_VIRTUAL.name.starts_with(XBOX_360.name));
+        let pad = STEAM_VIRTUAL.pad("event7");
+        assert_eq!(pad.event(), "event7");
+        assert_eq!((pad.vid, pad.pid), (0x28DE, 0x11FF));
     }
 
     #[test]
