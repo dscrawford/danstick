@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::binding::{axis_index, retroarch_button_index, sdl_button_index, Binding};
+use crate::binding::{axis_index, retroarch_button_index, sdl_button_index, Binding, BindingKind};
 use crate::control::Control;
 use crate::layout::Layout;
 use crate::sdl::AxisSpan;
@@ -27,6 +27,9 @@ pub const HAT_DOWN: i32 = 4;
 pub const HAT_LEFT: i32 = 8;
 
 pub const SKIP_HOLD_SECONDS: f64 = 0.8;
+
+/// One tier above skip: hold this long to end the run and keep what is bound.
+pub const FINISH_HOLD_SECONDS: f64 = 2.0;
 
 pub const CAPTURE_GAP_SECONDS: f64 = 0.35;
 
@@ -111,6 +114,8 @@ pub enum Outcome {
         travel: f64,
         needed: f64,
     },
+    /// A hold reached [`FINISH_HOLD_SECONDS`]: the run is over, keep what is bound.
+    Finished,
 }
 
 impl Outcome {
@@ -136,6 +141,7 @@ pub struct MappingRun {
     blocked_until: f64,
     conflict: Option<Control>,
     axis_armed: BTreeMap<u16, bool>,
+    ended: bool,
 }
 
 impl MappingRun {
@@ -162,6 +168,46 @@ impl MappingRun {
             blocked_until: 0.0,
             conflict: None,
             axis_armed: BTreeMap::new(),
+            ended: false,
+        }
+    }
+
+    /// Start from a stored capture, so the conflict guard sees it and an early
+    /// finish leaves a whole mapping.
+    pub fn seeded(mut self, stored: &BTreeMap<Control, Binding>) -> Self {
+        for (control, binding) in stored {
+            if let Some(claim) = self.claim_of(*binding) {
+                self.claimed.insert(claim, *control);
+            }
+            self.bindings.insert(*control, *binding);
+        }
+        self
+    }
+
+    /// The input a stored binding names, on this pad; None if the pad no longer has it.
+    fn claim_of(&self, binding: Binding) -> Option<Claim> {
+        match binding.kind {
+            BindingKind::Button => self
+                .keys
+                .iter()
+                .copied()
+                .find(|code| sdl_button_index(&self.keys, *code) == Some(binding.index))
+                .map(|code| Claim::Button { code }),
+            BindingKind::Hat => Some(Claim::Hat {
+                index: binding.index,
+                value: binding.value,
+            }),
+            BindingKind::Axis => {
+                let codes: Vec<u16> = self.axes.keys().copied().collect();
+                codes
+                    .iter()
+                    .copied()
+                    .find(|code| axis_index(&codes, *code) == Some(binding.index))
+                    .map(|code| Claim::Axis {
+                        code,
+                        sign: if binding.value >= 0 { 1 } else { -1 },
+                    })
+            }
         }
     }
 
@@ -172,7 +218,45 @@ impl MappingRun {
     }
 
     pub fn finished(&self) -> bool {
-        self.index >= self.layout.controls.len()
+        self.ended || self.index >= self.layout.controls.len()
+    }
+
+    /// How far the longest live hold is towards finishing, or None with nothing held.
+    pub fn finish_hold(&self, now: f64) -> Option<f64> {
+        if self.finished() || self.settling() {
+            return None;
+        }
+        self.down_at
+            .iter()
+            .filter(|(code, _)| !self.opening_held.contains(code))
+            .map(|(_, started)| now - started)
+            .fold(None, |best: Option<f64>, elapsed| {
+                Some(best.map_or(elapsed, |b| b.max(elapsed)))
+            })
+            .map(|elapsed| (elapsed / FINISH_HOLD_SECONDS).clamp(0.0, 1.0))
+    }
+
+    /// Time passing: a hold that reaches the finish tier ends the run without a release.
+    pub fn tick(&mut self, now: f64) -> Outcome {
+        match self.finish_hold(now) {
+            Some(fraction) if fraction >= 1.0 => self.finish(),
+            _ => Outcome::Ignored,
+        }
+    }
+
+    fn finish(&mut self) -> Outcome {
+        self.ended = true;
+        self.conflict = None;
+        self.down_at.clear();
+        Outcome::Finished
+    }
+
+    /// Who else holds this input; the control being asked for may re-take its own.
+    fn taken_by_other(&self, claim: Claim) -> Option<Control> {
+        self.claimed
+            .get(&claim)
+            .copied()
+            .filter(|holder| Some(*holder) != self.current())
     }
 
     pub fn index(&self) -> usize {
@@ -210,6 +294,7 @@ impl MappingRun {
         let Some(control) = self.current() else {
             return Outcome::Ignored;
         };
+        self.claimed.retain(|_, holder| *holder != control);
         self.bindings.insert(control, binding);
         self.claimed.insert(claim, control);
         self.index += 1;
@@ -268,7 +353,11 @@ impl MappingRun {
             return Outcome::Ignored;
         }
 
-        if now - started >= SKIP_HOLD_SECONDS {
+        let held = now - started;
+        if held >= FINISH_HOLD_SECONDS {
+            return self.finish();
+        }
+        if held >= SKIP_HOLD_SECONDS {
             return match self.skip(now) {
                 Some(control) => Outcome::Skipped { control },
                 None => Outcome::Ignored,
@@ -276,7 +365,7 @@ impl MappingRun {
         }
 
         let claim = Claim::Button { code: event.code };
-        if let Some(holder) = self.claimed.get(&claim).copied() {
+        if let Some(holder) = self.taken_by_other(claim) {
             return self.refuse(claim, holder);
         }
 
@@ -363,7 +452,7 @@ impl MappingRun {
                 index: 0,
                 value: bit,
             };
-            if let Some(holder) = self.claimed.get(&claim).copied() {
+            if let Some(holder) = self.taken_by_other(claim) {
                 return self.refuse(claim, holder);
             }
             self.axis_armed.insert(event.code, false);
@@ -386,7 +475,7 @@ impl MappingRun {
             code: event.code,
             sign,
         };
-        if let Some(holder) = self.claimed.get(&claim).copied() {
+        if let Some(holder) = self.taken_by_other(claim) {
             return self.refuse(claim, holder);
         }
         let codes: Vec<u16> = self.axes.keys().copied().collect();

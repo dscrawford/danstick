@@ -442,6 +442,19 @@ pub fn icon_for(pad: &Pad, overrides: &BTreeMap<String, String>) -> &'static str
     padmap_core::icons::for_pad(pad.vid, pad.pid, &pad.name, stored.as_deref(), overrides)
 }
 
+/// The capture already filed under exactly this scope, if it was made for this layout.
+///
+/// A run seeded from it refines the mapping instead of replacing it; a
+/// capture under another layout is about to be replaced wholesale, so there
+/// is nothing to carry over.
+pub fn stored_mapping(pad: &Pad, scope: &str, layout_id: &str) -> BTreeMap<Control, Binding> {
+    profiles::load(pad, None)
+        .and_then(|profile| profile.mappings.get(scope).cloned())
+        .filter(|mapping| mapping.layout == layout_id)
+        .map(|mapping| mapping.resolved())
+        .unwrap_or_default()
+}
+
 /// Layout of the pad's default (no-scope) capture.
 pub fn stored_layout(pad: &Pad) -> String {
     resolved(pad, "", "").1.layout

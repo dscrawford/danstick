@@ -37,6 +37,11 @@ pub fn confirm(fraction: f64) -> Value {
     json!({ "event": "confirm", "frac": round3(fraction) })
 }
 
+/// The wizard's finish hold, filling from 0 to 1 while a button stays down.
+pub fn finish(player: u32, fraction: f64) -> Value {
+    json!({ "event": "finish", "player": player, "frac": round3(fraction) })
+}
+
 pub fn claim(player: u32, name: &str, node: &str, icon: &str, configured: bool) -> Value {
     json!({
         "event": "claim",
@@ -184,6 +189,14 @@ mod tests {
         assert_eq!(progress(0.123456)["frac"], 0.123);
         assert_eq!(confirm(1.0)["frac"], 1.0);
         assert_eq!(round3(0.0005), 0.001);
+    }
+
+    #[test]
+    fn a_finish_hold_names_whose_ring_is_filling() {
+        let event = finish(2, 0.4567);
+        assert_eq!(event["event"], "finish");
+        assert_eq!(event["player"], 2);
+        assert_eq!(event["frac"], 0.457);
     }
 
     #[test]

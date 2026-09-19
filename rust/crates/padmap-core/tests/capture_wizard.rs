@@ -1675,3 +1675,268 @@ fn a_scope_strip_marks_what_is_already_captured() {
     }
     assert_eq!(options.iter().filter(|option| option.mapped).count(), 3);
 }
+
+// ---- Finishing from the pad, and runs that start from a stored capture ----
+
+use padmap_core::capture::FINISH_HOLD_SECONDS;
+
+fn seeded_run(stored: &[(Control, Binding)]) -> MappingRun {
+    let axes = axes(&[(ABS_X, stick())]);
+    snes_run(joystick_keys(), axes, BTreeSet::new())
+        .seeded(&stored.iter().copied().collect::<BTreeMap<_, _>>())
+}
+
+fn control_at(index: usize) -> Control {
+    layout::get("snes").controls[index].canonical
+}
+
+#[test]
+fn a_hold_past_the_finish_tier_ends_the_run_and_keeps_what_was_bound() {
+    let mut run = run();
+    let first = control_at(0);
+    assert!(tap(&mut run, 0x130, 0.0).advanced());
+    let outcome = last(play(
+        &mut run,
+        &[
+            (Event::key(0x131, 1), 1.0),
+            (Event::key(0x131, 0), 1.0 + FINISH_HOLD_SECONDS + 0.01),
+        ],
+    ));
+    assert_eq!(outcome, Outcome::Finished);
+    assert!(run.finished(), "a finish must end the run");
+    assert!(
+        run.index() < run.total(),
+        "finishing is not walking to the end"
+    );
+    assert!(
+        run.bindings().contains_key(&first),
+        "what was bound stays bound"
+    );
+    assert!(
+        !run.bindings().contains_key(&control_at(1)),
+        "the finishing button must not bind the prompt it ended on"
+    );
+    assert_eq!(
+        run.feed(Event::key(0x132, 1), 5.0),
+        Outcome::Ignored,
+        "a finished run is deaf"
+    );
+}
+
+#[test]
+fn a_hold_between_the_two_tiers_still_skips() {
+    let mut run = run();
+    let first = control_at(0);
+    let outcome = last(play(
+        &mut run,
+        &[
+            (Event::key(0x130, 1), 0.0),
+            (
+                Event::key(0x130, 0),
+                (SKIP_HOLD_SECONDS + FINISH_HOLD_SECONDS) / 2.0,
+            ),
+        ],
+    ));
+    assert_eq!(outcome, Outcome::Skipped { control: first });
+    assert!(!run.finished());
+    // The tiers must be far enough apart that a slow skip cannot finish.
+    const {
+        assert!(FINISH_HOLD_SECONDS >= 2.0 * SKIP_HOLD_SECONDS);
+    }
+}
+
+#[test]
+fn the_finish_ring_fills_while_a_button_is_down_and_time_alone_ends_the_run() {
+    let mut run = run();
+    assert_eq!(run.finish_hold(0.0), None, "nothing held, nothing to draw");
+    run.feed(Event::key(0x130, 1), 10.0);
+    assert_eq!(run.tick(10.0), Outcome::Ignored);
+    let half = run
+        .finish_hold(10.0 + FINISH_HOLD_SECONDS / 2.0)
+        .expect("a held button fills the ring");
+    assert!((half - 0.5).abs() < 1e-9, "{half}");
+    assert_eq!(
+        run.tick(10.0 + FINISH_HOLD_SECONDS - 0.01),
+        Outcome::Ignored
+    );
+    assert!(!run.finished());
+    assert_eq!(run.tick(10.0 + FINISH_HOLD_SECONDS), Outcome::Finished);
+    assert!(run.finished());
+    assert_eq!(run.finish_hold(20.0), None, "a finished run draws nothing");
+    assert_eq!(
+        run.feed(Event::key(0x130, 0), 10.0 + FINISH_HOLD_SECONDS + 0.5),
+        Outcome::Ignored,
+        "the release after a timed finish must not skip or record anything"
+    );
+}
+
+#[test]
+fn a_release_ends_the_ring_and_a_tap_never_fills_it() {
+    let mut run = run();
+    run.feed(Event::key(0x130, 1), 0.0);
+    assert!(run.finish_hold(0.5).is_some());
+    run.feed(Event::key(0x130, 0), 0.6);
+    assert_eq!(run.finish_hold(0.7), None, "released: nothing to draw");
+    assert!(run.bindings().contains_key(&control_at(0)), "0.6s is a tap");
+    let mut fresh = snes_run(joystick_keys(), BTreeMap::new(), BTreeSet::new());
+    assert!(tap(&mut fresh, 0x130, 0.0).advanced());
+    assert_eq!(fresh.finish_hold(TAP + 0.01), None);
+}
+
+#[test]
+fn a_press_held_from_before_the_run_does_not_fill_the_finish_ring() {
+    let mut run = snes_run(
+        joystick_keys(),
+        BTreeMap::new(),
+        [0x130].into_iter().collect(),
+    );
+    assert_eq!(
+        run.finish_hold(5.0),
+        None,
+        "an opening hold is not a gesture"
+    );
+    assert_eq!(run.tick(5.0), Outcome::Ignored);
+    assert!(!run.finished());
+    run.feed(Event::key(0x131, 1), 0.0);
+    assert_eq!(
+        run.finish_hold(1.0),
+        None,
+        "nothing counts while the opening press is still settling"
+    );
+}
+
+#[test]
+fn a_seeded_run_starts_with_the_stored_capture_and_guards_it() {
+    let a = control_at(0);
+    let b = control_at(1);
+    let mut run = seeded_run(&[(a, Binding::button(0)), (b, Binding::button(1))]);
+    assert_eq!(run.bindings().len(), 2, "seeded before the first prompt");
+    assert_eq!(run.index(), 0, "seeding does not advance the prompt");
+
+    let retaken = tap(&mut run, 0x130, 0.0);
+    assert_eq!(
+        retaken,
+        Outcome::Recorded {
+            control: a,
+            binding: Binding::button(0).with_ra_index(Some(0)),
+        },
+        "the control being asked for may take its own stored input again"
+    );
+
+    let clash = tap(&mut run, 0x130, TAP + AFTER_GAP);
+    assert_eq!(
+        clash,
+        Outcome::Refused {
+            claim: Claim::Button { code: 0x130 },
+            held_by: a,
+        },
+        "an input a stored control holds is refused, naming the holder"
+    );
+    assert_eq!(run.conflict(), Some(a));
+}
+
+#[test]
+fn rebinding_a_seeded_control_frees_the_input_it_used_to_hold() {
+    let a = control_at(0);
+    let b = control_at(1);
+    let mut run = seeded_run(&[(a, Binding::button(0))]);
+    let moved = tap(&mut run, 0x135, 0.0);
+    assert!(matches!(moved, Outcome::Recorded { control, .. } if control == a));
+    let taken = tap(&mut run, 0x130, TAP + AFTER_GAP);
+    assert!(
+        matches!(taken, Outcome::Recorded { control, .. } if control == b),
+        "button 0 belonged to A a moment ago and must be free now, not {taken:?}"
+    );
+    assert_eq!(run.bindings()[&a].index, 5);
+    assert_eq!(run.bindings()[&b].index, 0);
+}
+
+#[test]
+fn an_early_finish_on_a_seeded_run_leaves_a_whole_mapping() {
+    let stored: Vec<(Control, Binding)> = layout::get("snes")
+        .controls
+        .iter()
+        .enumerate()
+        .take(6)
+        .map(|(index, control)| (control.canonical, Binding::button(index as i32)))
+        .collect();
+    let mut run = seeded_run(&stored);
+    assert!(tap(&mut run, 0x137, 0.0).advanced(), "A moves to button 7");
+    let outcome = last(play(
+        &mut run,
+        &[
+            (Event::key(0x138, 1), 1.0),
+            (Event::key(0x138, 0), 1.0 + FINISH_HOLD_SECONDS),
+        ],
+    ));
+    assert_eq!(outcome, Outcome::Finished);
+    assert_eq!(run.bindings().len(), 6, "one moved, five kept, none lost");
+    assert_eq!(run.bindings()[&control_at(0)].index, 7);
+    for (control, binding) in &stored[1..] {
+        assert_eq!(run.bindings()[control], *binding);
+    }
+}
+
+#[test]
+fn a_skip_on_a_seeded_run_leaves_that_control_as_it_was() {
+    let a = control_at(0);
+    let mut run = seeded_run(&[(a, Binding::button(3))]);
+    assert_eq!(
+        hold(&mut run, SKIP_BUTTON, 0.0),
+        Outcome::Skipped { control: a }
+    );
+    assert_eq!(run.bindings()[&a], Binding::button(3));
+}
+
+#[test]
+fn seeded_hats_and_axes_are_guarded_too() {
+    let first_dpad = first_dpad();
+    let up = layout::get("snes").controls[first_dpad].canonical;
+    let mut run = seeded_run(&[
+        (up, Binding::hat(0, HAT_UP)),
+        (control_at(0), Binding::axis(0, 1)),
+    ]);
+    let clock = skip_to(&mut run, first_dpad + 1);
+    assert_eq!(
+        run.feed(Event::abs(ABS_HAT0Y, -1), clock),
+        Outcome::Refused {
+            claim: Claim::Hat {
+                index: 0,
+                value: HAT_UP
+            },
+            held_by: up,
+        }
+    );
+    run.feed(Event::abs(ABS_HAT0Y, 0), clock + 0.1);
+    assert_eq!(
+        run.feed(Event::abs(ABS_X, 100), clock + 0.2),
+        Outcome::Refused {
+            claim: Claim::Axis {
+                code: ABS_X,
+                sign: 1
+            },
+            held_by: control_at(0),
+        },
+        "the stored axis binding is resolved back to its ABS code"
+    );
+}
+
+#[test]
+fn a_stored_binding_the_pad_no_longer_has_is_kept_but_guards_nothing() {
+    let a = control_at(0);
+    let mut run = seeded_run(&[(a, Binding::button(40))]);
+    assert_eq!(run.bindings()[&a], Binding::button(40));
+    let clock = skip_to(&mut run, 1);
+    assert!(
+        tap(&mut run, 0x130, clock).advanced(),
+        "no input on this pad answers to index 40, so nothing is refused"
+    );
+}
+
+#[test]
+fn an_empty_seed_is_the_run_as_it_always_was() {
+    let mut run = seeded_run(&[]);
+    assert!(run.bindings().is_empty());
+    assert!(tap(&mut run, 0x130, 0.0).advanced());
+    assert_eq!(run.index(), 1);
+}
