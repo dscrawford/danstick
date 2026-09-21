@@ -66,6 +66,11 @@ impl AxisSpan {
         }
     }
 
+    /// A hat reports -1, 0 or 1; anything wider on a hat code is not a d-pad.
+    pub const fn is_hat_sized(&self) -> bool {
+        self.minimum >= -1 && self.maximum <= 1
+    }
+
     /// Stick (centred) vs trigger (at end): codes cannot express this alone.
     pub fn rests_centred(&self) -> bool {
         if self.maximum <= self.minimum {

@@ -33,6 +33,20 @@ pub const DPAD_KEYS: [(u16, &str); 4] = [
 pub const ABS_HAT0X: u16 = 0x10;
 pub const ABS_HAT0Y: u16 = 0x11;
 
+/// Is hat 0 a d-pad, or a trackpad parked on the codes one usually uses?
+///
+/// A Steam Deck reports its left trackpad on `ABS_HAT0X/Y` of -32767..32767
+/// and its d-pad on `BTN_DPAD_*`; bound by the codes alone, every direction
+/// would come from the pad under the player's thumb. Unmeasured, a hat code
+/// is still taken at its word.
+fn hat_zero_is_a_dpad(axis_codes: &[u16], axes: Option<&BTreeMap<u16, AxisSpan>>) -> bool {
+    if !(axis_codes.contains(&ABS_HAT0X) && axis_codes.contains(&ABS_HAT0Y)) {
+        return false;
+    }
+    axes.and_then(|spans| spans.get(&ABS_HAT0X))
+        .is_none_or(AxisSpan::is_hat_sized)
+}
+
 /// Directions and sticks, from what the pad actually reports.
 pub fn stick_and_dpad_fields(
     axis_codes: &[u16],
@@ -40,7 +54,7 @@ pub fn stick_and_dpad_fields(
     axes: Option<&BTreeMap<u16, AxisSpan>>,
 ) -> Fields {
     let mut fields = Fields::new();
-    if axis_codes.contains(&ABS_HAT0X) && axis_codes.contains(&ABS_HAT0Y) {
+    if hat_zero_is_a_dpad(axis_codes, axes) {
         fields.insert("dpup", "h0.1");
         fields.insert("dpright", "h0.2");
         fields.insert("dpdown", "h0.4");
