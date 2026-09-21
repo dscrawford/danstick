@@ -278,3 +278,51 @@ through the puck) cannot be grabbed at all -- `Source::grab` is a no-op for it.
 Its presses therefore reach whatever has focus during a run, in addition to the
 wizard. A front-end should ignore that pad's own SDL events while its rebind is
 open. Every other pad is grabbed for the duration and reaches only the wizard.
+
+## Seats belong to the session: `unseat`, `--fresh`, `--follow`
+
+A seat is something taken in front of the screen about to be used, not
+something the machine remembers you having. Three pieces make that true, each
+useful on its own.
+
+**Unseat, by command.**
+
+```json
+{"cmd": "unseat"}
+{"cmd": "unseat", "player": 2}
+```
+
+Drops that seat -- every seat, with no player named. The clone stops, the pad
+is released, consumers are rewritten for the seats that remain (a launch config
+naming nobody, when nobody is left), and the seat is gone from
+`assignments.json`, so a restart does not bring it back. A `controller` event
+with `action: "removed"` and `reason: "unseated"` is emitted per pad, then
+`state`. Seating is left exactly as it was: with it open, the next hold takes
+the freed seat straight back, because that is the next thing that happens. A
+seat whose controller is merely *away* is dropped the same way.
+
+Refused, with an `error`, while a session is open (`cancel` it first), while a
+controller is being set up, and for a seat nobody holds.
+
+**Start unseated.** `padmap serve --fresh`, or `PADMAP_NO_RESTORE=1`, skips
+restoring saved seats. Profiles, calibrations and mappings are the
+controller's and follow it; only the seats are forgotten. The file itself is
+left alone until the first seat taken in the new session overwrites it, so a
+plain `serve` after a `--fresh` one that seated nobody still restores what was
+there before.
+
+**Follow a pid.** `padmap serve --follow <pid>` exits, releasing everything --
+seating closed, clones stopped, socket removed -- once that pid is gone. It is
+polled four times a second, since `PR_SET_PDEATHSIG` does not survive the
+reparenting `ensure-daemon` does. A pid already gone at startup ends the daemon
+at once. `state` carries the pid as `following` (`null` otherwise). Until the
+pid goes, nothing changes: seating stays open after the last client
+disconnects, as before, so a second player still turns up mid-game.
+
+**From a front-end.** `padmap ensure-daemon --fresh --follow $$` is the whole
+integration, from the picker and from the launcher alike. A lifetime flag
+names a session: a running daemon that already follows that pid is left alone
+(the picker's daemon survives the `execvp` into the game, seats and all), and
+one that belongs to another session -- or to none, outliving everything with
+seats restored -- is replaced. `--check` reports that as a discrepancy and
+changes nothing. Without either flag `ensure-daemon` behaves as it always has.

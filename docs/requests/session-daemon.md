@@ -73,3 +73,40 @@ ends. The tests that hold GOTG to this are `tests/e2e/test_controllers.py`;
 the one for starting unseated is marked `xfail(strict=True)` against this
 request, so the day padmap delivers, it fails loudly until the marker comes
 off.
+
+## What was built
+
+All three, and the `ensure-daemon` integration on top:
+
+1. **`padmap serve --follow <pid>`** and **`ensure-daemon --follow <pid>`**.
+   Polled every 250 ms; a pid already gone at startup ends the daemon at once.
+   Exit is the ordinary one: seating closed, every clone stopped, the socket
+   removed. Until then seating is untouched. `state` reports the pid as
+   `following`.
+2. **`padmap serve --fresh`** and **`PADMAP_NO_RESTORE=1`**: `restore()` is
+   skipped, nothing else. The file is overwritten by the first seat change of
+   the new session, not at startup.
+3. **`{"cmd": "unseat"}`** / **`{"cmd": "unseat", "player": N}`**: drops the
+   seat(s), stops the clone, releases the pad, rewrites every consumer (an
+   empty roster when nobody is left), saves, emits `controller`/`removed`
+   with reason `unseated` per pad and then `state`. Seating is not closed.
+   Refused while a session is open, while a controller is being set up, and
+   for a seat nobody holds -- with an `error`, not silently.
+
+**`ensure-daemon --fresh --follow $$`** treats the flags as a session name: a
+current daemon that follows the same pid is left alone, so the launcher's call
+after the picker's `execvp` does not replace the daemon the picker seated
+people on. Any other running daemon is replaced.
+
+Journeys in `daemon_journey.rs`: a seat unseated, retaken by a hold, then
+everybody unseated; a plain restart restores yesterday's seat while `--fresh`
+does not; a following daemon ends within a second of its pid and leaves no
+socket; a pid gone before startup ends it immediately. `unseat` also has a
+parse test and the differential corpus arm.
+
+**Seen while testing, not fixed here.** With Steam running, a pad that
+appeared within the last second or so is grabbed by Steam and a hold on it
+reaches nobody, padmap included. The existing seating journey only passes
+because it happens to hold once while seating is closed. The new journeys wait
+it out explicitly. A front-end that opens seating the instant a controller is
+plugged in sees the same window.
