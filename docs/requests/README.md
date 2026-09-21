@@ -31,3 +31,4 @@ needs when the thing calling it keeps each emulator in a directory of its own.
 | [join-a-session-late.md](join-a-session-late.md) | a session's pads are fixed when it opens; a controller switched on during one cannot take a seat |
 | [look-like-an-xbox-pad.md](look-like-an-xbox-pad.md) | an `xbox360` clone identity, so decompiled ports and every SDL game map it from the database they were built with |
 | [seating-costs-the-game-its-input.md](seating-costs-the-game-its-input.md) | **bug**: seating open rescans every tick and a press takes 108 ms to reach the game |
+| [replacing-a-daemon-with-a-seat.md](replacing-a-daemon-with-a-seat.md) | **regression**: replacing a daemon that has a pad seated fails after 10 s; it took 0.5 s at f4356e4 |
