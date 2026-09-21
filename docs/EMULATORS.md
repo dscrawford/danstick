@@ -118,7 +118,9 @@ never two players at once. A Cemu keyboard profile the user made themselves is
 not touched. Dolphin's Wii Remote 1, which padmap does not write, stays on the
 mouse and keyboard as Dolphin ships it.
 
-The research behind the tables is `docs/KEYBOARD.md`.
+A front-end can also seat the keyboard on purpose with `seat_keyboard`
+(`docs/EVENTS.md`), which pins it to a seat of its own ahead of pads seated
+later. The research behind the tables is `docs/KEYBOARD.md`.
 
 ## Motion
 

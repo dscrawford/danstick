@@ -47,3 +47,29 @@ order: player 1 keyboard, player 2 pad. Emulators that number by *device*
 rather than by seat (ares' port order, RetroArch's index) need the keyboard's
 seat carried, not skipped, or the pad lands in port 1 and the keyboard in
 nothing.
+
+## What was built
+
+`{"cmd": "seat_keyboard"}` as asked: the lowest free seat, a `claim` with
+`name: "Keyboard"`, `icon: "keyboard"`, then `state` with the player carrying
+`"keyboard": true`. Refused with an `error` when every seat is taken, when
+the keyboard already holds one, and while a session is open. `unseat` drops
+it, `--fresh` forgets it, `--follow` ends with it, `seating` ignores it. The
+seat is saved beside the pads' in `assignments.json` with `"path":
+"keyboard"`, which every pad-resolving path skips.
+
+The ordering is kept: keyboard then pad is player 1 keyboard, player 2 pad in
+Dolphin's ports, ares' ports and RetroArch's players alike, because the seat
+is carried into each writer rather than recomputed there.
+
+Underneath it, and in the same change, the keyboard always has a port: with
+no seat it takes the first port no pad holds, in each emulator's own default
+keys (RetroArch, Dolphin, Ryujinx) or padmap's layout (ares, Cemu, which have
+none). Seating it moves it ahead of pads seated later; unseating it lets it
+fall back. The tables and where they came from are `docs/KEYBOARD.md`.
+
+The journey is `the_keyboard_takes_a_seat_by_command_and_a_pad_sits_after_it`
+in `daemon_journey.rs`: seated, refused twice, a pad seated after it as
+player 2, Dolphin's `[GCPad1]` on the keyboard and `[GCPad2]` on the pad,
+RetroArch's player-1 defaults left standing, then unseated with the pad
+keeping seat 2.

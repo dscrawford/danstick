@@ -326,3 +326,37 @@ names a session: a running daemon that already follows that pid is left alone
 one that belongs to another session -- or to none, outliving everything with
 seats restored -- is replaced. `--check` reports that as a discrepancy and
 changes nothing. Without either flag `ensure-daemon` behaves as it always has.
+
+## The keyboard as a player: `seat_keyboard`
+
+```json
+{"cmd": "seat_keyboard"}
+```
+
+Seats the keyboard as the next free player. No device is read and nothing is
+grabbed -- the keyboard stays the compositor's, and padmap never sees its
+keys; the front-end times the hold itself. What changes is every emulator's
+configuration: player N is now the emulator's own keyboard device, in the
+emulator's own default keys where it has them and padmap's where it does not
+(`docs/EMULATORS.md`, "The keyboard"). A `claim` goes out first:
+
+```json
+{"event": "claim", "player": 1, "name": "Keyboard", "node": "", "icon": "keyboard", "configured": true}
+```
+
+then `state`, whose `players[]` entry for the seat is
+`{"player": 1, "name": "Keyboard", "icon": "keyboard", "configured": true,
+"published": false, "keyboard": true}`. A pad seated after it takes the seat
+after: keyboard first then pad gives player 1 keyboard, player 2 pad, carried
+into ports that number by device (ares, RetroArch) as well as by seat.
+
+Refused, with an `error`, while a session is open, when the keyboard already
+holds a seat, and when every seat is taken. `unseat` and `unseat` with its
+player drop it like any seat; `--fresh` forgets it; `--follow` ends with it.
+`seating` ignores it and is not closed by it.
+
+**Unseated, the keyboard is still somewhere.** With no seat of its own it
+sits on the first port after the pads, which is where the emulators that
+have a keyboard default would have put it anyway, moved off a port a pad
+holds. Seating it pins it to a seat ahead of pads seated later; that is the
+difference.
