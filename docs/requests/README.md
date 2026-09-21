@@ -25,3 +25,4 @@ needs when the thing calling it keeps each emulator in a directory of its own.
 | [resume-republishing.md](resume-republishing.md) | **bug**: one sleeping wireless pad leaves every controller unpublished |
 | [secondary-bindings.md](secondary-bindings.md) | a control can hold one input, so a second button for the same control has nowhere to live |
 | [session-daemon.md](session-daemon.md) | every session starts unseated and the daemon ends with it — today it outlives everything and restores yesterday's seats |
+| [controllers-that-are-keyboards.md](controllers-that-are-keyboards.md) | a Steam Controller in lizard mode and a Bluetooth Xbox pad are keyboards and mice too; GOTG holds them in the picker, padmap should hold them in the game |
