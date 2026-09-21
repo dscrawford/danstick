@@ -95,6 +95,14 @@ padmap works.
 
     python3 tools/padctl.py watch
 
+## `pads` follows the room
+
+`{"event": "pads", "count": N}` is sent when a session opens and again
+whenever the set of pads in it changes: a controller switched on during the
+session is admitted and counted, one switched off is counted out (its claim
+kept for its return). A front-end saying "no controllers found -- plug one in"
+can stop saying it the moment that is no longer true.
+
 ## Shape
 
 ```jsonc

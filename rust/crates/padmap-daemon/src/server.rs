@@ -117,6 +117,8 @@ pub struct Server {
     last_finish: f64,
     /// The last `input` event sent under the wizard; the same one is not sent twice.
     last_input: Option<Value>,
+    /// Opens tried on a pad that appeared mid-session; a node is readable a beat after it exists.
+    late_attempts: BTreeMap<PathBuf, u32>,
     scratch: Vec<evdev::InputEvent>,
     pending_scope: String,
     sdl_lines: Vec<String>,
@@ -235,6 +237,7 @@ impl Server {
             solo: None,
             last_finish: 0.0,
             last_input: None,
+            late_attempts: BTreeMap::new(),
             scratch: Vec::with_capacity(64),
             pending_scope: String::new(),
             sdl_lines: Vec::new(),
@@ -1543,6 +1546,15 @@ impl Server {
             return;
         };
         let raw = session.read(index);
+        if session.is_gone(index) {
+            // A dead node reports readable forever; stop asking.
+            if let Some(source) = session.sources().get(index) {
+                let _ = self.reactor.unwatch(source.as_fd());
+            }
+            let count = session.present();
+            self.broadcast(&events::pads(count));
+            return;
+        }
         if raw.is_empty() {
             return;
         }
@@ -2228,6 +2240,7 @@ impl Server {
         self.last_attach_nodes = Some(nodes);
 
         if self.state == STATE_ASSIGNING {
+            self.admit_late_pads(scan);
             return;
         }
         let present: BTreeMap<String, Pad> = scan
@@ -2267,6 +2280,68 @@ impl Server {
             .map(|path| path.display().to_string())
             .collect();
         self.triton_live.clone()
+    }
+
+    /// A pad switched on during a session joins it: grabbed and watched like
+    /// the others, claimable by the same hold. `pads` is sent again with the
+    /// new count, so "no controllers found" can stop saying it.
+    fn admit_late_pads(&mut self, scan: &mut Scan) {
+        let Some(session) = self.session.as_mut() else {
+            return;
+        };
+        let late: Vec<Pad> = scan
+            .pads()
+            .iter()
+            .filter(|pad| {
+                session
+                    .index_of(&pad.path)
+                    .is_none_or(|index| session.is_gone(index))
+            })
+            .cloned()
+            .collect();
+        if late.is_empty() {
+            return;
+        }
+        let mut admitted = 0;
+        let mut retry = false;
+        for pad in late {
+            let name = clean(&pad.name);
+            let path = pad.path.clone();
+            match session.admit(pad) {
+                Ok(index) => {
+                    self.late_attempts.remove(&path);
+                    let Some(source) = session.sources().get(index) else {
+                        continue;
+                    };
+                    match self.reactor.watch(source.as_fd(), Watched::Session(index)) {
+                        Ok(()) => {
+                            info!("session: {name} joined late as pad {index}");
+                            admitted += 1;
+                        }
+                        Err(error) => warn!("session: could not watch {name}: {error}"),
+                    }
+                }
+                Err(error) => {
+                    // udev grants access a beat after the node appears; try again
+                    // on the next scan, as the hotplug path does, up to a limit.
+                    let tries = self.late_attempts.entry(path).or_insert(0);
+                    *tries += 1;
+                    if *tries < hotplug::ATTACH_ATTEMPTS {
+                        debug!("session: {name} not admitted yet ({error}); retrying");
+                        retry = true;
+                    } else {
+                        warn!("session: {name} could not be admitted ({error}); giving up");
+                    }
+                }
+            }
+        }
+        if admitted > 0 {
+            let count = session.present();
+            self.broadcast(&events::pads(count));
+        }
+        if retry {
+            self.last_attach_nodes = None;
+        }
     }
 
     fn announce_departure(&mut self, signature: &str) {

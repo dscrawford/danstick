@@ -42,6 +42,8 @@ pub struct Session {
     pub grab_failures: Vec<String>,
     buffer: Vec<InputEvent>,
     read_seen: Vec<bool>,
+    /// A pad whose node went away mid-session; its slot and claim stay.
+    gone: Vec<bool>,
 }
 
 impl Session {
@@ -67,6 +69,7 @@ impl Session {
                 None => {
                     let mut session = Session {
                         read_seen: vec![false; remaining.len()],
+                        gone: vec![false; remaining.len()],
                         pads: remaining,
                         sources,
                         assigner: Assigner::default(),
@@ -94,6 +97,39 @@ impl Session {
             }
         }
         Err(OpenError::AllGone(last))
+    }
+
+    /// A pad switched on after the session opened: grabbed and read like the
+    /// others, claimable by the same hold. Returns its index.
+    pub fn admit(&mut self, pad: Pad) -> Result<usize, clone::CloneError> {
+        let mut source = clone::open_source(&pad, false)?;
+        if source.grab().is_err() {
+            self.grab_failures.push(pad.event().to_owned());
+        }
+        source.drain();
+        if let Some(index) = self.index_of(&pad.path) {
+            // Back on the same node: take its old place, claim and all.
+            self.sources[index] = source;
+            self.pads[index] = pad;
+            self.gone[index] = false;
+            self.read_seen[index] = false;
+            return Ok(index);
+        }
+        self.pads.push(pad);
+        self.sources.push(source);
+        self.read_seen.push(false);
+        self.gone.push(false);
+        Ok(self.pads.len() - 1)
+    }
+
+    /// Whether the pad at `index` has gone away since it was opened.
+    pub fn is_gone(&self, index: usize) -> bool {
+        self.gone.get(index).copied().unwrap_or(true)
+    }
+
+    /// How many pads are here to be read.
+    pub fn present(&self) -> usize {
+        self.gone.iter().filter(|gone| !**gone).count()
     }
 
     pub fn drain(&mut self) {
@@ -142,6 +178,13 @@ impl Session {
         if let Err(error) = source.fetch_events(&mut self.buffer) {
             if error.kind() != std::io::ErrorKind::WouldBlock {
                 warn!("reading session pad {index}: {error}");
+                if !self.gone[index] {
+                    self.gone[index] = true;
+                    log::info!(
+                        "session pad {index} ({}) went away; its claim is kept for its return",
+                        self.pads.get(index).map(|pad| pad.event()).unwrap_or("?")
+                    );
+                }
             }
             return Vec::new();
         }

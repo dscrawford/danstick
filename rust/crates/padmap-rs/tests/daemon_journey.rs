@@ -75,6 +75,17 @@ const KEYSEAT: PadId = PadId {
     pid: 0x000e,
     only: "RSTESTKEYSEAT",
 };
+/// Two pads behind one filter, so the second can appear after the session opens.
+const LATE_FIRST: PadId = PadId {
+    name: "PADMAP RSTESTLATE one",
+    pid: 0x000f,
+    only: "RSTESTLATE",
+};
+const LATE_SECOND: PadId = PadId {
+    name: "PADMAP RSTESTLATE two",
+    pid: 0x0010,
+    only: "RSTESTLATE",
+};
 /// No pad is made for this one; the daemon under test only needs a filter.
 const FOLLOWER: PadId = PadId {
     name: "PADMAP RSTESTFOLLOW",
@@ -1504,5 +1515,59 @@ fn the_keyboard_takes_a_seat_by_command_and_a_pad_sits_after_it() {
 
     drop(daemon);
     drop(pad);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// A pad switched on during a session joins it: `pads` says so, a hold on it
+/// claims a seat, and when it goes away `pads` says that too.
+#[test]
+fn a_pad_switched_on_during_a_session_can_take_a_seat() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let _first = LiveGuard::new(LATE_FIRST);
+    let _second = LiveGuard::new(LATE_SECOND);
+    let root = std::env::temp_dir().join(format!("padmap-late-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let _one = TestPad::new(LATE_FIRST);
+    let mut daemon = Daemon::start(&root, LATE_FIRST);
+    daemon.pump(1.5);
+
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "begin", "players": 2}));
+    daemon
+        .wait_for("state", |e| e["state"] == "assigning", 6.0)
+        .expect("a session");
+    assert_eq!(
+        daemon.last("pads").map(|e| e["count"].clone()),
+        Some(1.into())
+    );
+
+    // The second pad is switched on now, with the session open.
+    let mut two = TestPad::new(LATE_SECOND);
+    daemon
+        .wait_for("pads", |e| e["count"] == 2, 6.0)
+        .expect("the late pad was admitted to the session");
+    daemon.pump(1.5);
+    two.hold(FIRST_KEY, 0.6);
+    let claim = daemon
+        .wait_for("claim", |e| e["name"] == LATE_SECOND.name, 6.0)
+        .expect("a hold on the late pad claimed a seat");
+    assert_eq!(claim["player"], 1);
+
+    // Switched off again: the session says so, and does not fall over.
+    daemon.events.clear();
+    drop(two);
+    daemon
+        .wait_for("pads", |e| e["count"] == 1, 6.0)
+        .expect("the departed pad was counted out");
+    daemon.send(serde_json::json!({"cmd": "cancel"}));
+    daemon
+        .wait_for("state", |e| e["state"] != "assigning", 6.0)
+        .expect("the session ended cleanly");
+
+    drop(daemon);
     let _ = std::fs::remove_dir_all(&root);
 }

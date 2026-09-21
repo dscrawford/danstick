@@ -36,3 +36,22 @@ only at `accept`. The list it owns just follows the room.
 **What GOTG would do with it.** Nothing new to send. The assignment screen's
 "hold a button on the controller for player 2" would become true the moment
 a second controller was switched on, which is what it already says.
+
+## What was built
+
+A session follows the room. While one is open the attach scan no longer
+stops at the door: a pad that appears is admitted -- opened, grabbed, drained,
+watched, fed to the same assigner -- and `pads` goes out again with the new
+count. A node is readable a beat after it exists (udev's ACL), so an admission
+that fails is retried on the next scan up to the hotplug path's limit rather
+than given up on the first `EACCES`, which is exactly what the test hit.
+
+A pad that goes away mid-session is the mirror: its node is unwatched so a
+dead fd cannot spin the loop, its slot and claim are kept, `pads` reports the
+smaller count, and if it comes back on the same node it takes its old place.
+Nothing about the session's meaning changed: it still owns every pad, still
+ends with `accept` or `cancel`, and claims still become seats at `accept`.
+
+The journey `a_pad_switched_on_during_a_session_can_take_a_seat` opens a
+session over one pad, creates a second, sees `pads: 2`, claims player 1 on
+the late pad, removes it, sees `pads: 1`, and cancels cleanly.
