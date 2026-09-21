@@ -19,3 +19,8 @@ rust/target/
 # direnv's cached devShell profile.
 .direnv/
 .claude-flow/
+
+# Agent tooling state: local sessions, swarm scratch, vector db.
+.claude/
+.swarm/
+ruvector.db
