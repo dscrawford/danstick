@@ -24,6 +24,7 @@ reason.
 | `XBOX_360` | the unremarkable pad everything else is compared against: sticks centred at zero, triggers from zero, a hat d-pad. Anything that only works here is assuming this shape |
 | `XBOX_SERIES_X` | same driver, triggers 0..1023 instead of 0..255, and one control that is a `KEY_` rather than a `BTN_` |
 | `MAYFLASH_GAMECUBE` | the adapter that broke three things at once |
+| `STEAM_DECK` | a pad that is not shaped like a pad: keys for the d-pad, a trackpad on the hat, triggers on `ABS_HAT2`, and X and Y on each other's codes (`docs/STEAM-DECK.md`) |
 
 The GameCube adapter is the one that pays for the framework. Everything
 awkward about it is real and measured:
@@ -50,6 +51,18 @@ A Steam Controller and a Switch Pro have no evdev node to build: padmap reads
 them over hidraw and decodes their reports itself. Their fixtures are the
 report bytes, in `padmap-input/tests/triton_protocol.rs` and
 `nintendo_differential.rs` — the same idea, one layer down.
+
+`STEAM_VIRTUAL` is here but is not a controller: it is Steam's uinput mirror of
+one. It was recorded from a Deck on 2026-09-21, which corrected it — its sticks
+stop at -32767, where the xpad table it copies reaches -32768.
+
+## Checking one against somebody else's answer
+
+A fixture and a test written from the same reading of the same driver agree
+with each other for free. `STEAM_DECK` is held against SDL's built-in database
+entry for its GUID instead (`padmap-input/tests/steam_deck.rs`): two
+independent records of one device, and the test names every control they
+disagree about. That is what caught the X/Y swap.
 
 ## Running them
 

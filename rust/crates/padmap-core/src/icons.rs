@@ -37,7 +37,7 @@ pub const ICON_NAMES: [&str; 11] = [
 pub const STEAM_VIRTUAL_ID: (u16, u16) = (0x28DE, 0x11FF);
 
 /// Fallback only, and treated as a guess: these ids are not reliable identity.
-const BY_ID: [((u16, u16), &str); 13] = [
+const BY_ID: [((u16, u16), &str); 14] = [
     ((0x0079, 0x1830), ARCADE),      // MAYFLASH Arcade Fightstick F300
     ((0x0079, 0x1843), GAMECUBE),    // Mayflash GameCube adapter
     ((0x057E, 0x0337), GAMECUBE),    // Nintendo official GC adapter
@@ -50,6 +50,7 @@ const BY_ID: [((u16, u16), &str); 13] = [
     ((0x057E, 0x2009), SWITCH),      // Switch Pro
     ((0x057E, 0x2017), SNES),        // SNES pad for Switch Online (layout of original console)
     ((0x057E, 0x2019), N64),         // N64 pad for Switch Online
+    ((0x28DE, 0x1205), STEAM),       // Steam Deck, built-in controls
     ((0x28DE, 0x1304), STEAM),       // Steam Controller Puck
 ];
 
@@ -198,6 +199,27 @@ mod tests {
                 &BTreeMap::new()
             ),
             XBOX
+        );
+    }
+
+    #[test]
+    fn a_decks_built_in_controls_are_valve_hardware_by_id_and_by_name() {
+        // hid-steam names the node "Steam Deck"; the lizard nodes beside it
+        // say only "Valve Software Steam Controller".
+        let deck = |name: &str| for_pad(0x28DE, 0x1205, name, None, &BTreeMap::new());
+        assert_eq!(deck("Steam Deck"), STEAM);
+        assert_eq!(deck(""), STEAM, "the id alone is enough");
+        assert_eq!(deck("Valve Software Steam Controller"), STEAM);
+        // Not to be confused with Steam's mirror, which wears an Xbox name.
+        assert_eq!(
+            for_pad(
+                0x28DE,
+                0x11FF,
+                "Microsoft X-Box 360 pad 0",
+                None,
+                &BTreeMap::new()
+            ),
+            STEAM
         );
     }
 

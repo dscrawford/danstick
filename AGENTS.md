@@ -82,6 +82,7 @@ ioctls deny it with targeted allows) and `missing_debug_implementations`.
     rust/crates/padmap-rs/      the CLI binary: main.rs dispatch, commands.rs, exec sandboxing
     tools/                      Python probes and the socket watcher (`padctl.py watch`); no runtime code
     docs/EVENTS.md              the socket contract consumers read; change it with the protocol
+    docs/STEAM-DECK.md          the Deck's built-in controls, and the four ways they are not an Xbox pad
     docs/STORIES.md             what a person at the box is promised, and the test that holds each
     docs/requests/              GOTG's requests; keep the text, append "What was built"
     FINDINGS.md                 the incident record; every guard in the code has a wound written here
@@ -123,6 +124,11 @@ Runtime state lives in `$XDG_RUNTIME_DIR/padmap/` (socket, `assignments.json`,
 - A Steam Virtual Gamepad (`28de:11ff`) mirrors a real pad; discovery drops
   it when any other pad is present. A triton pad (2026 Steam Controller)
   cannot be grabbed at all.
+- A Steam Deck's own controls (`28de:1205`) are a pad only while nothing holds
+  the hidraw node, and Steam holds it: with Steam up there is no `Steam Deck`
+  node, just the lizard keyboard and mouse and Steam's mirror. Its d-pad is
+  keys, `ABS_HAT0` is the left trackpad, the triggers are `ABS_HAT2`, and X and
+  Y arrive on each other's codes. All of it in `docs/STEAM-DECK.md`.
 - `nix build` of the Rust package needs several GB free; a 99%-full root
   disk fails it mid-build with a misleading error.
 - `.envrc` still exports `PYTHONPATH=$PWD/src`; there is no `src/` any more.

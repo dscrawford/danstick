@@ -142,6 +142,20 @@ fn an_xbox_trigger_pressed_half_way_sets_its_byte_and_not_its_bit() {
     }
 }
 
+/// Controls a DualShock-shaped packet has no field for, so a press of one is
+/// correctly seen by nobody: an Xbox share button, a Deck's grips, its
+/// trackpad clicks and its quick access button.
+const NOTHING_DSU_CAN_CARRY: [&str; 8] = [
+    "capture",
+    "l4",
+    "r4",
+    "l5",
+    "r5",
+    "lpad_click",
+    "rpad_click",
+    "quickaccess",
+];
+
 #[test]
 fn every_gamepad_button_a_fixture_declares_lands_somewhere_or_is_the_guide() {
     // A button the tracker does not know is a press nobody sees.
@@ -150,14 +164,14 @@ fn every_gamepad_button_a_fixture_declares_lands_somewhere_or_is_the_guide() {
             let mut tracker = tracker_for(fixture);
             tracker.apply(EV_KEY, *code, 1);
             let pad = tracker.pad();
-            let gamepad_block = (0x130..=0x13E).contains(code);
-            if !gamepad_block {
-                assert_eq!(
-                    *control, "capture",
-                    "{}: 0x{code:x} is outside BTN_GAMEPAD",
+            let carried = (0x130..=0x13E).contains(code) || (0x220..=0x223).contains(code);
+            if !carried {
+                assert!(
+                    NOTHING_DSU_CAN_CARRY.contains(control),
+                    "{}: {control} (0x{code:x}) is outside every table and unnamed",
                     fixture.name
                 );
-                assert_eq!(pad.buttons, 0);
+                assert_eq!(pad.buttons, 0, "{}: {control}", fixture.name);
                 continue;
             }
             assert!(
@@ -196,34 +210,44 @@ fn the_xbox_face_buttons_land_by_position() {
 
 #[test]
 fn a_hat_dpad_and_a_button_dpad_produce_the_same_bits() {
+    // Up and left held at once, however the pad happens to say so.
     for fixture in fakepad::EVERY {
         let mut tracker = tracker_for(fixture);
-        assert!(
-            fixture.dpad_is_hat,
-            "{}: every fixture here is a hat",
-            fixture.name
-        );
-        tracker.apply(EV_ABS, fakepad::ABS_HAT0X, -1);
-        tracker.apply(EV_ABS, fakepad::ABS_HAT0Y, -1);
+        if fixture.dpad_is_hat {
+            tracker.apply(EV_ABS, fakepad::ABS_HAT0X, -1);
+            tracker.apply(EV_ABS, fakepad::ABS_HAT0Y, -1);
+        } else {
+            // A Steam Deck's d-pad, and a Switch Pro's: BTN_DPAD_UP..RIGHT.
+            let up = fixture.button("up").expect("a d-pad key");
+            let left = fixture.button("left").expect("a d-pad key");
+            assert_eq!((up, left), (0x220, 0x222), "{}", fixture.name);
+            tracker.apply(EV_KEY, up, 1);
+            tracker.apply(EV_KEY, left, 1);
+        }
         assert_eq!(
             tracker.pad().buttons,
             button::UP | button::LEFT,
             "{}",
             fixture.name
         );
-        assert_eq!(tracker.pad().analog[analog::DPAD_UP], 255);
-        assert_eq!(tracker.pad().analog[analog::DPAD_LEFT], 255);
+        assert_eq!(
+            tracker.pad().analog[analog::DPAD_UP],
+            255,
+            "{}",
+            fixture.name
+        );
+        assert_eq!(
+            tracker.pad().analog[analog::DPAD_LEFT],
+            255,
+            "{}",
+            fixture.name
+        );
     }
-    // BTN_DPAD_UP..BTN_DPAD_RIGHT are 0x220..0x223.
+    // A pad declaring neither still answers to the keys, released and all.
     let mut tracker = Tracker::new(BTreeMap::new());
     tracker.apply(EV_KEY, 0x220, 1);
     tracker.apply(EV_KEY, 0x222, 1);
-    assert_eq!(
-        tracker.pad().buttons,
-        button::UP | button::LEFT,
-        "a Switch Pro's d-pad"
-    );
-    assert_eq!(tracker.pad().analog[analog::DPAD_LEFT], 255);
+    assert_eq!(tracker.pad().buttons, button::UP | button::LEFT);
     tracker.apply(EV_KEY, 0x220, 0);
     tracker.apply(EV_KEY, 0x222, 0);
     assert_eq!(tracker.pad().buttons, 0);

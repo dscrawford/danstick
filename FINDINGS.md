@@ -3182,3 +3182,63 @@ must be a *number* is refused when it is not one, loudly, because a wrong
 number is a real argument. A field that must be a *string* should be emptied
 when it is not one, because an empty layout or icon means "unset" and every
 caller already handles it. Neither should be rendered.
+
+## A Steam Deck's d-pad was the trackpad under the player's left thumb
+
+`28de:1205` is a Steam Deck's own controls, and `hid-steam` publishes them as
+an ordinary evdev pad -- but not an ordinary *shape*. Four things about it are
+not what the codes suggest, and only one of them is fixed here.
+
+`ABS_HAT0X/Y` is the left **trackpad**, -32767..32767 with a fuzz of 256. The
+d-pad is four keys, `BTN_DPAD_UP..RIGHT`. `guess.rs` bound the d-pad by looking
+for the hat codes and stopping there, so every direction came from the pad the
+player's thumb rests on, and the four keys that are the actual d-pad bound
+nothing. The guard is the obvious one once the question is asked out loud: **a
+hat reports -1, 0 or 1, and anything wider on a hat code is not a d-pad.**
+Unmeasured, a hat code is still taken at its word, so nothing that passes
+`axes: None` -- which is every frozen corpus case -- moved.
+
+The other three are recorded and not corrected:
+
+* **X and Y arrive on each other's codes.** `hid-steam` writes `BTN_X` for the
+  west button, and `BTN_X` *is* `BTN_NORTH` -- a legacy spelling of a
+  positional code. Anything reading the codes positionally, padmap's
+  `STANDARD_BUTTONS` included, comes out the wrong way round.
+* **The triggers are `ABS_HAT2Y`/`ABS_HAT2X` of 0..32767**, not `ABS_Z`/`ABS_RZ`
+  of 0..255, which the pad does not declare at all. `binding::axis_index`
+  excludes `0x10..0x18` from the axis numbering outright, so padmap cannot
+  spell those indices and falls back to the digital `BTN_TL2`/`BTN_TR2`.
+* **The grips are on `0x224..0x227`**, codes the kernel headers leave unnamed.
+  Mainline v6.16 `hid-steam` puts them on `BTN_TRIGGER_HAPPY1..4`
+  (`0x2C0..0x2C3`); SteamOS's does not. A fixture read off mainline would have
+  been wrong about the hardware in front of it.
+
+**What made the difference was a second opinion.** A fixture and a test written
+from one reading of one driver agree with each other for free, and the X/Y swap
+would have survived both: the driver says `BTN_X | button X`, and the obvious
+test asserts exactly that. SDL's built-in database has an entry for this GUID,
+written by people with the hardware, and it says `x:b5,y:b6` where padmap's
+guess says `y:b5,x:b6`. `padmap-input/tests/steam_deck.rs` holds the two
+records against each other and names every control they disagree about, so the
+list of disagreements is four and cannot grow by accident.
+
+The same pass corrected `STEAM_VIRTUAL`, whose own source string had been
+asking for a live recording since it was written: Steam's mirror is *not*
+byte-for-byte xpad's table. Its sticks stop at -32767 where xpad's reach
+-32768.
+
+**Worth generalising.** Capturing a device is not the same as checking one.
+Every fixture here came from one source, and a fixture nobody can cross-check
+is a guess with a struct around it even when the numbers are real -- the
+numbers can be right and the *names* still wrong. Where somebody else has
+published an independent answer for the same hardware, the test should be
+against theirs, not against the reading that produced the fixture.
+
+**Not fixed, and worth knowing.** `hid-steam` withdraws the pad node for any
+client that opens the hidraw device, and Steam is such a client, so on a Deck
+as it normally runs there is no `Steam Deck` node at all -- only the lizard
+keyboard and mouse, and Steam's `28de:11ff` mirror standing in for the built-in
+controls. `without_steam_mirrors` drops that mirror as soon as any other pad is
+present, on the assumption that a mirror always duplicates a pad padmap can
+already see. On a Deck that assumption is false, and plugging in a second pad
+costs the Deck its own controls.

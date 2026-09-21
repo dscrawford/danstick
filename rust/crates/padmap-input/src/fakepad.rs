@@ -24,6 +24,42 @@ impl Axis {
         }
     }
 
+    /// Steam's uinput mirror: xpad's stick, one short at the bottom.
+    const fn steam_stick(code: u16) -> Axis {
+        Axis {
+            code,
+            minimum: -32767,
+            maximum: 32767,
+            rest: 0,
+            fuzz: 16,
+            flat: 128,
+        }
+    }
+
+    /// A Deck stick: hid-steam declares no fuzz and no deadzone at all.
+    const fn deck_stick(code: u16) -> Axis {
+        Axis {
+            code,
+            minimum: -32767,
+            maximum: 32767,
+            rest: 0,
+            fuzz: 0,
+            flat: 0,
+        }
+    }
+
+    /// A Deck trackpad: a stick's range, with the fuzz a finger needs.
+    const fn deck_pad(code: u16) -> Axis {
+        Axis {
+            code,
+            minimum: -32767,
+            maximum: 32767,
+            rest: 0,
+            fuzz: 256,
+            flat: 0,
+        }
+    }
+
     const fn xpad_stick(code: u16) -> Axis {
         Axis {
             code,
@@ -54,12 +90,20 @@ pub struct Fixture {
     pub dpad_is_hat: bool,
 }
 
+/// `BTN_THUMB`/`BTN_THUMB2`: a Steam Deck's trackpad clicks.
+const BTN_THUMB: u16 = 0x121;
+const BTN_THUMB2: u16 = 0x122;
+/// `BTN_BASE`: the Deck's quick access ("...") button.
+const BTN_BASE: u16 = 0x126;
 const BTN_SOUTH: u16 = 0x130;
 const BTN_EAST: u16 = 0x131;
 const BTN_NORTH: u16 = 0x133;
 const BTN_WEST: u16 = 0x134;
 const BTN_TL: u16 = 0x136;
 const BTN_TR: u16 = 0x137;
+/// `BTN_TL2`/`BTN_TR2`: a trigger pulled all the way, as a key.
+const BTN_TL2: u16 = 0x138;
+const BTN_TR2: u16 = 0x139;
 const BTN_SELECT: u16 = 0x13A;
 const BTN_START: u16 = 0x13B;
 const BTN_MODE: u16 = 0x13C;
@@ -67,6 +111,16 @@ const BTN_THUMBL: u16 = 0x13D;
 const BTN_THUMBR: u16 = 0x13E;
 /// `KEY_RECORD`: a key code, not a BTN_.
 const KEY_RECORD: u16 = 167;
+/// `BTN_DPAD_*`: a d-pad reported as four keys rather than a hat.
+const BTN_DPAD_UP: u16 = 0x220;
+const BTN_DPAD_DOWN: u16 = 0x221;
+const BTN_DPAD_LEFT: u16 = 0x222;
+const BTN_DPAD_RIGHT: u16 = 0x223;
+/// The Deck's four grips, on codes the kernel headers give no name to.
+const DECK_GRIP_L4: u16 = 0x224;
+const DECK_GRIP_R4: u16 = 0x225;
+const DECK_GRIP_L5: u16 = 0x226;
+const DECK_GRIP_R5: u16 = 0x227;
 
 const ABS_X: u16 = 0x00;
 const ABS_Y: u16 = 0x01;
@@ -76,6 +130,10 @@ const ABS_RY: u16 = 0x04;
 const ABS_RZ: u16 = 0x05;
 pub const ABS_HAT0X: u16 = 0x10;
 pub const ABS_HAT0Y: u16 = 0x11;
+pub const ABS_HAT1X: u16 = 0x12;
+pub const ABS_HAT1Y: u16 = 0x13;
+pub const ABS_HAT2X: u16 = 0x14;
+pub const ABS_HAT2Y: u16 = 0x15;
 
 const BUS_USB: u16 = 0x03;
 
@@ -126,12 +184,20 @@ pub const STEAM_VIRTUAL: Fixture = Fixture {
     source: "the id is icons::STEAM_VIRTUAL_ID (28de:11ff), Steam's uinput \
              gamepad since the Steam Input rewrite; the name and the button \
              table are xpad's Xbox 360 entry with Steam's slot index appended. \
-             A live recording beside a puck is still owed (docs/requests/\
-             one-controller-one-pad.md)",
+             Recorded from Steam 1788652215 on a Steam Deck, 2026-09-21: the \
+             buttons are xpad's eleven exactly, but the sticks stop at -32767 \
+             where xpad's reach -32768",
     emits_scan: false,
     scancodes: &[],
     buttons: XBOX_360.buttons,
-    axes: XBOX_360.axes,
+    axes: &[
+        ("lx", Axis::steam_stick(ABS_X)),
+        ("ly", Axis::steam_stick(ABS_Y)),
+        ("rx", Axis::steam_stick(ABS_RX)),
+        ("ry", Axis::steam_stick(ABS_RY)),
+        ("lt", Axis::new(ABS_Z, 0, 255, 0)),
+        ("rt", Axis::new(ABS_RZ, 0, 255, 0)),
+    ],
     dpad_is_hat: true,
 };
 
@@ -211,7 +277,76 @@ pub const MAYFLASH_GAMECUBE: Fixture = Fixture {
     dpad_is_hat: true,
 };
 
-pub const EVERY: [&Fixture; 3] = [&XBOX_360, &XBOX_SERIES_X, &MAYFLASH_GAMECUBE];
+/// A Steam Deck's own controls, which are a pad only while Steam is not
+/// holding the hidraw node: `hid-steam` withdraws this node for any client
+/// that opens the device, and Steam is such a client.
+///
+/// It is not shaped like an Xbox pad in any of the four ways that matter.
+/// The d-pad is four keys, and `ABS_HAT0X/Y` -- where a d-pad usually lives --
+/// is the left trackpad. The triggers are `ABS_HAT2Y`/`ABS_HAT2X` of 0..32767,
+/// not `ABS_Z`/`ABS_RZ` of 0..255, which the pad does not declare at all. And
+/// X and Y arrive on each other's codes, because `hid-steam` writes `BTN_X`
+/// for the west button and `BTN_X` *is* `BTN_NORTH`.
+pub const STEAM_DECK: Fixture = Fixture {
+    name: "Steam Deck",
+    vid: 0x28DE,
+    pid: 0x1205,
+    bustype: BUS_USB,
+    source: "captured from a Steam Deck (Galileo, SteamOS neptune \
+             6.16.12-valve24.5) on 2026-09-21 with Steam stopped, by \
+             EVIOCGBIT/EVIOCGABS on the `Steam Deck` node; the same table is \
+             declared by drivers/hid/hid-steam.c steam_input_register under \
+             STEAM_QUIRK_DECK. The grip order and the x/y swap are not pressed \
+             but corroborated: SDL's built-in database has an entry for this \
+             GUID, and tests/steam_deck.rs holds this fixture against it. The \
+             grips are on 0x224..0x227 here, codes the kernel headers leave \
+             unnamed; mainline v6.16 puts them on BTN_TRIGGER_HAPPY1..4 \
+             (0x2C0..0x2C3), so this is SteamOS's hid-steam, not everyone's",
+    emits_scan: false,
+    scancodes: &[],
+    buttons: &[
+        ("a", BTN_SOUTH),
+        ("b", BTN_EAST),
+        // hid-steam writes BTN_X for the west button, and BTN_X is BTN_NORTH.
+        ("x", BTN_NORTH),
+        ("y", BTN_WEST),
+        ("l", BTN_TL),
+        ("r", BTN_TR),
+        ("lt_click", BTN_TL2),
+        ("rt_click", BTN_TR2),
+        ("select", BTN_SELECT),
+        ("start", BTN_START),
+        ("home", BTN_MODE),
+        ("l3", BTN_THUMBL),
+        ("r3", BTN_THUMBR),
+        ("up", BTN_DPAD_UP),
+        ("down", BTN_DPAD_DOWN),
+        ("left", BTN_DPAD_LEFT),
+        ("right", BTN_DPAD_RIGHT),
+        ("lpad_click", BTN_THUMB),
+        ("rpad_click", BTN_THUMB2),
+        ("quickaccess", BTN_BASE),
+        ("l4", DECK_GRIP_L4),
+        ("r4", DECK_GRIP_R4),
+        ("l5", DECK_GRIP_L5),
+        ("r5", DECK_GRIP_R5),
+    ],
+    axes: &[
+        ("lx", Axis::deck_stick(ABS_X)),
+        ("ly", Axis::deck_stick(ABS_Y)),
+        ("rx", Axis::deck_stick(ABS_RX)),
+        ("ry", Axis::deck_stick(ABS_RY)),
+        ("lt", Axis::new(ABS_HAT2Y, 0, 32767, 0)),
+        ("rt", Axis::new(ABS_HAT2X, 0, 32767, 0)),
+        ("lpad_x", Axis::deck_pad(ABS_HAT0X)),
+        ("lpad_y", Axis::deck_pad(ABS_HAT0Y)),
+        ("rpad_x", Axis::deck_pad(ABS_HAT1X)),
+        ("rpad_y", Axis::deck_pad(ABS_HAT1Y)),
+    ],
+    dpad_is_hat: false,
+};
+
+pub const EVERY: [&Fixture; 4] = [&XBOX_360, &XBOX_SERIES_X, &MAYFLASH_GAMECUBE, &STEAM_DECK];
 
 pub const DPAD: [&str; 4] = ["up", "down", "left", "right"];
 
@@ -345,11 +480,90 @@ mod tests {
     fn steams_mirror_is_an_xbox_pad_under_a_valve_id() {
         assert_eq!((STEAM_VIRTUAL.vid, STEAM_VIRTUAL.pid), (0x28DE, 0x11FF));
         assert_eq!(STEAM_VIRTUAL.buttons, XBOX_360.buttons);
-        assert_eq!(STEAM_VIRTUAL.axes, XBOX_360.axes);
         assert!(STEAM_VIRTUAL.name.starts_with(XBOX_360.name));
         let pad = STEAM_VIRTUAL.pad("event7");
         assert_eq!(pad.event(), "event7");
         assert_eq!((pad.vid, pad.pid), (0x28DE, 0x11FF));
+    }
+
+    #[test]
+    fn steams_mirror_copies_xpads_table_but_stops_a_step_short_of_it() {
+        // Recorded off Steam's uinput node: every axis but the bottom of a stick.
+        assert_eq!(STEAM_VIRTUAL.axis("lt"), XBOX_360.axis("lt"));
+        assert_eq!(STEAM_VIRTUAL.axis("rt"), XBOX_360.axis("rt"));
+        for stick in ["lx", "ly", "rx", "ry"] {
+            let mirror = STEAM_VIRTUAL.axis(stick).expect(stick);
+            let xpad = XBOX_360.axis(stick).expect(stick);
+            assert_eq!(mirror.minimum, -32767, "{stick}");
+            assert_eq!(xpad.minimum, -32768, "{stick}");
+            assert_eq!(
+                (mirror.maximum, mirror.fuzz, mirror.flat),
+                (xpad.maximum, xpad.fuzz, xpad.flat),
+                "{stick}: only the floor differs"
+            );
+        }
+    }
+
+    #[test]
+    fn a_deck_reports_x_and_y_on_each_others_codes() {
+        // hid-steam writes BTN_X for the west button; BTN_X is BTN_NORTH.
+        assert_eq!(STEAM_DECK.button("x"), Some(BTN_NORTH));
+        assert_eq!(STEAM_DECK.button("y"), Some(BTN_WEST));
+        assert_eq!(XBOX_360.button("x"), Some(BTN_WEST));
+        assert_eq!(XBOX_360.button("y"), Some(BTN_NORTH));
+        assert_eq!(STEAM_DECK.button("x"), XBOX_360.button("y"));
+        assert_eq!(STEAM_DECK.button("y"), XBOX_360.button("x"));
+        // A and B are not swapped, so this is not a whole-pad rotation.
+        assert_eq!(STEAM_DECK.button("a"), XBOX_360.button("a"));
+        assert_eq!(STEAM_DECK.button("b"), XBOX_360.button("b"));
+    }
+
+    #[test]
+    fn a_decks_triggers_are_hat_two_and_it_has_no_abs_z_at_all() {
+        let lt = STEAM_DECK.axis("lt").expect("lt");
+        let rt = STEAM_DECK.axis("rt").expect("rt");
+        assert_eq!((lt.code, lt.minimum, lt.maximum), (ABS_HAT2Y, 0, 32767));
+        assert_eq!((rt.code, rt.minimum, rt.maximum), (ABS_HAT2X, 0, 32767));
+        let codes = STEAM_DECK.abs_codes();
+        assert!(!codes.contains(&ABS_Z), "a Deck declares no ABS_Z");
+        assert!(!codes.contains(&ABS_RZ), "a Deck declares no ABS_RZ");
+        // Read them as xpad's triggers and both are 128x too small.
+        assert_eq!(XBOX_360.axis("lt").expect("lt").code, ABS_Z);
+    }
+
+    #[test]
+    fn a_decks_hat_zero_is_a_trackpad_and_its_dpad_is_four_keys() {
+        const { assert!(!STEAM_DECK.dpad_is_hat) };
+        let pad = STEAM_DECK.axis("lpad_x").expect("lpad_x");
+        assert_eq!(pad.code, ABS_HAT0X);
+        assert_eq!((pad.minimum, pad.maximum), (-32767, 32767));
+        assert_ne!(
+            (pad.minimum, pad.maximum),
+            (-1, 1),
+            "a real hat is -1..1; this one is a finger"
+        );
+        for direction in DPAD {
+            assert!(
+                STEAM_DECK.button(direction).is_some(),
+                "a Deck answers {direction} with a key"
+            );
+        }
+        assert_eq!(STEAM_DECK.button("up"), Some(BTN_DPAD_UP));
+    }
+
+    #[test]
+    fn a_decks_grips_are_on_codes_the_headers_do_not_name() {
+        // SteamOS's hid-steam puts them at 0x224..0x227, in the gap after
+        // BTN_DPAD_RIGHT; mainline v6.16 uses BTN_TRIGGER_HAPPY1..4.
+        let grips: Vec<u16> = ["l4", "r4", "l5", "r5"]
+            .iter()
+            .map(|name| STEAM_DECK.button(name).expect("a grip"))
+            .collect();
+        assert_eq!(grips, vec![0x224, 0x225, 0x226, 0x227]);
+        for code in &grips {
+            assert!(*code > BTN_DPAD_RIGHT, "{code:#x} is past the named d-pad");
+            assert!(*code < 0x2C0, "{code:#x} is not BTN_TRIGGER_HAPPY");
+        }
     }
 
     #[test]
