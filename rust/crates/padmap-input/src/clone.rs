@@ -9,13 +9,13 @@ use evdev::{
     InputId, KeyCode, UInputEvent, UinputAbsSetup,
 };
 use log::{info, warn};
-use padmap_core::binding::Binding;
 use padmap_core::calibration::{AxisCalibration, Declared};
-use padmap_core::control::Control;
 use padmap_core::dsupad;
 use padmap_core::emit::version_for;
+use padmap_core::profile::Mapping;
 use padmap_core::sdl::AxisSpan;
 use padmap_core::tuning::{Debouncer, Tuning};
+use padmap_core::twins::Twins;
 use padmap_core::xbox;
 
 use crate::motion;
@@ -345,6 +345,8 @@ pub struct VirtualPad {
     forwarded_any: bool,
     /// Under `IdentityMode::Xbox360`: the source's events onto the 360 layout.
     pub translator: Option<xbox::Translator>,
+    /// Under the other identities: controls with a second input, unioned onto the first.
+    pub twins: Option<Twins>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -356,8 +358,9 @@ pub enum CloneError {
 }
 
 /// Grab a pad and publish its clone.
-/// `bindings` is the pad's stored capture, used only to translate it onto the
-/// 360 layout under `IdentityMode::Xbox360`; empty for an unmapped pad.
+/// `mapping` is the pad's stored capture: what translates it onto the 360
+/// layout under `IdentityMode::Xbox360`, and what says which controls have a
+/// second input under the others. Default for an unmapped pad.
 pub fn create(
     pad: &Pad,
     player: u32,
@@ -365,13 +368,21 @@ pub fn create(
     profile_axes: &BTreeMap<u16, AxisCalibration>,
     tuning: Tuning,
     grab: bool,
-    bindings: &BTreeMap<Control, Binding>,
+    mapping: &Mapping,
 ) -> Result<VirtualPad, CloneError> {
     let source = open_source(pad, grab)?;
+    let bindings = mapping.resolved();
+    let extras = mapping.resolved_extra();
     let mut translator = None;
+    let mut twins = None;
     let (identity, clone) = if mode == IdentityMode::Xbox360 {
         let (keys, _) = source.capabilities();
-        translator = Some(xbox::Translator::new(&keys, &source.axis_spans(), bindings));
+        translator = Some(xbox::Translator::new(
+            &keys,
+            &source.axis_spans(),
+            &bindings,
+            &extras,
+        ));
         let axes: Vec<(u16, AbsInfo)> = xbox::AXES
             .iter()
             .map(|&(code, minimum, maximum, fuzz, flat)| {
@@ -384,6 +395,10 @@ pub fn create(
             build_clone_from(&xbox::KEYS, &axes, player, Identity::XBOX360),
         )
     } else {
+        if !extras.is_empty() {
+            let (keys, _) = source.capabilities();
+            twins = Twins::new(&keys, &source.axis_spans(), &bindings, &extras);
+        }
         match &source {
             Source::Triton(triton) => {
                 let version = version_for(player);
@@ -464,6 +479,7 @@ pub fn create(
         effects: BTreeMap::new(),
         forwarded_any: false,
         translator,
+        twins,
     };
     vpad.seed_calibrated_axes();
 
@@ -663,26 +679,30 @@ impl VirtualPad {
     /// What the clone is given for one shaped source event: itself, or its
     /// translation onto the 360 layout.
     pub fn outgoing(&mut self, event: InputEvent) -> Vec<InputEvent> {
-        match self.translator.as_mut() {
-            None => vec![event],
-            Some(translator) => translator
-                .translate(event.event_type().0, event.code(), event.value())
-                .into_iter()
-                .map(|out| InputEvent::new(out.kind, out.code, out.value))
-                .collect(),
-        }
+        let outs = if let Some(translator) = self.translator.as_mut() {
+            translator.translate(event.event_type().0, event.code(), event.value())
+        } else if let Some(twins) = self.twins.as_mut() {
+            twins.translate(event.event_type().0, event.code(), event.value())
+        } else {
+            return vec![event];
+        };
+        outs.into_iter()
+            .map(|out| InputEvent::new(out.kind, out.code, out.value))
+            .collect()
     }
 
     /// Every event the clone needs to read "nothing held", in its own codes.
     pub fn outgoing_release_all(&mut self) -> Vec<InputEvent> {
-        match self.translator.as_mut() {
-            None => Vec::new(),
-            Some(translator) => translator
-                .release_all()
-                .into_iter()
-                .map(|out| InputEvent::new(out.kind, out.code, out.value))
-                .collect(),
-        }
+        let outs = if let Some(translator) = self.translator.as_mut() {
+            translator.release_all()
+        } else if let Some(twins) = self.twins.as_mut() {
+            twins.release_all()
+        } else {
+            return Vec::new();
+        };
+        outs.into_iter()
+            .map(|out| InputEvent::new(out.kind, out.code, out.value))
+            .collect()
     }
 
     pub fn due_releases(&mut self, now_ms: u64) -> Vec<InputEvent> {

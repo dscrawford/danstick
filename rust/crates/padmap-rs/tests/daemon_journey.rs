@@ -86,6 +86,11 @@ const LATE_SECOND: PadId = PadId {
     pid: 0x0010,
     only: "RSTESTLATE",
 };
+const BINDER: PadId = PadId {
+    name: "PADMAP RSTESTBIND",
+    pid: 0x0011,
+    only: "RSTESTBIND",
+};
 /// A Valve-vendor pad beside a Valve-vendor keyboard, the Puck's lizard shape.
 const SIBLING: PadId = PadId {
     name: "PADMAP RSTESTSIB pad",
@@ -345,6 +350,22 @@ impl Daemon {
 }
 
 impl Daemon {
+    /// Tap a button until the wizard says it bound something, tapping again if
+    /// it does not: a tap that lands inside the capture gap after the previous
+    /// binding is ignored on purpose, and under load that window is not ours to
+    /// time.
+    fn tap_until_bound(&mut self, pad: &mut TestPad, code: u16, index: u64) -> Value {
+        for attempt in 0..4 {
+            pad.tap(code);
+            if let Some(event) = self.wait_for("mapping", |e| e["index"] == index, 3.0) {
+                return event;
+            }
+            eprintln!("tap {attempt} bound nothing; tapping again");
+            std::thread::sleep(Duration::from_millis(600));
+        }
+        panic!("tapping never bound control {index}");
+    }
+
     /// Hold a button until a `claim` matching `wanted` arrives, holding again
     /// if it does not: a freshly made pad is grabbed by Steam for a moment, and
     /// under a full parallel run how long that moment lasts is not ours to say.
@@ -1041,8 +1062,7 @@ fn a_seated_pad_is_rebound_and_finished_from_the_pad_with_no_session() {
     // Bind two controls by tapping. Each press is reported as it happens,
     // press and release, in the terms the profile will use for it.
     daemon.events.clear();
-    pad.tap(FIRST_KEY + 4);
-    daemon.pump(0.5);
+    daemon.tap_until_bound(&mut pad, FIRST_KEY + 4, 1);
     let inputs: Vec<&Value> = daemon
         .events
         .iter()
@@ -1061,10 +1081,7 @@ fn a_seated_pad_is_rebound_and_finished_from_the_pad_with_no_session() {
         "the release was not reported: {inputs:?}"
     );
     assert_eq!(inputs[0]["player"], 1);
-    pad.tap(FIRST_KEY + 5);
-    let two = daemon
-        .wait_for("mapping", |e| e["index"] == 2, 6.0)
-        .expect("two controls bound");
+    let two = daemon.tap_until_bound(&mut pad, FIRST_KEY + 5, 2);
     assert_eq!(two["captured"].as_object().map(|c| c.len()), Some(2));
     std::thread::sleep(Duration::from_millis(400));
 
@@ -1671,5 +1688,90 @@ fn a_seated_pads_keyboard_sibling_is_held_and_released_with_the_seat() {
     drop(daemon);
     drop(pad);
     drop(keyboard);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// The only profile the daemon wrote, as JSON.
+fn only_profile(dir: &Path) -> Value {
+    let path = std::fs::read_dir(dir)
+        .expect("the profile directory")
+        .flatten()
+        .map(|entry| entry.path())
+        .find(|path| path.extension().is_some_and(|ext| ext == "json"))
+        .expect("a profile was written");
+    serde_json::from_str(&std::fs::read_to_string(&path).expect("read")).expect("json")
+}
+
+/// `bind` captures one press onto one control; with `add`, beside the binding
+/// it already has, which is stored as a list whose first entry is unchanged.
+#[test]
+fn one_control_is_bound_on_its_own_and_can_take_a_second_input() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let _guard = LiveGuard::new(BINDER);
+    let root = std::env::temp_dir().join(format!("padmap-bind-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let mut pad = TestPad::new(BINDER);
+    let mut daemon = Daemon::start(&root, BINDER);
+    daemon.seat_by_hold(&mut pad);
+
+    // A control nobody has heard of is refused, not guessed at.
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "bind", "player": 1, "control": "nonsense"}));
+    assert!(
+        daemon.last("error").is_some(),
+        "an unknown control was accepted"
+    );
+
+    // Bind B on its own: one press, one control, stored.
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "bind", "player": 1, "control": "b"}));
+    daemon
+        .wait_for(
+            "mapping",
+            |e| e["done"] == false && e["control"] == "b",
+            5.0,
+        )
+        .expect("the wizard asked for b alone");
+    pad.tap(FIRST_KEY + 1);
+    daemon
+        .wait_for("mapping", |e| e["done"] == true, 5.0)
+        .expect("one press ended the run");
+    let profile = only_profile(&daemon.profiles);
+    let first = profile["buttons"]["b"].clone();
+    assert_eq!(
+        first["kind"], "button",
+        "one input is one object: {profile}"
+    );
+    assert!(!first.is_array());
+
+    // And now a second input for the same control.
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "bind", "player": 1, "control": "b", "add": true}));
+    daemon
+        .wait_for(
+            "mapping",
+            |e| e["done"] == false && e["control"] == "b",
+            5.0,
+        )
+        .expect("the wizard asked for b again");
+    pad.tap(FIRST_KEY + 3);
+    daemon
+        .wait_for("mapping", |e| e["done"] == true, 5.0)
+        .expect("the second press ended the run");
+    let profile = only_profile(&daemon.profiles);
+    let listed = profile["buttons"]["b"]
+        .as_array()
+        .cloned()
+        .unwrap_or_else(|| panic!("b should now be a list: {profile}"));
+    assert_eq!(listed.len(), 2);
+    assert_eq!(listed[0], first, "the first input is exactly what it was");
+    assert_ne!(listed[1], first, "and the second is a different input");
+
+    drop(daemon);
+    drop(pad);
     let _ = std::fs::remove_dir_all(&root);
 }

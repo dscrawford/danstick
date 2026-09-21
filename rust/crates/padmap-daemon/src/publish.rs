@@ -421,13 +421,34 @@ pub fn store_mapping(
     if profile.icon.is_empty() && scope.is_empty() && padmap_core::icons::known(layout_id) {
         profile.icon = layout_id.to_owned();
     }
+    // A control's second inputs survive a rewrite of its first, unless the new
+    // capture put that input on some control as a first: then it is spoken for.
+    let buttons: BTreeMap<String, Binding> = bindings
+        .iter()
+        .map(|(control, binding)| (control.to_string(), *binding))
+        .collect();
+    let extra: BTreeMap<String, Vec<Binding>> = profile
+        .mappings
+        .get(scope)
+        .filter(|existing| existing.layout == layout_id)
+        .map(|existing| existing.extra.clone())
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|(control, _)| buttons.contains_key(control))
+        .map(|(control, twins)| {
+            let kept: Vec<Binding> = twins
+                .into_iter()
+                .filter(|twin| !buttons.values().any(|primary| primary == twin))
+                .collect();
+            (control, kept)
+        })
+        .filter(|(_, twins)| !twins.is_empty())
+        .collect();
     profile.record(
         scope,
         padmap_core::profile::Mapping {
-            buttons: bindings
-                .iter()
-                .map(|(control, binding)| (control.to_string(), *binding))
-                .collect(),
+            buttons,
+            extra,
             layout: layout_id.to_owned(),
             name: String::new(),
         },
@@ -494,6 +515,30 @@ pub fn icon_for(pad: &Pad, overrides: &BTreeMap<String, String>) -> &'static str
 /// A run seeded from it refines the mapping instead of replacing it; a
 /// capture under another layout is about to be replaced wholesale, so there
 /// is nothing to carry over.
+/// One more input for one control, beside the one it has; the first input a
+/// control ever gets becomes its binding.
+pub fn add_binding(pad: &Pad, layout_id: &str, control: Control, binding: Binding, scope: &str) {
+    let mut profile = profile_for(pad);
+    let scope_key = if scope.is_empty() {
+        padmap_core::scope::UNIVERSAL.to_owned()
+    } else {
+        scope.to_owned()
+    };
+    let mut mapping = profile
+        .mappings
+        .get(&scope_key)
+        .cloned()
+        .unwrap_or_default();
+    if mapping.layout.is_empty() {
+        mapping.layout = layout_id.to_owned();
+    }
+    mapping.add(&control.to_string(), binding);
+    profile.record(&scope_key, mapping);
+    if let Err(error) = profiles::save(&profile, None) {
+        warn!("could not save the profile for {}: {error}", pad.name);
+    }
+}
+
 pub fn stored_mapping(pad: &Pad, scope: &str, layout_id: &str) -> BTreeMap<Control, Binding> {
     profiles::load(pad, None)
         .and_then(|profile| profile.mappings.get(scope).cloned())

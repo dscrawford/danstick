@@ -151,6 +151,10 @@ pub struct MappingRun {
     conflict: Option<Control>,
     axis_armed: BTreeMap<u16, bool>,
     ended: bool,
+    /// Set when the run is for one control only: the last index it walks.
+    last: Option<usize>,
+    /// The press captured is a second input for the control, not a replacement.
+    pub add: bool,
 }
 
 impl MappingRun {
@@ -178,7 +182,35 @@ impl MappingRun {
             conflict: None,
             axis_armed: BTreeMap::new(),
             ended: false,
+            last: None,
+            add: false,
         }
+    }
+
+    /// Walk one control only: start on it and finish after it. None if the
+    /// layout has no such control.
+    pub fn only(mut self, control: Control) -> Option<Self> {
+        let at = self
+            .layout
+            .controls
+            .iter()
+            .position(|entry| entry.canonical == control)?;
+        self.index = at;
+        self.last = Some(at);
+        Some(self)
+    }
+
+    /// The press captured adds an input to the control rather than replacing it.
+    pub fn adding(mut self) -> Self {
+        self.add = true;
+        self
+    }
+
+    /// The control this run is for, when it is for one.
+    pub fn single(&self) -> Option<Control> {
+        self.last
+            .and_then(|at| self.layout.controls.get(at))
+            .map(|entry| entry.canonical)
     }
 
     /// Start from a stored capture, so the conflict guard sees it and an early
@@ -227,7 +259,9 @@ impl MappingRun {
     }
 
     pub fn finished(&self) -> bool {
-        self.ended || self.index >= self.layout.controls.len()
+        self.ended
+            || self.index >= self.layout.controls.len()
+            || self.last.is_some_and(|last| self.index > last)
     }
 
     /// How far the longest live hold is towards finishing, or None with nothing held.

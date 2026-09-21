@@ -2021,3 +2021,66 @@ mod describing_presses {
         assert!(rest.value.abs() < 0.01, "{}", rest.value);
     }
 }
+
+mod binding_one_control {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    use padmap_core::capture::{Event, MappingRun, Outcome};
+    use padmap_core::control::Control;
+    use padmap_core::layout;
+    use padmap_core::sdl::AxisSpan;
+
+    fn run(control: Control) -> MappingRun {
+        let mut axes = BTreeMap::new();
+        axes.insert(0x00, AxisSpan::new(0, 255, 128));
+        MappingRun::new(
+            1,
+            layout::get("snes"),
+            vec![0x130, 0x131, 0x133, 0x134],
+            String::new(),
+            axes,
+            BTreeSet::new(),
+        )
+        .only(control)
+        .expect("the snes layout has this control")
+    }
+
+    #[test]
+    fn a_run_for_one_control_starts_on_it_and_ends_after_it() {
+        let mut one = run(Control::B);
+        assert_eq!(one.current(), Some(Control::B));
+        assert!(!one.finished());
+        one.feed(Event::key(0x131, 1), 0.0);
+        let outcome = one.feed(Event::key(0x131, 0), 0.1);
+        assert!(matches!(
+            outcome,
+            Outcome::Recorded {
+                control: Control::B,
+                ..
+            }
+        ));
+        assert!(one.finished(), "one press, one control, done");
+        assert_eq!(one.bindings().len(), 1);
+    }
+
+    #[test]
+    fn a_control_the_layout_lacks_is_no_run_at_all() {
+        let full = MappingRun::new(
+            1,
+            layout::get("snes"),
+            vec![0x130],
+            String::new(),
+            BTreeMap::new(),
+            BTreeSet::new(),
+        );
+        assert!(full.only(Control::RightStickUp).is_none());
+    }
+
+    #[test]
+    fn adding_is_carried_on_the_run_and_names_its_control() {
+        let one = run(Control::A).adding();
+        assert!(one.add);
+        assert_eq!(one.single(), Some(Control::A));
+        assert!(!run(Control::A).add, "a plain run replaces");
+    }
+}

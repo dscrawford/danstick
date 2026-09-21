@@ -11,15 +11,18 @@ use crate::scope;
 use crate::tuning::Tuning;
 
 /// One capture: where every control of one layout lives on this pad.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// On disk a control's entry is one binding, or a list whose first entry is
+/// what everything downstream reads and whose rest are second inputs for the
+/// same control. A file with no lists is byte-for-byte what it always was.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Mapping {
     /// Canonical control name -> where it lives on this pad.
-    #[serde(default)]
     pub buttons: BTreeMap<String, Binding>,
-    #[serde(default)]
+    /// Canonical control name -> its second (third, ...) inputs, if any.
+    pub extra: BTreeMap<String, Vec<Binding>>,
     pub layout: String,
     /// Empty means describe it from the scope.
-    #[serde(default)]
     pub name: String,
 }
 
@@ -32,24 +35,110 @@ impl Mapping {
             .collect()
     }
 
+    /// The second inputs, as the enum the rest of the crate uses.
+    pub fn resolved_extra(&self) -> BTreeMap<crate::Control, Vec<Binding>> {
+        self.extra
+            .iter()
+            .filter(|(_, twins)| !twins.is_empty())
+            .filter_map(|(name, twins)| name.parse().ok().map(|c| (c, twins.clone())))
+            .collect()
+    }
+
+    /// Every input a control has, primary first.
+    pub fn all(&self, control: &str) -> Vec<Binding> {
+        let mut out: Vec<Binding> = self.buttons.get(control).copied().into_iter().collect();
+        out.extend(self.extra.get(control).cloned().unwrap_or_default());
+        out
+    }
+
+    /// Add an input to a control: the first becomes its binding, the rest its twins.
+    pub fn add(&mut self, control: &str, binding: Binding) {
+        match self.buttons.get(control) {
+            None => {
+                self.buttons.insert(control.to_owned(), binding);
+            }
+            Some(primary) if *primary == binding => {}
+            Some(_) => {
+                let twins = self.extra.entry(control.to_owned()).or_default();
+                if !twins.contains(&binding) {
+                    twins.push(binding);
+                }
+            }
+        }
+    }
+
+    /// The `buttons` object as it is written: one binding, or a list with the twins.
+    pub fn buttons_value(&self) -> Value {
+        let mut out = serde_json::Map::new();
+        for (control, binding) in &self.buttons {
+            let twins = self.extra.get(control).filter(|t| !t.is_empty());
+            let value = match twins {
+                None => serde_json::to_value(binding).unwrap_or(Value::Null),
+                Some(twins) => Value::Array(
+                    std::iter::once(binding)
+                        .chain(twins.iter())
+                        .map(|b| serde_json::to_value(b).unwrap_or(Value::Null))
+                        .collect(),
+                ),
+            };
+            out.insert(control.clone(), value);
+        }
+        Value::Object(out)
+    }
+
     /// Never fails; junk in one binding slot costs that binding only.
     pub fn from_value(raw: &Value) -> Mapping {
         let Some(object) = raw.as_object() else {
             return Mapping::default();
         };
         let mut buttons = BTreeMap::new();
+        let mut extra: BTreeMap<String, Vec<Binding>> = BTreeMap::new();
         if let Some(stored) = object.get("buttons").and_then(Value::as_object) {
             for (control, values) in stored {
-                if let Ok(binding) = serde_json::from_value::<Binding>(values.clone()) {
-                    buttons.insert(control.clone(), binding);
+                let listed: Vec<Binding> = match values {
+                    Value::Array(items) => items
+                        .iter()
+                        .filter_map(|item| serde_json::from_value::<Binding>(item.clone()).ok())
+                        .collect(),
+                    other => serde_json::from_value::<Binding>(other.clone())
+                        .ok()
+                        .into_iter()
+                        .collect(),
+                };
+                let mut listed = listed.into_iter();
+                if let Some(first) = listed.next() {
+                    buttons.insert(control.clone(), first);
+                    let twins: Vec<Binding> = listed.filter(|b| *b != first).collect();
+                    if !twins.is_empty() {
+                        extra.insert(control.clone(), twins);
+                    }
                 }
             }
         }
         Mapping {
             buttons,
+            extra,
             layout: string_at(object.get("layout")),
             name: string_at(object.get("name")),
         }
+    }
+}
+
+impl Serialize for Mapping {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let value = serde_json::json!({
+            "buttons": self.buttons_value(),
+            "layout": self.layout,
+            "name": self.name,
+        });
+        value.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for Mapping {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = Value::deserialize(deserializer)?;
+        Ok(Mapping::from_value(&value))
     }
 }
 
@@ -152,7 +241,7 @@ impl Profile {
             "axes": axes,
             "mappings": mappings,
             "layout": universal.layout,
-            "buttons": universal.buttons,
+            "buttons": universal.buttons_value(),
         });
         if !self.tuning.is_default() {
             if let Ok(tuning) = serde_json::to_value(&self.tuning) {
@@ -291,9 +380,89 @@ mod tests {
             buttons: [(control.to_owned(), Binding::button(index))]
                 .into_iter()
                 .collect(),
+            extra: BTreeMap::new(),
             layout: "n64".to_owned(),
             name: String::new(),
         }
+    }
+
+    #[test]
+    fn a_control_with_one_input_is_written_as_it_always_was() {
+        let mapping = capture("a", 3);
+        let value = mapping.buttons_value();
+        assert_eq!(value["a"]["kind"], "button");
+        assert!(
+            !value["a"].is_array(),
+            "no list where there is nothing to list"
+        );
+        assert_eq!(
+            Mapping::from_value(&serde_json::to_value(&mapping).expect("json")),
+            mapping
+        );
+    }
+
+    #[test]
+    fn a_second_input_is_a_list_whose_first_entry_is_the_binding() {
+        let mut mapping = capture("rightshoulder", 5);
+        mapping.add("rightshoulder", Binding::axis(5, 1));
+        assert_eq!(
+            mapping.buttons["rightshoulder"],
+            Binding::button(5),
+            "the first is unmoved"
+        );
+        assert_eq!(mapping.extra["rightshoulder"], vec![Binding::axis(5, 1)]);
+        let value = mapping.buttons_value();
+        let listed = value["rightshoulder"].as_array().expect("a list");
+        assert_eq!(listed.len(), 2);
+        assert_eq!(listed[0]["kind"], "button");
+        assert_eq!(listed[1]["kind"], "axis");
+        // An old reader takes the first entry; a new one round-trips the whole list.
+        assert_eq!(
+            Mapping::from_value(&serde_json::to_value(&mapping).expect("json")),
+            mapping
+        );
+        assert_eq!(
+            mapping.all("rightshoulder"),
+            vec![Binding::button(5), Binding::axis(5, 1)]
+        );
+    }
+
+    #[test]
+    fn the_first_input_a_control_gets_is_its_binding_and_the_same_one_twice_is_once() {
+        let mut mapping = Mapping::default();
+        mapping.add("a", Binding::button(1));
+        assert_eq!(mapping.buttons["a"], Binding::button(1));
+        assert!(mapping.extra.is_empty(), "the first is not a twin");
+        mapping.add("a", Binding::button(1));
+        assert!(
+            mapping.extra.is_empty(),
+            "rebinding the same input changes nothing"
+        );
+        mapping.add("a", Binding::button(2));
+        mapping.add("a", Binding::button(2));
+        assert_eq!(
+            mapping.extra["a"],
+            vec![Binding::button(2)],
+            "and neither does twice"
+        );
+    }
+
+    #[test]
+    fn a_list_read_back_keeps_only_what_a_binding_can_be() {
+        let raw = serde_json::json!({
+            "buttons": {"a": [{"kind": "button", "index": 1}, "nonsense", {"kind": "hat", "index": 0, "value": 2}]},
+            "layout": "n64"
+        });
+        let mapping = Mapping::from_value(&raw);
+        assert_eq!(mapping.buttons["a"], Binding::button(1));
+        assert_eq!(mapping.extra["a"], vec![Binding::hat(0, 2)]);
+    }
+
+    #[test]
+    fn an_empty_list_leaves_the_control_unbound_rather_than_half_bound() {
+        let raw = serde_json::json!({"buttons": {"a": []}, "layout": "n64"});
+        let mapping = Mapping::from_value(&raw);
+        assert!(mapping.buttons.is_empty() && mapping.extra.is_empty());
     }
 
     #[test]

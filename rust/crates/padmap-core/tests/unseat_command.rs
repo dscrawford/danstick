@@ -28,3 +28,33 @@ fn seat_keyboard_takes_no_arguments() {
         Ok(Command::SeatKeyboard)
     );
 }
+
+#[test]
+fn bind_names_a_control_and_says_whether_it_replaces_or_adds() {
+    assert!(COMMANDS.contains(&"bind"));
+    assert_eq!(
+        Command::parse(&json!({"cmd": "bind", "player": 1, "control": "righttrigger"})),
+        Ok(Command::Bind {
+            player: 1,
+            control: "righttrigger".to_owned(),
+            scope: String::new(),
+            add: false,
+        })
+    );
+    assert_eq!(
+        Command::parse(&json!({
+            "cmd": "bind", "player": 2, "control": "a",
+            "scope": "console:gamecube", "add": true
+        })),
+        Ok(Command::Bind {
+            player: 2,
+            control: "a".to_owned(),
+            scope: "console:gamecube".to_owned(),
+            add: true,
+        })
+    );
+    assert!(matches!(
+        Command::parse(&json!({"cmd": "bind", "control": "a", "add": "yes"})),
+        Err(Refused::NotANumber { .. })
+    ));
+}

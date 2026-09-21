@@ -32,6 +32,7 @@ pub mod sdl;
 pub mod standard;
 pub mod state;
 pub mod tuning;
+pub mod twins;
 pub mod userconfig;
 pub mod wire;
 pub mod xbox;

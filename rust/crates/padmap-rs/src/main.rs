@@ -471,8 +471,8 @@ fn cmd_run() -> Result<()> {
             );
         }
         let tuning = padmap_daemon::publish::tuning_for(pad);
-        let bindings = padmap_daemon::publish::resolved(pad, "", "").1.resolved();
-        match clone::create(pad, player, mode, &axes, tuning, true, &bindings) {
+        let mapping = padmap_daemon::publish::resolved(pad, "", "").1;
+        match clone::create(pad, player, mode, &axes, tuning, true, &mapping) {
             Ok(vpad) => vpads.push(vpad),
             Err(error) => warn!("player {player}: {error}"),
         }

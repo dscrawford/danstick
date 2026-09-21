@@ -165,7 +165,8 @@ pub struct Translator {
     carried_keys: BTreeSet<u16>,
     /// Source axes carried across by code with rescaling: the left stick, which no capture covers.
     carried_axes: BTreeSet<u16>,
-    pressed: BTreeMap<Control, f64>,
+    /// Per control, how far each of its sources (code, sign) is pressed; the control is the most.
+    pressed: BTreeMap<Control, BTreeMap<(u16, i8), f64>>,
     last: BTreeMap<(u16, u16), i32>,
 }
 
@@ -177,6 +178,7 @@ impl Translator {
         keys: &[u16],
         spans: &BTreeMap<u16, AxisSpan>,
         bindings: &BTreeMap<Control, Binding>,
+        extras: &BTreeMap<Control, Vec<Binding>>,
     ) -> Self {
         let ordered = sdl_ordered(keys);
         let mut axis_codes: Vec<u16> = spans
@@ -259,7 +261,12 @@ impl Translator {
             }
             return out;
         }
-        for (&control, binding) in bindings {
+        let every = bindings.iter().map(|(c, b)| (*c, *b)).chain(
+            extras
+                .iter()
+                .flat_map(|(c, twins)| twins.iter().map(move |b| (*c, *b))),
+        );
+        for (control, binding) in every {
             match binding.kind {
                 BindingKind::Button => {
                     if let Some(&code) = usize::try_from(binding.index)
@@ -313,11 +320,14 @@ impl Translator {
                 if self.carried_keys.contains(&code) {
                     self.push(&mut out, EV_KEY, code, i32::from(value != 0));
                 }
-                if let Some(controls) = self.keys.get(&code) {
+                if let Some(controls) = self.keys.get(&code).cloned() {
                     let pressed = if value != 0 { 1.0 } else { 0.0 };
                     for control in controls {
-                        self.pressed.insert(*control, pressed);
-                        touched.push(*control);
+                        self.pressed
+                            .entry(control)
+                            .or_default()
+                            .insert((code, 0), pressed);
+                        touched.push(control);
                     }
                 }
             }
@@ -339,7 +349,10 @@ impl Translator {
                     };
                     for (control, sign) in controls {
                         let along = (fraction * f64::from(sign)).clamp(0.0, 1.0);
-                        self.pressed.insert(control, along);
+                        self.pressed
+                            .entry(control)
+                            .or_default()
+                            .insert((code, sign), along);
                         touched.push(control);
                     }
                 }
@@ -354,7 +367,10 @@ impl Translator {
     }
 
     fn at(&self, control: Control) -> f64 {
-        self.pressed.get(&control).copied().unwrap_or(0.0)
+        self.pressed
+            .get(&control)
+            .map(|sources| sources.values().copied().fold(0.0, f64::max))
+            .unwrap_or(0.0)
     }
 
     /// What the clone's element for `control` reads now, from every control that feeds it.
@@ -417,12 +433,12 @@ impl Translator {
         let held: Vec<Control> = self
             .pressed
             .iter()
-            .filter(|(_, v)| **v > 0.0)
+            .filter(|(_, sources)| sources.values().any(|v| *v > 0.0))
             .map(|(c, _)| *c)
             .collect();
         let mut out = Vec::new();
         for control in held {
-            self.pressed.insert(control, 0.0);
+            self.pressed.remove(&control);
             let (kind, code, value) = self.output_for(control);
             self.push(&mut out, kind, code, value);
         }
@@ -462,7 +478,7 @@ mod tests {
         bindings.insert(Control::RightStickUp, Binding::button(2)); // a C-button
         bindings.insert(Control::RightStickDown, Binding::button(3));
         bindings.insert(Control::LeftTrigger, Binding::axis(2, 1)); // Z trigger on an axis
-        Translator::new(&keys, &spans, &bindings)
+        Translator::new(&keys, &spans, &bindings, &BTreeMap::new())
     }
 
     #[test]
@@ -609,7 +625,7 @@ mod tests {
         spans.insert(ABS_Z, AxisSpan::new(0, 1023, 0));
         spans.insert(ABS_HAT0X, AxisSpan::new(-1, 1, 0));
         spans.insert(ABS_HAT0Y, AxisSpan::new(-1, 1, 0));
-        let mut t = Translator::new(&keys, &spans, &BTreeMap::new());
+        let mut t = Translator::new(&keys, &spans, &BTreeMap::new(), &BTreeMap::new());
         // The kernel's BTN_NORTH (0x133) is padmap's Y; xpad sends 0x133 for X. So Y
         // on a standard pad comes out as xpad's Y, which is 0x134.
         assert_eq!(
@@ -667,6 +683,39 @@ mod tests {
                 kind: EV_ABS,
                 code: ABS_RX,
                 value: -32767
+            }]
+        );
+    }
+
+    #[test]
+    fn a_second_input_on_a_control_is_a_union_with_the_first() {
+        let keys = [0x120, 0x121];
+        let spans = BTreeMap::new();
+        let mut bindings = BTreeMap::new();
+        bindings.insert(Control::RightShoulder, Binding::button(0));
+        let mut extras = BTreeMap::new();
+        extras.insert(Control::RightShoulder, vec![Binding::button(1)]);
+        let mut t = Translator::new(&keys, &spans, &bindings, &extras);
+        assert_eq!(
+            t.translate(EV_KEY, 0x121, 1),
+            vec![Out {
+                kind: EV_KEY,
+                code: 0x137,
+                value: 1
+            }],
+            "the twin presses R"
+        );
+        t.translate(EV_KEY, 0x120, 1);
+        assert!(
+            t.translate(EV_KEY, 0x121, 0).is_empty(),
+            "R is still down on the first"
+        );
+        assert_eq!(
+            t.translate(EV_KEY, 0x120, 0),
+            vec![Out {
+                kind: EV_KEY,
+                code: 0x137,
+                value: 0
             }]
         );
     }

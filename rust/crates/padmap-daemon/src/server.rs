@@ -685,6 +685,12 @@ impl Server {
             }
             Command::Unseat { player } => self.unseat(as_player(player)),
             Command::SeatKeyboard => self.seat_keyboard(),
+            Command::Bind {
+                player,
+                control,
+                scope,
+                add,
+            } => self.begin_bind(as_player(player), &control, &scope, add),
             Command::Status => {
                 let state = self.state_event();
                 self.send(fd, &state);
@@ -1409,6 +1415,65 @@ impl Server {
         }
     }
 
+    /// Capture the next press onto one control of the pad's own layout, as a
+    /// replacement for its binding or, with `add`, a second input beside it.
+    /// The same events the wizard sends, for one step.
+    fn begin_bind(&mut self, player: u32, control: &str, scope: &str, add: bool) {
+        let Ok(wanted) = control.parse::<padmap_core::Control>() else {
+            self.broadcast(&events::error(format!("no control called {control:?}")));
+            return;
+        };
+        let (pad, opened) = match self.modal_pad(player, "binding") {
+            Ok(found) => found,
+            Err(event) => {
+                self.broadcast(&event);
+                return;
+            }
+        };
+        let (_, current) = publish::resolved(&pad, "", "");
+        let chosen = if current.layout.is_empty() {
+            publish::icon_for(&pad, &self.icon_overrides).to_owned()
+        } else {
+            current.layout.clone()
+        };
+        let layout = padmap_core::layout::for_icon(&chosen);
+        let mut keys: Vec<u16> = self
+            .opened_source(opened)
+            .map(|source| source.capabilities().0)
+            .unwrap_or_default();
+        keys.sort_unstable();
+        let axes = self.absolute_ranges(opened);
+        let held = self.held_keys(opened);
+        let stored = publish::stored_mapping(&pad, scope, &layout.id);
+        let run =
+            MappingRun::new(player, layout, keys, scope.to_owned(), axes, held).seeded(&stored);
+        let Some(mut run) = run.only(wanted) else {
+            self.release_solo();
+            self.broadcast(&events::error(format!(
+                "the {} layout has no {control}",
+                layout.id
+            )));
+            return;
+        };
+        if add {
+            run = run.adding();
+        }
+        self.pending_scope.clear();
+        self.confirm.clear();
+        self.last_finish = 0.0;
+        info!(
+            "player {player}: binding {control} on {} ({}){}",
+            clean(&pad.name),
+            layout.id,
+            if add { ", as a second input" } else { "" }
+        );
+        self.broadcast(&events::mapping(&run));
+        self.mapping = Some(Modal {
+            run,
+            pad_path: pad.path,
+        });
+    }
+
     fn finish_mapping(&mut self, store: bool) {
         let modal = self.mapping.take();
         self.confirm.clear();
@@ -1421,7 +1486,27 @@ impl Server {
             }
         }
         if let Some(modal) = &modal {
-            if store && !modal.run.bindings().is_empty() {
+            if store && modal.run.add {
+                // One press, one more input for one control; nothing else moves.
+                if let (Some(control), Some(pad)) =
+                    (modal.run.single(), self.pad_for_player(modal.run.player))
+                {
+                    if let Some(binding) = modal.run.bindings().get(&control) {
+                        publish::add_binding(
+                            &pad,
+                            &modal.run.layout.id,
+                            control,
+                            *binding,
+                            &modal.run.scope,
+                        );
+                        info!(
+                            "player {}: {control} on {} answers to one more input",
+                            modal.run.player,
+                            clean(&pad.name)
+                        );
+                    }
+                }
+            } else if store && !modal.run.bindings().is_empty() {
                 if let Some(pad) = self.pad_for_player(modal.run.player) {
                     let missing = publish::store_mapping(
                         &pad,
@@ -2073,7 +2158,7 @@ impl Server {
                 .map(|profile| profile.axes)
                 .unwrap_or_default();
             let tuning = publish::tuning_for(&slot.pad);
-            let bindings = publish::resolved(&slot.pad, "", "").1.resolved();
+            let mapping = publish::resolved(&slot.pad, "", "").1;
             match clone::create(
                 &slot.pad,
                 slot.player,
@@ -2081,7 +2166,7 @@ impl Server {
                 &axes,
                 tuning,
                 true,
-                &bindings,
+                &mapping,
             ) {
                 Ok(vpad) => vpads.push(vpad),
                 Err(error) => {

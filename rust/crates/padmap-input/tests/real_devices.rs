@@ -86,7 +86,7 @@ fn clone_of(found: &pad::Pad, player: u32) -> clone::VirtualPad {
         &axes,
         tuning,
         false,
-        &BTreeMap::new(),
+        &padmap_core::profile::Mapping::default(),
     )
     .expect("create a clone");
     virtual_pad
@@ -615,7 +615,7 @@ fn tuned_clone_of(
         &axes,
         tuning,
         false,
-        &BTreeMap::new(),
+        &padmap_core::profile::Mapping::default(),
     )
     .expect("create a clone");
     virtual_pad
@@ -870,7 +870,7 @@ fn under_the_360_identity_the_clone_is_an_xbox_pad_whatever_the_source() {
         &axes,
         padmap_core::tuning::Tuning::default(),
         false,
-        &BTreeMap::new(),
+        &padmap_core::profile::Mapping::default(),
     )
     .expect("create a clone");
     vpad.source
