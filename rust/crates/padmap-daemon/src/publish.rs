@@ -297,8 +297,10 @@ pub fn write_all(
         autoconfig_dir: runtime::dir().join("autoconfig").display().to_string(),
         verbose: false,
     };
-    let config =
+    let mut config =
         retroarch::launch_config(&players, virtual_paths, &order, &facts, emit::virtual_name);
+    let managed_sorted: Vec<u32> = managed.keys().copied().collect();
+    config.push_str(&retroarch::keyboard_config(&managed_sorted));
     if let Err(error) = artefacts::write_launch_config(launch_config_path, &config) {
         warn!("could not write the launch config: {error}");
     }

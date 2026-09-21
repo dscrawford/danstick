@@ -41,6 +41,57 @@ pub const BINDINGS: [(&str, &str); 22] = [
 
 pub const DPAD_REST: [(&str, &str); 2] = [("D-Pad/Left", "`Pad W`"), ("D-Pad/Right", "`Pad E`")];
 
+/// Dolphin's own default device on X11: the highest-priority one it finds.
+pub const KEYBOARD_DEVICE: &str = "XInput2/0/Virtual core pointer";
+
+/// Dolphin's own keyboard defaults (`GCPad::LoadDefaults`, Linux branch).
+pub const KEYBOARD_BINDINGS: [(&str, &str); 24] = [
+    ("Buttons/A", "`X`"),
+    ("Buttons/B", "`Z`"),
+    ("Buttons/X", "`C`"),
+    ("Buttons/Y", "`S`"),
+    ("Buttons/Z", "`D`"),
+    ("Buttons/Start", "`Return`"),
+    ("Main Stick/Up", "`Up`"),
+    ("Main Stick/Down", "`Down`"),
+    ("Main Stick/Left", "`Left`"),
+    ("Main Stick/Right", "`Right`"),
+    ("Main Stick/Modifier", "`Shift`"),
+    (
+        "Main Stick/Calibration",
+        "100.00 141.42 100.00 141.42 100.00 141.42 100.00 141.42",
+    ),
+    ("C-Stick/Up", "`I`"),
+    ("C-Stick/Down", "`K`"),
+    ("C-Stick/Left", "`J`"),
+    ("C-Stick/Right", "`L`"),
+    ("C-Stick/Modifier", "`Ctrl`"),
+    (
+        "C-Stick/Calibration",
+        "100.00 141.42 100.00 141.42 100.00 141.42 100.00 141.42",
+    ),
+    ("Triggers/L", "`Q`"),
+    ("Triggers/R", "`W`"),
+    ("D-Pad/Up", "`T`"),
+    ("D-Pad/Down", "`G`"),
+    ("D-Pad/Left", "`F`"),
+    ("D-Pad/Right", "`H`"),
+];
+
+/// The keyboard's `[GCPadN]` section: what Dolphin itself writes for port 1 on a fresh install.
+pub fn keyboard_section(port: u32) -> String {
+    let mut out = format!("[GCPad{port}]\nDevice = {KEYBOARD_DEVICE}\n");
+    for (key, value) in KEYBOARD_BINDINGS {
+        out.push_str(&format!("{key} = {value}\n"));
+    }
+    out
+}
+
+/// The port the keyboard takes: the first of the four no pad holds.
+pub fn keyboard_port(players: &[u32]) -> Option<u32> {
+    crate::keyboard::first_free(players, MAX_PLAYERS)
+}
+
 /// Slot always 0: padmap pads unique per player.
 pub fn device(name: &str) -> String {
     format!("SDL/0/{name}")
@@ -64,9 +115,17 @@ pub fn sections(players: &[u32], name_for: impl Fn(u32) -> String) -> String {
         .collect();
     sorted.sort_unstable();
     sorted.dedup();
-    sorted
-        .iter()
-        .map(|player| section(*player, &device(&name_for(*player))))
+    let keyboard = keyboard_port(&sorted);
+    (1..=MAX_PLAYERS)
+        .filter_map(|port| {
+            if sorted.contains(&port) {
+                Some(section(port, &device(&name_for(port))))
+            } else if keyboard == Some(port) {
+                Some(keyboard_section(port))
+            } else {
+                None
+            }
+        })
         .collect()
 }
 
@@ -102,11 +161,12 @@ fn is_pad_section(header: &str) -> bool {
         .is_ok_and(|port| (1..=MAX_PLAYERS).contains(&port))
 }
 
-/// `SIDeviceN` zero-based; `GCPadN` one-based.
+/// `SIDeviceN` zero-based; `GCPadN` one-based. The keyboard's port counts as a controller.
 pub fn si_devices(players: &[u32]) -> Vec<(String, u32)> {
+    let keyboard = keyboard_port(players);
     (1..=MAX_PLAYERS)
         .map(|port| {
-            let kind = if players.contains(&port) {
+            let kind = if players.contains(&port) || keyboard == Some(port) {
                 SI_GC_CONTROLLER
             } else {
                 SI_NONE
@@ -276,16 +336,34 @@ mod tests {
 
     #[test]
     fn an_unmanaged_port_is_emptied_rather_than_left_alone() {
+        // Port 3 is the keyboard's; port 4 is nobody's.
         let devices = si_devices(&[1, 2]);
         assert_eq!(
             devices,
             vec![
                 ("SIDevice0".to_owned(), SI_GC_CONTROLLER),
                 ("SIDevice1".to_owned(), SI_GC_CONTROLLER),
-                ("SIDevice2".to_owned(), SI_NONE),
+                ("SIDevice2".to_owned(), SI_GC_CONTROLLER),
                 ("SIDevice3".to_owned(), SI_NONE),
             ]
         );
+        assert_eq!(si_devices(&[1, 2, 3, 4])[3].1, SI_GC_CONTROLLER);
+    }
+
+    #[test]
+    fn the_keyboard_takes_the_first_free_port_in_dolphins_own_keys() {
+        let text = sections(&[1], |p| format!("padmap Player {p}"));
+        assert!(text.contains("[GCPad1]\nDevice = SDL/0/padmap Player 1\n"));
+        assert!(text.contains("[GCPad2]\nDevice = XInput2/0/Virtual core pointer\n"));
+        assert!(text.contains("Buttons/A = `X`\n"), "{text}");
+        assert!(text.contains("D-Pad/Up = `T`\n"), "{text}");
+        assert!(!text.contains("[GCPad3]"));
+
+        let none = sections(&[], |_| String::new());
+        assert!(none.starts_with("[GCPad1]\nDevice = XInput2/0/Virtual core pointer\n"));
+
+        let full = sections(&[1, 2, 3, 4], |p| format!("p{p}"));
+        assert!(!full.contains("XInput2"), "no port left for the keyboard");
     }
 
     #[test]

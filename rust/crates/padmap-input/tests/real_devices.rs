@@ -390,8 +390,18 @@ fn rewriting_ryujinx_config_keeps_every_other_setting() {
     assert_eq!(back["version"], 70);
     assert_eq!(back["res_scale"], 2);
     let entries = back["input_config"].as_array().expect("an array");
-    assert_eq!(entries.len(), 1, "the keyboard was replaced, not appended");
+    assert_eq!(
+        entries.len(),
+        2,
+        "the pad took Player1 and the keyboard moved"
+    );
     assert_eq!(entries[0]["name"], "padmap Player 1");
+    assert_eq!(entries[0]["player_index"], "Player1");
+    assert_eq!(
+        entries[1]["name"], "Keyboard",
+        "the user's own keyboard entry survived"
+    );
+    assert_eq!(entries[1]["player_index"], "Player2");
 
     let _ = std::fs::remove_dir_all(&dir);
 }

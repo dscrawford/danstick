@@ -144,6 +144,84 @@ pub fn assignment(guid: &str, source: Source, indices: &Indices) -> Option<Strin
     Some(out)
 }
 
+/// ares' generic keyboard: vendor 0, product 1, path 0, one `Button` group.
+const KEYBOARD_ID: &str = "0x1";
+
+/// Where a key sits in ares' xlib keyboard table (`ruby/input/keyboard/xlib.cpp`).
+/// The index is the key's position in that list, so it is Linux-specific.
+mod xlib {
+    pub const Q: u8 = 51;
+    pub const W: u8 = 57;
+    pub const E: u8 = 39;
+    pub const R: u8 = 52;
+    pub const A: u8 = 35;
+    pub const S: u8 = 53;
+    pub const Z: u8 = 60;
+    pub const X: u8 = 58;
+    pub const I: u8 = 43;
+    pub const J: u8 = 44;
+    pub const K: u8 = 45;
+    pub const L: u8 = 46;
+    pub const B: u8 = 36;
+    pub const N: u8 = 48;
+    pub const UP: u8 = 84;
+    pub const DOWN: u8 = 85;
+    pub const LEFT: u8 = 86;
+    pub const RIGHT: u8 = 87;
+    pub const RETURN: u8 = 89;
+    pub const RIGHT_SHIFT: u8 = 96;
+}
+
+/// padmap's keyboard layout on ares' controls, which ares itself leaves unbound.
+/// Arrows drive the d-pad and the left stick both: ares' pad is one abstraction
+/// over every system, and which of the two is "the direction" depends on the game.
+pub const KEYBOARD: [(&str, u8); 24] = [
+    ("Pad.Up", xlib::UP),
+    ("Pad.Down", xlib::DOWN),
+    ("Pad.Left", xlib::LEFT),
+    ("Pad.Right", xlib::RIGHT),
+    ("Select", xlib::RIGHT_SHIFT),
+    ("Start", xlib::RETURN),
+    ("A..South", xlib::Z),
+    ("B..East", xlib::X),
+    ("X..West", xlib::A),
+    ("Y..North", xlib::S),
+    ("L-Bumper", xlib::Q),
+    ("R-Bumper", xlib::W),
+    ("L-Trigger", xlib::E),
+    ("R-Trigger", xlib::R),
+    ("L-Stick..Click", xlib::B),
+    ("R-Stick..Click", xlib::N),
+    ("L-Up", xlib::UP),
+    ("L-Down", xlib::DOWN),
+    ("L-Left", xlib::LEFT),
+    ("L-Right", xlib::RIGHT),
+    ("R-Up", xlib::I),
+    ("R-Down", xlib::K),
+    ("R-Left", xlib::J),
+    ("R-Right", xlib::L),
+];
+
+/// The `VirtualPadN` block for the keyboard.
+pub fn keyboard_pad(player: u32) -> String {
+    let mut out = format!("VirtualPad{player}\n");
+    for (name, key) in KEYBOARD {
+        out.push_str(&format!("  {name}: {KEYBOARD_ID}/0/{key};;\n"));
+    }
+    out.push_str("  Rumble: ;;\n");
+    out
+}
+
+/// A `VirtualPadN` block binding nothing, for a port nobody holds.
+pub fn empty_pad(player: u32) -> String {
+    let mut out = format!("VirtualPad{player}\n");
+    for (name, _) in CONTROLS {
+        out.push_str(&format!("  {name}: ;;\n"));
+    }
+    out.push_str("  Rumble: ;;\n");
+    out
+}
+
 /// The `VirtualPadN` block for one player (every control, bound or not).
 pub fn virtual_pad(player: u32, guid: &str, indices: &Indices) -> String {
     let mut out = format!("VirtualPad{player}\n");

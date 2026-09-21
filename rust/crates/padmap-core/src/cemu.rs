@@ -245,6 +245,131 @@ fn motion_controller(player: u32, display_name: &str) -> String {
     )
 }
 
+/// Marks a keyboard profile as padmap's, so a stale one can be told from the user's.
+pub const KEYBOARD_MARKER: &str = "<!-- padmap keyboard: the first port no pad holds -->";
+
+/// GDK keysyms: on Linux Cemu stores the raw wx keycode, which is the keysym of
+/// the key's *output*, so letters are the lowercase ones.
+mod keysym {
+    pub const Z: u32 = 122;
+    pub const X: u32 = 120;
+    pub const A: u32 = 97;
+    pub const S: u32 = 115;
+    pub const Q: u32 = 113;
+    pub const W: u32 = 119;
+    pub const E: u32 = 101;
+    pub const R: u32 = 114;
+    pub const I: u32 = 105;
+    pub const J: u32 = 106;
+    pub const K: u32 = 107;
+    pub const L: u32 = 108;
+    pub const B: u32 = 98;
+    pub const N: u32 = 110;
+    pub const RETURN: u32 = 0xff0d;
+    pub const SHIFT_R: u32 = 0xffe2;
+    pub const UP: u32 = 0xff52;
+    pub const DOWN: u32 = 0xff54;
+    pub const LEFT: u32 = 0xff51;
+    pub const RIGHT: u32 = 0xff53;
+}
+
+/// padmap's keyboard layout on the Wii U's controls, by Nintendo label:
+/// A is east and B is south, as on the pad tables above.
+fn keyboard_mapping(emulated: Emulated) -> Vec<(u8, u32)> {
+    use keysym as k;
+    match emulated {
+        Emulated::GamePad => vec![
+            (GamePad::A as u8, k::X),
+            (GamePad::B as u8, k::Z),
+            (GamePad::X as u8, k::S),
+            (GamePad::Y as u8, k::A),
+            (GamePad::L as u8, k::Q),
+            (GamePad::R as u8, k::W),
+            (GamePad::Zl as u8, k::E),
+            (GamePad::Zr as u8, k::R),
+            (GamePad::Plus as u8, k::RETURN),
+            (GamePad::Minus as u8, k::SHIFT_R),
+            (GamePad::Up as u8, k::UP),
+            (GamePad::Down as u8, k::DOWN),
+            (GamePad::Left as u8, k::LEFT),
+            (GamePad::Right as u8, k::RIGHT),
+            (GamePad::StickL as u8, k::B),
+            (GamePad::StickR as u8, k::N),
+            (GamePad::StickLUp as u8, k::UP),
+            (GamePad::StickLDown as u8, k::DOWN),
+            (GamePad::StickLLeft as u8, k::LEFT),
+            (GamePad::StickLRight as u8, k::RIGHT),
+            (GamePad::StickRUp as u8, k::I),
+            (GamePad::StickRDown as u8, k::K),
+            (GamePad::StickRLeft as u8, k::J),
+            (GamePad::StickRRight as u8, k::L),
+        ],
+        Emulated::Pro => vec![
+            (WiiU::A as u8, k::X),
+            (WiiU::B as u8, k::Z),
+            (WiiU::X as u8, k::S),
+            (WiiU::Y as u8, k::A),
+            (WiiU::L as u8, k::Q),
+            (WiiU::R as u8, k::W),
+            (WiiU::Zl as u8, k::E),
+            (WiiU::Zr as u8, k::R),
+            (WiiU::Plus as u8, k::RETURN),
+            (WiiU::Minus as u8, k::SHIFT_R),
+            (WiiU::Up as u8, k::UP),
+            (WiiU::Down as u8, k::DOWN),
+            (WiiU::Left as u8, k::LEFT),
+            (WiiU::Right as u8, k::RIGHT),
+            (WiiU::StickL as u8, k::B),
+            (WiiU::StickR as u8, k::N),
+            (WiiU::StickLUp as u8, k::UP),
+            (WiiU::StickLDown as u8, k::DOWN),
+            (WiiU::StickLLeft as u8, k::LEFT),
+            (WiiU::StickLRight as u8, k::RIGHT),
+            (WiiU::StickRUp as u8, k::I),
+            (WiiU::StickRDown as u8, k::K),
+            (WiiU::StickRLeft as u8, k::J),
+            (WiiU::StickRRight as u8, k::L),
+        ],
+    }
+}
+
+/// controllerN.xml for the keyboard on one player: GamePad on player 1, Pro after.
+pub fn keyboard_profile(player: u32) -> String {
+    let emulated = emulated_for(player);
+    let mut out = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+         {KEYBOARD_MARKER}\n\
+         <emulated_controller>\n\
+         \t<type>{}</type>\n\
+         \t<profile>Keyboard</profile>\n\
+         \t<controller>\n\
+         \t\t<api>Keyboard</api>\n\
+         \t\t<uuid>keyboard</uuid>\n\
+         \t\t<display_name>Keyboard</display_name>\n\
+         \t\t<motion>false</motion>\n\
+         \t\t<rumble>0</rumble>\n",
+        emulated.tag()
+    );
+    for group in ["axis", "rotation", "trigger"] {
+        out.push_str(&format!(
+            "\t\t<{group}>\n\t\t\t<deadzone>0.25</deadzone>\n\t\t\t<range>1</range>\n\t\t</{group}>\n"
+        ));
+    }
+    out.push_str("\t\t<mappings>\n");
+    for (control, key) in keyboard_mapping(emulated) {
+        out.push_str(&format!(
+            "\t\t\t<entry>\n\t\t\t\t<mapping>{control}</mapping>\n\t\t\t\t<button>{key}</button>\n\t\t\t</entry>\n"
+        ));
+    }
+    out.push_str("\t\t</mappings>\n\t</controller>\n</emulated_controller>\n");
+    out
+}
+
+/// Whether a profile on disk is padmap's keyboard, as opposed to one the user made.
+pub fn is_keyboard_profile(text: &str) -> bool {
+    text.contains(KEYBOARD_MARKER)
+}
+
 /// Filename controllerN.xml for player (1-based -> 0-based).
 pub fn profile_filename(player: u32) -> String {
     format!("controller{}.xml", player.saturating_sub(1))

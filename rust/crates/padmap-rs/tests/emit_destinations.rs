@@ -90,7 +90,10 @@ fn every_destination_can_be_pointed_somewhere_else() {
         serde_json::from_str(&std::fs::read_to_string(&ryujinx).expect("Ryujinx config"))
             .expect("json");
     assert_eq!(config["version"], 50, "Ryujinx's own settings went");
-    assert_eq!(config["input_config"].as_array().map(Vec::len), Some(2));
+    let entries = config["input_config"].as_array().expect("entries");
+    assert_eq!(entries.len(), 3, "two pads and the keyboard on Player3");
+    assert_eq!(entries[2]["backend"], "WindowKeyboard");
+    assert_eq!(entries[2]["player_index"], "Player3");
     let script = std::fs::read_to_string(&env_file).expect("env file");
     assert!(script.contains("padmap Player 1") && script.contains("padmap Player 2"));
     let pads = std::fs::read_to_string(dolphin.join("GCPadNew.ini")).expect("GCPadNew.ini");
@@ -105,8 +108,12 @@ fn every_destination_can_be_pointed_somewhere_else() {
         "{core}"
     );
     assert!(
-        core.contains("SIDevice2 = 0") && core.contains("SIDevice3 = 0"),
-        "{core}"
+        core.contains("SIDevice2 = 6") && core.contains("SIDevice3 = 0"),
+        "port 3 is the keyboard's, port 4 nobody's: {core}"
+    );
+    assert!(
+        pads.contains("[GCPad3]\nDevice = XInput2/0/Virtual core pointer"),
+        "{pads}"
     );
 
     assert!(

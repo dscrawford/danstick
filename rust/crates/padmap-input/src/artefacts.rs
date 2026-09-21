@@ -131,16 +131,37 @@ pub fn write_cemu_profiles(
     name_for: impl Fn(u32) -> String,
     dir: Option<&Path>,
 ) -> Result<Vec<PathBuf>, WriteError> {
+    use padmap_core::cemu;
+
     let target = or_default(dir, cemu_profile_dir);
     std::fs::create_dir_all(&target).map_err(io_at(&target))?;
     let mut written = Vec::new();
     for &player in players {
-        if player == 0 || player > padmap_core::cemu::MAX_PLAYERS {
+        if player == 0 || player > cemu::MAX_PLAYERS {
             continue;
         }
-        let path = target.join(padmap_core::cemu::profile_filename(player));
-        let body = padmap_core::cemu::profile(player, &guid_for(player), &name_for(player));
+        let path = target.join(cemu::profile_filename(player));
+        let body = cemu::profile(player, &guid_for(player), &name_for(player));
         std::fs::write(&path, body).map_err(io_at(&path))?;
+        written.push(path);
+    }
+    // The keyboard takes the first free port. A keyboard profile padmap left
+    // at another port last time would make the keyboard two players at once,
+    // so those go; a keyboard profile the user made themselves is not ours to
+    // touch.
+    let keyboard = padmap_core::keyboard::first_free(players, cemu::MAX_PLAYERS);
+    for port in 1..=cemu::MAX_PLAYERS {
+        if players.contains(&port) || keyboard == Some(port) {
+            continue;
+        }
+        let path = target.join(cemu::profile_filename(port));
+        if read_lossy(&path).is_ok_and(|text| cemu::is_keyboard_profile(&text)) {
+            std::fs::remove_file(&path).map_err(io_at(&path))?;
+        }
+    }
+    if let Some(port) = keyboard {
+        let path = target.join(cemu::profile_filename(port));
+        std::fs::write(&path, cemu::keyboard_profile(port)).map_err(io_at(&path))?;
         written.push(path);
     }
     Ok(written)

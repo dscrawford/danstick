@@ -327,6 +327,62 @@ pub fn launch_config(
     lines.join("\n") + "\n"
 }
 
+/// RetroArch's own keyboard defaults for one player, as suffix-less binds.
+/// From `config.def.keybinds.h`; only player 1 has them compiled in.
+pub const KEYBOARD_DEFAULTS: [(&str, &str); 12] = [
+    ("b", "z"),
+    ("y", "a"),
+    ("select", "rshift"),
+    ("start", "enter"),
+    ("up", "up"),
+    ("down", "down"),
+    ("left", "left"),
+    ("right", "right"),
+    ("a", "x"),
+    ("x", "s"),
+    ("l", "q"),
+    ("r", "w"),
+];
+
+/// The keyboard's binds for the first port no managed pad holds.
+///
+/// RetroArch compiles the keyboard into player 1 and nowhere else, and a
+/// keyboard bind is independent of the pad bind on the same port, so a pad
+/// seated as player 1 shared the port with the keyboard. With player 1 taken
+/// the keyboard moves: its player-1 binds are nulled and its defaults are
+/// written on the free port. With player 1 free nothing is written, since
+/// the defaults already say so. Every port taken: the keyboard is nulled and
+/// drives nobody, rather than doubling a pad.
+pub fn keyboard_config(managed: &[u32]) -> String {
+    let free = crate::keyboard::first_free(managed, MAX_PLAYERS);
+    if free == Some(1) {
+        return String::new();
+    }
+    let mut lines = vec![
+        String::new(),
+        "# The keyboard takes the first port no pad holds. RetroArch".to_owned(),
+        "# compiles it into player 1, so with that port seated the".to_owned(),
+        "# keyboard's own binds move off it rather than doubling the pad.".to_owned(),
+    ];
+    for bind in crate::userconfig::PLAYER_BINDS {
+        lines.push(format!("input_player1_{bind} = \"nul\""));
+    }
+    match free {
+        Some(port) => {
+            for (bind, key) in KEYBOARD_DEFAULTS {
+                lines.push(format!("input_player{port}_{bind} = \"{key}\""));
+            }
+            lines.push(String::new());
+            lines
+                .push("# Without its player-1 binds the keyboard cannot drive the menu".to_owned());
+            lines.push("# on its own; let every port do so, keyboard included.".to_owned());
+            lines.push("input_all_users_control_menu = \"true\"".to_owned());
+        }
+        None => lines.push("# Every port is seated; the keyboard drives nobody.".to_owned()),
+    }
+    lines.join("\n") + "\n"
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

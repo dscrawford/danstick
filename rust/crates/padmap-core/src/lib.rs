@@ -20,6 +20,7 @@ pub mod fields;
 pub mod guess;
 pub mod hide;
 pub mod icons;
+pub mod keyboard;
 pub mod launch;
 pub mod layout;
 pub mod motion;

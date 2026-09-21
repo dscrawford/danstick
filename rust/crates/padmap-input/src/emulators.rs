@@ -115,15 +115,21 @@ pub fn publish(pads: &[Published], dirs: &Destinations) -> Written {
         Err(error) => written.skipped.push(("dolphin", error.to_string())),
     }
 
-    let blocks: BTreeMap<u32, String> = by_player
-        .values()
-        .filter(|pad| pad.player <= ares::MAX_PLAYERS)
-        .map(|pad| {
-            let indices = ares::Indices::of(&pad.keys, &pad.axes);
-            (
-                pad.player,
-                ares::virtual_pad(pad.player, &pad.guid, &indices),
-            )
+    // Every one of ares' five ports is written: a pad's, the keyboard's on the
+    // first free one, and nothing on the rest -- a keyboard block left at
+    // another port from last time would make the keyboard two players.
+    let keyboard = padmap_core::keyboard::first_free(&players, ares::MAX_PLAYERS);
+    let blocks: BTreeMap<u32, String> = (1..=ares::MAX_PLAYERS)
+        .map(|port| {
+            let block = match by_player.get(&port) {
+                Some(pad) => {
+                    let indices = ares::Indices::of(&pad.keys, &pad.axes);
+                    ares::virtual_pad(port, &pad.guid, &indices)
+                }
+                None if keyboard == Some(port) => ares::keyboard_pad(port),
+                None => ares::empty_pad(port),
+            };
+            (port, block)
         })
         .collect();
     written.record(
@@ -244,9 +250,10 @@ mod tests {
         let config: serde_json::Value = serde_json::from_str(&text).expect("json");
         assert_eq!(config["version"], 50, "Ryujinx's own settings went");
         let entries = config["input_config"].as_array().expect("array");
-        assert_eq!(entries.len(), 4);
+        assert_eq!(entries.len(), 5, "four pads and the keyboard");
         let ids: std::collections::BTreeSet<&str> = entries
             .iter()
+            .filter(|entry| entry["backend"] == "GamepadSDL2")
             .filter_map(|entry| entry["id"].as_str())
             .collect();
         assert_eq!(ids.len(), 4, "ids collapsed: {ids:?}");
@@ -298,6 +305,64 @@ mod tests {
     #[test]
     fn a_file_that_is_not_ours_yields_nothing_rather_than_half_a_mapping() {
         assert_eq!(value_from_script("export FOO=bar\n"), None);
+    }
+
+    #[test]
+    fn the_keyboard_takes_the_first_free_port_everywhere_and_nowhere_else() {
+        let dir = scratch("keyboard");
+        std::fs::write(dir.join("ares.bml"), "Video\n").expect("seed");
+        std::fs::write(dir.join("Config.json"), r#"{"version": 50}"#).expect("seed");
+        // A keyboard profile padmap left at port 3 last time, and one the user made at port 5.
+        std::fs::create_dir_all(dir.join("cemu")).expect("mkdir");
+        std::fs::write(
+            dir.join("cemu/controller2.xml"),
+            padmap_core::cemu::keyboard_profile(3),
+        )
+        .expect("stale");
+        std::fs::write(dir.join("cemu/controller4.xml"), "<emulated_controller/>\n")
+            .expect("theirs");
+
+        publish(&[pad(1)], &only(&dir));
+
+        let cemu = std::fs::read_to_string(dir.join("cemu/controller1.xml")).expect("keyboard");
+        assert!(cemu.contains("<api>Keyboard</api>"), "{cemu}");
+        assert!(
+            !dir.join("cemu/controller2.xml").exists(),
+            "the stale keyboard stayed"
+        );
+        assert!(
+            dir.join("cemu/controller4.xml").exists(),
+            "the user's own profile went"
+        );
+
+        let dolphin = std::fs::read_to_string(dir.join("dolphin-emu/GCPadNew.ini")).expect("ini");
+        assert!(
+            dolphin.contains("[GCPad2]\nDevice = XInput2/0/Virtual core pointer\n"),
+            "{dolphin}"
+        );
+        let core = std::fs::read_to_string(dir.join("dolphin-emu/Dolphin.ini")).expect("ini");
+        assert!(core.contains("SIDevice1 = 6"), "{core}");
+        assert!(core.contains("SIDevice2 = 0"), "{core}");
+
+        let ares = std::fs::read_to_string(dir.join("ares.bml")).expect("bml");
+        assert!(
+            ares.contains("VirtualPad2\n  Pad.Up: 0x1/0/84;;\n"),
+            "{ares}"
+        );
+        assert!(ares.contains("VirtualPad3\n  Pad.Up: ;;\n"), "{ares}");
+        assert!(ares.contains("VirtualPad5\n"));
+
+        let text = std::fs::read_to_string(dir.join("Config.json")).expect("json");
+        let config: serde_json::Value = serde_json::from_str(&text).expect("json");
+        let keyboards: Vec<&serde_json::Value> = config["input_config"]
+            .as_array()
+            .expect("array")
+            .iter()
+            .filter(|e| e["backend"] == "WindowKeyboard")
+            .collect();
+        assert_eq!(keyboards.len(), 1);
+        assert_eq!(keyboards[0]["player_index"], "Player2");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

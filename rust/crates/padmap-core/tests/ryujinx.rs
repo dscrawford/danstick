@@ -114,7 +114,7 @@ fn merging_keeps_entries_padmap_is_not_managing() {
         vec![ryujinx::input_config(1, PADMAP_GUIDS[0], "padmap Player 1", 0).expect("entry")];
     let merged = ryujinx::merge(&existing, ours);
     let entries = merged.as_array().expect("an array");
-    assert_eq!(entries.len(), 2, "{merged}");
+    assert_eq!(entries.len(), 3, "{merged}");
     let one: Vec<&Value> = entries
         .iter()
         .filter(|e| e["player_index"] == "Player1")
@@ -122,12 +122,20 @@ fn merging_keeps_entries_padmap_is_not_managing() {
     assert_eq!(one.len(), 1, "the keyboard entry was not replaced");
     assert_eq!(one[0]["name"], "padmap Player 1");
     assert!(entries.iter().any(|e| e["name"] == "Someone else's pad"));
+    // The keyboard is not dropped: it moves to the first free player.
+    let keyboard = entries
+        .iter()
+        .find(|e| e["name"] == "Keyboard")
+        .expect("the keyboard survived");
+    assert_eq!(keyboard["player_index"], "Player2");
 }
 
 #[test]
-fn merging_into_nothing_is_just_our_entries() {
+fn merging_into_nothing_is_our_entries_and_a_keyboard() {
     let merged = ryujinx::merge(&Value::Null, vec![config(1, PADMAP_GUIDS[0])]);
-    assert_eq!(merged.as_array().map(Vec::len), Some(1));
+    assert_eq!(merged.as_array().map(Vec::len), Some(2));
+    assert_eq!(merged[1]["backend"], "WindowKeyboard");
+    assert_eq!(merged[1]["player_index"], "Player2");
 }
 
 #[test]
