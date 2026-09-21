@@ -29,3 +29,4 @@ needs when the thing calling it keeps each emulator in a directory of its own.
 | [keyboard-as-a-player.md](keyboard-as-a-player.md) | holding space on the grid should seat the keyboard as player N, bound in every emulator like a pad |
 | [press-in-the-wizard.md](press-in-the-wizard.md) | during a capture the front-end's SDL sees nothing from the pad; an `input` event would let it show the button under the thumb |
 | [join-a-session-late.md](join-a-session-late.md) | a session's pads are fixed when it opens; a controller switched on during one cannot take a seat |
+| [look-like-an-xbox-pad.md](look-like-an-xbox-pad.md) | an `xbox360` clone identity, so decompiled ports and every SDL game map it from the database they were built with |
