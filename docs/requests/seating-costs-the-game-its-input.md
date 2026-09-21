@@ -37,6 +37,19 @@ is one scan.
 `would_change` guards the epoll churn, which was the earlier fix, but it is
 *after* the scan that costs the time.
 
+## And a hold can be missed outright
+
+The same starvation costs claims, not only latency. With seating open, a
+0.7 s hold on a second pad -- long past `HOLD_SECONDS` -- is sometimes never
+claimed at all, and a person is left pressing a button that does nothing.
+GOTG's e2e sees it as flake: the test that joins a second controller at the
+launch gate passes alone and fails when the machine is busier, and it now
+holds for 1.2 s and retries five times to be reliable. Reported from a real
+launch as "I am unable to pair my second controller".
+
+That is the stronger reason to fix the scan: 100 ms of lag is bad, and a
+hold that reaches nobody is a controller that cannot join.
+
 ## What would be enough
 
 Any of these, and the first is probably the whole thing:
