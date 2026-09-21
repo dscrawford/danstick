@@ -3,7 +3,7 @@
 use serde_json::Value;
 
 /// Every command the socket accepts.
-pub const COMMANDS: [&str; 17] = [
+pub const COMMANDS: [&str; 18] = [
     "begin",
     "reset",
     "accept",
@@ -21,6 +21,7 @@ pub const COMMANDS: [&str; 17] = [
     "seating",
     "tune",
     "unseat",
+    "seat_keyboard",
 ];
 
 /// A parsed command, with its arguments already coerced.
@@ -78,6 +79,8 @@ pub enum Command {
     Unseat {
         player: i64,
     },
+    /// Seat the keyboard as the next player: no device, no clone, just every emulator's keyboard on that port.
+    SeatKeyboard,
 }
 
 /// Why a message could not be acted on.
@@ -177,6 +180,7 @@ impl Command {
             "unseat" => Command::Unseat {
                 player: number("player", 0)?,
             },
+            "seat_keyboard" => Command::SeatKeyboard,
             other => return Err(Refused::Unknown(other.to_owned())),
         })
     }

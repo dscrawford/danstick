@@ -134,6 +134,8 @@ pub struct Server {
     triton_checked_for: Option<BTreeSet<String>>,
     last_stale_check: f64,
     tick_failures: u64,
+    /// The keyboard's seat: no device, no clone, bound in every emulator by name.
+    keyboard_seat: Option<u32>,
     /// The pid this daemon ends with; None outlives everything, as before.
     follow: Option<u32>,
     last_follow_check: f64,
@@ -247,6 +249,7 @@ impl Server {
             triton_checked_for: None,
             last_stale_check: 0.0,
             tick_failures: 0,
+            keyboard_seat: None,
             follow: None,
             last_follow_check: 0.0,
         })
@@ -320,6 +323,7 @@ impl Server {
         if saved.is_empty() {
             return;
         }
+        self.keyboard_seat = assignments::keyboard_seat(&saved);
         let pads = discover();
         let (found, missing) = assignments::resolve(&saved, &pads);
         let restored: Vec<Slot> = found
@@ -338,15 +342,17 @@ impl Server {
                 entry.path.display()
             );
         }
-        if restored.is_empty() && self.away.is_empty() {
+        if restored.is_empty() && self.away.is_empty() && self.keyboard_seat.is_none() {
             return;
         }
         self.slots = restored
             .iter()
             .map(|slot| slot.player)
             .chain(self.away.iter().map(|entry| entry.player))
+            .chain(self.keyboard_seat)
             .max()
-            .unwrap_or(4);
+            .unwrap_or(4)
+            .max(4);
         self.slots_assigned = restored;
         match self.start_republisher() {
             Ok(()) => {
@@ -665,6 +671,7 @@ impl Server {
                 self.broadcast(&state);
             }
             Command::Unseat { player } => self.unseat(as_player(player)),
+            Command::SeatKeyboard => self.seat_keyboard(),
             Command::Status => {
                 let state = self.state_event();
                 self.send(fd, &state);
@@ -818,6 +825,16 @@ impl Server {
         self.slots_assigned
             .retain(|slot| !targets.contains(&slot.player));
         self.away.retain(|entry| !targets.contains(&entry.player));
+        if self
+            .keyboard_seat
+            .is_some_and(|seat| targets.contains(&seat))
+        {
+            info!(
+                "player {}: the keyboard unseated",
+                self.keyboard_seat.unwrap_or_default()
+            );
+            self.keyboard_seat = None;
+        }
         for slot in &removed {
             self.attached
                 .live
@@ -2100,6 +2117,7 @@ impl Server {
             &self.launch_config_path,
             &self.launch_args_path,
             last.as_ref(),
+            self.keyboard_seat,
         );
         self.sdl_lines = written.sdl_lines;
         let lines = events::sdl_mapping(&self.sdl_lines);
@@ -2535,6 +2553,7 @@ impl Server {
             .iter()
             .map(|slot| slot.player)
             .chain(self.away.iter().map(|entry| entry.player))
+            .chain(self.keyboard_seat)
             .collect()
     }
 
@@ -2559,7 +2578,7 @@ impl Server {
                 .collect(),
         };
         let live = self.published_players();
-        source
+        let mut players: Vec<PlayerState> = source
             .into_iter()
             .map(|(player, pad)| PlayerState {
                 player,
@@ -2569,8 +2588,65 @@ impl Server {
                 configured: publish::has_mapping(&pad),
                 mappings: publish::mapping_scopes(&pad),
                 published: live.contains(&player),
+                keyboard: false,
             })
-            .collect()
+            .collect();
+        if let Some(seat) = self.keyboard_seat.filter(|_| self.session.is_none()) {
+            players.push(keyboard_state(seat));
+        }
+        players.sort_by_key(|state| state.player);
+        players
+    }
+
+    /// Seat the keyboard as the next player. No device is read and nothing is
+    /// grabbed -- the keyboard stays the compositor's -- but every emulator's
+    /// config now names it as that player, and a pad seated after it takes
+    /// the seat after. Refused while a session is open, when it already holds
+    /// a seat, and when every seat is taken.
+    fn seat_keyboard(&mut self) {
+        if self.session.is_some() {
+            self.broadcast(&events::error("a session is open; cancel it first"));
+            return;
+        }
+        if let Some(seat) = self.keyboard_seat {
+            self.broadcast(&events::error(format!(
+                "the keyboard is already player {seat}"
+            )));
+            return;
+        }
+        let player = padmap_core::announce::next_player(&self.taken_seats());
+        let seats = self.slots.max(self.seating.seats());
+        if player > seats {
+            self.broadcast(&events::error("every seat is taken"));
+            return;
+        }
+        self.keyboard_seat = Some(player);
+        info!("seating: player {player} <- the keyboard");
+        let state = keyboard_state(player);
+        self.broadcast(&events::claim(player, &state.name, "", &state.icon, true));
+        if self.republisher.is_some() {
+            // Consumers are rewritten for the seat change; the clones are untouched.
+            let paths = self.virtual_paths();
+            self.rewrite_consumers(&paths);
+        } else {
+            self.rewrite_consumers(&BTreeMap::new());
+        }
+        self.save_assignments();
+        let state = self.state_event();
+        self.broadcast(&state);
+    }
+
+    /// The clone node of every published player.
+    fn virtual_paths(&mut self) -> BTreeMap<u32, String> {
+        let mut paths = BTreeMap::new();
+        if let Some(republisher) = self.republisher.as_mut() {
+            for vpad in &mut republisher.pads {
+                if let Some(node) = vpad.node() {
+                    paths.insert(vpad.player, node);
+                }
+            }
+        }
+        paths
     }
 
     fn state_event(&self) -> Value {
@@ -2591,6 +2667,7 @@ impl Server {
             .map(to_input_assignment)
             .collect();
         entries.extend(self.away.iter().cloned());
+        entries.extend(self.keyboard_seat.map(assignments::keyboard_assignment));
         entries.sort_by_key(|entry| entry.player);
         if let Err(error) = assignments::save(&self.state_path, &entries) {
             warn!("could not save assignments: {error}");
@@ -2600,6 +2677,20 @@ impl Server {
 
 fn as_player(player: i64) -> u32 {
     u32::try_from(player).unwrap_or(0)
+}
+
+/// What `state.players[]` says of the keyboard's seat.
+fn keyboard_state(player: u32) -> PlayerState {
+    PlayerState {
+        player,
+        name: "Keyboard".to_owned(),
+        node: String::new(),
+        icon: "keyboard".to_owned(),
+        configured: true,
+        mappings: Vec::new(),
+        published: false,
+        keyboard: true,
+    }
 }
 
 const FOLLOW_POLL_SECONDS: f64 = 0.25;

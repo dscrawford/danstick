@@ -128,7 +128,7 @@ fn usage() {
         "usage: padmap list [--json] | setup | map | calibrate | tune | forget | run | \
          serve [--fresh] [--follow PID] | \
          launch | play | hide | ensure-daemon [--check] [--fresh] [--follow PID] | clean-config | \
-         emit [--cemu-dir D] [--dolphin-dir D] [--ares-settings F] \
+         emit [--keyboard N] [--cemu-dir D] [--dolphin-dir D] [--ares-settings F] \
          [--ryujinx-config F] \
          [--env-file F] | \
          exec -- <program> [args...] | sdl-mapping <guid>"
@@ -194,7 +194,9 @@ fn cmd_emit(args: &[String]) -> Result<()> {
         ryujinx_config: flag_value(args, &["--ryujinx-config"]).map(PathBuf::from),
         env_file: flag_value(args, &["--env-file"]).map(PathBuf::from),
     };
-    let written = emulators::publish(&pads, &destinations);
+    let seat =
+        flag_value(args, &["--keyboard"]).map(|value| parse_number::<u32>(&value, "--keyboard"));
+    let written = emulators::publish(&pads, &destinations, seat);
     for path in &written.paths {
         println!("{}", path.display());
     }
@@ -478,7 +480,7 @@ fn cmd_run() -> Result<()> {
         anyhow::bail!("no pad could be republished");
     }
 
-    if let Err(error) = publish_artefacts(&vpads) {
+    if let Err(error) = publish_artefacts(&vpads, assignments::keyboard_seat(&saved)) {
         warn!("could not write the mapping files: {error}");
     }
 
@@ -585,7 +587,7 @@ fn cmd_run() -> Result<()> {
     Ok(())
 }
 
-fn publish_artefacts(vpads: &[padmap_input::VirtualPad]) -> Result<()> {
+fn publish_artefacts(vpads: &[padmap_input::VirtualPad], keyboard: Option<u32>) -> Result<()> {
     let mut sdl_lines = BTreeMap::new();
     let mut profiles_out = BTreeMap::new();
     let mut identities = BTreeMap::new();
@@ -666,7 +668,7 @@ fn publish_artefacts(vpads: &[padmap_input::VirtualPad]) -> Result<()> {
         }
     }
 
-    let emulators = emulators::publish(&published, &emulators::Destinations::default());
+    let emulators = emulators::publish(&published, &emulators::Destinations::default(), keyboard);
     for path in &emulators.paths {
         info!("emulator config: {}", path.display());
     }

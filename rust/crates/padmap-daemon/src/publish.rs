@@ -253,6 +253,7 @@ pub fn write_all(
     launch_config_path: &Path,
     launch_args_path: &Path,
     last: Option<&runtime::Game>,
+    keyboard: Option<u32>,
 ) -> Written {
     let console = last.map(|game| game.console.as_str()).unwrap_or("");
     let game = last.map(|game| game.key.as_str()).unwrap_or("");
@@ -300,7 +301,7 @@ pub fn write_all(
     let mut config =
         retroarch::launch_config(&players, virtual_paths, &order, &facts, emit::virtual_name);
     let managed_sorted: Vec<u32> = managed.keys().copied().collect();
-    config.push_str(&retroarch::keyboard_config(&managed_sorted));
+    config.push_str(&retroarch::keyboard_config(&managed_sorted, keyboard));
     if let Err(error) = artefacts::write_launch_config(launch_config_path, &config) {
         warn!("could not write the launch config: {error}");
     }
@@ -347,7 +348,7 @@ pub fn write_all(
         Ok(path) => info!("wrote {} SDL mapping(s) to {}", lines.len(), path.display()),
         Err(error) => warn!("could not write SDL mappings: {error}"),
     }
-    let wrote = emulators::publish(&published, &emulators::Destinations::default());
+    let wrote = emulators::publish(&published, &emulators::Destinations::default(), keyboard);
     for (target, why) in &wrote.skipped {
         info!("{target}: not written ({why})");
     }

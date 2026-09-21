@@ -9,13 +9,13 @@ const GUID: &str = "03000000120900000100000001000000";
 
 #[test]
 fn retroarch_leaves_its_own_defaults_alone_when_player_one_is_free() {
-    assert_eq!(retroarch::keyboard_config(&[]), "");
-    assert_eq!(retroarch::keyboard_config(&[2, 3]), "");
+    assert_eq!(retroarch::keyboard_config(&[], None), "");
+    assert_eq!(retroarch::keyboard_config(&[2, 3], None), "");
 }
 
 #[test]
 fn retroarch_moves_the_keyboard_off_a_seated_player_one() {
-    let text = retroarch::keyboard_config(&[1]);
+    let text = retroarch::keyboard_config(&[1], None);
     for bind in userconfig::PLAYER_BINDS {
         assert!(
             text.contains(&format!("input_player1_{bind} = \"nul\"\n")),
@@ -38,10 +38,29 @@ fn retroarch_moves_the_keyboard_off_a_seated_player_one() {
 #[test]
 fn retroarch_with_every_port_seated_gives_the_keyboard_nobody() {
     let all: Vec<u32> = (1..=retroarch::MAX_PLAYERS).collect();
-    let text = retroarch::keyboard_config(&all);
+    let text = retroarch::keyboard_config(&all, None);
     assert!(text.contains("input_player1_a = \"nul\"\n"));
     assert!(!text.contains("= \"x\""), "{text}");
     assert!(!text.contains("all_users_control_menu"));
+}
+
+#[test]
+fn a_seated_keyboard_keeps_its_seat_ahead_of_pads_seated_later() {
+    // Keyboard seated first as player 1, a pad after it as player 2.
+    assert_eq!(
+        retroarch::keyboard_config(&[2], Some(1)),
+        "",
+        "player 1's defaults stand"
+    );
+    let text = retroarch::keyboard_config(&[1, 2], Some(3));
+    assert!(text.contains("input_player3_a = \"x\"\n"), "{text}");
+    let merged = ryujinx::merge(&Value::Null, vec![pad(2)], Some(1));
+    assert_eq!(indices_of(&merged, "WindowKeyboard"), ["Player1"]);
+    let merged = ryujinx::merge(&Value::Null, vec![pad(1)], Some(9));
+    assert!(
+        indices_of(&merged, "WindowKeyboard").is_empty(),
+        "seat 9 is no Ryujinx player"
+    );
 }
 
 // ---- Dolphin ----
@@ -62,8 +81,8 @@ fn dolphin_writes_what_it_would_have_written_itself_for_port_one() {
     ] {
         assert!(section.contains(&format!("{line}\n")), "{line}");
     }
-    assert_eq!(dolphin::keyboard_port(&[1, 2]), Some(3));
-    assert_eq!(dolphin::keyboard_port(&[1, 2, 3, 4]), None);
+    assert_eq!(dolphin::keyboard_port(&[1, 2], None), Some(3));
+    assert_eq!(dolphin::keyboard_port(&[1, 2, 3, 4], None), None);
 }
 
 // ---- Ryujinx ----
@@ -87,7 +106,7 @@ fn ryujinx_moves_the_users_own_keyboard_to_the_first_free_player() {
     let existing = json!([
         {"backend": "WindowKeyboard", "player_index": "Player1", "left_joycon": {"dpad_up": "Number8"}}
     ]);
-    let merged = ryujinx::merge(&existing, vec![pad(1), pad(2)]);
+    let merged = ryujinx::merge(&existing, vec![pad(1), pad(2)], None);
     assert_eq!(indices_of(&merged, "GamepadSDL2"), ["Player1", "Player2"]);
     assert_eq!(indices_of(&merged, "WindowKeyboard"), ["Player3"]);
     let keyboard = &merged.as_array().expect("array")[2];
@@ -99,7 +118,7 @@ fn ryujinx_moves_the_users_own_keyboard_to_the_first_free_player() {
 
 #[test]
 fn ryujinx_seeds_its_own_default_keyboard_when_there_is_none() {
-    let merged = ryujinx::merge(&Value::Null, vec![pad(1)]);
+    let merged = ryujinx::merge(&Value::Null, vec![pad(1)], None);
     assert_eq!(indices_of(&merged, "WindowKeyboard"), ["Player2"]);
     let keyboard = &merged.as_array().expect("array")[1];
     assert_eq!(keyboard["controller_type"], "JoyconPair");
@@ -115,14 +134,14 @@ fn ryujinx_keeps_one_keyboard_and_no_more() {
         {"backend": "WindowKeyboard", "player_index": "Player5"},
         {"backend": "GamepadSDL2", "player_index": "Player3", "name": "theirs"}
     ]);
-    let merged = ryujinx::merge(&existing, vec![pad(1)]);
+    let merged = ryujinx::merge(&existing, vec![pad(1)], None);
     assert_eq!(indices_of(&merged, "WindowKeyboard"), ["Player2"]);
     assert_eq!(indices_of(&merged, "GamepadSDL2"), ["Player3", "Player1"]);
 }
 
 #[test]
 fn ryujinx_with_eight_players_has_no_keyboard() {
-    let merged = ryujinx::merge(&Value::Null, (1..=8).map(pad).collect());
+    let merged = ryujinx::merge(&Value::Null, (1..=8).map(pad).collect(), None);
     assert!(indices_of(&merged, "WindowKeyboard").is_empty());
 }
 

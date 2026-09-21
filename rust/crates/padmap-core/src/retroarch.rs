@@ -353,8 +353,8 @@ pub const KEYBOARD_DEFAULTS: [(&str, &str); 12] = [
 /// written on the free port. With player 1 free nothing is written, since
 /// the defaults already say so. Every port taken: the keyboard is nulled and
 /// drives nobody, rather than doubling a pad.
-pub fn keyboard_config(managed: &[u32]) -> String {
-    let free = crate::keyboard::first_free(managed, MAX_PLAYERS);
+pub fn keyboard_config(managed: &[u32], seat: Option<u32>) -> String {
+    let free = crate::keyboard::port(seat, managed, MAX_PLAYERS);
     if free == Some(1) {
         return String::new();
     }

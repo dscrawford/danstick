@@ -70,6 +70,11 @@ const FRESH: PadId = PadId {
     pid: 0x000c,
     only: "RSTESTFRESH",
 };
+const KEYSEAT: PadId = PadId {
+    name: "PADMAP RSTESTKEYSEAT",
+    pid: 0x000e,
+    only: "RSTESTKEYSEAT",
+};
 /// No pad is made for this one; the daemon under test only needs a filter.
 const FOLLOWER: PadId = PadId {
     name: "PADMAP RSTESTFOLLOW",
@@ -322,6 +327,20 @@ impl Daemon {
 }
 
 impl Daemon {
+    /// Open seating and hold a button until the pad is `player` and published.
+    fn seat_by_hold_as(&mut self, pad: &mut TestPad, player: u64) {
+        self.pump(1.5);
+        self.events.clear();
+        self.send(serde_json::json!({"cmd": "seating", "open": true, "players": 4}));
+        pad.hold(FIRST_KEY, 0.6);
+        let claim = self
+            .wait_for("claim", |e| e["name"] != "Keyboard", 5.0)
+            .expect("holding a button took the free seat");
+        assert_eq!(claim["player"], player);
+        self.wait_for("state", |e| e["state"] == "ready", 5.0)
+            .expect("ready after the seat was taken");
+    }
+
     /// Open seating and hold a button until the pad is player 1 and published.
     ///
     /// A pad that appeared a moment ago is not readable by anybody yet when
@@ -1369,4 +1388,101 @@ fn sdl_mappings_in(path: &Path) -> Option<usize> {
             .filter(|line| !line.trim().is_empty() && !line.starts_with('#'))
             .count(),
     )
+}
+
+/// `seat_keyboard` seats the keyboard as the next player with no device behind
+/// it; a pad seated after it takes the seat after, and every consumer says so.
+#[test]
+fn the_keyboard_takes_a_seat_by_command_and_a_pad_sits_after_it() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let _guard = LiveGuard::new(KEYSEAT);
+    let root = std::env::temp_dir().join(format!("padmap-keyseat-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let mut pad = TestPad::new(KEYSEAT);
+    let mut daemon = Daemon::start(&root, KEYSEAT);
+    let state_dir = daemon.runtime.join("padmap");
+    let gcpad = root.join("config/dolphin-emu/GCPadNew.ini");
+
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "seat_keyboard"}));
+    let claim = daemon
+        .wait_for("claim", |e| e["name"] == "Keyboard", 5.0)
+        .expect("the keyboard took a seat");
+    assert_eq!(claim["player"], 1);
+    assert_eq!(claim["icon"], "keyboard");
+    let state = daemon
+        .wait_for(
+            "state",
+            |e| e["players"].as_array().map(Vec::len) == Some(1),
+            5.0,
+        )
+        .expect("a state with the keyboard seated");
+    assert_eq!(state["players"][0]["player"], 1);
+    assert_eq!(state["players"][0]["keyboard"], true);
+    assert_eq!(state["players"][0]["name"], "Keyboard");
+    let saved = std::fs::read_to_string(state_dir.join("assignments.json")).expect("saved");
+    assert!(
+        saved.contains("\"keyboard\""),
+        "the seat was not saved: {saved}"
+    );
+    let ini = std::fs::read_to_string(&gcpad).expect("Dolphin config");
+    assert!(
+        ini.contains("[GCPad1]\nDevice = XInput2/0/Virtual core pointer\n"),
+        "{ini}"
+    );
+
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "seat_keyboard"}));
+    assert!(
+        daemon.last("error").is_some(),
+        "the keyboard was seated twice"
+    );
+
+    // A pad seated after the keyboard is player 2.
+    daemon.seat_by_hold_as(&mut pad, 2);
+    let state = daemon.last("state").expect("state").clone();
+    let players = state["players"].as_array().expect("players");
+    assert_eq!(players.len(), 2, "{state}");
+    assert_eq!(players[0]["keyboard"], true);
+    assert_eq!(players[1]["player"], 2);
+    assert_eq!(players[1]["published"], true);
+    let ini = std::fs::read_to_string(&gcpad).expect("Dolphin config");
+    assert!(
+        ini.contains("[GCPad1]\nDevice = XInput2/0/Virtual core pointer\n"),
+        "{ini}"
+    );
+    assert!(
+        ini.contains("[GCPad2]\nDevice = SDL/0/padmap Player 2\n"),
+        "{ini}"
+    );
+    let launch = std::fs::read_to_string(state_dir.join("launch.cfg")).expect("launch.cfg");
+    assert!(
+        !launch.contains("input_player1_b = \"nul\""),
+        "the keyboard is player 1, so RetroArch's own defaults stand: {launch}"
+    );
+
+    // Unseating the keyboard frees seat 1; the pad keeps seat 2.
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "unseat", "player": 1}));
+    let state = daemon
+        .wait_for(
+            "state",
+            |e| e["players"].as_array().map(Vec::len) == Some(1),
+            5.0,
+        )
+        .expect("one player left");
+    assert_eq!(state["players"][0]["player"], 2);
+    let saved = std::fs::read_to_string(state_dir.join("assignments.json")).expect("saved");
+    assert!(
+        !saved.contains("\"keyboard\""),
+        "the keyboard seat survived on disk"
+    );
+
+    drop(daemon);
+    drop(pad);
+    let _ = std::fs::remove_dir_all(&root);
 }

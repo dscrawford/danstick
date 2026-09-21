@@ -90,7 +90,8 @@ pub fn write_env(value: &str, path: Option<&Path>) -> Result<PathBuf, artefacts:
 }
 
 /// Write all emulator configs; skips instead of failing.
-pub fn publish(pads: &[Published], dirs: &Destinations) -> Written {
+/// `seat` is the keyboard's, when it holds one; otherwise it takes the first free port.
+pub fn publish(pads: &[Published], dirs: &Destinations, seat: Option<u32>) -> Written {
     let mut written = Written::default();
 
     let by_player: BTreeMap<u32, &Published> = pads.iter().map(|pad| (pad.player, pad)).collect();
@@ -98,6 +99,7 @@ pub fn publish(pads: &[Published], dirs: &Destinations) -> Written {
 
     match artefacts::write_cemu_profiles(
         &players,
+        seat,
         |player| by_player[&player].guid.clone(),
         |player| by_player[&player].name.clone(),
         dirs.cemu_dir.as_deref(),
@@ -108,6 +110,7 @@ pub fn publish(pads: &[Published], dirs: &Destinations) -> Written {
 
     match artefacts::write_dolphin_config(
         &players,
+        seat,
         |player| by_player[&player].name.clone(),
         dirs.dolphin_dir.as_deref(),
     ) {
@@ -118,7 +121,7 @@ pub fn publish(pads: &[Published], dirs: &Destinations) -> Written {
     // Every one of ares' five ports is written: a pad's, the keyboard's on the
     // first free one, and nothing on the rest -- a keyboard block left at
     // another port from last time would make the keyboard two players.
-    let keyboard = padmap_core::keyboard::first_free(&players, ares::MAX_PLAYERS);
+    let keyboard = padmap_core::keyboard::port(seat, &players, ares::MAX_PLAYERS);
     let blocks: BTreeMap<u32, String> = (1..=ares::MAX_PLAYERS)
         .map(|port| {
             let block = match by_player.get(&port) {
@@ -143,7 +146,7 @@ pub fn publish(pads: &[Published], dirs: &Destinations) -> Written {
         .collect();
     written.record(
         "ryujinx",
-        artefacts::write_ryujinx_config(entries, dirs.ryujinx_config.as_deref()),
+        artefacts::write_ryujinx_config(entries, seat, dirs.ryujinx_config.as_deref()),
     );
 
     // The environment file, which is the only way into Cemu and works for any other SDL program that loads its database once and never again.
@@ -205,7 +208,7 @@ mod tests {
     #[test]
     fn an_emulator_that_has_never_run_is_skipped_not_invented() {
         let dir = scratch("absent");
-        let written = publish(&[pad(1)], &only(&dir));
+        let written = publish(&[pad(1)], &only(&dir), None);
 
         let skipped: Vec<&str> = written.skipped.iter().map(|(what, _)| *what).collect();
         assert!(skipped.contains(&"ares"), "{written:?}");
@@ -226,7 +229,7 @@ mod tests {
     fn a_skip_never_stops_the_other_emulators() {
         let dir = scratch("partial");
         std::fs::write(dir.join("ares.bml"), "Video\n  Driver: OpenGL\n").expect("seed");
-        let written = publish(&[pad(1), pad(2)], &only(&dir));
+        let written = publish(&[pad(1), pad(2)], &only(&dir), None);
 
         let text = std::fs::read_to_string(dir.join("ares.bml")).expect("read");
         assert!(text.contains("Driver: OpenGL"), "ares' own settings went");
@@ -244,7 +247,7 @@ mod tests {
         let dir = scratch("ryujinx");
         std::fs::write(dir.join("Config.json"), r#"{"version": 50}"#).expect("seed");
         let pads: Vec<Published> = (1..=4).map(pad).collect();
-        publish(&pads, &only(&dir));
+        publish(&pads, &only(&dir), None);
 
         let text = std::fs::read_to_string(dir.join("Config.json")).expect("read");
         let config: serde_json::Value = serde_json::from_str(&text).expect("json");
@@ -263,7 +266,7 @@ mod tests {
     #[test]
     fn the_env_file_carries_every_mapping_and_is_sourceable() {
         let dir = scratch("env");
-        publish(&[pad(1), pad(2)], &only(&dir));
+        publish(&[pad(1), pad(2)], &only(&dir), None);
         let text = std::fs::read_to_string(dir.join("env.sh")).expect("read");
         assert!(text.contains("padmap Player 1") && text.contains("padmap Player 2"));
 
@@ -322,7 +325,7 @@ mod tests {
         std::fs::write(dir.join("cemu/controller4.xml"), "<emulated_controller/>\n")
             .expect("theirs");
 
-        publish(&[pad(1)], &only(&dir));
+        publish(&[pad(1)], &only(&dir), None);
 
         let cemu = std::fs::read_to_string(dir.join("cemu/controller1.xml")).expect("keyboard");
         assert!(cemu.contains("<api>Keyboard</api>"), "{cemu}");
@@ -366,10 +369,33 @@ mod tests {
     }
 
     #[test]
+    fn a_seated_keyboard_is_player_one_ahead_of_a_pad_seated_after_it() {
+        let dir = scratch("keyboard-seat");
+        std::fs::write(dir.join("ares.bml"), "Video\n").expect("seed");
+        publish(&[pad(2)], &only(&dir), Some(1));
+
+        let cemu = std::fs::read_to_string(dir.join("cemu/controller0.xml")).expect("keyboard");
+        assert!(cemu.contains("<api>Keyboard</api>") && cemu.contains("Wii U GamePad"));
+        assert!(
+            dir.join("cemu/controller1.xml").exists(),
+            "the pad is player 2"
+        );
+        let dolphin = std::fs::read_to_string(dir.join("dolphin-emu/GCPadNew.ini")).expect("ini");
+        assert!(dolphin.starts_with("[GCPad1]\nDevice = XInput2/0/Virtual core pointer\n"));
+        assert!(dolphin.contains("[GCPad2]\nDevice = SDL/0/padmap Player 2\n"));
+        let ares = std::fs::read_to_string(dir.join("ares.bml")).expect("bml");
+        assert!(
+            ares.contains("VirtualPad1\n  Pad.Up: 0x1/0/84;;\n"),
+            "{ares}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn a_ninth_player_is_left_out_rather_than_wrapped_round() {
         let dir = scratch("cap");
         std::fs::write(dir.join("ares.bml"), "Video\n").expect("seed");
-        publish(&[pad(1), pad(6), pad(9)], &only(&dir));
+        publish(&[pad(1), pad(6), pad(9)], &only(&dir), None);
 
         assert!(
             dir.join("cemu").join("controller5.xml").exists(),

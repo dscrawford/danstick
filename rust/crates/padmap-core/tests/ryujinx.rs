@@ -112,7 +112,7 @@ fn merging_keeps_entries_padmap_is_not_managing() {
     ]);
     let ours =
         vec![ryujinx::input_config(1, PADMAP_GUIDS[0], "padmap Player 1", 0).expect("entry")];
-    let merged = ryujinx::merge(&existing, ours);
+    let merged = ryujinx::merge(&existing, ours, None);
     let entries = merged.as_array().expect("an array");
     assert_eq!(entries.len(), 3, "{merged}");
     let one: Vec<&Value> = entries
@@ -132,7 +132,7 @@ fn merging_keeps_entries_padmap_is_not_managing() {
 
 #[test]
 fn merging_into_nothing_is_our_entries_and_a_keyboard() {
-    let merged = ryujinx::merge(&Value::Null, vec![config(1, PADMAP_GUIDS[0])]);
+    let merged = ryujinx::merge(&Value::Null, vec![config(1, PADMAP_GUIDS[0])], None);
     assert_eq!(merged.as_array().map(Vec::len), Some(2));
     assert_eq!(merged[1]["backend"], "WindowKeyboard");
     assert_eq!(merged[1]["player_index"], "Player2");

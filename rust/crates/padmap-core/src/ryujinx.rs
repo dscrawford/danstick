@@ -173,7 +173,7 @@ fn index_of(entry: &Value) -> Option<u32> {
 /// seeds one on Player1, which is where padmap's first pad goes. The user's
 /// own keyboard entry is the one moved when there is one, so their keys
 /// survive; otherwise Ryujinx's defaults are written. One keyboard only.
-pub fn merge(existing: &Value, ours: Vec<Value>) -> Value {
+pub fn merge(existing: &Value, ours: Vec<Value>, seat: Option<u32>) -> Value {
     let taken: Vec<&Value> = ours
         .iter()
         .filter_map(|entry| entry.get("player_index"))
@@ -189,7 +189,7 @@ pub fn merge(existing: &Value, ours: Vec<Value>) -> Value {
     out.extend(ours);
 
     let held: Vec<u32> = out.iter().filter_map(index_of).collect();
-    if let Some(port) = crate::keyboard::first_free(&held, MAX_PLAYERS) {
+    if let Some(port) = crate::keyboard::port(seat, &held, MAX_PLAYERS) {
         let mut keyboard = keyboards
             .into_iter()
             .next()

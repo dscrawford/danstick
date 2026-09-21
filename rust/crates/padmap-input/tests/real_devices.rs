@@ -299,6 +299,7 @@ fn cemu_profiles_are_written_per_player_and_stop_at_cemus_limit() {
     let players: Vec<u32> = (1..=9).collect();
     let written = artefacts::write_cemu_profiles(
         &players,
+        None,
         |player| format!("{player:032x}"),
         |player| format!("padmap Player {player}"),
         Some(&dir),
@@ -318,8 +319,14 @@ fn cemu_profiles_are_written_per_player_and_stop_at_cemus_limit() {
     assert!(first.contains("<display_name>padmap Player 1</display_name>"));
 
     std::fs::write(dir.join("controller5.xml"), "mine").expect("write");
-    artefacts::write_cemu_profiles(&[1], |_| "g".to_owned(), |_| "n".to_owned(), Some(&dir))
-        .expect("writes");
+    artefacts::write_cemu_profiles(
+        &[1],
+        None,
+        |_| "g".to_owned(),
+        |_| "n".to_owned(),
+        Some(&dir),
+    )
+    .expect("writes");
     assert_eq!(
         std::fs::read_to_string(dir.join("controller5.xml")).expect("read"),
         "mine",
@@ -383,7 +390,7 @@ fn rewriting_ryujinx_config_keeps_every_other_setting() {
         0,
     )
     .expect("an entry");
-    artefacts::write_ryujinx_config(vec![entry], Some(&path)).expect("writes");
+    artefacts::write_ryujinx_config(vec![entry], None, Some(&path)).expect("writes");
 
     let back: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&path).expect("read")).expect("json");
@@ -414,7 +421,7 @@ fn neither_writer_invents_a_config_that_was_never_there() {
     // Writing one from nothing would leave the emulator with padmap's ports.
     let missing = std::path::Path::new("/nonexistent-padmap-emulator/settings.bml");
     assert!(artefacts::write_ares_settings(&BTreeMap::new(), Some(missing)).is_err());
-    assert!(artefacts::write_ryujinx_config(Vec::new(), Some(missing)).is_err());
+    assert!(artefacts::write_ryujinx_config(Vec::new(), None, Some(missing)).is_err());
 }
 
 #[test]

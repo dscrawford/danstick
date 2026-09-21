@@ -127,6 +127,7 @@ pub fn cemu_profile_dir() -> PathBuf {
 /// Up to Cemu's eight slots; profiles for players padmap is not managing are left alone.
 pub fn write_cemu_profiles(
     players: &[u32],
+    seat: Option<u32>,
     guid_for: impl Fn(u32) -> String,
     name_for: impl Fn(u32) -> String,
     dir: Option<&Path>,
@@ -149,7 +150,7 @@ pub fn write_cemu_profiles(
     // at another port last time would make the keyboard two players at once,
     // so those go; a keyboard profile the user made themselves is not ours to
     // touch.
-    let keyboard = padmap_core::keyboard::first_free(players, cemu::MAX_PLAYERS);
+    let keyboard = padmap_core::keyboard::port(seat, players, cemu::MAX_PLAYERS);
     for port in 1..=cemu::MAX_PLAYERS {
         if players.contains(&port) || keyboard == Some(port) {
             continue;
@@ -174,6 +175,7 @@ pub fn dolphin_config_dir() -> PathBuf {
 /// Writes `GCPadNew.ini`, `Dolphin.ini` (port device types) and `DSUClient.ini`, key by key.
 pub fn write_dolphin_config(
     players: &[u32],
+    seat: Option<u32>,
     name_for: impl Fn(u32) -> String,
     dir: Option<&Path>,
 ) -> Result<Vec<PathBuf>, WriteError> {
@@ -184,13 +186,13 @@ pub fn write_dolphin_config(
 
     let bindings = target.join("GCPadNew.ini");
     let existing = read_lossy(&bindings).unwrap_or_default();
-    let body = dolphin::sections(players, name_for);
+    let body = dolphin::sections(players, seat, name_for);
     std::fs::write(&bindings, dolphin::rewrite_bindings(&existing, &body))
         .map_err(io_at(&bindings))?;
 
     let core = target.join("Dolphin.ini");
     let mut text = read_lossy(&core).unwrap_or_default();
-    for (key, kind) in dolphin::si_devices(players) {
+    for (key, kind) in dolphin::si_devices(players, seat) {
         text = dolphin::set_ini(&text, "Core", &key, &kind.to_string());
     }
     std::fs::write(&core, text).map_err(io_at(&core))?;
@@ -262,6 +264,7 @@ pub fn write_ares_settings(
 /// Replaces only `input_config`, and only padmap's players within it.
 pub fn write_ryujinx_config(
     entries: Vec<serde_json::Value>,
+    seat: Option<u32>,
     path: Option<&Path>,
 ) -> Result<PathBuf, WriteError> {
     let target = or_default(path, ryujinx_config_path);
@@ -273,6 +276,7 @@ pub fn write_ryujinx_config(
             .get("input_config")
             .unwrap_or(&serde_json::Value::Null),
         entries,
+        seat,
     );
     config["input_config"] = merged;
     let body = serde_json::to_string_pretty(&config).map_err(|error| invalid(&target, error))?;

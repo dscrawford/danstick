@@ -87,9 +87,9 @@ pub fn keyboard_section(port: u32) -> String {
     out
 }
 
-/// The port the keyboard takes: the first of the four no pad holds.
-pub fn keyboard_port(players: &[u32]) -> Option<u32> {
-    crate::keyboard::first_free(players, MAX_PLAYERS)
+/// The port the keyboard takes: its seat, else the first of the four no pad holds.
+pub fn keyboard_port(players: &[u32], seat: Option<u32>) -> Option<u32> {
+    crate::keyboard::port(seat, players, MAX_PLAYERS)
 }
 
 /// Slot always 0: padmap pads unique per player.
@@ -107,7 +107,7 @@ pub fn section(port: u32, device_line: &str) -> String {
 }
 
 /// Every managed port's section, in player order.
-pub fn sections(players: &[u32], name_for: impl Fn(u32) -> String) -> String {
+pub fn sections(players: &[u32], seat: Option<u32>, name_for: impl Fn(u32) -> String) -> String {
     let mut sorted: Vec<u32> = players
         .iter()
         .copied()
@@ -115,7 +115,7 @@ pub fn sections(players: &[u32], name_for: impl Fn(u32) -> String) -> String {
         .collect();
     sorted.sort_unstable();
     sorted.dedup();
-    let keyboard = keyboard_port(&sorted);
+    let keyboard = keyboard_port(&sorted, seat);
     (1..=MAX_PLAYERS)
         .filter_map(|port| {
             if sorted.contains(&port) {
@@ -162,8 +162,8 @@ fn is_pad_section(header: &str) -> bool {
 }
 
 /// `SIDeviceN` zero-based; `GCPadN` one-based. The keyboard's port counts as a controller.
-pub fn si_devices(players: &[u32]) -> Vec<(String, u32)> {
-    let keyboard = keyboard_port(players);
+pub fn si_devices(players: &[u32], seat: Option<u32>) -> Vec<(String, u32)> {
+    let keyboard = keyboard_port(players, seat);
     (1..=MAX_PLAYERS)
         .map(|port| {
             let kind = if players.contains(&port) || keyboard == Some(port) {
@@ -337,7 +337,7 @@ mod tests {
     #[test]
     fn an_unmanaged_port_is_emptied_rather_than_left_alone() {
         // Port 3 is the keyboard's; port 4 is nobody's.
-        let devices = si_devices(&[1, 2]);
+        let devices = si_devices(&[1, 2], None);
         assert_eq!(
             devices,
             vec![
@@ -347,23 +347,37 @@ mod tests {
                 ("SIDevice3".to_owned(), SI_NONE),
             ]
         );
-        assert_eq!(si_devices(&[1, 2, 3, 4])[3].1, SI_GC_CONTROLLER);
+        assert_eq!(si_devices(&[1, 2, 3, 4], None)[3].1, SI_GC_CONTROLLER);
+        assert_eq!(
+            si_devices(&[2], Some(1)),
+            vec![
+                ("SIDevice0".to_owned(), SI_GC_CONTROLLER),
+                ("SIDevice1".to_owned(), SI_GC_CONTROLLER),
+                ("SIDevice2".to_owned(), SI_NONE),
+                ("SIDevice3".to_owned(), SI_NONE),
+            ],
+            "a seated keyboard is port 1 ahead of a pad seated after it"
+        );
     }
 
     #[test]
     fn the_keyboard_takes_the_first_free_port_in_dolphins_own_keys() {
-        let text = sections(&[1], |p| format!("padmap Player {p}"));
+        let text = sections(&[1], None, |p| format!("padmap Player {p}"));
         assert!(text.contains("[GCPad1]\nDevice = SDL/0/padmap Player 1\n"));
         assert!(text.contains("[GCPad2]\nDevice = XInput2/0/Virtual core pointer\n"));
         assert!(text.contains("Buttons/A = `X`\n"), "{text}");
         assert!(text.contains("D-Pad/Up = `T`\n"), "{text}");
         assert!(!text.contains("[GCPad3]"));
 
-        let none = sections(&[], |_| String::new());
+        let none = sections(&[], None, |_| String::new());
         assert!(none.starts_with("[GCPad1]\nDevice = XInput2/0/Virtual core pointer\n"));
 
-        let full = sections(&[1, 2, 3, 4], |p| format!("p{p}"));
+        let full = sections(&[1, 2, 3, 4], None, |p| format!("p{p}"));
         assert!(!full.contains("XInput2"), "no port left for the keyboard");
+
+        let seated = sections(&[2], Some(1), |p| format!("p{p}"));
+        assert!(seated.starts_with("[GCPad1]\nDevice = XInput2/0/Virtual core pointer\n"));
+        assert!(seated.contains("[GCPad2]\nDevice = SDL/0/p2\n"));
     }
 
     #[test]
@@ -410,7 +424,9 @@ mod tests {
 
     #[test]
     fn only_the_four_real_ports_get_a_section() {
-        let text = sections(&[1, 2, 5, 0], |player| format!("padmap Player {player}"));
+        let text = sections(&[1, 2, 5, 0], None, |player| {
+            format!("padmap Player {player}")
+        });
         assert!(text.contains("[GCPad1]") && text.contains("[GCPad2]"));
         assert!(!text.contains("[GCPad5]"), "Dolphin has four ports");
         assert!(!text.contains("[GCPad0]"));

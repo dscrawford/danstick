@@ -19,3 +19,12 @@ fn unseat_is_a_command_and_parses_its_player() {
         Err(Refused::NotANumber { .. })
     ));
 }
+
+#[test]
+fn seat_keyboard_takes_no_arguments() {
+    assert!(COMMANDS.contains(&"seat_keyboard"));
+    assert_eq!(
+        Command::parse(&json!({"cmd": "seat_keyboard"})),
+        Ok(Command::SeatKeyboard)
+    );
+}

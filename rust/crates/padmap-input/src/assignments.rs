@@ -31,6 +31,33 @@ pub enum AssignmentsError {
 }
 
 /// A missing file is an empty order, not an error.
+/// The keyboard's seat is saved beside the pads' with this in place of a node.
+pub const KEYBOARD_PATH: &str = "keyboard";
+
+/// The keyboard's entry: a seat with no device behind it.
+pub fn keyboard_assignment(player: u32) -> Assignment {
+    Assignment {
+        player,
+        path: PathBuf::from(KEYBOARD_PATH),
+        name: "Keyboard".to_owned(),
+        phys: String::new(),
+        vid: 0,
+        pid: 0,
+    }
+}
+
+pub fn is_keyboard(assignment: &Assignment) -> bool {
+    assignment.path == Path::new(KEYBOARD_PATH)
+}
+
+/// The seat the keyboard holds, if it was saved with one.
+pub fn keyboard_seat(assignments: &[Assignment]) -> Option<u32> {
+    assignments
+        .iter()
+        .find(|a| is_keyboard(a))
+        .map(|a| a.player)
+}
+
 pub fn load(path: &Path) -> Result<Vec<Assignment>, AssignmentsError> {
     match std::fs::read_to_string(path) {
         Ok(text) => serde_json::from_str(&text)
@@ -60,7 +87,8 @@ pub fn resolve<'a>(
     let mut missing = Vec::new();
     let mut taken: Vec<&Path> = Vec::new();
 
-    for assignment in assignments {
+    // The keyboard is a seat, not a pad: nothing to find and nothing missing.
+    for assignment in assignments.iter().filter(|a| !is_keyboard(a)) {
         if let Some(pad) = pads.iter().find(|pad| pad.path == assignment.path) {
             taken.push(pad.path.as_path());
             found.push((assignment.player, pad));

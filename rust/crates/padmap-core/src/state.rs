@@ -23,6 +23,9 @@ pub struct PlayerState {
     /// Whether this seat has a clone on the air.
     #[serde(default)]
     pub published: bool,
+    /// The keyboard's seat: no device behind it, bound in every emulator by name.
+    #[serde(default)]
+    pub keyboard: bool,
 }
 
 /// The whole event.
