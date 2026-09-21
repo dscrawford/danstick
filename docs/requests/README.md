@@ -26,3 +26,4 @@ needs when the thing calling it keeps each emulator in a directory of its own.
 | [secondary-bindings.md](secondary-bindings.md) | a control can hold one input, so a second button for the same control has nowhere to live |
 | [session-daemon.md](session-daemon.md) | every session starts unseated and the daemon ends with it — today it outlives everything and restores yesterday's seats |
 | [controllers-that-are-keyboards.md](controllers-that-are-keyboards.md) | a Steam Controller in lizard mode and a Bluetooth Xbox pad are keyboards and mice too; GOTG holds them in the picker, padmap should hold them in the game |
+| [keyboard-as-a-player.md](keyboard-as-a-player.md) | holding space on the grid should seat the keyboard as player N, bound in every emulator like a pad |
