@@ -46,3 +46,23 @@ a front-end can stop doing it itself the moment padmap has.
 adapter reports the adapter's address as its phys; BlueZ's own media-control
 keyboard (`nixos #1 (MCS)`) shares it with the pad and is somebody's phone.
 `Uniq` is the device's own.
+
+## What was built
+
+While a pad is seated, or is one seating is listening to, its keyboard and
+mouse siblings are opened and grabbed beside its joystick, and released with
+the seat -- `padmap_input::siblings`, driven from the daemon's tick and
+recomputed only when the machine's input nodes or the pads that matter change.
+A sibling is a node that types letters or moves a pointer and shares the pad's
+`uniq`, or, for Valve hardware, its vendor, since the Puck's lizard nodes carry
+no uniq. Never by `phys`, for the reason given above: BlueZ's media-control
+keyboard is somebody's phone. The daemon lets go of everything on exit.
+
+Not built: the `held` field on `controller`. The front-end can stop grabbing
+the moment it pulls this; nothing it needs to know per event.
+
+Tests: the classifier on the Xbox pad's three nodes (keyboard and mouse held,
+consumer control not), BlueZ's MCS keyboard, the Puck's vendor-only nodes, a
+generic pad with no uniq, and the pad's own node; and a journey with a uinput
+keyboard beside a uinput pad of the same vendor, where the test's own grab
+fails while the pad is seated and succeeds once it is unseated.

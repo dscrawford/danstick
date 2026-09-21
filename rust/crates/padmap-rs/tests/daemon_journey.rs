@@ -86,6 +86,13 @@ const LATE_SECOND: PadId = PadId {
     pid: 0x0010,
     only: "RSTESTLATE",
 };
+/// A Valve-vendor pad beside a Valve-vendor keyboard, the Puck's lizard shape.
+const SIBLING: PadId = PadId {
+    name: "PADMAP RSTESTSIB pad",
+    pid: 0x0f00,
+    only: "RSTESTSIB",
+};
+const SIBLING_KEYBOARD_NAME: &str = "PADMAP RSTESTSIB keyboard";
 /// No pad is made for this one; the daemon under test only needs a filter.
 const FOLLOWER: PadId = PadId {
     name: "PADMAP RSTESTFOLLOW",
@@ -772,7 +779,7 @@ fn a_pad_can_take_a_free_seat_without_a_session() {
     let mut pad = TestPad::new(JOINER);
     let mut daemon = Daemon::start(&root, JOINER);
 
-    let state = daemon.last("state").expect("a greeting").clone();
+    let state = daemon.wait_for("state", |_| true, 5.0).expect("a greeting");
     assert_eq!(state["state"], "idle");
     assert_eq!(state["players"].as_array().map(Vec::len), Some(0));
 
@@ -783,6 +790,9 @@ fn a_pad_can_take_a_free_seat_without_a_session() {
         "a seat was taken while seating was closed"
     );
 
+    // A freshly made pad is grabbed by Steam for a moment (see seat_by_hold);
+    // under a full parallel run the hold above no longer covers that window.
+    daemon.pump(1.5);
     daemon.events.clear();
     daemon.send(serde_json::json!({"cmd": "seating", "open": true, "players": 4}));
     pad.hold(FIRST_KEY, 0.6);
@@ -1569,5 +1579,105 @@ fn a_pad_switched_on_during_a_session_can_take_a_seat() {
         .expect("the session ended cleanly");
 
     drop(daemon);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// A uinput keyboard: letters and Enter, so it classifies as one.
+fn test_keyboard(name: &str, vid: u16) -> VirtualDevice {
+    let mut keys = AttributeSet::<KeyCode>::new();
+    for code in KeyCode::KEY_Q.0..=KeyCode::KEY_M.0 {
+        keys.insert(KeyCode::new(code));
+    }
+    keys.insert(KeyCode::KEY_A);
+    keys.insert(KeyCode::KEY_ENTER);
+    let device = VirtualDevice::builder()
+        .expect("uinput")
+        .name(name)
+        .input_id(InputId::new(BusType::BUS_USB, vid, 0x0f01, 1))
+        .with_keys(&keys)
+        .expect("keys")
+        .build()
+        .expect("a virtual keyboard");
+    std::thread::sleep(Duration::from_millis(500));
+    device
+}
+
+/// Whether the node can be grabbed by us, i.e. nobody else holds it.
+fn grabbable(path: &Path) -> bool {
+    let Ok(mut device) = evdev::Device::open(path) else {
+        return false;
+    };
+    let ok = device.grab().is_ok();
+    let _ = device.ungrab();
+    ok
+}
+
+/// A seated pad's keyboard sibling is held by padmap, and released with the seat.
+#[test]
+fn a_seated_pads_keyboard_sibling_is_held_and_released_with_the_seat() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let _guard = LiveGuard::for_signature(format!(
+        "{:04x}:{:04x}:{}",
+        padmap_input::siblings::VALVE_VID,
+        SIBLING.pid,
+        SIBLING.name
+    ));
+    let root = std::env::temp_dir().join(format!("padmap-sibling-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let mut keyboard = test_keyboard(SIBLING_KEYBOARD_NAME, padmap_input::siblings::VALVE_VID);
+    let keyboard_node = keyboard
+        .enumerate_dev_nodes_blocking()
+        .expect("nodes")
+        .flatten()
+        .find(|path| path.to_string_lossy().contains("/dev/input/event"))
+        .expect("the keyboard's node");
+    let mut pad = TestPad::with_id(SIBLING.name, padmap_input::siblings::VALVE_VID, SIBLING.pid);
+    let mut daemon = Daemon::start(&root, SIBLING);
+    daemon.pump(1.5);
+    assert!(
+        grabbable(&keyboard_node),
+        "nobody should hold the keyboard yet"
+    );
+
+    // Seating open: the pad is a candidate, so its keyboard is already held.
+    daemon.send(serde_json::json!({"cmd": "seating", "open": true, "players": 4}));
+    daemon.pump(1.5);
+    assert!(
+        !grabbable(&keyboard_node),
+        "the candidate pad's keyboard is not held"
+    );
+
+    pad.hold(FIRST_KEY, 0.6);
+    daemon
+        .wait_for("claim", |_| true, 5.0)
+        .expect("the pad took a seat");
+    daemon.send(serde_json::json!({"cmd": "seating", "open": false}));
+    daemon.pump(1.0);
+    assert!(
+        !grabbable(&keyboard_node),
+        "the seated pad's keyboard is not held"
+    );
+
+    daemon.send(serde_json::json!({"cmd": "unseat"}));
+    daemon
+        .wait_for(
+            "state",
+            |e| e["players"].as_array().map(Vec::len) == Some(0),
+            5.0,
+        )
+        .expect("unseated");
+    daemon.pump(1.0);
+    assert!(
+        grabbable(&keyboard_node),
+        "the keyboard was not released with the seat"
+    );
+
+    drop(daemon);
+    drop(pad);
+    drop(keyboard);
     let _ = std::fs::remove_dir_all(&root);
 }

@@ -15,6 +15,7 @@ pub mod reactor;
 pub mod republish;
 pub mod runtime;
 pub mod sdlprobe;
+pub mod siblings;
 pub mod triton;
 
 pub use clone::{IdentityMode, VirtualPad};

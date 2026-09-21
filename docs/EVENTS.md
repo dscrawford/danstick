@@ -369,6 +369,15 @@ have a keyboard default would have put it anyway, moved off a port a pad
 holds. Seating it pins it to a seat ahead of pads seated later; that is the
 difference.
 
+## A seated pad's keyboard and mouse are held too
+
+A Steam Controller in lizard mode is four keyboards and four mice; an Xbox pad
+over Bluetooth carries a `Keyboard` and a `Mouse` node beside its joystick.
+While a pad is seated, or seating is listening to it, padmap grabs those
+siblings as well, and releases them with the seat, so a Share button cannot
+type into the game and a trackpad cannot move the desktop pointer behind it.
+A front-end that was holding them itself in the picker can stop.
+
 ## `input`: what is under the thumb while the wizard runs
 
 During a mapping run padmap holds the pad and holds back its clone, so the

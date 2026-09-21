@@ -316,7 +316,7 @@ fn property(device: &udev::Device, name: &str) -> Option<String> {
 }
 
 /// A sysfs attribute, walking up to the first parent that has it.
-fn attribute(device: &udev::Device, name: &str) -> Option<String> {
+pub(crate) fn attribute(device: &udev::Device, name: &str) -> Option<String> {
     let mut current = Some(device.clone());
     for _ in 0..4 {
         let device = current?;
@@ -328,7 +328,7 @@ fn attribute(device: &udev::Device, name: &str) -> Option<String> {
     None
 }
 
-fn hex_attribute(device: &udev::Device, name: &str) -> u16 {
+pub(crate) fn hex_attribute(device: &udev::Device, name: &str) -> u16 {
     attribute(device, name)
         .and_then(|raw| u16::from_str_radix(raw.trim(), 16).ok())
         .unwrap_or(0)

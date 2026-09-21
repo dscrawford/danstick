@@ -22,7 +22,7 @@ use padmap_input::clone::{self, IdentityMode, Source};
 use padmap_input::pad::{self, Pad};
 use padmap_input::reactor::{Reactor, Watched};
 use padmap_input::republish::Republisher;
-use padmap_input::{artefacts, assignments, profiles, runtime, triton};
+use padmap_input::{artefacts, assignments, profiles, runtime, siblings, triton};
 use serde_json::Value;
 
 use crate::calibration::{CalibrationRun, Phase, Step};
@@ -119,6 +119,10 @@ pub struct Server {
     last_input: Option<Value>,
     /// Opens tried on a pad that appeared mid-session; a node is readable a beat after it exists.
     late_attempts: BTreeMap<PathBuf, u32>,
+    /// The keyboard and mouse nodes of seated and candidate pads, grabbed beside their joysticks.
+    held: siblings::Held,
+    /// What `held` was last computed for: the event nodes and the pads that matter.
+    held_for: Option<(BTreeSet<String>, Vec<PathBuf>)>,
     scratch: Vec<evdev::InputEvent>,
     pending_scope: String,
     sdl_lines: Vec<String>,
@@ -238,6 +242,8 @@ impl Server {
             last_finish: 0.0,
             last_input: None,
             late_attempts: BTreeMap::new(),
+            held: siblings::Held::default(),
+            held_for: None,
             scratch: Vec::with_capacity(64),
             pending_scope: String::new(),
             sdl_lines: Vec::new(),
@@ -440,6 +446,7 @@ impl Server {
     }
 
     pub fn close(&mut self) {
+        self.held.release_all();
         self.close_seating();
         self.end_session();
         self.release_solo();
@@ -1979,6 +1986,7 @@ impl Server {
         self.republish_if_stale();
         self.refresh_seating(&mut scan);
         self.tick_seating();
+        self.hold_siblings();
 
         let clock = now();
         self.tick_mapping(clock);
@@ -2280,6 +2288,38 @@ impl Server {
             .map(|path| path.display().to_string())
             .collect();
         self.triton_live.clone()
+    }
+
+    /// Hold the keyboard and mouse siblings of every seated pad and every pad
+    /// seating is listening to, and only those. Recomputed when the nodes on
+    /// the machine or the pads that matter change, not every tick.
+    fn hold_siblings(&mut self) {
+        let mut pads: Vec<&Pad> = self.slots_assigned.iter().map(|slot| &slot.pad).collect();
+        if self.seating.is_open() {
+            pads.extend(self.seating.pads().iter());
+        }
+        let mut paths: Vec<PathBuf> = pads.iter().map(|pad| pad.path.clone()).collect();
+        paths.sort();
+        paths.dedup();
+        let nodes = self
+            .last_attach_nodes
+            .clone()
+            .unwrap_or_else(hotplug::event_nodes);
+        if self.held_for.as_ref() == Some(&(nodes.clone(), paths.clone())) {
+            return;
+        }
+        // Nothing seated and nothing listened to: nothing to look for.
+        let known = if pads.is_empty() {
+            Vec::new()
+        } else {
+            siblings::scan()
+        };
+        let wanted: BTreeSet<PathBuf> = pads
+            .iter()
+            .flat_map(|pad| siblings::of(pad, &known))
+            .collect();
+        self.held.sync(&wanted);
+        self.held_for = Some((nodes, paths));
     }
 
     /// A pad switched on during a session joins it: grabbed and watched like
