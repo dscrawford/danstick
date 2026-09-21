@@ -345,15 +345,27 @@ impl Daemon {
 }
 
 impl Daemon {
+    /// Hold a button until a `claim` matching `wanted` arrives, holding again
+    /// if it does not: a freshly made pad is grabbed by Steam for a moment, and
+    /// under a full parallel run how long that moment lasts is not ours to say.
+    fn hold_until_claimed(&mut self, pad: &mut TestPad, wanted: impl Fn(&Value) -> bool) -> Value {
+        for attempt in 0..4 {
+            pad.hold(FIRST_KEY, 0.6);
+            if let Some(claim) = self.wait_for("claim", &wanted, 3.0) {
+                return claim;
+            }
+            eprintln!("hold {attempt} claimed nothing; holding again");
+            std::thread::sleep(Duration::from_millis(700));
+        }
+        panic!("holding a button never took a seat");
+    }
+
     /// Open seating and hold a button until the pad is `player` and published.
     fn seat_by_hold_as(&mut self, pad: &mut TestPad, player: u64) {
         self.pump(1.5);
         self.events.clear();
         self.send(serde_json::json!({"cmd": "seating", "open": true, "players": 4}));
-        pad.hold(FIRST_KEY, 0.6);
-        let claim = self
-            .wait_for("claim", |e| e["name"] != "Keyboard", 5.0)
-            .expect("holding a button took the free seat");
+        let claim = self.hold_until_claimed(pad, |e| e["name"] != "Keyboard");
         assert_eq!(claim["player"], player);
         self.wait_for("state", |e| e["state"] == "ready", 5.0)
             .expect("ready after the seat was taken");
@@ -370,15 +382,7 @@ impl Daemon {
         self.pump(1.5);
         self.events.clear();
         self.send(serde_json::json!({"cmd": "seating", "open": true, "players": 4}));
-        pad.hold(FIRST_KEY, 0.6);
-        let claim = self.wait_for("claim", |_| true, 5.0).unwrap_or_else(|| {
-            let names: Vec<&str> = self
-                .events
-                .iter()
-                .filter_map(|e| e["event"].as_str())
-                .collect();
-            panic!("holding a button took the free seat; saw {names:?}")
-        });
+        let claim = self.hold_until_claimed(pad, |_| true);
         assert_eq!(claim["player"], 1);
         let ready = self
             .wait_for("state", |e| e["state"] == "ready", 5.0)
@@ -795,10 +799,7 @@ fn a_pad_can_take_a_free_seat_without_a_session() {
     daemon.pump(1.5);
     daemon.events.clear();
     daemon.send(serde_json::json!({"cmd": "seating", "open": true, "players": 4}));
-    pad.hold(FIRST_KEY, 0.6);
-    let claim = daemon
-        .wait_for("claim", |_| true, 5.0)
-        .expect("holding a button took the free seat");
+    let claim = daemon.hold_until_claimed(&mut pad, |_| true);
     assert_eq!(claim["player"], 1);
     assert_eq!(claim["name"], JOINER.name);
 
@@ -1300,10 +1301,7 @@ fn unseat_drops_the_seat_and_the_next_hold_takes_it_again() {
 
     // Seating was not closed by any of that: the next hold is player 1 again.
     daemon.events.clear();
-    pad.hold(FIRST_KEY, 0.6);
-    let claim = daemon
-        .wait_for("claim", |_| true, 5.0)
-        .expect("the freed seat could be taken again");
+    let claim = daemon.hold_until_claimed(&mut pad, |_| true);
     assert_eq!(claim["player"], 1);
     daemon
         .wait_for("state", |e| e["state"] == "ready", 5.0)
@@ -1561,10 +1559,7 @@ fn a_pad_switched_on_during_a_session_can_take_a_seat() {
         .wait_for("pads", |e| e["count"] == 2, 6.0)
         .expect("the late pad was admitted to the session");
     daemon.pump(1.5);
-    two.hold(FIRST_KEY, 0.6);
-    let claim = daemon
-        .wait_for("claim", |e| e["name"] == LATE_SECOND.name, 6.0)
-        .expect("a hold on the late pad claimed a seat");
+    let claim = daemon.hold_until_claimed(&mut two, |e| e["name"] == LATE_SECOND.name);
     assert_eq!(claim["player"], 1);
 
     // Switched off again: the session says so, and does not fall over.
@@ -1651,10 +1646,7 @@ fn a_seated_pads_keyboard_sibling_is_held_and_released_with_the_seat() {
         "the candidate pad's keyboard is not held"
     );
 
-    pad.hold(FIRST_KEY, 0.6);
-    daemon
-        .wait_for("claim", |_| true, 5.0)
-        .expect("the pad took a seat");
+    daemon.hold_until_claimed(&mut pad, |_| true);
     daemon.send(serde_json::json!({"cmd": "seating", "open": false}));
     daemon.pump(1.0);
     assert!(
