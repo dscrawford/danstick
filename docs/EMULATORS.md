@@ -87,6 +87,39 @@ and Ryujinx, padmap *will* create them: neither is the whole of Dolphin's
 settings, and Dolphin reads them at startup whether or not it has run before,
 so bindings are worth having on the first run too.
 
+## The keyboard
+
+padmap binds pads, and the keyboard is not one -- but a person with no pad
+still has it, and every emulator above either binds it to port 1 by default
+(RetroArch, Dolphin, Ryujinx) or not at all (ares, Cemu). Seating a pad on
+port 1 used to take the keyboard's port with it, silently.
+
+Now **the keyboard takes the first port no pad holds**, in every emulator, in
+that emulator's own keys where it has them:
+
+| | where it goes | which keys |
+|---|---|---|
+| RetroArch | `input_player{N}_*` suffix-less binds; player 1's are nulled when a pad sits there, and `input_all_users_control_menu` is set so the keyboard can still drive the menu | RetroArch's own: arrows, Z/X/A/S, Q/W, Enter, right Shift |
+| Dolphin | `[GCPad{N}]` on `XInput2/0/Virtual core pointer`, `SIDevice{N-1} = 6` | Dolphin's own: X/Z/C/S/D, Q/W, arrows + IJKL sticks, TGFH d-pad |
+| Ryujinx | the existing `WindowKeyboard` entry moved to `Player{N}`, or Ryujinx's default seeded there | the user's own if there is one, else Ryujinx's: WASD/IJKL, Z/X/C/V, E/U, Q/O |
+| ares | `VirtualPad{N}` as `0x1/0/<key index>` | padmap's layout (below) |
+| Cemu | `controller{N-1}.xml` with `<api>Keyboard</api>`, marked as padmap's | padmap's layout (below) |
+
+padmap's layout, for the two that have none: arrows for direction -- the d-pad
+and the left stick both, since which one is "the direction" depends on the
+game -- Z/X/A/S for south/east/west/north, Q/W bumpers, E/R triggers, Enter
+start, right Shift select, I/J/K/L right stick, B/N stick clicks.
+
+Two things are Linux-specific and say so in the code: ares' key numbers are
+positions in its xlib key table, and Cemu's are GDK keysyms. With every port
+seated the keyboard drives nobody rather than doubling a pad, and a keyboard
+block padmap left at another port last time is removed, so the keyboard is
+never two players at once. A Cemu keyboard profile the user made themselves is
+not touched. Dolphin's Wii Remote 1, which padmap does not write, stays on the
+mouse and keyboard as Dolphin ships it.
+
+The research behind the tables is `docs/KEYBOARD.md`.
+
 ## Motion
 
 padmap serves every seated player's gyro and accelerometer over **DSU**, the
