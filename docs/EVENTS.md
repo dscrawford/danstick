@@ -404,3 +404,41 @@ direction bit for a hat (`1` up, `2` right, `4` down, `8` left, `0` centred),
 and `-1..1` for an axis, rounded to twentieths; the same event is never sent
 twice in a row, so a resting stick is one event, not a stream. Only the pad
 under the wizard reports, and only while it runs.
+
+## `bind`: one control, and a second input for it
+
+```json
+{"cmd": "bind", "player": 1, "control": "righttrigger"}
+{"cmd": "bind", "player": 1, "control": "righttrigger", "scope": "console:gamecube", "add": true}
+```
+
+Captures the next press onto one control, rather than walking the whole
+wizard for it. The events are the wizard's, for one step: a `mapping` naming
+that control, then `mapping` with `done` when the press lands. Everything
+else the pad has bound is left alone -- the run is seeded from what is
+stored, so the other controls keep their inputs.
+
+Without `add` the press replaces that control's binding. With `add` it
+becomes a **second input for the same control**: both work, and the control
+is down while either is. A control's first input is always its binding,
+whatever `add` says. Refused with an `error` for a control the layout does
+not have, and for a name no control answers to.
+
+The pad's own layout is used, so the front-end does not have to know it.
+Legal with no session open, like `map`; it opens only that player's pad.
+
+**On disk.** A control with one input is the object it always was; a control
+with more is a list whose first entry is that same object:
+
+```json
+"righttrigger": [
+  {"kind": "button", "index": 5},
+  {"kind": "axis", "index": 5, "value": 1}
+]
+```
+
+Everything downstream reads the first entry and is unchanged -- the SDL line,
+every emulator's config -- because the virtual pad still has one button for
+that control. A file with no second inputs is byte-for-byte what it was, so
+a rollback keeps working. Re-running the wizard keeps a control's second
+inputs, unless the new capture gave that input to some control as a first.

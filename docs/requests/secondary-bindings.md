@@ -53,3 +53,37 @@ same `mapping` event the wizard uses.
 
 GOTG's screen shows the one binding and does not offer to add another, rather
 than offering something it cannot store.
+
+## What was built
+
+Both halves, as asked.
+
+**The format.** `Mapping.buttons` keeps one binding per control, and a new
+`extra` holds the rest. On disk a control is the object it always was, or a
+list whose first entry is that object and whose rest are its second inputs,
+so an old reader and a rollback both keep working and a file with no lists
+is byte-for-byte unchanged. `Mapping` serialises itself rather than deriving
+it, because the shape of one field now depends on another.
+
+**The second `if`.** `padmap_core::twins` is that loop: a control with more
+than one input comes out as its first, down while any of them is. A twin on
+a button primary presses it; a twin on an axis primary drives it to the end
+of its travel; a twin on a hat primary pushes that direction. Letting go of
+one while another is held changes nothing, which is the whole point. The
+second input still reaches the clone as itself, since the clone mirrors the
+pad and it is a real input on it. Under `PADMAP_PAD_IDENTITY=xbox360` the
+same union happens inside that translator instead, where every control is
+already synthesised.
+
+**Adding one.** `{"cmd": "bind", "player": N, "control": C, "scope": S,
+"add": true}` captures the next press onto that control alone and answers
+with the same `mapping` events the wizard uses, as the request asked.
+Without `add` it replaces the control's binding, which is the cheap rebind
+the wizard was the long way round for. A run is seeded from what is stored,
+so binding one control does not disturb the others, and a control's first
+input is always its binding whatever `add` says.
+
+Tests: five on the profile format (single, list, round-trip, junk, empty),
+five on the twins loop, three on the one-control run, one on the command's
+parse, and a journey that binds B alone, sees one object on disk, adds a
+second input, and sees a two-entry list whose first entry is untouched.
