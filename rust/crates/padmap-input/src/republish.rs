@@ -94,11 +94,14 @@ impl Republisher {
         };
         vpad.tracker.release_all();
         let held = vpad.source.held_keys();
-        let mut frame: Vec<InputEvent> = held
-            .iter()
-            .map(|&code| InputEvent::new(EventType::KEY.0, code, 0))
-            .collect();
-        frame.extend(vpad.held_releases());
+        let mut frame: Vec<InputEvent> = Vec::new();
+        for code in held {
+            frame.extend(vpad.outgoing(InputEvent::new(EventType::KEY.0, code, 0)));
+        }
+        for event in vpad.held_releases() {
+            frame.extend(vpad.outgoing(event));
+        }
+        frame.extend(vpad.outgoing_release_all());
         if frame.is_empty() {
             return;
         }
@@ -176,7 +179,7 @@ impl Republisher {
             };
             vpad.tracker
                 .apply(shaped.event_type().0, shaped.code(), shaped.value());
-            self.frame.push(shaped);
+            self.frame.extend(vpad.outgoing(shaped));
         }
         debug_assert!(self.frame.is_empty());
         if emitted_any {
@@ -245,12 +248,17 @@ impl Republisher {
             if vpad.gone || self.held_back.get(index).copied().unwrap_or(false) {
                 continue;
             }
-            let mut frame = vpad.due_releases(now_ms);
-            if frame.is_empty() {
+            let due = vpad.due_releases(now_ms);
+            if due.is_empty() {
                 continue;
             }
-            for event in &frame {
+            let mut frame = Vec::with_capacity(due.len() + 1);
+            for event in due {
                 vpad.tracker.apply(event.event_type().0, event.code(), 0);
+                frame.extend(vpad.outgoing(event));
+            }
+            if frame.is_empty() {
+                continue;
             }
             frame.push(InputEvent::new(EventType::SYNCHRONIZATION.0, 0, 0));
             if let Err(error) = vpad.clone.emit(&frame) {

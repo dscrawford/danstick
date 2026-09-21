@@ -203,8 +203,16 @@ departure fills the hole rather than opening a slot beyond the live pads.
 
 **`virtual.vid`/`pid` are not always the hardware's.** By default the clone
 *mirrors* the controller, so they match; under `PADMAP_PAD_IDENTITY=padmap`
-they are `1209:0001` on `BUS_VIRTUAL`. `identity_mode` says which. Match on
-`guid`, which is computed from whichever is in force.
+they are `1209:0001` on `BUS_VIRTUAL`; under `PADMAP_PAD_IDENTITY=xbox360`
+every clone is a wired Xbox 360 pad, `045e:028e` version `0x0110` with the
+layout `xpad` gives it, so every SDL program maps it from the database it was
+built with and needs no mapping handed to it. The source's inputs are
+translated onto that layout through its stored capture (or code for code for
+a pad that follows the kernel's convention); a control the source lacks is
+never pressed. Two clones share one GUID under it -- SDL tells them apart by
+index, ares by slot, RetroArch by name; Ryujinx, which blanks the name CRC,
+cannot, and is the one consumer this identity does not suit. `identity_mode`
+says which is in force. Match on `guid`, which is computed from it.
 
 **`index` is not `port`.** RetroArch's `input_playerN_joypad_index` is a
 0-based position in its own enumeration, and hidden pads are not in it. `-1`

@@ -30,6 +30,16 @@ pub struct PadFacts {
     pub physical_guid: Option<String>,
 }
 
+/// The 360 clone's capabilities, the same for every pad behind one.
+pub fn xbox_facts() -> PadFacts {
+    PadFacts {
+        keys: padmap_core::xbox::KEYS.to_vec(),
+        axes: padmap_core::xbox::axis_codes(),
+        spans: padmap_core::xbox::spans(),
+        physical_guid: None,
+    }
+}
+
 pub fn pad_facts(pad: &Pad) -> PadFacts {
     match clone::open_source(pad, false) {
         Ok(source) => {
@@ -55,10 +65,18 @@ pub fn identity_of(pad: &Pad, player: u32, mode: IdentityMode) -> Identity {
         product: clone::PADMAP_PID,
         version: emit::version_for(player),
     };
+    if mode == IdentityMode::Xbox360 {
+        return Identity {
+            bustype: padmap_core::xbox::BUS_USB,
+            vendor: padmap_core::xbox::VENDOR,
+            product: padmap_core::xbox::PRODUCT,
+            version: padmap_core::xbox::VERSION,
+        };
+    }
     if triton::owns(pad) {
         return match mode {
             IdentityMode::Padmap => padmap_own,
-            IdentityMode::Mirror => Identity {
+            IdentityMode::Mirror | IdentityMode::Xbox360 => Identity {
                 bustype: 0x03,
                 vendor: pad.vid,
                 product: pad.pid,
@@ -264,11 +282,23 @@ pub fn write_all(
         .collect();
     let players: Vec<u32> = slots.iter().map(|slot| slot.player).collect();
 
+    // Under the 360 identity every consumer describes the clone's layout,
+    // which is the same for every pad, rather than the pad behind it.
+    let xbox = mode == IdentityMode::Xbox360;
     let profiles_out: BTreeMap<u32, String> = slots
         .iter()
         .map(|slot| {
-            (
-                slot.player,
+            let text = if xbox {
+                emit::retroarch_profile(
+                    slot.player,
+                    identities[&slot.player],
+                    &padmap_core::xbox::bindings(),
+                    "",
+                    padmap_core::layout::default_id(),
+                    "",
+                    context,
+                )
+            } else {
                 profile_text(
                     &slot.pad,
                     slot.player,
@@ -276,8 +306,9 @@ pub fn write_all(
                     console,
                     game,
                     context,
-                ),
-            )
+                )
+            };
+            (slot.player, text)
         })
         .collect();
     match artefacts::write_autoconfig(&profiles_out, None) {
@@ -314,9 +345,22 @@ pub fn write_all(
     let mut notes: BTreeMap<u32, String> = BTreeMap::new();
     let mut published: Vec<emulators::Published> = Vec::new();
     for slot in slots {
-        let facts = pad_facts(&slot.pad);
+        let facts = if xbox {
+            xbox_facts()
+        } else {
+            pad_facts(&slot.pad)
+        };
         let identity = identities[&slot.player];
-        let line = stored_sdl_line(slot.player, &slot.pad, identity, &facts);
+        let line = if xbox {
+            sdl_line_for(
+                slot.player,
+                identity,
+                &padmap_core::xbox::bindings(),
+                &facts,
+            )
+        } else {
+            stored_sdl_line(slot.player, &slot.pad, identity, &facts)
+        };
         if !line.is_empty() {
             lines.insert(slot.player, line);
         } else if let Some((line, note)) = fallback_line_for(slot.player, identity, &facts) {

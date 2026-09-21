@@ -2073,7 +2073,16 @@ impl Server {
                 .map(|profile| profile.axes)
                 .unwrap_or_default();
             let tuning = publish::tuning_for(&slot.pad);
-            match clone::create(&slot.pad, slot.player, self.mode, &axes, tuning, true) {
+            let bindings = publish::resolved(&slot.pad, "", "").1.resolved();
+            match clone::create(
+                &slot.pad,
+                slot.player,
+                self.mode,
+                &axes,
+                tuning,
+                true,
+                &bindings,
+            ) {
                 Ok(vpad) => vpads.push(vpad),
                 Err(error) => {
                     warn!(

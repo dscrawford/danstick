@@ -86,6 +86,7 @@ fn clone_of(found: &pad::Pad, player: u32) -> clone::VirtualPad {
         &axes,
         tuning,
         false,
+        &BTreeMap::new(),
     )
     .expect("create a clone");
     virtual_pad
@@ -607,9 +608,16 @@ fn tuned_clone_of(
     tuning: padmap_core::tuning::Tuning,
 ) -> (clone::VirtualPad, Device) {
     let axes: BTreeMap<u16, padmap_core::calibration::AxisCalibration> = BTreeMap::new();
-    let mut virtual_pad =
-        clone::create(found, 1, clone::IdentityMode::Mirror, &axes, tuning, false)
-            .expect("create a clone");
+    let mut virtual_pad = clone::create(
+        found,
+        1,
+        clone::IdentityMode::Mirror,
+        &axes,
+        tuning,
+        false,
+        &BTreeMap::new(),
+    )
+    .expect("create a clone");
     virtual_pad
         .source
         .set_nonblocking(true)
@@ -842,6 +850,115 @@ fn holding_one_pad_back_leaves_the_others_forwarding() {
     assert!(
         republisher.forward(0).frames > 0,
         "the pad never resumed forwarding after the rebind ended"
+    );
+    republisher.close();
+}
+
+/// Under the 360 identity the clone is a wired Xbox 360 pad whatever is behind
+/// it: xpad's id, xpad's layout, and xpad's X and Y, which are the kernel's
+/// north and west swapped.
+#[test]
+fn under_the_360_identity_the_clone_is_an_xbox_pad_whatever_the_source() {
+    needs_uinput!();
+    let mut source = spawn_source();
+    let found = find(&mut source).expect("discover");
+    let axes: BTreeMap<u16, padmap_core::calibration::AxisCalibration> = BTreeMap::new();
+    let mut vpad = clone::create(
+        &found,
+        1,
+        clone::IdentityMode::Xbox360,
+        &axes,
+        padmap_core::tuning::Tuning::default(),
+        false,
+        &BTreeMap::new(),
+    )
+    .expect("create a clone");
+    vpad.source
+        .set_nonblocking(true)
+        .expect("set the source non-blocking");
+    let node = vpad.node().expect("the clone's node");
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    let mut reader = loop {
+        match Device::open(&node) {
+            Ok(device) => break device,
+            Err(_) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(error) => panic!("open the clone {node}: {error}"),
+        }
+    };
+    reader.set_nonblocking(true).expect("non-blocking");
+
+    let id = reader.input_id();
+    assert_eq!(
+        (id.vendor(), id.product(), id.version()),
+        (0x045e, 0x028e, 0x0110)
+    );
+    assert_eq!(reader.name(), Some("padmap Player 1"));
+    let keys: Vec<u16> = reader
+        .supported_keys()
+        .expect("keys")
+        .iter()
+        .map(|key| key.0)
+        .collect();
+    assert_eq!(keys, padmap_core::xbox::KEYS.to_vec());
+    let absinfo: BTreeMap<u16, AbsInfo> = reader
+        .get_absinfo()
+        .expect("absinfo")
+        .map(|(code, info)| (code.0, info))
+        .collect();
+    assert_eq!(absinfo[&0x02].maximum(), 255, "ABS_Z is a trigger");
+    assert_eq!(absinfo[&0x00].minimum(), -32768, "ABS_X is a stick");
+    assert!(
+        absinfo.contains_key(&0x10),
+        "a hat, whatever the source had"
+    );
+    let guid = padmap_core::emit::virtual_guid(
+        1,
+        padmap_core::emit::Identity {
+            bustype: vpad.identity.bustype,
+            vendor: vpad.identity.vendor,
+            product: vpad.identity.product,
+            version: vpad.identity.version,
+        },
+    );
+    assert!(
+        guid.starts_with("0300") && guid.ends_with("5e0400008e02000010010000"),
+        "{guid}"
+    );
+
+    let mut republisher = republish::Republisher::new(vec![vpad]);
+    let _ = republisher.forward(0);
+    let _ = drain_clone(&mut reader);
+    let emit = |source: &mut VirtualDevice, kind: u16, code: u16, value: i32| {
+        source
+            .emit(&[
+                InputEvent::new(kind, code, value),
+                InputEvent::new(EventType::SYNCHRONIZATION.0, 0, 0),
+            ])
+            .expect("emit");
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    // The kernel's BTN_NORTH is padmap's Y; xpad's Y is 0x134.
+    emit(&mut source, EventType::KEY.0, KeyCode::BTN_NORTH.code(), 1);
+    let _ = republisher.forward(0);
+    assert_eq!(drain_clone(&mut reader), vec![(EventType::KEY.0, 0x134, 1)]);
+    emit(&mut source, EventType::KEY.0, KeyCode::BTN_NORTH.code(), 0);
+    let _ = republisher.forward(0);
+    assert_eq!(drain_clone(&mut reader), vec![(EventType::KEY.0, 0x134, 0)]);
+    // A trigger at the top of its range is 255 on the clone.
+    emit(&mut source, EventType::ABSOLUTE.0, 0x02, 255);
+    let _ = republisher.forward(0);
+    assert_eq!(
+        drain_clone(&mut reader),
+        vec![(EventType::ABSOLUTE.0, 0x02, 255)]
+    );
+    // The left stick rides across, rescaled to the same full range.
+    emit(&mut source, EventType::ABSOLUTE.0, 0x00, 32767);
+    let _ = republisher.forward(0);
+    assert_eq!(
+        drain_clone(&mut reader),
+        vec![(EventType::ABSOLUTE.0, 0x00, 32767)]
     );
     republisher.close();
 }

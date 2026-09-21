@@ -9,11 +9,14 @@ use evdev::{
     InputId, KeyCode, UInputEvent, UinputAbsSetup,
 };
 use log::{info, warn};
+use padmap_core::binding::Binding;
 use padmap_core::calibration::{AxisCalibration, Declared};
+use padmap_core::control::Control;
 use padmap_core::dsupad;
 use padmap_core::emit::version_for;
 use padmap_core::sdl::AxisSpan;
 use padmap_core::tuning::{Debouncer, Tuning};
+use padmap_core::xbox;
 
 use crate::motion;
 use crate::pad::{Pad, VIRTUAL_PHYS_PREFIX};
@@ -43,6 +46,8 @@ pub fn virtual_phys(player: u32) -> String {
 pub enum IdentityMode {
     Mirror,
     Padmap,
+    /// A wired Xbox 360 pad, layout and all: what every SDL maps out of the box.
+    Xbox360,
 }
 
 impl IdentityMode {
@@ -50,6 +55,7 @@ impl IdentityMode {
         match self {
             IdentityMode::Mirror => "mirror",
             IdentityMode::Padmap => "padmap",
+            IdentityMode::Xbox360 => "xbox360",
         }
     }
 
@@ -63,6 +69,7 @@ impl IdentityMode {
         {
             "mirror" => IdentityMode::Mirror,
             "padmap" => IdentityMode::Padmap,
+            "xbox360" => IdentityMode::Xbox360,
             _ if std::env::var(ENV_ONLY_VIRTUAL).as_deref() == Ok("1") => IdentityMode::Padmap,
             _ => IdentityMode::Mirror,
         }
@@ -86,9 +93,19 @@ impl Identity {
         version: PADMAP_VERSION,
     };
 
+    /// The wired 360 pad's, version and all: SDL's GUID carries the version,
+    /// and the database entry is for 0x0110. The player lives in phys instead.
+    pub const XBOX360: Identity = Identity {
+        vendor: xbox::VENDOR,
+        product: xbox::PRODUCT,
+        bustype: xbox::BUS_USB,
+        version: xbox::VERSION,
+    };
+
     pub fn for_source(mode: IdentityMode, source: &Device, player: u32) -> Identity {
         let version = version_for(player);
         match mode {
+            IdentityMode::Xbox360 => Identity::XBOX360,
             IdentityMode::Padmap => Identity {
                 version,
                 ..Identity::PADMAP
@@ -326,6 +343,8 @@ pub struct VirtualPad {
     pub gone: bool,
     effects: BTreeMap<i16, FFEffect>,
     forwarded_any: bool,
+    /// Under `IdentityMode::Xbox360`: the source's events onto the 360 layout.
+    pub translator: Option<xbox::Translator>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -337,6 +356,8 @@ pub enum CloneError {
 }
 
 /// Grab a pad and publish its clone.
+/// `bindings` is the pad's stored capture, used only to translate it onto the
+/// 360 layout under `IdentityMode::Xbox360`; empty for an unmapped pad.
 pub fn create(
     pad: &Pad,
     player: u32,
@@ -344,29 +365,47 @@ pub fn create(
     profile_axes: &BTreeMap<u16, AxisCalibration>,
     tuning: Tuning,
     grab: bool,
+    bindings: &BTreeMap<Control, Binding>,
 ) -> Result<VirtualPad, CloneError> {
     let source = open_source(pad, grab)?;
-    let (identity, clone) = match &source {
-        Source::Triton(triton) => {
-            let version = version_for(player);
-            let identity = match mode {
-                IdentityMode::Padmap => Identity {
-                    version,
-                    ..Identity::PADMAP
-                },
-                IdentityMode::Mirror => Identity {
-                    vendor: pad.vid,
-                    product: pad.pid,
-                    bustype: BusType::BUS_USB.0,
-                    version,
-                },
-            };
-            let (keys, axes) = triton.capabilities();
-            (identity, build_clone_from(&keys, &axes, player, identity))
-        }
-        Source::Evdev(device) => {
-            let identity = Identity::for_source(mode, device, player);
-            (identity, build_clone(device, player, identity))
+    let mut translator = None;
+    let (identity, clone) = if mode == IdentityMode::Xbox360 {
+        let (keys, _) = source.capabilities();
+        translator = Some(xbox::Translator::new(&keys, &source.axis_spans(), bindings));
+        let axes: Vec<(u16, AbsInfo)> = xbox::AXES
+            .iter()
+            .map(|&(code, minimum, maximum, fuzz, flat)| {
+                let rest = if minimum < 0 { 0 } else { minimum };
+                (code, AbsInfo::new(rest, minimum, maximum, fuzz, flat, 0))
+            })
+            .collect();
+        (
+            Identity::XBOX360,
+            build_clone_from(&xbox::KEYS, &axes, player, Identity::XBOX360),
+        )
+    } else {
+        match &source {
+            Source::Triton(triton) => {
+                let version = version_for(player);
+                let identity = match mode {
+                    IdentityMode::Padmap => Identity {
+                        version,
+                        ..Identity::PADMAP
+                    },
+                    IdentityMode::Mirror | IdentityMode::Xbox360 => Identity {
+                        vendor: pad.vid,
+                        product: pad.pid,
+                        bustype: BusType::BUS_USB.0,
+                        version,
+                    },
+                };
+                let (keys, axes) = triton.capabilities();
+                (identity, build_clone_from(&keys, &axes, player, identity))
+            }
+            Source::Evdev(device) => {
+                let identity = Identity::for_source(mode, device, player);
+                (identity, build_clone(device, player, identity))
+            }
         }
     };
     let clone = clone.map_err(|error| CloneError::Build(player, error))?;
@@ -424,6 +463,7 @@ pub fn create(
         gone: false,
         effects: BTreeMap::new(),
         forwarded_any: false,
+        translator,
     };
     vpad.seed_calibrated_axes();
 
@@ -561,7 +601,7 @@ impl VirtualPad {
 
     /// Seed calibrated axes at centre, not source default (may be stale).
     fn seed_calibrated_axes(&mut self) {
-        if self.axes.is_empty() {
+        if self.axes.is_empty() || self.translator.is_some() {
             return;
         }
         let mut frame: Vec<InputEvent> = self
@@ -618,6 +658,31 @@ impl VirtualPad {
             _ => return Some(event),
         };
         Some(InputEvent::new(event.event_type().0, code, value))
+    }
+
+    /// What the clone is given for one shaped source event: itself, or its
+    /// translation onto the 360 layout.
+    pub fn outgoing(&mut self, event: InputEvent) -> Vec<InputEvent> {
+        match self.translator.as_mut() {
+            None => vec![event],
+            Some(translator) => translator
+                .translate(event.event_type().0, event.code(), event.value())
+                .into_iter()
+                .map(|out| InputEvent::new(out.kind, out.code, out.value))
+                .collect(),
+        }
+    }
+
+    /// Every event the clone needs to read "nothing held", in its own codes.
+    pub fn outgoing_release_all(&mut self) -> Vec<InputEvent> {
+        match self.translator.as_mut() {
+            None => Vec::new(),
+            Some(translator) => translator
+                .release_all()
+                .into_iter()
+                .map(|out| InputEvent::new(out.kind, out.code, out.value))
+                .collect(),
+        }
     }
 
     pub fn due_releases(&mut self, now_ms: u64) -> Vec<InputEvent> {

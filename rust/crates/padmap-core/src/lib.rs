@@ -34,6 +34,7 @@ pub mod state;
 pub mod tuning;
 pub mod userconfig;
 pub mod wire;
+pub mod xbox;
 
 pub use binding::{Binding, BindingKind};
 pub use calibration::AxisCalibration;

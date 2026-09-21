@@ -471,7 +471,8 @@ fn cmd_run() -> Result<()> {
             );
         }
         let tuning = padmap_daemon::publish::tuning_for(pad);
-        match clone::create(pad, player, mode, &axes, tuning, true) {
+        let bindings = padmap_daemon::publish::resolved(pad, "", "").1.resolved();
+        match clone::create(pad, player, mode, &axes, tuning, true, &bindings) {
             Ok(vpad) => vpads.push(vpad),
             Err(error) => warn!("player {player}: {error}"),
         }
@@ -603,11 +604,17 @@ fn publish_artefacts(vpads: &[padmap_input::VirtualPad], keyboard: Option<u32>) 
         identities.insert(vpad.player, identity);
 
         let stored = profiles::load(&vpad.pad, None);
-        let (_scope, mapping) = stored
+        let (_scope, mut mapping) = stored
             .as_ref()
             .map(|profile| profile.resolve("", ""))
             .unwrap_or_default();
-        let bindings = mapping.resolved();
+        let mut bindings = mapping.resolved();
+        let xbox = vpad.translator.is_some();
+        if xbox {
+            // The clone is a 360 pad whatever is behind it; describe that.
+            bindings = padmap_core::xbox::bindings();
+            mapping.layout = padmap_core::layout::default_id().to_owned();
+        }
 
         // Unmapped pads must still be usable; d-pad and sticks come from capabilities.
         let line = if bindings.is_empty() {
@@ -622,7 +629,14 @@ fn publish_artefacts(vpads: &[padmap_input::VirtualPad], keyboard: Option<u32>) 
         } else {
             emit::sdl_line_for(vpad.player, identity, &bindings, None)
         };
-        let (keys, axes) = vpad.source.capabilities();
+        let (keys, axes) = if xbox {
+            (
+                padmap_core::xbox::KEYS.to_vec(),
+                padmap_core::xbox::axis_codes(),
+            )
+        } else {
+            vpad.source.capabilities()
+        };
         published.push(emulators::Published {
             player: vpad.player,
             guid: emit::virtual_guid(vpad.player, identity),

@@ -47,3 +47,41 @@ box".
 launcher for the ports that want it, and later for all. Nothing else changes:
 the picker's filter matches the CRC of the name, the ares writer matches the
 GUID padmap publishes, and both would go on doing so.
+
+## What was built
+
+`PADMAP_PAD_IDENTITY=xbox360`, as specified: `045e:028e` on USB, version
+`0x0110`, the player in `phys` and nowhere in the id, so the GUID is the
+database's; the name still `padmap Player N`; the layout fixed to what `xpad`
+advertises -- the eleven buttons, four sticks at `-32768..32767` (fuzz 16,
+flat 128), `ABS_Z`/`ABS_RZ` at `0..255`, a hat. `padmap_core::xbox` holds the
+layout and the translator; `clone::create` builds the clone from the layout
+rather than the source and hands the republisher a translator, through which
+every forwarded event, debounce release and pause release passes.
+
+The translation is the profile's: a button binding names the source key by
+its SDL ordinal, an axis binding the source axis by ordinal and sign, a hat
+binding the hat direction. A pad with no capture that follows the kernel's
+convention is carried across code for code, rescaled -- with one deliberate
+swap, since `xpad` sends `BTN_X` (the kernel's `BTN_NORTH`, `0x133`) for X
+and `BTN_Y` (`BTN_WEST`, `0x134`) for Y, and SDL's database entry for this
+GUID says so (`x:b2,y:b3`). C-buttons bound to right-stick halves come out
+as the stick, opposing halves cancel, letting go returns it to centre. Guide
+and the stick clicks ride across where the source has them; the left stick
+always does. A control the source lacks is never pressed.
+
+Every consumer describes the clone's layout rather than the pad behind it:
+the SDL line, RetroArch autoconfig, Cemu, ares and Ryujinx all derive from
+`xbox::bindings()` and the layout's capabilities under this identity, in the
+daemon and in `padmap run` alike. `mirror` stays the default.
+
+One thing to know: Ryujinx blanks the name CRC from the GUID to make its id,
+so under this identity every clone has the same Ryujinx id and it binds by
+connection order. That was the reason the version word carried the player;
+this identity gives that up on purpose, so Ryujinx is the consumer it does
+not suit. Use `mirror` for it.
+
+Tests: eleven on the translator (captured pads, standard pads, cancellation,
+rescaling, dedupe, release) and a real-device test that clones a standard
+uinput pad under the identity and reads back xpad's id, layout, the X/Y
+swap, a trigger at 255 and the left stick at full range.
