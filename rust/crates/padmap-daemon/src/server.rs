@@ -134,6 +134,9 @@ pub struct Server {
     triton_checked_for: Option<BTreeSet<String>>,
     last_stale_check: f64,
     tick_failures: u64,
+    /// The pid this daemon ends with; None outlives everything, as before.
+    follow: Option<u32>,
+    last_follow_check: f64,
 }
 
 impl std::fmt::Debug for Server {
@@ -244,6 +247,8 @@ impl Server {
             triton_checked_for: None,
             last_stale_check: 0.0,
             tick_failures: 0,
+            follow: None,
+            last_follow_check: 0.0,
         })
     }
 
@@ -359,8 +364,36 @@ impl Server {
         }
     }
 
+    /// End with `pid`: once it is gone the daemon exits and releases every pad.
+    /// Polled, because PR_SET_PDEATHSIG does not survive the reparenting
+    /// `ensure-daemon` does.
+    pub fn follow(&mut self, pid: u32) {
+        self.follow = Some(pid);
+        info!("following pid {pid}; ending when it does");
+    }
+
+    /// Whether the followed pid has gone away, checked at most every quarter second.
+    fn followed_is_gone(&mut self) -> bool {
+        let Some(pid) = self.follow else {
+            return false;
+        };
+        let clock = now();
+        if clock - self.last_follow_check < FOLLOW_POLL_SECONDS {
+            return false;
+        }
+        self.last_follow_check = clock;
+        !process_exists(pid)
+    }
+
     pub fn run(&mut self, stop: &Arc<AtomicBool>) {
         while !stop.load(Ordering::Relaxed) {
+            if self.followed_is_gone() {
+                info!(
+                    "pid {} is gone; ending with it",
+                    self.follow.unwrap_or_default()
+                );
+                return;
+            }
             let ready = match self.reactor.wait() {
                 Ok(ready) => ready,
                 Err(rustix::io::Errno::INTR) => continue,
@@ -631,6 +664,7 @@ impl Server {
                 let state = self.state_event();
                 self.broadcast(&state);
             }
+            Command::Unseat { player } => self.unseat(as_player(player)),
             Command::Status => {
                 let state = self.state_event();
                 self.send(fd, &state);
@@ -742,6 +776,81 @@ impl Server {
         if had_session {
             self.resume_republishing();
         }
+        let state = self.state_event();
+        self.broadcast(&state);
+    }
+
+    /// Drop one seat, or every seat for player 0. The clone stops, the pad is
+    /// released, consumers are rewritten, and the seat is free to be taken
+    /// again by a hold -- seating is left exactly as it was, because "hold a
+    /// button to take a seat" is the next thing that happens.
+    fn unseat(&mut self, player: u32) {
+        if self.session.is_some() {
+            self.broadcast(&events::error("a session is open; cancel it first"));
+            return;
+        }
+        if self.modal_open() {
+            self.broadcast(&events::error(
+                "a controller is being set up; finish that first",
+            ));
+            return;
+        }
+        let targets: Vec<u32> = self
+            .taken_seats()
+            .into_iter()
+            .filter(|seat| player == 0 || *seat == player)
+            .collect();
+        if targets.is_empty() {
+            let why = if player == 0 {
+                "nobody is seated".to_owned()
+            } else {
+                format!("no controller assigned to player {player}")
+            };
+            self.broadcast(&events::error(why));
+            return;
+        }
+        let removed: Vec<Slot> = self
+            .slots_assigned
+            .iter()
+            .filter(|slot| targets.contains(&slot.player))
+            .cloned()
+            .collect();
+        self.slots_assigned
+            .retain(|slot| !targets.contains(&slot.player));
+        self.away.retain(|entry| !targets.contains(&entry.player));
+        for slot in &removed {
+            self.attached
+                .live
+                .remove(&profiles::signature_of(&slot.pad));
+            info!("player {}: unseated {}", slot.player, clean(&slot.pad.name));
+        }
+        for seat in targets
+            .iter()
+            .filter(|seat| !removed.iter().any(|slot| slot.player == **seat))
+        {
+            info!("player {seat}: unseated (was away)");
+        }
+        if self.slots_assigned.is_empty() {
+            self.stop_republisher();
+            self.rewrite_consumers(&BTreeMap::new());
+            self.state = STATE_IDLE;
+        } else {
+            if let Err(error) = self.start_republisher() {
+                warn!("could not republish after unseating: {error}");
+            }
+            self.state = if self.republisher.is_some() {
+                STATE_READY
+            } else {
+                STATE_IDLE
+            };
+        }
+        self.save_assignments();
+        for slot in &removed {
+            let event =
+                self.controller_event(announce::ACTION_REMOVED, slot.player, &slot.pad, "unseated");
+            self.broadcast(&event);
+        }
+        self.refresh_seating(&mut Scan::default());
         let state = self.state_event();
         self.broadcast(&state);
     }
@@ -1635,6 +1744,14 @@ impl Server {
                 warn!("seating: could not watch pad {index}: {error}");
             }
         }
+        debug!(
+            "seating: listening on {:?}",
+            self.seating
+                .pads()
+                .iter()
+                .map(|pad| pad.event())
+                .collect::<Vec<_>>()
+        );
     }
 
     fn tick_seating(&mut self) {
@@ -1963,10 +2080,22 @@ impl Server {
         self.republisher = Some(republisher);
         self.sync_republish_pause();
 
+        self.rewrite_consumers(&virtual_paths);
+        info!(
+            "republishing {} pad(s); launch config at {}",
+            self.slots_assigned.len(),
+            self.launch_config_path.display()
+        );
+        Ok(())
+    }
+
+    /// Write every consumer's config for the seats as they are now -- with no
+    /// seats, that is a launch config naming nobody, not yesterday's roster.
+    fn rewrite_consumers(&mut self, virtual_paths: &BTreeMap<u32, String>) {
         let last = runtime::read_recent_games().into_iter().next();
         let written = publish::write_all(
             &self.slots_assigned,
-            &virtual_paths,
+            virtual_paths,
             self.mode,
             &self.launch_config_path,
             &self.launch_args_path,
@@ -1975,12 +2104,6 @@ impl Server {
         self.sdl_lines = written.sdl_lines;
         let lines = events::sdl_mapping(&self.sdl_lines);
         self.broadcast(&lines);
-        info!(
-            "republishing {} pad(s); launch config at {}",
-            self.slots_assigned.len(),
-            self.launch_config_path.display()
-        );
-        Ok(())
     }
 
     fn stop_republisher(&mut self) {
@@ -2457,6 +2580,7 @@ impl Server {
             self.players_payload(),
             runtime::build_id_of_binary(),
             self.mode.as_str(),
+            self.follow,
         )
     }
 
@@ -2476,6 +2600,23 @@ impl Server {
 
 fn as_player(player: i64) -> u32 {
     u32::try_from(player).unwrap_or(0)
+}
+
+const FOLLOW_POLL_SECONDS: f64 = 0.25;
+
+/// Whether `pid` is still around. A signal of 0 checks without sending; EPERM
+/// means it exists but is not ours, which is still "exists".
+fn process_exists(pid: u32) -> bool {
+    let Some(pid) = i32::try_from(pid)
+        .ok()
+        .and_then(rustix::process::Pid::from_raw)
+    else {
+        return false;
+    };
+    !matches!(
+        rustix::process::test_kill_process(pid),
+        Err(rustix::io::Errno::SRCH)
+    )
 }
 
 fn raw_events(events: &[evdev::InputEvent]) -> Vec<Raw> {

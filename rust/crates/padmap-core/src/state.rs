@@ -35,6 +35,9 @@ pub struct StateEvent {
     pub build: String,
     pub pid: u32,
     pub identity: String,
+    /// The pid this daemon ends with, when started with `--follow`.
+    #[serde(default)]
+    pub following: Option<u32>,
 }
 
 impl StateEvent {
@@ -54,6 +57,7 @@ impl StateEvent {
             build,
             pid,
             identity: identity.to_owned(),
+            following: None,
         }
     }
 }

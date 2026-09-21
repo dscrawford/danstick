@@ -60,6 +60,22 @@ const MIRRORED: PadId = PadId {
     pid: 0x000a,
     only: "RSTESTMIRROR",
 };
+const UNSEATED: PadId = PadId {
+    name: "PADMAP RSTESTUNSEAT",
+    pid: 0x000b,
+    only: "RSTESTUNSEAT",
+};
+const FRESH: PadId = PadId {
+    name: "PADMAP RSTESTFRESH",
+    pid: 0x000c,
+    only: "RSTESTFRESH",
+};
+/// No pad is made for this one; the daemon under test only needs a filter.
+const FOLLOWER: PadId = PadId {
+    name: "PADMAP RSTESTFOLLOW",
+    pid: 0x000d,
+    only: "RSTESTFOLLOW",
+};
 /// Steam's virtual gamepad, by id; the name only has to pass the test filter.
 const MIRROR_NAME: &str = "PADMAP RSTESTMIRROR X-Box 360 pad 0";
 const MIRROR_VID: u16 = 0x28de;
@@ -198,6 +214,10 @@ struct Daemon {
 
 impl Daemon {
     fn start(root: &Path, id: PadId) -> Daemon {
+        Daemon::start_with(root, id, &[])
+    }
+
+    fn start_with(root: &Path, id: PadId, extra: &[&str]) -> Daemon {
         let runtime = root.join("run");
         let config = root.join("config");
         let profiles = root.join("devices");
@@ -206,6 +226,7 @@ impl Daemon {
         }
         let child = Command::new(env!("CARGO_BIN_EXE_padmap-rs"))
             .arg("serve")
+            .args(extra)
             .env("XDG_RUNTIME_DIR", &runtime)
             .env("XDG_CONFIG_HOME", &config)
             .env("XDG_DATA_HOME", root.join("data"))
@@ -297,6 +318,47 @@ impl Daemon {
             }
         }
         None
+    }
+}
+
+impl Daemon {
+    /// Open seating and hold a button until the pad is player 1 and published.
+    ///
+    /// A pad that appeared a moment ago is not readable by anybody yet when
+    /// Steam is running: it grabs every new joystick briefly to look at it,
+    /// and a hold made under that grab reaches nobody. Measured here at a
+    /// little over a second; the seating test above survives it only because
+    /// it holds once while seating is still closed.
+    fn seat_by_hold(&mut self, pad: &mut TestPad) {
+        self.pump(1.5);
+        self.events.clear();
+        self.send(serde_json::json!({"cmd": "seating", "open": true, "players": 4}));
+        pad.hold(FIRST_KEY, 0.6);
+        let claim = self.wait_for("claim", |_| true, 5.0).unwrap_or_else(|| {
+            let names: Vec<&str> = self
+                .events
+                .iter()
+                .filter_map(|e| e["event"].as_str())
+                .collect();
+            panic!("holding a button took the free seat; saw {names:?}")
+        });
+        assert_eq!(claim["player"], 1);
+        let ready = self
+            .wait_for("state", |e| e["state"] == "ready", 5.0)
+            .expect("ready after the seat was taken");
+        assert_eq!(ready["players"][0]["published"], true);
+    }
+
+    /// Whether the daemon process has exited within `seconds`.
+    fn exited_within(&mut self, seconds: f64) -> bool {
+        let deadline = Instant::now() + Duration::from_secs_f64(seconds);
+        while Instant::now() < deadline {
+            if let Ok(Some(_)) = self.child.try_wait() {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        false
     }
 }
 
@@ -1106,4 +1168,205 @@ fn steams_mirror_is_listed_as_dropped_beside_the_pad_it_mirrors() {
 
     drop(mirror);
     let _ = std::fs::remove_dir_all(&root);
+}
+
+/// `unseat` frees the seat, stops the clone and forgets the seat on disk --
+/// and leaves seating open, so the same hold takes the seat straight back.
+#[test]
+fn unseat_drops_the_seat_and_the_next_hold_takes_it_again() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let _guard = LiveGuard::new(UNSEATED);
+    let root = std::env::temp_dir().join(format!("padmap-unseat-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let mut pad = TestPad::new(UNSEATED);
+    let mut daemon = Daemon::start(&root, UNSEATED);
+    daemon.seat_by_hold(&mut pad);
+    let state_dir = daemon.runtime.join("padmap");
+    let sdl_db = root.join("sdl_controllers.txt");
+    assert_eq!(sdl_mappings_in(&sdl_db), Some(1), "one clone published");
+
+    // Unseating a player nobody holds is an error, not a silent no-op.
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "unseat", "player": 3}));
+    assert!(
+        daemon.last("error").is_some(),
+        "unseating an empty seat was accepted"
+    );
+
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "unseat", "player": 1}));
+    let state = daemon
+        .wait_for(
+            "state",
+            |e| e["players"].as_array().map(Vec::len) == Some(0),
+            5.0,
+        )
+        .expect("a state with nobody seated");
+    assert_eq!(state["state"], "idle");
+    // The freed pad is re-announced as unconfigured right after; the removal
+    // is the event before that one.
+    assert!(
+        daemon
+            .events
+            .iter()
+            .any(|e| e["event"] == "controller" && e["action"] == "removed" && e["player"] == 1),
+        "no removal was announced for player 1"
+    );
+    assert!(
+        !daemon
+            .events
+            .iter()
+            .any(|event| event["event"] == "state" && event["state"] == "assigning"),
+        "unseat opened a session"
+    );
+    let saved = std::fs::read_to_string(state_dir.join("assignments.json")).expect("saved");
+    let saved: Value = serde_json::from_str(&saved).expect("json");
+    assert_eq!(
+        saved.as_array().map(Vec::len),
+        Some(0),
+        "the seat survived on disk"
+    );
+    // Other journeys publish a "padmap Player 1" of their own, so the clone's
+    // absence is read from this daemon's consumer files, not from sysfs.
+    assert_eq!(
+        sdl_mappings_in(&sdl_db),
+        Some(0),
+        "the clone outlived the seat"
+    );
+
+    // Seating was not closed by any of that: the next hold is player 1 again.
+    daemon.events.clear();
+    pad.hold(FIRST_KEY, 0.6);
+    let claim = daemon
+        .wait_for("claim", |_| true, 5.0)
+        .expect("the freed seat could be taken again");
+    assert_eq!(claim["player"], 1);
+    daemon
+        .wait_for("state", |e| e["state"] == "ready", 5.0)
+        .expect("ready again");
+
+    // And with no player named, everybody goes.
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "unseat"}));
+    let state = daemon
+        .wait_for(
+            "state",
+            |e| e["players"].as_array().map(Vec::len) == Some(0),
+            5.0,
+        )
+        .expect("nobody seated after unseat with no player");
+    assert_eq!(state["state"], "idle");
+
+    drop(daemon);
+    drop(pad);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// The same daemon, restarted: plain brings yesterday's seat back, `--fresh` does not.
+#[test]
+fn a_fresh_daemon_starts_with_nobody_seated() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let _guard = LiveGuard::new(FRESH);
+    let root = std::env::temp_dir().join(format!("padmap-fresh-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let mut pad = TestPad::new(FRESH);
+
+    let mut daemon = Daemon::start(&root, FRESH);
+    daemon.seat_by_hold(&mut pad);
+    drop(daemon);
+
+    // Restoring a real pad republishes it before the first client is greeted.
+    let mut daemon = Daemon::start(&root, FRESH);
+    let state = daemon.wait_for("state", |_| true, 5.0).expect("a greeting");
+    assert_eq!(
+        state["players"].as_array().map(Vec::len),
+        Some(1),
+        "a plain restart forgot the seat: {state}"
+    );
+    assert_eq!(state["following"], Value::Null);
+    drop(daemon);
+
+    let mut daemon = Daemon::start_with(&root, FRESH, &["--fresh"]);
+    let state = daemon.wait_for("state", |_| true, 5.0).expect("a greeting");
+    assert_eq!(
+        state["players"].as_array().map(Vec::len),
+        Some(0),
+        "--fresh restored the seat: {state}"
+    );
+    assert_eq!(state["state"], "idle");
+    drop(daemon);
+    drop(pad);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// `--follow PID` ends the daemon when that pid is gone, and says so in `state`.
+#[test]
+fn a_daemon_that_follows_a_pid_ends_when_it_does() {
+    let root = std::env::temp_dir().join(format!("padmap-follow-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let mut leader = Command::new("sleep")
+        .arg("60")
+        .stdout(Stdio::null())
+        .spawn()
+        .expect("a process to follow");
+    let pid = leader.id().to_string();
+
+    let mut daemon = Daemon::start_with(&root, FOLLOWER, &["--follow", &pid]);
+    let state = daemon.last("state").expect("a greeting").clone();
+    assert_eq!(state["following"], leader.id());
+    // Seating open and no client connected: the shape of a game in progress.
+    daemon.send(serde_json::json!({"cmd": "seating", "open": true, "players": 4}));
+    assert!(
+        !daemon.exited_within(1.0),
+        "the daemon ended while its pid was alive"
+    );
+
+    leader.kill().expect("kill");
+    let _ = leader.wait();
+    assert!(
+        daemon.exited_within(3.0),
+        "the daemon outlived the pid it follows"
+    );
+    assert!(
+        !daemon.runtime.join("padmap").join("padmap.sock").exists(),
+        "the socket was left behind"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// A pid that is already gone at startup is not waited for.
+#[test]
+fn following_a_pid_that_is_already_gone_ends_at_once() {
+    let root = std::env::temp_dir().join(format!("padmap-follow-gone-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let mut gone = Command::new("true").spawn().expect("a short process");
+    let pid = gone.id().to_string();
+    let _ = gone.wait();
+
+    let mut daemon = Daemon::start_with(&root, FOLLOWER, &["--follow", &pid]);
+    assert!(
+        daemon.exited_within(3.0),
+        "the daemon waited for a pid that never existed"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Mapping lines in an SDL controller db, header comments aside.
+fn sdl_mappings_in(path: &Path) -> Option<usize> {
+    let text = std::fs::read_to_string(path).ok()?;
+    Some(
+        text.lines()
+            .filter(|line| !line.trim().is_empty() && !line.starts_with('#'))
+            .count(),
+    )
 }

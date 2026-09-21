@@ -38,7 +38,7 @@ fn main() -> Result<()> {
         }
         Some("hide") => cmd_hide(&rest),
         Some("run") => cmd_run(),
-        Some("serve") => cmd_serve(),
+        Some("serve") => cmd_serve(&rest),
         Some("emit") => cmd_emit(&rest),
         Some("exec") => cmd_exec(rest),
         Some("sdl-mapping") => cmd_sdl_mapping(rest.into_iter().next()),
@@ -78,6 +78,7 @@ fn main() -> Result<()> {
             flag_value(&rest, &["--timeout"])
                 .map(|value| parse_number::<f64>(&value, "--timeout"))
                 .unwrap_or(10.0),
+            lifetime_flags(&rest),
         ),
         Some("launch") => {
             let log = rest.iter().position(|arg| arg == "--log").map(|at| {
@@ -124,8 +125,9 @@ fn parse_number<T: std::str::FromStr>(value: &str, flag: &str) -> T {
 
 fn usage() {
     eprintln!(
-        "usage: padmap list [--json] | setup | map | calibrate | tune | forget | run | serve | \
-         launch | play | hide | ensure-daemon | clean-config | \
+        "usage: padmap list [--json] | setup | map | calibrate | tune | forget | run | \
+         serve [--fresh] [--follow PID] | \
+         launch | play | hide | ensure-daemon [--check] [--fresh] [--follow PID] | clean-config | \
          emit [--cemu-dir D] [--dolphin-dir D] [--ares-settings F] \
          [--ryujinx-config F] \
          [--env-file F] | \
@@ -133,11 +135,30 @@ fn usage() {
     );
 }
 
+/// `--fresh` / `--follow PID` from the command line, `PADMAP_NO_RESTORE=1` from
+/// the environment: how long the daemon lives and whether it starts unseated.
+fn lifetime_flags(args: &[String]) -> commands::Lifetime {
+    commands::Lifetime {
+        fresh: args.iter().any(|arg| arg == "--fresh")
+            || std::env::var_os("PADMAP_NO_RESTORE").is_some_and(|v| !v.is_empty() && v != "0"),
+        follow: flag_value(args, &["--follow"])
+            .map(|value| parse_number::<u32>(&value, "--follow")),
+    }
+}
+
 /// SIGTERM must release grabs lest the machine be left with no working controllers.
-fn cmd_serve() -> Result<()> {
+fn cmd_serve(args: &[String]) -> Result<()> {
+    let lifetime = lifetime_flags(args);
     let mut server = padmap_daemon::server::Server::new().context("preparing the daemon")?;
     server.start().context("starting the daemon")?;
-    server.restore();
+    if let Some(pid) = lifetime.follow {
+        server.follow(pid);
+    }
+    if lifetime.fresh {
+        info!("starting unseated: saved seats are not restored");
+    } else {
+        server.restore();
+    }
     let stop = Arc::new(AtomicBool::new(false));
     install_signal_handlers(&stop)?;
     server.run(&stop);

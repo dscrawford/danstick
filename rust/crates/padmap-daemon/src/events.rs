@@ -20,8 +20,10 @@ pub fn state(
     players: Vec<PlayerState>,
     build: String,
     identity: &str,
+    following: Option<u32>,
 ) -> Value {
-    let event = StateEvent::new(state, slots, players, build, std::process::id(), identity);
+    let mut event = StateEvent::new(state, slots, players, build, std::process::id(), identity);
+    event.following = following;
     serde_json::to_value(event).unwrap_or_else(|_| json!({ "event": "state" }))
 }
 

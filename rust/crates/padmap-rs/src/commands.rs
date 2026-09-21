@@ -630,7 +630,41 @@ pub fn cmd_calibrate(force: bool) -> Result<()> {
     Ok(())
 }
 
-pub fn cmd_ensure_daemon(check: bool, timeout: f64) -> Result<()> {
+/// How long a daemon lives and whether it starts unseated. Both name a
+/// *session*: a daemon that already belongs to this one is left alone, one
+/// that belongs to another (or to none) is replaced.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Lifetime {
+    /// Skip restoring saved seats; profiles and mappings are kept.
+    pub fresh: bool,
+    /// Exit, releasing every pad, once this pid is gone.
+    pub follow: Option<u32>,
+}
+
+impl Lifetime {
+    fn is_default(self) -> bool {
+        self == Lifetime::default()
+    }
+
+    /// Whether a running daemon reporting `following` already serves this session.
+    fn owns(self, following: Option<u32>) -> bool {
+        self.follow.is_some() && following == self.follow
+    }
+
+    fn args(self) -> Vec<String> {
+        let mut args = Vec::new();
+        if self.fresh {
+            args.push("--fresh".to_owned());
+        }
+        if let Some(pid) = self.follow {
+            args.push("--follow".to_owned());
+            args.push(pid.to_string());
+        }
+        args
+    }
+}
+
+pub fn cmd_ensure_daemon(check: bool, timeout: f64, lifetime: Lifetime) -> Result<()> {
     let pads = discover().unwrap_or_default();
     let hideable: Vec<padmap_core::hide::Hideable> = pads
         .iter()
@@ -661,7 +695,7 @@ pub fn cmd_ensure_daemon(check: bool, timeout: f64) -> Result<()> {
             std::process::exit(1);
         }
         println!("no daemon running; starting one");
-        spawn_daemon()?;
+        spawn_daemon(lifetime)?;
         let Some(state) = wait_for_daemon(timeout) else {
             println!("daemon did not come up within {timeout:.0}s");
             std::process::exit(1);
@@ -674,14 +708,36 @@ pub fn cmd_ensure_daemon(check: bool, timeout: f64) -> Result<()> {
     };
     let theirs = state["build"].as_str().unwrap_or("");
     let their_identity = state["identity"].as_str();
-    if theirs == ours && their_identity.is_none_or(|mode| mode == our_identity.as_str()) {
+    let their_follow = state["following"]
+        .as_u64()
+        .and_then(|pid| u32::try_from(pid).ok());
+    let current = theirs == ours && their_identity.is_none_or(|mode| mode == our_identity.as_str());
+    if current && (lifetime.is_default() || lifetime.owns(their_follow)) {
         println!(
-            "daemon is current (build {ours}, identity {})",
-            our_identity.as_str()
+            "daemon is current (build {ours}, identity {}{})",
+            our_identity.as_str(),
+            their_follow
+                .map(|pid| format!(", following pid {pid}"))
+                .unwrap_or_default()
         );
         return Ok(());
     }
-    if theirs == ours {
+    if current {
+        println!("daemon is current but belongs to another session:");
+        println!(
+            "  daemon: {}",
+            their_follow
+                .map(|pid| format!("follows pid {pid}"))
+                .unwrap_or_else(|| "outlives everything, seats restored".to_owned())
+        );
+        println!(
+            "  ours:   {}",
+            lifetime
+                .follow
+                .map(|pid| format!("follows pid {pid}"))
+                .unwrap_or_else(|| "starts unseated".to_owned())
+        );
+    } else if theirs == ours {
         println!("daemon is running with a different pad identity:");
         println!("  daemon: {}", their_identity.unwrap_or("?"));
         println!("  ours:   {}", our_identity.as_str());
@@ -697,7 +753,7 @@ pub fn cmd_ensure_daemon(check: bool, timeout: f64) -> Result<()> {
         println!("could not stop the running daemon");
         std::process::exit(1);
     }
-    spawn_daemon()?;
+    spawn_daemon(lifetime)?;
     let Some(state) = wait_for_daemon(timeout) else {
         println!("replacement daemon did not come up within {timeout:.0}s");
         std::process::exit(1);
@@ -781,7 +837,7 @@ pub fn daemon_state(timeout: f64) -> Option<serde_json::Value> {
     None
 }
 
-fn spawn_daemon() -> Result<()> {
+fn spawn_daemon(lifetime: Lifetime) -> Result<()> {
     let exe = std::env::current_exe().context("finding this binary")?;
     let log_path = runtime::daemon_log_path();
     if let Some(parent) = log_path.parent() {
@@ -790,6 +846,7 @@ fn spawn_daemon() -> Result<()> {
     let log = std::fs::File::create(&log_path).ok();
     let mut command = std::process::Command::new(exe);
     command.arg("serve");
+    command.args(lifetime.args());
     if let Some(log) = log {
         let errors = log.try_clone().ok();
         command.stdout(log);
@@ -1037,4 +1094,41 @@ pub fn cmd_tune(
     println!("{}  {}", pad.event(), pad.name);
     println!("{}", serde_json::to_string_pretty(&tuning)?);
     Ok(())
+}
+
+#[cfg(test)]
+mod lifetime_tests {
+    use super::Lifetime;
+
+    #[test]
+    fn a_daemon_following_our_pid_is_ours_and_any_other_is_not() {
+        let ours = Lifetime {
+            fresh: true,
+            follow: Some(42),
+        };
+        assert!(ours.owns(Some(42)));
+        assert!(!ours.owns(Some(43)));
+        assert!(!ours.owns(None));
+        // Without a pid to compare, nothing is "ours": --fresh alone always replaces.
+        let fresh_only = Lifetime {
+            fresh: true,
+            follow: None,
+        };
+        assert!(!fresh_only.owns(None));
+        assert!(!fresh_only.is_default());
+        assert!(Lifetime::default().is_default());
+    }
+
+    #[test]
+    fn the_flags_round_trip_to_serve_arguments() {
+        assert!(Lifetime::default().args().is_empty());
+        assert_eq!(
+            Lifetime {
+                fresh: true,
+                follow: Some(7)
+            }
+            .args(),
+            vec!["--fresh", "--follow", "7"]
+        );
+    }
 }

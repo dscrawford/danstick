@@ -3,7 +3,7 @@
 use serde_json::Value;
 
 /// Every command the socket accepts.
-pub const COMMANDS: [&str; 16] = [
+pub const COMMANDS: [&str; 17] = [
     "begin",
     "reset",
     "accept",
@@ -20,6 +20,7 @@ pub const COMMANDS: [&str; 16] = [
     "status",
     "seating",
     "tune",
+    "unseat",
 ];
 
 /// A parsed command, with its arguments already coerced.
@@ -72,6 +73,10 @@ pub enum Command {
         player: i64,
         signature: String,
         request: crate::tuning::Request,
+    },
+    /// Drop a seat (player 0: every seat), stop its clone, ungrab its pad; seating stays as it was.
+    Unseat {
+        player: i64,
     },
 }
 
@@ -168,6 +173,9 @@ impl Command {
                     Some(_) => return Err(Refused::NotANumber { field: "open" }),
                 },
                 players: number("players", 4)?,
+            },
+            "unseat" => Command::Unseat {
+                player: number("player", 0)?,
             },
             other => return Err(Refused::Unknown(other.to_owned())),
         })

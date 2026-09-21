@@ -49,6 +49,7 @@ fn as_fields(command: &Command) -> Value {
         Command::Seating { open, players } => {
             json!({"cmd": "seating", "open": open, "players": players})
         }
+        Command::Unseat { player } => json!({"cmd": "unseat", "player": player}),
         Command::Tune {
             player,
             signature,
