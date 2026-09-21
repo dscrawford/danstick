@@ -1940,3 +1940,84 @@ fn an_empty_seed_is_the_run_as_it_always_was() {
     assert!(tap(&mut run, 0x130, 0.0).advanced());
     assert_eq!(run.index(), 1);
 }
+
+mod describing_presses {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    use padmap_core::binding::BindingKind;
+    use padmap_core::capture::{Event, MappingRun};
+    use padmap_core::layout;
+    use padmap_core::sdl::AxisSpan;
+
+    fn run() -> MappingRun {
+        let mut axes = BTreeMap::new();
+        axes.insert(0x00, AxisSpan::new(0, 255, 128)); // ABS_X, ordinal 0
+        axes.insert(0x01, AxisSpan::new(0, 255, 128)); // ABS_Y, ordinal 1
+        axes.insert(0x10, AxisSpan::new(-1, 1, 0)); // hat, not an axis ordinal
+        axes.insert(0x11, AxisSpan::new(-1, 1, 0));
+        MappingRun::new(
+            1,
+            layout::get("snes"),
+            vec![0x130, 0x131, 0x133, 0x134],
+            "console:snes".to_owned(),
+            axes,
+            BTreeSet::new(),
+        )
+    }
+
+    #[test]
+    fn a_button_is_its_sdl_ordinal_and_one_or_zero() {
+        let run = run();
+        let down = run.describe(Event::key(0x133, 1)).expect("known");
+        assert_eq!(
+            (down.kind, down.index, down.value),
+            (BindingKind::Button, 2, 1.0)
+        );
+        let up = run.describe(Event::key(0x133, 0)).expect("known");
+        assert_eq!(up.value, 0.0);
+        assert!(
+            run.describe(Event::key(0x1ff, 1)).is_none(),
+            "not on this pad"
+        );
+    }
+
+    #[test]
+    fn a_hat_is_a_direction_bit_and_centred_is_zero() {
+        let run = run();
+        assert_eq!(
+            run.describe(Event::abs(0x11, -1)).map(|p| p.value),
+            Some(1.0),
+            "up"
+        );
+        assert_eq!(
+            run.describe(Event::abs(0x10, 1)).map(|p| p.value),
+            Some(2.0),
+            "right"
+        );
+        assert_eq!(
+            run.describe(Event::abs(0x11, 1)).map(|p| p.value),
+            Some(4.0),
+            "down"
+        );
+        assert_eq!(
+            run.describe(Event::abs(0x10, -1)).map(|p| p.value),
+            Some(8.0),
+            "left"
+        );
+        let centred = run.describe(Event::abs(0x10, 0)).expect("hat");
+        assert_eq!(
+            (centred.kind, centred.index, centred.value),
+            (BindingKind::Hat, 0, 0.0)
+        );
+    }
+
+    #[test]
+    fn an_axis_is_its_ordinal_skipping_hats_and_a_deflection() {
+        let run = run();
+        let full = run.describe(Event::abs(0x01, 255)).expect("axis");
+        assert_eq!((full.kind, full.index), (BindingKind::Axis, 1));
+        assert!((full.value - 1.0).abs() < 0.01, "{}", full.value);
+        let rest = run.describe(Event::abs(0x00, 128)).expect("axis");
+        assert!(rest.value.abs() < 0.01, "{}", rest.value);
+    }
+}

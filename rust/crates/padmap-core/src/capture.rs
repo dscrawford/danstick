@@ -124,6 +124,15 @@ impl Outcome {
     }
 }
 
+/// A raw input in the terms a profile uses: kind, ordinal, and a value that is
+/// 0 or 1 for a button, a direction bit for a hat, -1..1 for an axis.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Pressed {
+    pub kind: BindingKind,
+    pub index: i32,
+    pub value: f64,
+}
+
 #[derive(Debug, Clone)]
 pub struct MappingRun {
     pub player: u32,
@@ -306,6 +315,42 @@ impl MappingRun {
     fn refuse(&mut self, claim: Claim, held_by: Control) -> Outcome {
         self.conflict = Some(held_by);
         Outcome::Refused { claim, held_by }
+    }
+
+    /// What `event` is on this pad, whether or not it binds anything -- so a
+    /// front-end can show the button under the thumb while the wizard runs.
+    pub fn describe(&self, event: Event) -> Option<Pressed> {
+        match event.kind {
+            EV_KEY => Some(Pressed {
+                kind: BindingKind::Button,
+                index: sdl_button_index(&self.keys, event.code)?,
+                value: if event.value != 0 { 1.0 } else { 0.0 },
+            }),
+            EV_ABS if event.code == ABS_HAT0X || event.code == ABS_HAT0Y => {
+                let bit = match (event.code, event.value.signum()) {
+                    (ABS_HAT0Y, -1) => 1,
+                    (ABS_HAT0X, 1) => 2,
+                    (ABS_HAT0Y, 1) => 4,
+                    (ABS_HAT0X, -1) => 8,
+                    _ => 0,
+                };
+                Some(Pressed {
+                    kind: BindingKind::Hat,
+                    index: 0,
+                    value: f64::from(bit),
+                })
+            }
+            EV_ABS => {
+                let span = *self.axes.get(&event.code)?;
+                let codes: Vec<u16> = self.axes.keys().copied().collect();
+                Some(Pressed {
+                    kind: BindingKind::Axis,
+                    index: axis_index(&codes, event.code)?,
+                    value: deflection(span, event.value),
+                })
+            }
+            _ => None,
+        }
     }
 
     pub fn feed(&mut self, event: Event, now: f64) -> Outcome {

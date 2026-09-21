@@ -1016,9 +1016,29 @@ fn a_seated_pad_is_rebound_and_finished_from_the_pad_with_no_session() {
         "a session announced its pads"
     );
 
-    // Bind two controls by tapping.
+    // Bind two controls by tapping. Each press is reported as it happens,
+    // press and release, in the terms the profile will use for it.
+    daemon.events.clear();
     pad.tap(FIRST_KEY + 4);
     daemon.pump(0.5);
+    let inputs: Vec<&Value> = daemon
+        .events
+        .iter()
+        .filter(|e| e["event"] == "input")
+        .collect();
+    assert!(
+        inputs
+            .iter()
+            .any(|e| e["kind"] == "button" && e["index"] == 4 && e["value"] == 1),
+        "the press was not reported: {inputs:?}"
+    );
+    assert!(
+        inputs
+            .iter()
+            .any(|e| e["kind"] == "button" && e["index"] == 4 && e["value"] == 0),
+        "the release was not reported: {inputs:?}"
+    );
+    assert_eq!(inputs[0]["player"], 1);
     pad.tap(FIRST_KEY + 5);
     let two = daemon
         .wait_for("mapping", |e| e["index"] == 2, 6.0)

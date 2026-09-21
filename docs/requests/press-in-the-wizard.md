@@ -33,3 +33,14 @@ pressed input in words -- "Button 3", "Hat up" -- and, once it is bound to a
 control, that control ringed on the drawing as the press happens. On the
 door after the wizard, GOTG already does this from the clone; this is the
 same thing during the ten seconds it cannot.
+
+## What was built
+
+The `input` event, as asked: one per raw input on the pad under the wizard,
+`{"event": "input", "player": N, "kind": "button"|"hat"|"axis", "index": I,
+"value": V}`, the same `kind`/`index` a profile binding carries. A button is
+`1`/`0`; a hat is its direction bit or `0` centred; an axis is `-1..1` rounded
+to twentieths, and an event identical to the last is not sent, which is the
+rate limit. `MappingRun::describe` is the pure part, tested on a button, a
+hat and an axis; the rebind journey asserts the press and the release of the
+first tap are reported before it is bound. Documented in `docs/EVENTS.md`.

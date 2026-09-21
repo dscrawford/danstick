@@ -31,6 +31,24 @@ pub fn pads(count: usize) -> Value {
     json!({ "event": "pads", "count": count })
 }
 
+/// A raw input under the wizard, whether or not it binds anything. An axis is
+/// rounded to twentieths so a resting stick's jitter is one event, not many.
+pub fn input(player: u32, pressed: padmap_core::capture::Pressed) -> Value {
+    let value = match pressed.kind {
+        padmap_core::binding::BindingKind::Axis => {
+            Value::from((pressed.value * 20.0).round() / 20.0)
+        }
+        _ => Value::from(pressed.value as i64),
+    };
+    json!({
+        "event": "input",
+        "player": player,
+        "kind": pressed.kind.as_str(),
+        "index": pressed.index,
+        "value": value,
+    })
+}
+
 pub fn progress(fraction: f64) -> Value {
     json!({ "event": "progress", "frac": round3(fraction) })
 }

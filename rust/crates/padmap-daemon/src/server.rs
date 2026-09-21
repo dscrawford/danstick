@@ -115,6 +115,8 @@ pub struct Server {
     choice: Option<Modal<Chooser>>,
     solo: Option<Solo>,
     last_finish: f64,
+    /// The last `input` event sent under the wizard; the same one is not sent twice.
+    last_input: Option<Value>,
     scratch: Vec<evdev::InputEvent>,
     pending_scope: String,
     sdl_lines: Vec<String>,
@@ -232,6 +234,7 @@ impl Server {
             choice: None,
             solo: None,
             last_finish: 0.0,
+            last_input: None,
             scratch: Vec::with_capacity(64),
             pending_scope: String::new(),
             sdl_lines: Vec::new(),
@@ -1592,6 +1595,18 @@ impl Server {
                     let update = events::layout_choice(&modal.run);
                     self.broadcast(&update);
                 }
+            }
+        }
+        let pressed = self
+            .mapping
+            .as_ref()
+            .filter(|modal| modal.pad_path == pad_path)
+            .map(|modal| (modal.run.player, modal.run.describe(capture_event)));
+        if let Some((player, Some(pressed))) = pressed {
+            let event = events::input(player, pressed);
+            if self.last_input.as_ref() != Some(&event) {
+                self.last_input = Some(event.clone());
+                self.broadcast(&event);
             }
         }
         if let Some(modal) = self.mapping.as_mut() {

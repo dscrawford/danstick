@@ -360,3 +360,22 @@ sits on the first port after the pads, which is where the emulators that
 have a keyboard default would have put it anyway, moved off a port a pad
 holds. Seating it pins it to a seat ahead of pads seated later; that is the
 difference.
+
+## `input`: what is under the thumb while the wizard runs
+
+During a mapping run padmap holds the pad and holds back its clone, so the
+front-end's SDL sees nothing from it. This is the window: one event per raw
+input on the pad being mapped, sent whether or not it binds anything.
+
+```json
+{"event": "input", "player": 1, "kind": "button", "index": 3, "value": 1}
+{"event": "input", "player": 1, "kind": "hat", "index": 0, "value": 1}
+{"event": "input", "player": 1, "kind": "axis", "index": 2, "value": 0.95}
+```
+
+`kind` and `index` are the same triple a profile's binding uses, so the table
+a front-end already has names it. `value` is `1`/`0` for a button, a
+direction bit for a hat (`1` up, `2` right, `4` down, `8` left, `0` centred),
+and `-1..1` for an axis, rounded to twentieths; the same event is never sent
+twice in a row, so a resting stick is one event, not a stream. Only the pad
+under the wizard reports, and only while it runs.
