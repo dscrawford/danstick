@@ -1935,7 +1935,12 @@ impl Server {
             let player = padmap_core::announce::next_player(&self.taken_seats());
             if player > self.seating.seats() {
                 info!("{} held a button but every seat is taken", clean(&pad.name));
-                self.seating.reset();
+                // This pad's hold and no other: the fifth person at the party
+                // must not cancel the fourth person joining.
+                self.seating.forget(index);
+                let seats = self.seating.seats();
+                let event = events::full(&clean(&pad.name), pad.event(), seats);
+                self.broadcast(&event);
                 continue;
             }
             info!(

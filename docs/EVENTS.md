@@ -143,6 +143,21 @@ and a button that was already down when `seating` opened -- the hold begins at
 a press the daemon saw, so a button held across the open is ignored until it
 is let go and pressed again.
 
+### `full`: a hold that finished with nowhere to sit
+
+```json
+{"event": "full", "name": "Xbox Wireless Controller", "node": "event9", "seats": 4}
+```
+
+Sent when a hold completes and every seat is taken, followed by that pad's
+`frac: 0`. Only that pad's hold is dropped: the fifth person at the party
+picking up a spare must not cancel the fourth person joining, and the other
+fills carry on. The pad is not remembered as having claimed anything, so it
+can hold again the moment a seat frees.
+
+Without this a front-end drew a fill that reached the end and then stopped,
+with nothing to put on screen.
+
 The same events, in the same shape, come out of an assignment session
 (`begin`); there the seat a fill names is the next one that session will hand
 out.

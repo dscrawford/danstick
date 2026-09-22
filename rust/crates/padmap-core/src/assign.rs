@@ -170,6 +170,14 @@ impl Assigner {
         out
     }
 
+    /// Undo everything one pad did -- its hold, and its claim if it had one --
+    /// leaving everybody else's alone, so it can try again later.
+    pub fn forget(&mut self, pad: usize) {
+        self.holding.remove(&pad);
+        self.claimed.retain(|claimed| *claimed != pad);
+        self.assignments.retain(|assignment| assignment.pad != pad);
+    }
+
     /// Drop every claim. Caller must discard queued pad events.
     pub fn reset(&mut self) {
         self.assignments.clear();
@@ -391,6 +399,50 @@ mod tests {
         assigner.set_hold_seconds(1.5);
         assert_eq!(assigner.tick(0.6).progress.len(), 1, "the fill was wiped");
         assert_eq!(assigner.tick(1.51).claimed.len(), 1, "and it still claims");
+    }
+
+    #[test]
+    fn forgetting_one_hold_leaves_everybody_elses_alone() {
+        let mut assigner = Assigner::default();
+        assigner.feed(0, EV_KEY, A, 1, 0.0);
+        assigner.feed(1, EV_KEY, A, 1, 0.0);
+        assigner.tick(0.1);
+        assigner.forget(0);
+        let tick = assigner.tick(0.15);
+        assert_eq!(tick.released, [0]);
+        assert_eq!(tick.progress.len(), 1, "{:?}", tick.progress);
+        assert_eq!(tick.progress[0].0, 1);
+    }
+
+    #[test]
+    fn a_pad_that_was_forgotten_can_hold_again() {
+        // The seats were full when it finished; one frees and it tries again.
+        let mut assigner = Assigner::default();
+        assigner.feed(0, EV_KEY, A, 1, 0.0);
+        assert_eq!(assigner.tick(HOLD_SECONDS + 0.01).claimed.len(), 1);
+        assigner.forget(0);
+        assert!(!assigner.is_claimed(0));
+        assert!(assigner.assignments().is_empty());
+        assigner.feed(0, EV_KEY, A, 1, 1.0);
+        assert_eq!(assigner.tick(1.0 + HOLD_SECONDS + 0.01).claimed.len(), 1);
+    }
+
+    #[test]
+    fn forgetting_one_pad_keeps_another_pads_claim() {
+        let mut assigner = Assigner::default();
+        assigner.feed(1, EV_KEY, A, 1, 0.0);
+        assigner.feed(0, EV_KEY, A, 1, 0.01);
+        assigner.tick(HOLD_SECONDS + 0.1);
+        assigner.forget(0);
+        assert_eq!(
+            assigner
+                .assignments()
+                .iter()
+                .map(|claim| claim.pad)
+                .collect::<Vec<_>>(),
+            [1]
+        );
+        assert!(assigner.is_claimed(1));
     }
 
     #[test]

@@ -83,6 +83,11 @@ pub fn claim(player: u32, name: &str, node: &str, icon: &str, configured: bool) 
     })
 }
 
+/// A hold that finished with nowhere to sit: every seat is taken.
+pub fn full(name: &str, node: &str, seats: u32) -> Value {
+    json!({ "event": "full", "name": name, "node": node, "seats": seats })
+}
+
 pub fn newpad(names: &[String]) -> Value {
     json!({ "event": "newpad", "names": names })
 }

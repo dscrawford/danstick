@@ -152,6 +152,11 @@ impl Seating {
         }
     }
 
+    /// Drop one pad's hold; the rest of the room keeps filling.
+    pub fn forget(&mut self, pad: usize) {
+        self.assigner.forget(pad);
+    }
+
     pub fn reset(&mut self) {
         self.assigner.reset();
     }
