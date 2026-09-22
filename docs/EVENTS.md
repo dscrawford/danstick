@@ -143,6 +143,18 @@ and a button that was already down when `seating` opened -- the hold begins at
 a press the daemon saw, so a button held across the open is ignored until it
 is let go and pressed again.
 
+### `state` says whether seating is listening, and for how long
+
+```json
+{"event": "state", "...": "...", "seating": true, "hold": 1.5}
+```
+
+`seating` is whether an unseated pad holding a button would take a seat right
+now; `hold` is how long that takes, in seconds. A front-end that knows both
+can stop re-sending `seating` when nothing has changed -- which is worth doing,
+since a `seating` whose `hold` differs from the one already set drops every
+hold in flight.
+
 ### `full`: a hold that finished with nowhere to sit
 
 ```json

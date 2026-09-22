@@ -14,6 +14,7 @@ pub fn error(message: impl Into<String>) -> Value {
     json!({ "event": "error", "message": message.into() })
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn state(
     state: &str,
     slots: u32,
@@ -21,9 +22,13 @@ pub fn state(
     build: String,
     identity: &str,
     following: Option<u32>,
+    seating: bool,
+    hold: f64,
 ) -> Value {
     let mut event = StateEvent::new(state, slots, players, build, std::process::id(), identity);
     event.following = following;
+    event.seating = seating;
+    event.hold = hold;
     serde_json::to_value(event).unwrap_or_else(|_| json!({ "event": "state" }))
 }
 

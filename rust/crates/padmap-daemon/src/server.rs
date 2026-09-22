@@ -2947,6 +2947,8 @@ impl Server {
             runtime::build_id_of_binary(),
             self.mode.as_str(),
             self.follow,
+            self.seating.is_open(),
+            self.seating.hold_seconds(),
         )
     }
 

@@ -29,7 +29,8 @@ pub struct PlayerState {
 }
 
 /// The whole event.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+// `Eq` is gone with `hold`: a length is a float and floats are not Eq.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StateEvent {
     pub event: String,
     pub state: String,
@@ -41,6 +42,12 @@ pub struct StateEvent {
     /// The pid this daemon ends with, when started with `--follow`.
     #[serde(default)]
     pub following: Option<u32>,
+    /// Whether an unseated pad holding a button would take a seat right now.
+    #[serde(default)]
+    pub seating: bool,
+    /// How long that hold has to run, in seconds.
+    #[serde(default)]
+    pub hold: f64,
 }
 
 impl StateEvent {
@@ -61,6 +68,8 @@ impl StateEvent {
             pid,
             identity: identity.to_owned(),
             following: None,
+            seating: false,
+            hold: crate::assign::HOLD_SECONDS,
         }
     }
 }
