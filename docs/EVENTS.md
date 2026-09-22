@@ -53,12 +53,13 @@ no disconnect. `list --json` reports the same object under
 
 ```json
 {"cmd": "seating", "open": true, "players": 4}
+{"cmd": "seating", "open": true, "players": 4, "hold": 1.5}
 {"cmd": "seating", "open": false}
 ```
 
 While it is open, holding a button on a controller that **holds no seat**
-claims the lowest free one after `HOLD_SECONDS` -- the same hold `begin` uses
--- and padmap republishes and rewrites every consumer's config exactly as
+claims the lowest free one after the hold -- the same hold `begin` uses -- and
+padmap republishes and rewrites every consumer's config exactly as
 `accept` does. The same `progress` and `claim` events are emitted, so a
 front-end draws it the way it draws a seat taken on the setup screen.
 
@@ -81,6 +82,27 @@ Seating suspends itself while an assignment session is open: the session grabs
 every pad and is about to rewrite the roster, so reading underneath it would
 claim a seat the user is in the middle of assigning. `begin` is still the way
 to *reorder* seats, which is something done with everybody's attention.
+
+### How long the hold is
+
+`hold` is that length in seconds, `0.05` to `10.0`, and `0.25` for anybody who
+does not ask. The right length differs by screen -- a launch gate wants
+deliberation, a mid-game join wants to be quick -- so it is on the command
+rather than only on the daemon, and it needs no restart. **Omitted, it leaves
+the length as it was**, so a caller that does not care never resets one that
+does.
+
+`PADMAP_HOLD_SECONDS` sets what a daemon starts with, for a front-end that
+starts its own (`serve --fresh --follow`) and would rather not say it twice.
+
+Nothing here is refused. A length that is missing, unparseable or outside the
+range is `0.25`: a comfort setting is not worth failing to open seating over.
+`progress` is already a fraction of the hold, so a reveal fills over whatever
+length is set.
+
+One thing to rely on: **a hold in flight when the length changes is dropped**,
+not re-measured. A press that became a claim because the number moved
+underneath it is the accident a longer hold exists to prevent.
 
 
 padmap's premise is that a program attaches to it and gets stable virtual

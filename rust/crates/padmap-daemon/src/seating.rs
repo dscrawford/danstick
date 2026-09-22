@@ -27,6 +27,18 @@ pub struct Claimed {
 }
 
 impl Seating {
+    /// A seating not yet open, whose holds run for `hold_seconds`.
+    pub fn with_hold(hold_seconds: f64) -> Seating {
+        let mut seating = Seating::default();
+        seating.assigner.set_hold_seconds(hold_seconds);
+        seating
+    }
+
+    /// How long a hold has to run here to claim a seat.
+    pub fn hold_seconds(&self) -> f64 {
+        self.assigner.hold_seconds()
+    }
+
     pub fn is_open(&self) -> bool {
         self.open
     }
@@ -35,9 +47,14 @@ impl Seating {
         self.seats
     }
 
-    pub fn open(&mut self, seats: u32) {
+    /// Open for `seats` players. `hold` omitted leaves the length as it was,
+    /// so a caller that does not care never resets one that does.
+    pub fn open(&mut self, seats: u32, hold: Option<f64>) {
         self.open = true;
         self.seats = seats.max(1);
+        if let Some(seconds) = hold {
+            self.assigner.set_hold_seconds(seconds);
+        }
     }
 
     pub fn close(&mut self) {
@@ -169,9 +186,26 @@ mod tests {
     }
 
     #[test]
+    fn opening_without_a_length_leaves_the_one_already_set() {
+        let mut seating = Seating::with_hold(1.5);
+        assert_eq!(seating.hold_seconds(), 1.5);
+        seating.open(4, None);
+        assert_eq!(
+            seating.hold_seconds(),
+            1.5,
+            "a caller who did not ask reset it"
+        );
+        seating.open(4, Some(0.5));
+        assert_eq!(seating.hold_seconds(), 0.5);
+        // Closing frees the pads; the length is a setting, not a claim.
+        seating.close();
+        assert_eq!(seating.hold_seconds(), 0.5);
+    }
+
+    #[test]
     fn closing_lets_go_of_everything() {
         let mut seating = Seating::default();
-        seating.open(4);
+        seating.open(4, None);
         assert!(seating.is_open());
         assert_eq!(seating.seats(), 4);
         seating.close();
@@ -183,14 +217,14 @@ mod tests {
     #[test]
     fn opening_with_no_seats_still_has_one() {
         let mut seating = Seating::default();
-        seating.open(0);
+        seating.open(0, None);
         assert_eq!(seating.seats(), 1);
     }
 
     #[test]
     fn the_same_set_of_pads_is_not_a_change() {
         let mut seating = Seating::default();
-        seating.open(4);
+        seating.open(4, None);
         // Nodes no machine has, so nothing opens here or on a build machine.
         let present = [pad("event90001"), pad("event90002")];
         assert!(

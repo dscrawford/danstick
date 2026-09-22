@@ -46,8 +46,12 @@ fn as_fields(command: &Command) -> Value {
         }
         Command::Status => json!({"cmd": "status"}),
         // Exhaustive on purpose: a command added and never routed is a compile error here.
-        Command::Seating { open, players } => {
-            json!({"cmd": "seating", "open": open, "players": players})
+        Command::Seating {
+            open,
+            players,
+            hold,
+        } => {
+            json!({"cmd": "seating", "open": open, "players": players, "hold": hold})
         }
         Command::Unseat { player } => json!({"cmd": "unseat", "player": player}),
         Command::SeatKeyboard => json!({"cmd": "seat_keyboard"}),

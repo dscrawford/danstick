@@ -72,7 +72,7 @@ impl Session {
                         gone: vec![false; remaining.len()],
                         pads: remaining,
                         sources,
-                        assigner: Assigner::default(),
+                        assigner: Assigner::new(crate::configured_hold()),
                         grab_failures,
                         buffer: Vec::with_capacity(64),
                     };

@@ -69,6 +69,8 @@ pub enum Command {
         open: bool,
         /// How many seats exist.
         players: i64,
+        /// How long a hold must run to claim one; omitted leaves it as it was.
+        hold: Option<f64>,
     },
     /// Set what a misbehaving controller needs: a deadzone, a debounce, an axis or button to ignore.
     Tune {
@@ -184,6 +186,12 @@ impl Command {
                     Some(_) => return Err(Refused::NotANumber { field: "open" }),
                 },
                 players: number("players", 4)?,
+                // Never refused: a comfort setting is not worth failing to open
+                // seating over, so a length nobody can read is the default.
+                hold: message
+                    .get("hold")
+                    .filter(|value| !value.is_null())
+                    .map(|value| crate::assign::hold_or_default(value.as_f64())),
             },
             "unseat" => Command::Unseat {
                 player: number("player", 0)?,

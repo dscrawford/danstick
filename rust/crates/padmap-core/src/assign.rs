@@ -2,8 +2,25 @@
 
 use std::collections::BTreeMap;
 
-/// How long a button must be down to claim a slot.
+/// How long a button must be down to claim a slot, for whoever does not ask.
 pub const HOLD_SECONDS: f64 = 0.25;
+
+/// What a hold can be set to: nought is a press, and a minute is not a hold.
+pub const HOLD_RANGE: std::ops::RangeInclusive<f64> = 0.05..=10.0;
+
+/// The hold length asked for, or [`HOLD_SECONDS`] where none was or it is
+/// outside [`HOLD_RANGE`]. A comfort setting is not worth refusing over, so
+/// there is no error here and NaN falls through like any other non-length.
+pub fn hold_or_default(seconds: Option<f64>) -> f64 {
+    seconds
+        .filter(|seconds| HOLD_RANGE.contains(seconds))
+        .unwrap_or(HOLD_SECONDS)
+}
+
+/// The same, from text: what an environment variable carries.
+pub fn hold_from(text: Option<&str>) -> f64 {
+    hold_or_default(text.and_then(|text| text.trim().parse::<f64>().ok()))
+}
 
 /// Ignore the keyboard range on combo devices (first valid button code).
 pub const BTN_FIRST: u16 = 0x100;
@@ -56,6 +73,19 @@ impl Assigner {
 
     pub fn assignments(&self) -> &[Assignment] {
         &self.assignments
+    }
+
+    /// How long a hold has to run here to claim.
+    pub fn hold_seconds(&self) -> f64 {
+        self.hold_seconds
+    }
+
+    /// Set how long a hold has to run, dropping every hold in flight: a press
+    /// that became a claim because the number moved under it is exactly the
+    /// accident a longer hold exists to prevent.
+    pub fn set_hold_seconds(&mut self, hold_seconds: f64) {
+        self.hold_seconds = hold_seconds;
+        self.holding.clear();
     }
 
     /// Whether this pad has already claimed a slot.
@@ -146,6 +176,49 @@ mod tests {
                 button: A
             }
         );
+    }
+
+    #[test]
+    fn a_length_is_read_from_text_or_is_the_default() {
+        assert_eq!(hold_from(Some("1.5")), 1.5);
+        assert_eq!(hold_from(Some("  0.05  ")), 0.05, "the ends are inside");
+        assert_eq!(hold_from(Some("10")), 10.0);
+        // Nothing here is worth refusing to start over.
+        for asked in ["", "soon", "0", "-2", "600", "nan", "inf", "1,5"] {
+            assert_eq!(hold_from(Some(asked)), HOLD_SECONDS, "{asked:?}");
+        }
+        assert_eq!(hold_from(None), HOLD_SECONDS);
+        assert_eq!(hold_or_default(Some(f64::NAN)), HOLD_SECONDS);
+    }
+
+    #[test]
+    fn a_longer_hold_takes_longer_and_fills_at_its_own_pace() {
+        let mut assigner = Assigner::new(1.5);
+        assert_eq!(assigner.hold_seconds(), 1.5);
+        assigner.feed(0, EV_KEY, A, 1, 0.0);
+        assert!(assigner.tick(0.3).claimed.is_empty(), "0.3s is not a claim");
+        assert!(assigner.tick(1.4).claimed.is_empty(), "nor is 1.4s");
+        // Progress fills over whatever length is set, not over the default.
+        let part = assigner.tick(0.75).progress[0].1;
+        assert!((part - 0.5).abs() < 0.01, "progress at half was {part}");
+        assert_eq!(assigner.tick(1.51).claimed.len(), 1);
+    }
+
+    #[test]
+    fn changing_the_length_drops_the_hold_running_under_it() {
+        let mut assigner = Assigner::new(1.5);
+        assigner.feed(0, EV_KEY, A, 1, 0.0);
+        assigner.tick(1.0);
+        // A press that became a claim because the number moved is the accident.
+        assigner.set_hold_seconds(0.25);
+        assert!(
+            assigner.tick(1.1).claimed.is_empty(),
+            "the hold in flight claimed on the new length"
+        );
+        assert!(assigner.tick(100.0).claimed.is_empty(), "and never does");
+        // A fresh press measures the new length.
+        assigner.feed(0, EV_KEY, A, 1, 2.0);
+        assert_eq!(assigner.tick(2.26).claimed.len(), 1);
     }
 
     #[test]

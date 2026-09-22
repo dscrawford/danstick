@@ -234,7 +234,7 @@ impl Server {
             last_confirm: 0.0,
             slots: 4,
             icon_overrides: runtime::load_icon_overrides(),
-            seating: Seating::default(),
+            seating: Seating::with_hold(crate::configured_hold()),
             calibration: None,
             mapping: None,
             choice: None,
@@ -670,11 +670,19 @@ impl Server {
                 signature,
                 request,
             } => self.tune(fd, as_player(player), &signature, &request),
-            Command::Seating { open, players } => {
+            Command::Seating {
+                open,
+                players,
+                hold,
+            } => {
                 if open {
                     self.seating
-                        .open(players.clamp(1, i64::from(u16::MAX)) as u32);
-                    info!("seating open: {} seat(s)", self.seating.seats());
+                        .open(players.clamp(1, i64::from(u16::MAX)) as u32, hold);
+                    info!(
+                        "seating open: {} seat(s), {:.2}s hold",
+                        self.seating.seats(),
+                        self.seating.hold_seconds()
+                    );
                     self.refresh_seating(&mut Scan::default());
                 } else {
                     self.close_seating();

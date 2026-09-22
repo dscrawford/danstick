@@ -16,6 +16,14 @@ pub fn clean(name: &str) -> String {
     padmap_core::sdl::clean_name(name)
 }
 
+/// How long a hold must run to claim a seat, for a daemon nobody tells.
+pub const ENV_HOLD: &str = "PADMAP_HOLD_SECONDS";
+
+/// The hold length this daemon starts with: the environment's, or the default.
+pub fn configured_hold() -> f64 {
+    padmap_core::assign::hold_from(std::env::var(ENV_HOLD).ok().as_deref())
+}
+
 pub fn now() -> f64 {
     static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
     START

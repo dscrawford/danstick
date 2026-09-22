@@ -86,6 +86,12 @@ const LATE_SECOND: PadId = PadId {
     pid: 0x0010,
     only: "RSTESTLATE",
 };
+/// A seat claimed under a hold longer than the default.
+const HOLDER: PadId = PadId {
+    name: "PADMAP RSTESTHOLD",
+    pid: 0x0012,
+    only: "RSTESTHOLD",
+};
 const BINDER: PadId = PadId {
     name: "PADMAP RSTESTBIND",
     pid: 0x0011,
@@ -246,6 +252,10 @@ impl Daemon {
     }
 
     fn start_with(root: &Path, id: PadId, extra: &[&str]) -> Daemon {
+        Daemon::start_with_env(root, id, extra, &[])
+    }
+
+    fn start_with_env(root: &Path, id: PadId, extra: &[&str], env: &[(&str, &str)]) -> Daemon {
         let runtime = root.join("run");
         let config = root.join("config");
         let profiles = root.join("devices");
@@ -267,6 +277,7 @@ impl Daemon {
             .env("PADMAP_ARES_SETTINGS", root.join("nowhere/ares.bml"))
             .env("PADMAP_RYUJINX_CONFIG", root.join("nowhere/Config.json"))
             .env("RUST_LOG", "info,padmap_daemon=debug")
+            .envs(env.iter().copied())
             .stdout(Stdio::null())
             .stderr(Stdio::inherit())
             .spawn()
@@ -864,6 +875,70 @@ fn a_pad_can_take_a_free_seat_without_a_session() {
     pad.hold(FIRST_KEY, 0.6);
     daemon.pump(0.8);
     assert!(daemon.last("claim").is_none());
+
+    drop(daemon);
+    drop(pad);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn how_long_a_hold_takes_to_claim_a_seat_can_be_set() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let _guard = LiveGuard::new(HOLDER);
+    let root = std::env::temp_dir().join(format!("padmap-hold-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let mut pad = TestPad::new(HOLDER);
+    let mut daemon = Daemon::start_with_env(&root, HOLDER, &[], &[("PADMAP_HOLD_SECONDS", "1.5")]);
+    daemon.wait_for("state", |_| true, 5.0).expect("a greeting");
+
+    // A freshly made pad is grabbed by Steam for a moment (see seat_by_hold).
+    daemon.pump(1.5);
+    daemon.events.clear();
+    // No `hold` field: the length is the environment's, and asking for seating
+    // without one must not reset it.
+    daemon.send(serde_json::json!({"cmd": "seating", "open": true, "players": 4}));
+
+    // A second is a claim at the default and is not one at 1.5s. The progress
+    // events are what say the daemon saw the hold: without them this would
+    // pass just as well for a pad nobody was reading.
+    pad.hold(FIRST_KEY, 1.0);
+    daemon.pump(0.5);
+    let seen: Vec<f64> = daemon
+        .events
+        .iter()
+        .filter(|event| event["event"] == "progress")
+        .filter_map(|event| event["frac"].as_f64())
+        .collect();
+    assert!(!seen.is_empty(), "the daemon never saw the hold at all");
+    assert!(
+        daemon.last("claim").is_none(),
+        "a second took a seat under a hold of one and a half"
+    );
+    let highest = seen.iter().copied().fold(0.0_f64, f64::max);
+    assert!(
+        highest < 1.0,
+        "progress reached {highest} in a second of a 1.5s hold"
+    );
+    assert!(
+        highest > 0.4,
+        "progress only reached {highest}; the hold was barely read"
+    );
+
+    // Opening again with a length of its own replaces it, no restart needed.
+    daemon.events.clear();
+    daemon.send(serde_json::json!({
+        "cmd": "seating", "open": true, "players": 4, "hold": 0.25
+    }));
+    let claim = daemon.hold_until_claimed(&mut pad, |_| true);
+    assert_eq!(claim["player"], 1);
+    assert_eq!(claim["name"], HOLDER.name);
+    daemon
+        .wait_for("state", |e| e["state"] == "ready", 5.0)
+        .expect("ready after the seat was taken");
 
     drop(daemon);
     drop(pad);
