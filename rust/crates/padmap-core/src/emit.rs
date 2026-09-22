@@ -90,15 +90,31 @@ pub fn retroarch_profile(
     out.push(format!("input_vendor_id = \"{}\"", identity.vendor));
     out.push(format!("input_product_id = \"{}\"", identity.product));
 
-    out.extend(retroarch::lines(bindings, &resolved.retroarch_keys()));
-
-    out.push("input_l_x_plus_axis = \"+0\"".to_owned());
-    out.push("input_l_x_minus_axis = \"-0\"".to_owned());
-    out.push("input_l_y_plus_axis = \"+1\"".to_owned());
-    out.push("input_l_y_minus_axis = \"-1\"".to_owned());
+    let mut mapped = retroarch::lines(bindings, &resolved.retroarch_keys());
+    // The clone's own left stick, only under a key the capture did not name.
+    let named: Vec<String> = mapped
+        .iter()
+        .filter_map(|line| line.split(" = ").next().map(str::to_owned))
+        .collect();
+    for (key, target) in DEFAULT_LEFT_STICK {
+        let button = key.replace("_axis", "_btn");
+        if named.iter().any(|have| have == key || *have == button) {
+            continue;
+        }
+        mapped.push(format!("{key} = \"{target}\""));
+    }
+    out.extend(retroarch::drop_shadowed_axis_halves(mapped));
 
     out.join("\n") + "\n"
 }
+
+/// The left stick a clone always publishes, for a capture that did not say.
+const DEFAULT_LEFT_STICK: [(&str, &str); 4] = [
+    ("input_l_x_plus_axis", "+0"),
+    ("input_l_x_minus_axis", "-0"),
+    ("input_l_y_plus_axis", "+1"),
+    ("input_l_y_minus_axis", "-1"),
+];
 
 pub fn sdl_line_for(
     player: u32,
@@ -269,6 +285,48 @@ mod tests {
         ] {
             assert!(text.contains(axis), "{axis} missing");
         }
+    }
+
+    #[test]
+    fn a_captured_left_stick_is_not_overwritten_by_the_default_one() {
+        // The defaults name axes 0 and 1; a pad whose stick is elsewhere says so.
+        let captured: BTreeMap<Control, Binding> = [
+            (Control::LeftStickLeft, Binding::axis(3, -1)),
+            (Control::LeftStickRight, Binding::axis(3, 1)),
+            (Control::LeftStickUp, Binding::axis(4, -1)),
+            (Control::LeftStickDown, Binding::axis(4, 1)),
+        ]
+        .into_iter()
+        .collect();
+        let text = retroarch_profile(1, MIRRORED, &captured, "", "", "", "");
+        for key in [
+            "input_l_x_minus_axis",
+            "input_l_x_plus_axis",
+            "input_l_y_minus_axis",
+            "input_l_y_plus_axis",
+        ] {
+            assert_eq!(
+                text.lines().filter(|l| l.starts_with(key)).count(),
+                1,
+                "{key} is written twice; the last one wins in RetroArch\n{text}"
+            );
+        }
+        assert!(text.contains("input_l_x_minus_axis = \"-3\""), "{text}");
+        assert!(text.contains("input_l_y_plus_axis = \"+4\""), "{text}");
+    }
+
+    #[test]
+    fn a_left_stick_half_on_a_button_does_not_leave_the_other_half_shadowing_it() {
+        // The wound drop_shadowed_axis_halves exists for, reached from the default.
+        let captured: BTreeMap<Control, Binding> = [(Control::LeftStickUp, Binding::button(7))]
+            .into_iter()
+            .collect();
+        let text = retroarch_profile(1, MIRRORED, &captured, "", "", "", "");
+        assert!(text.contains("input_l_y_minus_btn = \"7\""), "{text}");
+        assert!(
+            !text.contains("input_l_y_plus_axis"),
+            "the opposite half still shadows the button\n{text}"
+        );
     }
 
     #[test]
