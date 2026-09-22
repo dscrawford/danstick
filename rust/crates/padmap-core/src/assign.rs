@@ -85,10 +85,14 @@ impl Assigner {
         self.hold_seconds
     }
 
-    /// Set how long a hold has to run, dropping every hold in flight: a press
-    /// that became a claim because the number moved under it is exactly the
-    /// accident a longer hold exists to prevent.
+    /// Set how long a hold has to run. A *change* drops every hold in flight,
+    /// because a press that became a claim when the number moved under it is
+    /// the accident a longer hold exists to prevent; setting the same length
+    /// again is not a change and costs nobody their fill.
     pub fn set_hold_seconds(&mut self, hold_seconds: f64) {
+        if (hold_seconds - self.hold_seconds).abs() <= f64::EPSILON {
+            return;
+        }
         self.hold_seconds = hold_seconds;
         self.holding.clear();
     }
@@ -375,6 +379,18 @@ mod tests {
                 .collect::<Vec<_>>(),
             [0, 1]
         );
+    }
+
+    #[test]
+    fn setting_the_same_length_again_costs_nobody_their_fill() {
+        // A front-end that sends `seating` on every screen sends the same
+        // number each time; the hold in flight must survive that.
+        let mut assigner = Assigner::new(1.5);
+        assigner.feed(0, EV_KEY, A, 1, 0.0);
+        assigner.tick(0.5);
+        assigner.set_hold_seconds(1.5);
+        assert_eq!(assigner.tick(0.6).progress.len(), 1, "the fill was wiped");
+        assert_eq!(assigner.tick(1.51).claimed.len(), 1, "and it still claims");
     }
 
     #[test]
