@@ -303,8 +303,27 @@ impl Translator {
                 out.carried_keys.insert(code);
             }
         }
+        // An axis whose control the capture named is driven by the capture alone.
+        let captured = |halves: [Control; 2]| {
+            out.axes
+                .values()
+                .flatten()
+                .any(|(control, _)| halves.contains(control))
+                || out
+                    .keys
+                    .values()
+                    .flatten()
+                    .any(|control| halves.contains(control))
+        };
+        let left_x = captured([Control::LeftStickLeft, Control::LeftStickRight]);
+        let left_y = captured([Control::LeftStickUp, Control::LeftStickDown]);
         for &code in spans.keys() {
-            if (code == ABS_X || code == ABS_Y) && !out.axes.contains_key(&code) {
+            let spoken_for = match code {
+                ABS_X => left_x,
+                ABS_Y => left_y,
+                _ => continue,
+            };
+            if !spoken_for && !out.axes.contains_key(&code) {
                 out.carried_axes.insert(code);
             }
         }
@@ -489,6 +508,82 @@ mod tests {
         bindings.insert(Control::RightStickDown, Binding::button(3));
         bindings.insert(Control::LeftTrigger, Binding::axis(2, 1)); // Z trigger on an axis
         Translator::new(&keys, &spans, &bindings, &BTreeMap::new())
+    }
+
+    #[test]
+    fn a_left_stick_bound_to_buttons_is_not_fought_by_the_carried_axis() {
+        // A pad whose stick reports as four keys: the source still declares
+        // ABS_X/ABS_Y, and both must not drive the clone's stick at once.
+        let keys = [0x120, 0x121, 0x122, 0x123];
+        let mut spans = BTreeMap::new();
+        spans.insert(ABS_X, stick());
+        spans.insert(ABS_Y, stick());
+        let mut bindings = BTreeMap::new();
+        bindings.insert(Control::LeftStickUp, Binding::button(0));
+        bindings.insert(Control::LeftStickDown, Binding::button(1));
+        bindings.insert(Control::LeftStickLeft, Binding::button(2));
+        bindings.insert(Control::LeftStickRight, Binding::button(3));
+        let mut t = Translator::new(&keys, &spans, &bindings, &BTreeMap::new());
+
+        // Holding up drives the clone's stick to the top.
+        assert_eq!(
+            t.translate(EV_KEY, 0x120, 1),
+            vec![Out {
+                kind: EV_ABS,
+                code: ABS_Y,
+                value: -STICK_MAX
+            }]
+        );
+        // The source's own ABS_Y is not what the capture named, so it must not
+        // reach the clone and undo the press still being held.
+        assert_eq!(
+            t.translate(EV_ABS, ABS_Y, 128),
+            Vec::new(),
+            "the raw axis centred the stick a held button is pushing"
+        );
+    }
+
+    #[test]
+    fn a_stick_captured_onto_other_axes_is_the_only_thing_driving_the_clones() {
+        // An adapter that puts the stick on ABS_RX/ABS_RY: the clone's left
+        // stick must come from there, not from the source's own ABS_X/ABS_Y.
+        let mut spans = BTreeMap::new();
+        spans.insert(ABS_X, stick());
+        spans.insert(ABS_Y, stick());
+        spans.insert(ABS_RX, stick());
+        spans.insert(ABS_RY, stick());
+        let mut bindings = BTreeMap::new();
+        bindings.insert(Control::LeftStickLeft, Binding::axis(2, -1));
+        bindings.insert(Control::LeftStickRight, Binding::axis(2, 1));
+        let mut t = Translator::new(&[], &spans, &bindings, &BTreeMap::new());
+
+        assert_eq!(
+            t.translate(EV_ABS, ABS_RX, 255),
+            vec![Out {
+                kind: EV_ABS,
+                code: ABS_X,
+                value: STICK_MAX
+            }]
+        );
+        assert_eq!(
+            t.translate(EV_ABS, ABS_X, 0),
+            Vec::new(),
+            "a second axis was driving the clone's left stick"
+        );
+    }
+
+    #[test]
+    fn a_stick_nobody_captured_still_rides_across_untouched() {
+        let keys = [0x120];
+        let mut spans = BTreeMap::new();
+        spans.insert(ABS_X, stick());
+        spans.insert(ABS_Y, stick());
+        let mut bindings = BTreeMap::new();
+        bindings.insert(Control::A, Binding::button(0));
+        let mut t = Translator::new(&keys, &spans, &bindings, &BTreeMap::new());
+        let out = t.translate(EV_ABS, ABS_X, 255);
+        assert_eq!(out.len(), 1, "{out:?}");
+        assert_eq!(out[0].code, ABS_X);
     }
 
     #[test]
