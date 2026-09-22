@@ -73,6 +73,12 @@ ioctls deny it with targeted allows) and `missing_debug_implementations`.
   `handle_command` and `tick` are wrapped in `catch_unwind` for that reason.
 - Environment variables are `PADMAP_*` and documented where a consumer
   would look (`docs/EVENTS.md`, README). *(Review: inferred from practice.)*
+- `docs/requests/` holds what is still **open**. Answering a request deletes
+  its file in the same commit that answers it, so the directory is a to-do
+  list rather than an archive: if a file is there, somebody is waiting.
+  The answer lives in the commit body, in the docs the change touched, and in
+  `FINDINGS.md` when there was a wound. `git log --diff-filter=D --
+  docs/requests/` finds what was asked and when it went.
 
 ## Architecture
 
@@ -84,7 +90,7 @@ ioctls deny it with targeted allows) and `missing_debug_implementations`.
     docs/EVENTS.md              the socket contract consumers read; change it with the protocol
     docs/STEAM-DECK.md          the Deck's built-in controls, and the four ways they are not an Xbox pad
     docs/STORIES.md             what a person at the box is promised, and the test that holds each
-    docs/requests/              GOTG's requests; keep the text, append "What was built"
+    docs/requests/              GOTG's open requests only; answering one deletes it (see below)
     FINDINGS.md                 the incident record; every guard in the code has a wound written here
 
 Runtime state lives in `$XDG_RUNTIME_DIR/padmap/` (socket, `assignments.json`,

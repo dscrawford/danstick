@@ -15,20 +15,32 @@ current shape does not reach it, and what would be enough. None of them ask
 for a redesign; they are the seams an *abstraction layer over emulators*
 needs when the thing calling it keeps each emulator in a directory of its own.
 
-| request | why |
-| --- | --- |
-| [emit-destinations.md](emit-destinations.md) | GOTG isolates every environment, so config must be written where it says |
-| [dolphin.md](dolphin.md) | GameCube and Wii are Dolphin, and padmap writes no Dolphin config |
-| [machine-readable-list.md](machine-readable-list.md) | a launcher has to enumerate pads without a daemon and without parsing prose |
-| [always-seating.md](always-seating.md) | a controller that arrives mid-game should be able to join without everybody stopping |
-| [triton-assignment.md](triton-assignment.md) | **bug**: the 2026 Steam Controller pairs in a session and is then never read |
-| [resume-republishing.md](resume-republishing.md) | **bug**: one sleeping wireless pad leaves every controller unpublished |
-| [secondary-bindings.md](secondary-bindings.md) | a control can hold one input, so a second button for the same control has nowhere to live |
-| [session-daemon.md](session-daemon.md) | every session starts unseated and the daemon ends with it — today it outlives everything and restores yesterday's seats |
-| [controllers-that-are-keyboards.md](controllers-that-are-keyboards.md) | a Steam Controller in lizard mode and a Bluetooth Xbox pad are keyboards and mice too; GOTG holds them in the picker, padmap should hold them in the game |
-| [keyboard-as-a-player.md](keyboard-as-a-player.md) | holding space on the grid should seat the keyboard as player N, bound in every emulator like a pad |
-| [press-in-the-wizard.md](press-in-the-wizard.md) | during a capture the front-end's SDL sees nothing from the pad; an `input` event would let it show the button under the thumb |
-| [join-a-session-late.md](join-a-session-late.md) | a session's pads are fixed when it opens; a controller switched on during one cannot take a seat |
-| [look-like-an-xbox-pad.md](look-like-an-xbox-pad.md) | an `xbox360` clone identity, so decompiled ports and every SDL game map it from the database they were built with |
-| [seating-costs-the-game-its-input.md](seating-costs-the-game-its-input.md) | **bug**: seating open rescans every tick and a press takes 108 ms to reach the game |
-| [replacing-a-daemon-with-a-seat.md](replacing-a-daemon-with-a-seat.md) | **regression**: replacing a daemon that has a pad seated fails after 10 s; it took 0.5 s at f4356e4 |
+## This directory is a to-do list, not an archive
+
+**A file here is open.** Answering a request deletes its file, in the same
+commit that answers it. So an empty directory means nothing is waiting, and a
+file that is present means somebody is.
+
+That is a deliberate trade. The write-ups were worth keeping while they were
+being worked, and they stopped being worth keeping once every one of them
+ended in "answered" — twenty files nobody would read again, each of which had
+to be opened to find that out. What a request was for does not go anywhere:
+
+* the **commit** that answered it says what was wrong and what was measured
+  (`git log --diff-filter=D -- docs/requests/` lists them, newest first);
+* the **docs** it changed carry the contract — `docs/EVENTS.md` for anything
+  on the socket, `docs/STORIES.md` for what a person at the box is promised;
+* `FINDINGS.md` carries the reasoning for anything that was a wound rather
+  than a feature, which is most of the bugs filed here.
+
+To read one back in full:
+
+    git log --diff-filter=D --name-only -- docs/requests/   # what went, and when
+    git show <commit>^:docs/requests/<file>                 # the text as filed
+
+## Filing one
+
+One file, named for what is wanted rather than for the code it would touch.
+Say what GOTG is trying to do, what happens today, why the current shape does
+not reach it, and what would be enough. A reproduction beats a description.
+Nothing here needs to propose an implementation, and the ones that do say so.
