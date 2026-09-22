@@ -76,3 +76,14 @@ and it goes the day this is fixed. The test that proves the latency is in
 GOTG's `tests/e2e/test_controllers.py`, with a strict xfail
 (`test_a_pad_can_join_mid_game_without_costing_the_game_its_input`) that
 fails loudly when seating open is cheap enough to keep.
+
+---
+
+## Answered
+
+Fixed upstream, at the pin GOTG now follows. The suite's strict xfail
+`test_a_pad_can_join_mid_game_without_costing_the_game_its_input` turned into
+an XPASS, which is what that marker was for: a press reaches the game in under
+a frame with seating open. `gotg-seat` no longer closes seating before the
+game, so a controller switched on in the middle of a level can take a seat
+again.

@@ -91,42 +91,18 @@ second before a press can start the game — stays either way. It exists
 because the *pairing* press used to roll straight into the go hold, and that
 is a front-end problem, not this one.
 
-## What was built
+---
 
-Both knobs, as asked, and 0.25 s for whoever does not ask.
+## Answered
 
-**On the command.** `{"cmd": "seating", "open": true, "players": 4, "hold":
-1.5}`. `Command::Seating` carries `hold: Option<f64>`, routed into
-`Seating::open(seats, hold)`. Omitted or `null` it is `None` and the length
-stays as it was, so a caller that does not care never resets one that does.
-Present but unreadable -- a string, a bool, out of range, NaN -- it is the
-default, and nothing is ever refused: failing to open seating is a worse
-answer than opening it at a quarter second. The range is `0.05..=10.0`.
+padmap `98fd757`. `hold` on the `seating` command, 0.05 to 10 seconds, 0.25
+for anybody who does not ask, and omitted it leaves the length as it was;
+`PADMAP_HOLD_SECONDS` sets what a daemon starts with. A hold in flight when
+the length changes is dropped rather than re-measured, and nothing is refused
+-- a length outside the range is the default. `docs/EVENTS.md`, "How long the
+hold is".
 
-**On the environment.** `PADMAP_HOLD_SECONDS=1.5` is what a daemon starts
-with, read once where the daemon builds its `Assigner`s, so it covers both
-the `begin` path (`session.rs`) and the seating path (`server.rs`). The
-parse is `assign::hold_from(Option<&str>)`, a function of the text, so
-nothing has to export a variable into a shared process to test it.
-
-`Tick::progress` needed nothing, as the request said: it was already
-`elapsed / hold_seconds`.
-
-**The hold in flight.** `Assigner::set_hold_seconds` clears `holding`. A
-press that became a claim because the number moved underneath it is the
-accident the longer hold exists to prevent, so the running hold is dropped
-rather than re-measured, and a fresh press measures the new length.
-
-Tests: the text parse against `""`, `"soon"`, `"0"`, `"-2"`, `"600"`,
-`"nan"`, `"inf"`, `"1,5"` and both ends of the range; an `Assigner::new(1.5)`
-that claims nothing at 0.3 or 1.4 and claims at 1.51, with `progress` at
-0.75 s reading 0.5; the mid-hold change, where the old hold never claims and
-a fresh press does; four on the command's parse; one on `open` with no
-length leaving the length alone; and a journey that starts a real daemon
-under `PADMAP_HOLD_SECONDS=1.5`, opens seating with no `hold` field, holds
-for a second and gets `progress` but no `claim`, then reopens with
-`"hold": 0.25` and takes the seat.
-
-**Not built:** nothing. `padmap serve` has no flag for it -- the environment
-variable covers the launcher and the command covers the screen, and a third
-spelling of one number seemed worse than two.
+GOTG asks for **1.5 s**: `theme.timeouts.pair_hold`, sent on every `seating`
+by `gate.decide` and the picker's `assign.Watch`, and exported as
+`PADMAP_HOLD_SECONDS` by `padmap.sh` and `gotg_ui.padmap.ensure_daemon` so a
+session -- padmap's own wizard -- takes the same length.

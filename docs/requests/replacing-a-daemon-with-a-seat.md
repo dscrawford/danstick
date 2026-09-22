@@ -53,3 +53,12 @@ crashes; the game just does not get what it asked for.
 `test_a_launch_from_steam_meets_the_gate_first_on_a_daemon_of_its_own` --
 marked `xfail(strict=True)` against this file, so they fail for passing the
 day it is fixed.
+
+---
+
+## Answered
+
+Fixed upstream, at the pin GOTG now follows. Both strict xfails --
+`test_a_new_session_opens_with_nobody_seated_whatever_padmap_remembers` and
+`test_a_launch_from_steam_meets_the_gate_first_on_a_daemon_of_its_own` --
+turned into XPASSes and their markers are gone.
