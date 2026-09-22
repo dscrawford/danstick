@@ -6,9 +6,9 @@ use std::sync::OnceLock;
 use padmap_core::binding::{Binding, RA_INVISIBLE};
 use padmap_core::capture::{
     deflection, game_scope_options, layout_options, scope_options, ChoiceKind, Chooser, Claim,
-    Event, MappingRun, Outcome, ABS_HAT0X, ABS_HAT0Y, ABS_X, AXIS_AS_BUTTON_THRESHOLD,
-    AXIS_RELEASE, AXIS_THRESHOLD, CAPTURE_GAP_SECONDS, HAT_DOWN, HAT_LEFT, HAT_RIGHT, HAT_UP,
-    SKIP_HOLD_SECONDS,
+    Event, MappingRun, Outcome, ABS_HAT0X, ABS_HAT0Y, ABS_RX, ABS_RY, ABS_X, ABS_Y,
+    AXIS_AS_BUTTON_THRESHOLD, AXIS_RELEASE, AXIS_THRESHOLD, CAPTURE_GAP_SECONDS, HAT_DOWN,
+    HAT_LEFT, HAT_RIGHT, HAT_UP, SKIP_HOLD_SECONDS,
 };
 use padmap_core::control::Control;
 use padmap_core::layout::Layout;
@@ -160,6 +160,81 @@ fn a_whole_layout_can_be_walked_to_completion() {
             "{control} was walked past without a binding"
         );
     }
+}
+
+/// A GameCube pad's two sticks, as an adapter declares them.
+fn gamecube_run() -> MappingRun {
+    MappingRun::new(
+        1,
+        layout::get("gamecube"),
+        Vec::new(),
+        String::new(),
+        axes(&[
+            (ABS_X, stick()),
+            (ABS_Y, stick()),
+            (ABS_RX, stick()),
+            (ABS_RY, stick()),
+        ]),
+        BTreeSet::new(),
+    )
+}
+
+fn position_of(id: &str, wanted: Control) -> usize {
+    layout::get(id)
+        .order()
+        .iter()
+        .position(|control| *control == wanted)
+        .unwrap_or_else(|| panic!("the {id} layout asks about {wanted}"))
+}
+
+#[test]
+fn a_gamecube_capture_ends_with_the_control_stick_on_an_axis() {
+    let mut run = gamecube_run();
+    let mut clock = skip_to(&mut run, position_of("gamecube", Control::LeftStickUp));
+
+    let mut bound = Vec::new();
+    for (code, value) in [(ABS_Y, -100), (ABS_Y, 100), (ABS_X, -100), (ABS_X, 100)] {
+        bound.push(recorded(&run.feed(Event::abs(code, value), clock)));
+        run.feed(Event::abs(code, 0), clock + 0.05);
+        clock += AFTER_GAP;
+    }
+
+    assert_eq!(
+        bound,
+        vec![
+            (Control::LeftStickUp, Binding::axis(1, -1)),
+            (Control::LeftStickDown, Binding::axis(1, 1)),
+            (Control::LeftStickLeft, Binding::axis(0, -1)),
+            (Control::LeftStickRight, Binding::axis(0, 1)),
+        ]
+    );
+    for (control, binding) in &bound {
+        assert_eq!(
+            run.bindings().get(control),
+            Some(binding),
+            "{control} is not in the written profile"
+        );
+    }
+}
+
+#[test]
+fn a_gamecube_capture_still_asks_about_the_c_stick_as_it_always_did() {
+    let mut run = gamecube_run();
+    let order = layout::get("gamecube").order();
+    assert!(
+        position_of("gamecube", Control::RightStickUp)
+            < position_of("gamecube", Control::LeftStickUp),
+        "the four controls that were there are still where they were"
+    );
+    assert_eq!(
+        order.len(),
+        20,
+        "sixteen controls, and the stick makes twenty"
+    );
+
+    let clock = skip_to(&mut run, position_of("gamecube", Control::RightStickUp));
+    let c_up = recorded(&run.feed(Event::abs(ABS_RY, -100), clock));
+    assert_eq!(c_up, (Control::RightStickUp, Binding::axis(3, -1)));
 }
 
 #[test]

@@ -131,6 +131,38 @@
       "y": 0.35,
       "kind": "stick",
       "radius": 0.032
+    },
+    {
+      "canonical": "leftstick_up",
+      "label": "Control stick up",
+      "x": 0.5,
+      "y": 0.56,
+      "kind": "stick",
+      "radius": 0.032
+    },
+    {
+      "canonical": "leftstick_down",
+      "label": "Control stick down",
+      "x": 0.5,
+      "y": 0.68,
+      "kind": "stick",
+      "radius": 0.032
+    },
+    {
+      "canonical": "leftstick_left",
+      "label": "Control stick left",
+      "x": 0.46,
+      "y": 0.62,
+      "kind": "stick",
+      "radius": 0.032
+    },
+    {
+      "canonical": "leftstick_right",
+      "label": "Control stick right",
+      "x": 0.54,
+      "y": 0.62,
+      "kind": "stick",
+      "radius": 0.032
     }
   ]
 }

@@ -10,6 +10,9 @@ use crate::sdl::AxisSpan;
 pub const EV_KEY: u16 = 0x01;
 pub const EV_ABS: u16 = 0x03;
 pub const ABS_X: u16 = 0x00;
+pub const ABS_Y: u16 = 0x01;
+pub const ABS_RX: u16 = 0x03;
+pub const ABS_RY: u16 = 0x04;
 pub const ABS_HAT0X: u16 = 0x10;
 pub const ABS_HAT0Y: u16 = 0x11;
 

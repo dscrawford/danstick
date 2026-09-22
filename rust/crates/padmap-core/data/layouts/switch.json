@@ -113,6 +113,70 @@
       "x": 0.66,
       "y": 0.12,
       "kind": "shoulder"
+    },
+    {
+      "canonical": "leftstick_up",
+      "label": "Left stick up",
+      "x": 0.38,
+      "y": 0.24,
+      "kind": "stick",
+      "radius": 0.032
+    },
+    {
+      "canonical": "leftstick_down",
+      "label": "Left stick down",
+      "x": 0.38,
+      "y": 0.36,
+      "kind": "stick",
+      "radius": 0.032
+    },
+    {
+      "canonical": "leftstick_left",
+      "label": "Left stick left",
+      "x": 0.34,
+      "y": 0.3,
+      "kind": "stick",
+      "radius": 0.032
+    },
+    {
+      "canonical": "leftstick_right",
+      "label": "Left stick right",
+      "x": 0.42,
+      "y": 0.3,
+      "kind": "stick",
+      "radius": 0.032
+    },
+    {
+      "canonical": "rightstick_up",
+      "label": "Right stick up",
+      "x": 0.62,
+      "y": 0.56,
+      "kind": "stick",
+      "radius": 0.032
+    },
+    {
+      "canonical": "rightstick_down",
+      "label": "Right stick down",
+      "x": 0.62,
+      "y": 0.68,
+      "kind": "stick",
+      "radius": 0.032
+    },
+    {
+      "canonical": "rightstick_left",
+      "label": "Right stick left",
+      "x": 0.58,
+      "y": 0.62,
+      "kind": "stick",
+      "radius": 0.032
+    },
+    {
+      "canonical": "rightstick_right",
+      "label": "Right stick right",
+      "x": 0.66,
+      "y": 0.62,
+      "kind": "stick",
+      "radius": 0.032
     }
   ]
 }

@@ -422,6 +422,42 @@
      "retroarch": "",
      "x": 0.784,
      "y": 0.35
+    },
+    {
+     "canonical": "leftstick_up",
+     "kind": "stick",
+     "label": "Control stick up",
+     "radius": 0.032,
+     "retroarch": "",
+     "x": 0.5,
+     "y": 0.56
+    },
+    {
+     "canonical": "leftstick_down",
+     "kind": "stick",
+     "label": "Control stick down",
+     "radius": 0.032,
+     "retroarch": "",
+     "x": 0.5,
+     "y": 0.68
+    },
+    {
+     "canonical": "leftstick_left",
+     "kind": "stick",
+     "label": "Control stick left",
+     "radius": 0.032,
+     "retroarch": "",
+     "x": 0.46,
+     "y": 0.62
+    },
+    {
+     "canonical": "leftstick_right",
+     "kind": "stick",
+     "label": "Control stick right",
+     "radius": 0.032,
+     "retroarch": "",
+     "x": 0.54,
+     "y": 0.62
     }
    ],
    "id": "n64",
@@ -748,6 +784,42 @@
      "retroarch": "",
      "x": 0.54,
      "y": 0.66
+    },
+    {
+     "canonical": "leftstick_up",
+     "kind": "stick",
+     "label": "Control stick up",
+     "radius": 0.032,
+     "retroarch": "",
+     "x": 0.3,
+     "y": 0.37
+    },
+    {
+     "canonical": "leftstick_down",
+     "kind": "stick",
+     "label": "Control stick down",
+     "radius": 0.032,
+     "retroarch": "",
+     "x": 0.3,
+     "y": 0.49
+    },
+    {
+     "canonical": "leftstick_left",
+     "kind": "stick",
+     "label": "Control stick left",
+     "radius": 0.032,
+     "retroarch": "",
+     "x": 0.26,
+     "y": 0.43
+    },
+    {
+     "canonical": "leftstick_right",
+     "kind": "stick",
+     "label": "Control stick right",
+     "radius": 0.032,
+     "retroarch": "",
+     "x": 0.34,
+     "y": 0.43
     }
    ],
    "id": "gamecube",
@@ -1076,6 +1148,78 @@
      "retroarch": "",
      "x": 0.66,
      "y": 0.12
+    },
+    {
+     "canonical": "leftstick_up",
+     "kind": "stick",
+     "label": "Left stick up",
+     "radius": 0.032,
+     "retroarch": "",
+     "x": 0.38,
+     "y": 0.24
+    },
+    {
+     "canonical": "leftstick_down",
+     "kind": "stick",
+     "label": "Left stick down",
+     "radius": 0.032,
+     "retroarch": "",
+     "x": 0.38,
+     "y": 0.36
+    },
+    {
+     "canonical": "leftstick_left",
+     "kind": "stick",
+     "label": "Left stick left",
+     "radius": 0.032,
+     "retroarch": "",
+     "x": 0.34,
+     "y": 0.3
+    },
+    {
+     "canonical": "leftstick_right",
+     "kind": "stick",
+     "label": "Left stick right",
+     "radius": 0.032,
+     "retroarch": "",
+     "x": 0.42,
+     "y": 0.3
+    },
+    {
+     "canonical": "rightstick_up",
+     "kind": "stick",
+     "label": "Right stick up",
+     "radius": 0.032,
+     "retroarch": "",
+     "x": 0.62,
+     "y": 0.56
+    },
+    {
+     "canonical": "rightstick_down",
+     "kind": "stick",
+     "label": "Right stick down",
+     "radius": 0.032,
+     "retroarch": "",
+     "x": 0.62,
+     "y": 0.68
+    },
+    {
+     "canonical": "rightstick_left",
+     "kind": "stick",
+     "label": "Right stick left",
+     "radius": 0.032,
+     "retroarch": "",
+     "x": 0.58,
+     "y": 0.62
+    },
+    {
+     "canonical": "rightstick_right",
+     "kind": "stick",
+     "label": "Right stick right",
+     "radius": 0.032,
+     "retroarch": "",
+     "x": 0.66,
+     "y": 0.62
     }
    ],
    "id": "switch",
@@ -1240,6 +1384,78 @@
      "retroarch": "",
      "x": 0.66,
      "y": 0.12
+    },
+    {
+     "canonical": "leftstick_up",
+     "kind": "stick",
+     "label": "Left stick up",
+     "radius": 0.032,
+     "retroarch": "",
+     "x": 0.38,
+     "y": 0.24
+    },
+    {
+     "canonical": "leftstick_down",
+     "kind": "stick",
+     "label": "Left stick down",
+     "radius": 0.032,
+     "retroarch": "",
+     "x": 0.38,
+     "y": 0.36
+    },
+    {
+     "canonical": "leftstick_left",
+     "kind": "stick",
+     "label": "Left stick left",
+     "radius": 0.032,
+     "retroarch": "",
+     "x": 0.34,
+     "y": 0.3
+    },
+    {
+     "canonical": "leftstick_right",
+     "kind": "stick",
+     "label": "Left stick right",
+     "radius": 0.032,
+     "retroarch": "",
+     "x": 0.42,
+     "y": 0.3
+    },
+    {
+     "canonical": "rightstick_up",
+     "kind": "stick",
+     "label": "Right stick up",
+     "radius": 0.032,
+     "retroarch": "",
+     "x": 0.62,
+     "y": 0.56
+    },
+    {
+     "canonical": "rightstick_down",
+     "kind": "stick",
+     "label": "Right stick down",
+     "radius": 0.032,
+     "retroarch": "",
+     "x": 0.62,
+     "y": 0.68
+    },
+    {
+     "canonical": "rightstick_left",
+     "kind": "stick",
+     "label": "Right stick left",
+     "radius": 0.032,
+     "retroarch": "",
+     "x": 0.58,
+     "y": 0.62
+    },
+    {
+     "canonical": "rightstick_right",
+     "kind": "stick",
+     "label": "Right stick right",
+     "radius": 0.032,
+     "retroarch": "",
+     "x": 0.66,
+     "y": 0.62
     }
    ],
    "id": "wiiu",

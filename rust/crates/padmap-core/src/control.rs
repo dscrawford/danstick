@@ -27,10 +27,15 @@ pub enum Control {
     RightStickDown,
     RightStickLeft,
     RightStickRight,
+    /// The stick a console's own manual calls the control stick, as four halves.
+    LeftStickUp,
+    LeftStickDown,
+    LeftStickLeft,
+    LeftStickRight,
 }
 
-/// Every control in mapping order (stable, prevents diff noise on regenerate).
-pub const CANONICAL_ORDER: [Control; 18] = [
+/// Every control in mapping order: appended to, never reordered.
+pub const CANONICAL_ORDER: [Control; 22] = [
     Control::A,
     Control::B,
     Control::X,
@@ -49,11 +54,15 @@ pub const CANONICAL_ORDER: [Control; 18] = [
     Control::RightStickDown,
     Control::RightStickLeft,
     Control::RightStickRight,
+    Control::LeftStickUp,
+    Control::LeftStickDown,
+    Control::LeftStickLeft,
+    Control::LeftStickRight,
 ];
 
 impl Control {
     /// Every control, in mapping order.
-    pub const ALL: [Control; 18] = CANONICAL_ORDER;
+    pub const ALL: [Control; 22] = CANONICAL_ORDER;
 
     /// padmap's name for this control (used in profiles, layouts, wire protocol).
     pub const fn as_str(self) -> &'static str {
@@ -76,6 +85,10 @@ impl Control {
             Control::RightStickDown => "rightstick_down",
             Control::RightStickLeft => "rightstick_left",
             Control::RightStickRight => "rightstick_right",
+            Control::LeftStickUp => "leftstick_up",
+            Control::LeftStickDown => "leftstick_down",
+            Control::LeftStickLeft => "leftstick_left",
+            Control::LeftStickRight => "leftstick_right",
         }
     }
 
@@ -100,6 +113,10 @@ impl Control {
             Control::RightStickDown => "+righty",
             Control::RightStickLeft => "-rightx",
             Control::RightStickRight => "+rightx",
+            Control::LeftStickUp => "-lefty",
+            Control::LeftStickDown => "+lefty",
+            Control::LeftStickLeft => "-leftx",
+            Control::LeftStickRight => "+leftx",
         }
     }
 
@@ -124,6 +141,10 @@ impl Control {
             Control::RightStickDown => "input_r_y_plus_btn",
             Control::RightStickLeft => "input_r_x_minus_btn",
             Control::RightStickRight => "input_r_x_plus_btn",
+            Control::LeftStickUp => "input_l_y_minus_btn",
+            Control::LeftStickDown => "input_l_y_plus_btn",
+            Control::LeftStickLeft => "input_l_x_minus_btn",
+            Control::LeftStickRight => "input_l_x_plus_btn",
         }
     }
 }

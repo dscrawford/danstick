@@ -674,7 +674,7 @@ fn controls_supplied_out_of_order_come_out_in_canonical_order() {
 }
 
 #[test]
-fn a_capture_of_all_eighteen_controls_writes_all_eighteen_fields() {
+fn a_capture_of_every_control_writes_every_field() {
     let bindings: BTreeMap<Control, Binding> = [
         (Control::A, Binding::button(1)),
         (Control::B, Binding::button(2)),
@@ -694,6 +694,11 @@ fn a_capture_of_all_eighteen_controls_writes_all_eighteen_fields() {
         (Control::RightStickDown, Binding::button(12)),
         (Control::RightStickLeft, Binding::button(13)),
         (Control::RightStickRight, Binding::button(14)),
+        // The analog stick, as a capture of a GameCube layout records it.
+        (Control::LeftStickUp, Binding::axis(1, -1)),
+        (Control::LeftStickDown, Binding::axis(1, 1)),
+        (Control::LeftStickLeft, Binding::axis(0, -1)),
+        (Control::LeftStickRight, Binding::axis(0, 1)),
     ]
     .into_iter()
     .collect();
@@ -709,11 +714,16 @@ fn a_capture_of_all_eighteen_controls_writes_all_eighteen_fields() {
             "{REAL_GUID},{REAL_NAME},a:b1,b:b2,x:b3,y:b4,back:b6,start:b7,\
              leftshoulder:b9,rightshoulder:b10,lefttrigger:+a4,righttrigger:+a5,\
              dpup:h0.1,dpdown:h0.4,dpleft:h0.8,dpright:h0.2,-righty:b11,\
-             +righty:b12,-rightx:b13,+rightx:b14,platform:Linux,"
+             +righty:b12,-rightx:b13,+rightx:b14,-lefty:-a1,+lefty:+a1,\
+             -leftx:-a0,+leftx:+a0,platform:Linux,"
         )
     );
     let (_, _, fields) = parse_line(&built).expect("parse");
-    assert_eq!(fields.len(), 19, "eighteen controls plus the platform");
+    assert_eq!(
+        fields.len(),
+        CANONICAL_ORDER.len() + 1,
+        "every control plus the platform"
+    );
 }
 
 #[test]

@@ -967,6 +967,10 @@ fn an_n64_pad_has_no_x_or_y_and_four_c_buttons_as_right_stick_halves() {
             Control::RightStickDown,
             Control::RightStickLeft,
             Control::RightStickRight,
+            Control::LeftStickUp,
+            Control::LeftStickDown,
+            Control::LeftStickLeft,
+            Control::LeftStickRight,
         ]
     );
     assert!(!order.contains(&Control::X), "an N64 pad has no X");
@@ -1020,11 +1024,24 @@ fn a_gamecube_pad_has_a_c_stick_a_z_button_and_no_select() {
             Control::RightStickDown,
             Control::RightStickLeft,
             Control::RightStickRight,
+            Control::LeftStickUp,
+            Control::LeftStickDown,
+            Control::LeftStickLeft,
+            Control::LeftStickRight,
         ]
     );
     assert!(
         !order.contains(&Control::Back),
         "a GameCube pad has no Select"
+    );
+    assert_eq!(
+        layout::get("gamecube")
+            .controls
+            .iter()
+            .find(|c| c.canonical == Control::LeftStickUp)
+            .map(|c| c.label.as_str()),
+        Some("Control stick up"),
+        "in the console's own words, not SDL's"
     );
     assert!(!order.contains(&Control::LeftTrigger));
 }
@@ -1042,10 +1059,27 @@ fn a_ps2_pad_is_the_plain_retropad_with_its_own_words() {
 }
 
 #[test]
-fn a_switch_pro_pad_is_the_plain_retropad_with_its_own_words() {
+fn a_switch_pro_pad_is_the_plain_retropad_with_its_own_words_and_two_sticks() {
+    let order = layout::get("switch").order();
+    let generic = layout::get("generic").order();
     assert_eq!(
-        layout::get("switch").order(),
-        layout::get("generic").order()
+        order[..generic.len()],
+        generic,
+        "everything the generic pad asks for, in the same order"
+    );
+    assert_eq!(
+        &order[generic.len()..],
+        [
+            Control::LeftStickUp,
+            Control::LeftStickDown,
+            Control::LeftStickLeft,
+            Control::LeftStickRight,
+            Control::RightStickUp,
+            Control::RightStickDown,
+            Control::RightStickLeft,
+            Control::RightStickRight,
+        ],
+        "a Pro controller has two sticks and the generic pad lists neither"
     );
     let labels: Vec<&str> = layout::get("switch")
         .controls
@@ -1055,6 +1089,7 @@ fn a_switch_pro_pad_is_the_plain_retropad_with_its_own_words() {
     assert_eq!(labels[0], "B (bottom)");
     assert_eq!(labels[1], "A (right)");
     assert_eq!(labels[8], "Minus");
+    assert_eq!(labels[14], "Left stick up");
 }
 
 #[test]
@@ -1079,12 +1114,58 @@ fn a_genesis_pad_is_six_buttons_in_two_rows_with_mode_for_select() {
 }
 
 #[test]
-fn only_the_two_layouts_with_a_c_cluster_ask_about_the_right_stick() {
-    let with_stick: Vec<&str> = shipped_ids()
+fn the_right_stick_halves_are_a_c_cluster_on_two_pads_and_a_stick_on_two_more() {
+    let with_right: Vec<&str> = shipped_ids()
         .into_iter()
         .filter(|id| layout::get(id).order().contains(&Control::RightStickUp))
         .collect();
-    assert_eq!(with_stick, ["n64", "gamecube"]);
+    assert_eq!(with_right, ["n64", "gamecube", "switch", "wiiu"]);
+    // Which of the two it is, is in the label and nowhere else.
+    for (id, word) in [
+        ("n64", "C-up"),
+        ("gamecube", "C-stick up"),
+        ("switch", "Right stick up"),
+        ("wiiu", "Right stick up"),
+    ] {
+        let label = layout::get(id)
+            .controls
+            .iter()
+            .find(|c| c.canonical == Control::RightStickUp)
+            .map(|c| c.label.as_str());
+        assert_eq!(label, Some(word), "{id}");
+    }
+}
+
+#[test]
+fn every_pad_with_an_analog_stick_asks_about_all_four_of_its_halves() {
+    let with_left: Vec<&str> = shipped_ids()
+        .into_iter()
+        .filter(|id| layout::get(id).order().contains(&Control::LeftStickUp))
+        .collect();
+    assert_eq!(with_left, ["n64", "gamecube", "switch", "wiiu"]);
+    for id in &with_left {
+        let order = layout::get(id).order();
+        for half in [
+            Control::LeftStickUp,
+            Control::LeftStickDown,
+            Control::LeftStickLeft,
+            Control::LeftStickRight,
+        ] {
+            assert!(order.contains(&half), "{id} is missing {half}");
+        }
+        // An axis is not a button: the wizard has to know to ask for a push.
+        for control in layout::get(id).controls.iter() {
+            if control.canonical == Control::LeftStickUp {
+                assert_eq!(control.kind, "stick", "{id}");
+            }
+        }
+    }
+    for id in ["snes", "genesis", "arcade"] {
+        assert!(
+            !layout::get(id).order().contains(&Control::LeftStickUp),
+            "{id} has no analog stick"
+        );
+    }
 }
 
 #[test]

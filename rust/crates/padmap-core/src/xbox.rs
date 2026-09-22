@@ -418,6 +418,16 @@ impl Translator {
                 ABS_RY,
                 stick(Control::RightStickUp, Control::RightStickDown),
             ),
+            Control::LeftStickLeft | Control::LeftStickRight => (
+                EV_ABS,
+                ABS_X,
+                stick(Control::LeftStickLeft, Control::LeftStickRight),
+            ),
+            Control::LeftStickUp | Control::LeftStickDown => (
+                EV_ABS,
+                ABS_Y,
+                stick(Control::LeftStickUp, Control::LeftStickDown),
+            ),
         }
     }
 

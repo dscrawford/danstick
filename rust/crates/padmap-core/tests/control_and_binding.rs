@@ -31,10 +31,30 @@ const PYTHON_NAMES: [&str; 18] = [
 
 #[test]
 fn the_canonical_names_are_still_the_ones_the_python_wrote_to_disk() {
+    // An ordered prefix, like COMMANDS: append only, never reorder.
     let names: Vec<&str> = CANONICAL_ORDER.iter().map(|c| c.as_str()).collect();
     assert_eq!(
-        names, PYTHON_NAMES,
-        "a renamed control orphans every stored profile"
+        &names[..PYTHON_NAMES.len()],
+        PYTHON_NAMES,
+        "a renamed or reordered control orphans every stored profile"
+    );
+}
+
+#[test]
+fn the_four_left_stick_halves_are_what_was_added_after_the_python() {
+    let names: Vec<&str> = CANONICAL_ORDER
+        .iter()
+        .skip(PYTHON_NAMES.len())
+        .map(|c| c.as_str())
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "leftstick_up",
+            "leftstick_down",
+            "leftstick_left",
+            "leftstick_right"
+        ]
     );
 }
 
@@ -55,7 +75,7 @@ fn canonical_order_is_a_permutation_of_every_control() {
     assert_eq!(ordered, all);
     assert_eq!(
         ordered.len(),
-        18,
+        22,
         "a control missing from the order is never written out"
     );
     for control in Control::ALL {
@@ -148,7 +168,7 @@ fn sdl_field_is_total_and_injective() {
             panic!("{control} and {other} both write the SDL field {field:?}");
         }
     }
-    assert_eq!(seen.len(), 18);
+    assert_eq!(seen.len(), 22);
 }
 
 #[test]
@@ -168,7 +188,7 @@ fn retroarch_key_is_total_and_injective() {
             panic!("{control} and {other} both write the RetroArch key {key:?}");
         }
     }
-    assert_eq!(seen.len(), 18);
+    assert_eq!(seen.len(), 22);
 }
 
 #[test]
@@ -222,12 +242,33 @@ fn the_four_right_stick_halves_spell_the_same_direction_to_both_consumers() {
 }
 
 #[test]
+fn the_four_left_stick_halves_spell_the_same_direction_to_both_consumers() {
+    let halves = [
+        (Control::LeftStickUp, "-lefty", "input_l_y_minus_btn"),
+        (Control::LeftStickDown, "+lefty", "input_l_y_plus_btn"),
+        (Control::LeftStickLeft, "-leftx", "input_l_x_minus_btn"),
+        (Control::LeftStickRight, "+leftx", "input_l_x_plus_btn"),
+    ];
+    for (control, field, key) in halves {
+        assert_eq!(control.sdl_field(), field, "{control}'s SDL half-axis");
+        assert_eq!(control.retroarch_key(), key, "{control}'s RetroArch key");
+    }
+    // Not the shoulder or the trigger, which own the plain `input_l_*` keys.
+    assert_eq!(Control::LeftShoulder.retroarch_key(), "input_l_btn");
+    assert_eq!(Control::LeftTrigger.retroarch_key(), "input_l2_btn");
+}
+
+#[test]
 fn only_the_stick_halves_have_an_sdl_field_unlike_their_own_name() {
     let halves = [
         Control::RightStickUp,
         Control::RightStickDown,
         Control::RightStickLeft,
         Control::RightStickRight,
+        Control::LeftStickUp,
+        Control::LeftStickDown,
+        Control::LeftStickLeft,
+        Control::LeftStickRight,
     ];
     for control in Control::ALL {
         let differs = control.sdl_field() != control.as_str();
@@ -246,7 +287,8 @@ fn an_sdl_half_axis_target_carries_a_sign_and_nothing_else_does() {
         let signed = field.starts_with('+') || field.starts_with('-');
         assert_eq!(
             signed,
-            field.contains("right") && field.ends_with(['x', 'y'])
+            (field.contains("right") || field.contains("left")) && field.ends_with(['x', 'y']),
+            "{control} carries a sign it should not, or lacks one it should"
         );
     }
 }
