@@ -98,6 +98,14 @@ pub fn stick_fields(
         .map(|binding| binding.index)
         .collect();
 
+    // A stick a capture named in halves is that stick, whatever the halves are
+    // bound to; `taken` only sees the ones that happen to be axes.
+    let halved = |field: &str| {
+        bindings
+            .keys()
+            .any(|control| control.sdl_field().strip_prefix(['+', '-']) == Some(field))
+    };
+
     let mut fields = Fields::new();
     for (code, field) in STICK_AXES {
         if !axis_codes.contains(&code) {
@@ -106,7 +114,7 @@ pub fn stick_fields(
         let Some(index) = axis_index(axis_codes, code) else {
             continue;
         };
-        if taken.contains(&index) {
+        if taken.contains(&index) || halved(field) {
             continue;
         }
         if let Some(span) = axes.and_then(|axes| axes.get(&code)) {
@@ -388,6 +396,53 @@ mod tests {
         let fields = stick_fields(&codes, &bindings, None);
         assert_eq!(fields.get("rightx"), None, "an axis cannot be both");
         assert_eq!(fields.get("righty"), Some("a3"));
+    }
+
+    #[test]
+    fn a_stick_a_capture_named_in_halves_is_not_also_offered_whole() {
+        let codes = [0x00_u16, 0x01, 0x03, 0x04];
+        // Whatever the half is bound to: a stick half is often a button, which
+        // is what an N64 C-button and a fumbled stick prompt both record.
+        for half in [
+            Binding::button(12),
+            Binding::hat(0, 8),
+            Binding::axis(0, -1),
+        ] {
+            let bindings: BTreeMap<Control, Binding> =
+                [(Control::LeftStickLeft, half)].into_iter().collect();
+            let fields = stick_fields(&codes, &bindings, None);
+            assert_eq!(
+                fields.get("leftx"),
+                None,
+                "{half:?} already speaks for this stick under a signed name"
+            );
+            assert_eq!(fields.get("lefty"), Some("a1"), "the other axis stands");
+            assert_eq!(fields.get("rightx"), Some("a2"));
+        }
+    }
+
+    #[test]
+    fn an_n64_c_cluster_does_not_also_claim_the_whole_right_stick() {
+        // Four C-buttons are the right stick as far as SDL is concerned, and a
+        // physical right axis on the adapter is not what they are.
+        let codes = [0x00_u16, 0x01, 0x03, 0x04];
+        let bindings: BTreeMap<Control, Binding> = [
+            (Control::RightStickUp, Binding::button(2)),
+            (Control::RightStickDown, Binding::button(3)),
+            (Control::RightStickLeft, Binding::button(4)),
+            (Control::RightStickRight, Binding::button(5)),
+        ]
+        .into_iter()
+        .collect();
+        let fields = stick_fields(&codes, &bindings, None);
+        assert_eq!(fields.get("rightx"), None);
+        assert_eq!(fields.get("righty"), None);
+        assert_eq!(
+            fields.get("leftx"),
+            Some("a0"),
+            "the main stick is untouched"
+        );
+        assert_eq!(fields.get("lefty"), Some("a1"));
     }
 
     #[test]

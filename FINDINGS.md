@@ -3242,3 +3242,77 @@ controls. `without_steam_mirrors` drops that mirror as soon as any other pad is
 present, on the assumption that a mirror always duplicates a pad padmap can
 already see. On a Deck that assumption is false, and plugging in a second pad
 costs the Deck its own controls.
+
+## Every layout with an analog stick was missing the analog stick
+
+`gamecube.json` listed sixteen controls. Four of them were the C-stick. The
+stick a person actually holds was not one of them, and the same hole was in
+`n64.json`, `switch.json` and `wiiu.json` -- the last two listing neither of
+their two sticks.
+
+It survived because nothing downstream fails when a control is absent. The
+clone forwards `ABS_X`/`ABS_Y` whether or not anything captured them, so the
+pad *works*; what breaks is everything that reads the profile to find out
+where the stick is. An emulator whose port bindings come from the capture gets
+a pad with no stick. A front-end cannot draw one, and GOTG had gone as far as
+reading SDL's standard axis order instead and marking the stick in the drawing
+itself, because the layout could not say. A pad whose stick is somewhere
+unusual -- an adapter -- had no way to be told so.
+
+`Control` grew four variants and `CANONICAL_ORDER` went from eighteen to
+twenty-two. **Appended, never inserted.** That order is the order a profile is
+written in, so moving an entry rewrites every file that was already correct,
+and `the_canonical_names_are_still_the_ones_the_python_wrote_to_disk` now
+asserts the Python's eighteen as an ordered *prefix* rather than as the whole
+list -- the same discipline `COMMANDS` has, for the same reason.
+
+**Worth generalising.** A vocabulary that only ever grows at the end can be
+extended without touching anything that used it, and a test that asserts the
+whole list forbids growing it at all. The useful assertion is the prefix: what
+was there is still there, in the same order, spelled the same way. Both tests
+exist now -- the prefix, and a second naming exactly what was appended -- so
+neither an accidental rename nor an unannounced addition gets through.
+
+### Three places had been safe only because the control could not exist
+
+All three wrote the left stick from two sources at once, and all three were
+safe *only* because nothing had ever mapped onto it.
+
+**The RetroArch profile wrote the stick twice.** `emit::retroarch_profile`
+appended four fixed lines -- `input_l_x_plus_axis = "+0"` and its three
+siblings -- after the captured ones, so that an unmapped pad still had a
+working stick. Nothing in `Control` could produce an `input_l_*` key, so those
+four were the only ones in the file. They are not any more. RetroArch takes the
+last line under a key, so on a pad whose stick is not on axes 0 and 1 -- the
+adapter two findings up is exactly that shape -- the capture was written and
+then silently overwritten with the wrong axis. Worse, a half captured onto a
+*button* left the opposite half's default axis line shadowing it, which is the
+wound `drop_shadowed_axis_halves` exists for, reopened from the other side
+because the guard ran before the append. The defaults are now written only for
+a key the capture did not name, and the guard runs over the assembled list.
+
+**The clone's stick had two drivers.** `Translator::new` carried the source's
+`ABS_X`/`ABS_Y` across untouched whenever no binding *targeted* those codes.
+A capture that put the left stick on buttons, or on an adapter's `ABS_RX`/
+`ABS_RY`, satisfies that test and still writes `ABS_X`/`ABS_Y` out of
+`output_for` -- so the raw axis and the translated one both drove the clone's
+stick, and moving the physical stick centred a direction the player was
+holding. The carry now asks whether the *control* is spoken for, not whether
+the code is.
+
+**The SDL line offered the stick whole and in halves.** `sdl::stick_fields`
+refuses an axis a capture has claimed -- but only by looking for a binding
+whose *kind* is `Axis` at that index. Nothing makes a stick-kind prompt record
+an axis: `feed_key` never consults the control's kind at all. So a half
+captured as a button left the physical axis looking unclaimed, and the line
+came out `-leftx:b12,leftx:a0` -- the same stick named twice, once signed and
+once whole. This was not new; it applied to `rightstick_*` from the day the
+C-cluster existed, and an N64 capture is *exactly* this shape, four C-buttons
+and an adapter's real right axis. It had simply never been looked at. The rule
+now reads off the vocabulary rather than the binding kind: a field is not
+guessed whole when some control's `sdl_field()` is one of its signed halves,
+whatever that control is bound to.
+
+None of the three was found by a failing test -- they were found by reading the
+diff against what each file assumed. All three have one now, and each fails
+without its fix.
