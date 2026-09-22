@@ -105,7 +105,7 @@ pub struct Server {
     republisher: Option<Republisher>,
     motion: Option<DsuMotion>,
     confirm: ConfirmHold,
-    last_progress: f64,
+    last_progress: BTreeMap<usize, f64>,
     last_confirm: f64,
     slots: u32,
     icon_overrides: BTreeMap<String, String>,
@@ -230,7 +230,7 @@ impl Server {
             republisher: None,
             motion: None,
             confirm: ConfirmHold::default(),
-            last_progress: 0.0,
+            last_progress: BTreeMap::new(),
             last_confirm: 0.0,
             slots: 4,
             icon_overrides: runtime::load_icon_overrides(),
@@ -748,7 +748,7 @@ impl Server {
         self.mapping = None;
         self.slots = players;
         self.confirm.clear();
-        self.last_progress = 0.0;
+        self.last_progress.clear();
         self.last_confirm = 0.0;
         self.state = STATE_ASSIGNING;
         info!(
@@ -1903,11 +1903,30 @@ impl Server {
             return;
         }
         let claimed = self.seating.tick(now());
-        for (index, fraction) in &claimed.progress {
-            if let Some(pad) = self.seating.pads().get(*index) {
-                let _ = pad;
-                self.broadcast(&events::progress(*fraction));
-            }
+        // Named and seated before broadcasting: two people holding at once are
+        // two fills, and a front-end can only tell them apart by the pad.
+        let seats =
+            padmap_core::announce::next_players(&self.taken_seats(), claimed.progress.len());
+        let filling: Vec<(f64, String, String, Option<u32>)> = claimed
+            .progress
+            .iter()
+            .zip(seats)
+            .filter_map(|((index, fraction), player)| {
+                let pad = self.seating.pads().get(*index)?;
+                Some((
+                    *fraction,
+                    clean(&pad.name),
+                    pad.event().to_owned(),
+                    Some(player),
+                ))
+            })
+            .chain(claimed.released.iter().filter_map(|index| {
+                let pad = self.seating.pads().get(*index)?;
+                Some((0.0, clean(&pad.name), pad.event().to_owned(), None))
+            }))
+            .collect();
+        for (fraction, name, node, player) in filling {
+            self.broadcast(&events::progress(fraction, &name, &node, player));
         }
         for index in claimed.pads {
             let Some(pad) = self.seating.pads().get(index).cloned() else {
@@ -2100,11 +2119,19 @@ impl Server {
             let before = session.claims().len();
             (before, session.assigner.tick(clock))
         };
-        let progress = ticked
+        let seated = self
+            .session
+            .as_ref()
+            .map(|session| session.claims().len())
+            .unwrap_or(0);
+        let filling: Vec<(usize, f64, u32)> = ticked
             .progress
             .iter()
-            .map(|(_, fraction)| fraction.min(1.0))
-            .fold(0.0_f64, f64::max);
+            .enumerate()
+            .map(|(queued, (pad, fraction))| {
+                (*pad, fraction.min(1.0), (seated + queued + 1) as u32)
+            })
+            .collect();
         for claim in &ticked.claimed {
             let Some(pad) = self
                 .session
@@ -2128,9 +2155,35 @@ impl Server {
             );
             self.broadcast(&event);
         }
-        if progress != self.last_progress {
-            self.last_progress = progress;
-            self.broadcast(&events::progress(progress));
+        let named: Vec<(f64, String, String, Option<u32>)> = filling
+            .iter()
+            .filter(|(pad, fraction, _)| self.last_progress.get(pad) != Some(fraction))
+            .filter_map(|(pad, fraction, player)| {
+                let found = self
+                    .session
+                    .as_ref()
+                    .and_then(|session| session.pads.get(*pad))?;
+                Some((
+                    *fraction,
+                    clean(&found.name),
+                    found.event().to_owned(),
+                    Some(*player),
+                ))
+            })
+            .chain(ticked.released.iter().filter_map(|pad| {
+                let found = self
+                    .session
+                    .as_ref()
+                    .and_then(|session| session.pads.get(*pad))?;
+                Some((0.0, clean(&found.name), found.event().to_owned(), None))
+            }))
+            .collect();
+        self.last_progress = filling
+            .iter()
+            .map(|(pad, fraction, _)| (*pad, *fraction))
+            .collect();
+        for (fraction, name, node, player) in named {
+            self.broadcast(&events::progress(fraction, &name, &node, player));
         }
         let after = self.session.as_ref().map(|s| s.claims().len()).unwrap_or(0);
         if after != before {

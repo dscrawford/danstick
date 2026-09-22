@@ -23,7 +23,10 @@ pub struct Seating {
 #[derive(Debug, Default)]
 pub struct Claimed {
     pub pads: Vec<usize>,
+    /// Pads filling and how far, earliest press first.
     pub progress: Vec<(usize, f64)>,
+    /// Pads that stopped filling without claiming.
+    pub released: Vec<usize>,
 }
 
 impl Seating {
@@ -137,10 +140,15 @@ impl Seating {
     }
 
     pub fn tick(&mut self, now: f64) -> Claimed {
-        let Tick { progress, claimed } = self.assigner.tick(now);
+        let Tick {
+            progress,
+            claimed,
+            released,
+        } = self.assigner.tick(now);
         Claimed {
             pads: claimed.into_iter().map(|claim| claim.pad).collect(),
             progress,
+            released,
         }
     }
 

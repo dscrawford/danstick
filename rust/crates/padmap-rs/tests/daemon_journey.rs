@@ -92,6 +92,17 @@ const HOLDER: PadId = PadId {
     pid: 0x0012,
     only: "RSTESTHOLD",
 };
+/// Two pads behind one filter, for two people holding at the same time.
+const PAIR_FIRST: PadId = PadId {
+    name: "PADMAP RSTESTPAIR one",
+    pid: 0x0013,
+    only: "RSTESTPAIR",
+};
+const PAIR_SECOND: PadId = PadId {
+    name: "PADMAP RSTESTPAIR two",
+    pid: 0x0014,
+    only: "RSTESTPAIR",
+};
 const BINDER: PadId = PadId {
     name: "PADMAP RSTESTBIND",
     pid: 0x0011,
@@ -942,6 +953,147 @@ fn how_long_a_hold_takes_to_claim_a_seat_can_be_set() {
 
     drop(daemon);
     drop(pad);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn two_people_pairing_at_once_are_two_fills_in_the_order_they_pressed() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let _first = LiveGuard::new(PAIR_FIRST);
+    let _second = LiveGuard::new(PAIR_SECOND);
+    let root = std::env::temp_dir().join(format!("padmap-pair-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let mut one = TestPad::new(PAIR_FIRST);
+    let mut two = TestPad::new(PAIR_SECOND);
+    let mut daemon = Daemon::start(&root, PAIR_FIRST);
+    daemon.wait_for("state", |_| true, 5.0).expect("a greeting");
+
+    // A button already down when seating opens is not a hold: the press the
+    // daemon never saw cannot start one.
+    daemon.pump(2.5);
+    daemon.events.clear();
+    one.emit(EventType::KEY.0, FIRST_KEY, 1);
+    daemon.pump(0.3);
+    daemon.send(serde_json::json!({
+        "cmd": "seating", "open": true, "players": 4, "hold": 3.0
+    }));
+    daemon.pump(0.6);
+    assert!(
+        !daemon
+            .events
+            .iter()
+            .any(|event| event["event"] == "progress"),
+        "a button held across the open started filling: {:?}",
+        daemon.events
+    );
+    one.emit(EventType::KEY.0, FIRST_KEY, 0);
+    daemon.pump(0.3);
+    daemon.events.clear();
+
+    // Pad two presses first, so press order and device order disagree. Both
+    // have to be readable at once, and a pad Steam grabbed on arrival is not
+    // (see seat_by_hold), so this is held until it takes rather than once.
+    let mut fills: Vec<Value> = Vec::new();
+    for attempt in 0..4 {
+        daemon.events.clear();
+        two.emit(EventType::KEY.0, FIRST_KEY, 1);
+        std::thread::sleep(Duration::from_millis(250));
+        one.emit(EventType::KEY.0, FIRST_KEY, 1);
+        daemon.pump(0.8);
+        fills = daemon
+            .events
+            .iter()
+            .filter(|event| event["event"] == "progress")
+            .cloned()
+            .collect();
+        let nodes: BTreeSet<&str> = fills.iter().filter_map(|e| e["node"].as_str()).collect();
+        if nodes.len() == 2 {
+            break;
+        }
+        eprintln!("attempt {attempt}: {} pad(s) filling; again", nodes.len());
+        two.emit(EventType::KEY.0, FIRST_KEY, 0);
+        one.emit(EventType::KEY.0, FIRST_KEY, 0);
+        daemon.pump(0.8);
+    }
+
+    let nodes: BTreeSet<&str> = fills.iter().filter_map(|e| e["node"].as_str()).collect();
+    assert_eq!(nodes.len(), 2, "two holds came out as one fill: {fills:?}");
+    for event in &fills {
+        assert!(event["name"].is_string(), "a fill with no pad: {event}");
+    }
+
+    // Whichever press the daemon saw first is seat one and is further along.
+    // Which one that is cannot be asserted: a pad Steam grabbed on arrival is
+    // read late, so the order of the emits is not the order of the presses.
+    let latest = |name: &str| {
+        fills
+            .iter()
+            .rev()
+            .find(|event| event["name"] == name)
+            .unwrap_or_else(|| panic!("no fill for {name}"))
+    };
+    let one_fill = latest(PAIR_FIRST.name);
+    let two_fill = latest(PAIR_SECOND.name);
+    let (ahead, behind) = if one_fill["player"] == 1 {
+        (one_fill, two_fill)
+    } else {
+        (two_fill, one_fill)
+    };
+    assert_eq!(ahead["player"], 1, "nobody was filling towards seat one");
+    assert_eq!(behind["player"], 2, "{behind}");
+    // Not strictly ahead: two presses read in the same tick start together, and
+    // the ordering under a tie is pinned in assign.rs where the clock is ours.
+    assert!(
+        ahead["frac"].as_f64() >= behind["frac"].as_f64(),
+        "the one filling towards seat one is behind: {ahead} {behind}"
+    );
+    let leader = ahead["name"].as_str().expect("a name").to_owned();
+    let next = behind["name"].as_str().expect("a name").to_owned();
+
+    // The one in front lets go: said out loud, and its place is lost.
+    daemon.events.clear();
+    if leader == PAIR_FIRST.name {
+        one.emit(EventType::KEY.0, FIRST_KEY, 0);
+    } else {
+        two.emit(EventType::KEY.0, FIRST_KEY, 0);
+    }
+    let released = daemon
+        .wait_for(
+            "progress",
+            |event| event["name"] == leader && event["frac"] == 0.0,
+            3.0,
+        )
+        .expect("the release was never said out loud");
+    assert!(
+        released.get("player").is_none(),
+        "a released fill still names a seat: {released}"
+    );
+
+    // The one still holding is promoted into the seat that was given up.
+    let promoted = daemon
+        .wait_for(
+            "progress",
+            |event| event["name"] == next && event["player"] == 1,
+            3.0,
+        )
+        .expect("the next in line was not moved up");
+    assert!(promoted["frac"].as_f64().unwrap_or(0.0) > 0.0, "{promoted}");
+
+    // The one still holding takes seat one, not seat two.
+    let claim = daemon
+        .wait_for("claim", |event| event["name"] == next, 6.0)
+        .expect("the pad that kept holding took a seat");
+    assert_eq!(claim["player"], 1, "letting go did not lose the place");
+
+    one.emit(EventType::KEY.0, FIRST_KEY, 0);
+    two.emit(EventType::KEY.0, FIRST_KEY, 0);
+    drop(daemon);
+    drop(one);
+    drop(two);
     let _ = std::fs::remove_dir_all(&root);
 }
 

@@ -49,8 +49,18 @@ pub fn input(player: u32, pressed: padmap_core::capture::Pressed) -> Value {
     })
 }
 
-pub fn progress(fraction: f64) -> Value {
-    json!({ "event": "progress", "frac": round3(fraction) })
+/// One pad's hold filling; `player` is the seat it takes if it finishes now.
+pub fn progress(fraction: f64, name: &str, node: &str, player: Option<u32>) -> Value {
+    let mut event = json!({
+        "event": "progress",
+        "frac": round3(fraction),
+        "name": name,
+        "node": node,
+    });
+    if let Some(player) = player {
+        event["player"] = json!(player);
+    }
+    event
 }
 
 pub fn confirm(fraction: f64) -> Value {
@@ -206,9 +216,28 @@ mod tests {
 
     #[test]
     fn fractions_are_rounded_to_three_places() {
-        assert_eq!(progress(0.123456)["frac"], 0.123);
+        assert_eq!(progress(0.123456, "Pad", "event9", Some(2))["frac"], 0.123);
         assert_eq!(confirm(1.0)["frac"], 1.0);
         assert_eq!(round3(0.0005), 0.001);
+    }
+
+    #[test]
+    fn a_fill_names_the_pad_and_the_seat_it_would_take() {
+        let event = progress(0.5, "Xbox Wireless Controller", "event9", Some(2));
+        assert_eq!(event["event"], "progress");
+        assert_eq!(event["frac"], 0.5);
+        assert_eq!(event["name"], "Xbox Wireless Controller");
+        assert_eq!(event["node"], "event9");
+        assert_eq!(event["player"], 2);
+    }
+
+    #[test]
+    fn a_released_fill_names_the_pad_and_no_seat() {
+        // Letting go loses the place, so there is no seat left to name.
+        let event = progress(0.0, "Xbox Wireless Controller", "event9", None);
+        assert_eq!(event["frac"], 0.0);
+        assert_eq!(event["node"], "event9");
+        assert!(event.get("player").is_none(), "{event}");
     }
 
     #[test]

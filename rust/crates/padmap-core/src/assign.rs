@@ -1,6 +1,6 @@
 //! Press-and-hold controller assignment: a held button claims a slot, not a single press.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// How long a button must be down to claim a slot, for whoever does not ask.
 pub const HOLD_SECONDS: f64 = 0.25;
@@ -37,12 +37,14 @@ pub struct Assignment {
 }
 
 /// What a tick produced.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Tick {
-    /// Pads with a hold in flight, and how far through it they are (0.0..1.0).
+    /// Pads with a hold in flight and how far through it they are, earliest press first.
     pub progress: Vec<(usize, f64)>,
     /// Slots claimed by this tick.
     pub claimed: Vec<Assignment>,
+    /// Pads that were filling and are not any more, having claimed nothing.
+    pub released: Vec<usize>,
 }
 
 /// Watches a set of pads and yields player order from held presses.
@@ -53,6 +55,8 @@ pub struct Assigner {
     holding: BTreeMap<usize, (u16, f64)>,
     claimed: Vec<usize>,
     assignments: Vec<Assignment>,
+    /// Pads the last tick reported filling, so a hold that stops is noticed.
+    filling: BTreeSet<usize>,
 }
 
 impl Default for Assigner {
@@ -68,6 +72,7 @@ impl Assigner {
             holding: BTreeMap::new(),
             claimed: Vec::new(),
             assignments: Vec::new(),
+            filling: BTreeSet::new(),
         }
     }
 
@@ -111,15 +116,21 @@ impl Assigner {
 
     /// Advance the hold timers. Must be called on a timer (events alone cannot detect completion).
     pub fn tick(&mut self, now: f64) -> Tick {
-        let mut out = Tick {
-            progress: Vec::new(),
-            claimed: Vec::new(),
-        };
-        let pending: Vec<(usize, (u16, f64))> = self
+        let mut out = Tick::default();
+        // Earliest press first: `holding` is keyed by pad index, which is the
+        // order the pads were plugged in and not the order anybody pressed.
+        let mut pending: Vec<(usize, (u16, f64))> = self
             .holding
             .iter()
             .map(|(pad, held)| (*pad, *held))
             .collect();
+        pending.sort_by(|left, right| {
+            left.1
+                 .1
+                .partial_cmp(&right.1 .1)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then(left.0.cmp(&right.0))
+        });
 
         for (pad, (code, started)) in pending {
             if self.is_claimed(pad) {
@@ -142,6 +153,16 @@ impl Assigner {
             out.progress.push((pad, 1.0));
             out.claimed.push(assignment);
         }
+
+        // A pad that was filling and is no longer: let go of, or gone.
+        let seen: BTreeSet<usize> = out.progress.iter().map(|(pad, _)| *pad).collect();
+        out.released = self.filling.difference(&seen).copied().collect();
+        self.filling = out
+            .progress
+            .iter()
+            .filter(|(_, fraction)| *fraction < 1.0)
+            .map(|(pad, _)| *pad)
+            .collect();
         out
     }
 
@@ -219,6 +240,141 @@ mod tests {
         // A fresh press measures the new length.
         assigner.feed(0, EV_KEY, A, 1, 2.0);
         assert_eq!(assigner.tick(2.26).claimed.len(), 1);
+    }
+
+    #[test]
+    fn two_pads_take_their_seats_in_the_order_the_buttons_went_down() {
+        // Pad 1 presses first, so pad index and press order disagree.
+        let mut assigner = Assigner::default();
+        assigner.feed(1, EV_KEY, A, 1, 0.0);
+        assigner.feed(0, EV_KEY, A, 1, 0.1);
+        let tick = assigner.tick(HOLD_SECONDS + 0.2);
+        assert_eq!(
+            tick.claimed
+                .iter()
+                .map(|claim| (claim.player, claim.pad))
+                .collect::<Vec<_>>(),
+            [(1, 1), (2, 0)],
+            "seats went by device number, not by who pressed first"
+        );
+    }
+
+    #[test]
+    fn a_fill_is_reported_for_every_pad_in_flight_earliest_press_first() {
+        let mut assigner = Assigner::default();
+        assigner.feed(2, EV_KEY, A, 1, 0.0);
+        assigner.feed(0, EV_KEY, B, 1, 0.05);
+        let tick = assigner.tick(0.1);
+        let pads: Vec<usize> = tick.progress.iter().map(|(pad, _)| *pad).collect();
+        assert_eq!(pads, [2, 0]);
+        assert!(
+            tick.progress[0].1 > tick.progress[1].1,
+            "{:?}",
+            tick.progress
+        );
+        assert!(tick.claimed.is_empty());
+    }
+
+    #[test]
+    fn letting_go_loses_the_place_and_the_one_still_holding_takes_seat_one() {
+        let mut assigner = Assigner::default();
+        assigner.feed(0, EV_KEY, A, 1, 0.0);
+        assigner.feed(1, EV_KEY, A, 1, 0.01);
+        assigner.tick(HOLD_SECONDS * 0.8);
+        // Pad 0 pressed first and lets go at 80%.
+        assigner.feed(0, EV_KEY, A, 0, HOLD_SECONDS * 0.8);
+        let tick = assigner.tick(HOLD_SECONDS + 0.1);
+        assert_eq!(
+            tick.claimed
+                .iter()
+                .map(|claim| (claim.player, claim.pad))
+                .collect::<Vec<_>>(),
+            [(1, 1)],
+            "the one still holding takes seat one, not seat two"
+        );
+        assert_eq!(tick.released, [0], "the fill that stopped was not said");
+    }
+
+    #[test]
+    fn a_hold_that_stops_is_said_once_and_not_again() {
+        let mut assigner = Assigner::default();
+        assigner.feed(0, EV_KEY, A, 1, 0.0);
+        assert_eq!(assigner.tick(0.1).progress, [(0, 0.4)]);
+        assigner.feed(0, EV_KEY, A, 0, 0.11);
+        let tick = assigner.tick(0.12);
+        assert_eq!(tick.released, [0]);
+        assert!(tick.progress.is_empty());
+        assert!(assigner.tick(0.2).released.is_empty(), "said twice");
+    }
+
+    #[test]
+    fn a_claim_is_not_also_a_release() {
+        let mut assigner = Assigner::default();
+        assigner.feed(0, EV_KEY, A, 1, 0.0);
+        assigner.tick(0.1);
+        let tick = assigner.tick(HOLD_SECONDS + 0.01);
+        assert_eq!(tick.claimed.len(), 1);
+        assert_eq!(tick.progress, [(0, 1.0)], "a claim fills to the end");
+        assert!(tick.released.is_empty());
+        assert!(assigner.tick(1.0).released.is_empty());
+    }
+
+    #[test]
+    fn a_pad_that_goes_away_mid_hold_has_its_fill_taken_back() {
+        // reset() is what the daemon calls when the set of pads changes.
+        let mut assigner = Assigner::default();
+        assigner.feed(0, EV_KEY, A, 1, 0.0);
+        assigner.feed(1, EV_KEY, A, 1, 0.0);
+        assert_eq!(assigner.tick(0.1).progress.len(), 2);
+        assigner.reset();
+        let tick = assigner.tick(0.2);
+        assert_eq!(tick.released, [0, 1], "the fills were left on the screen");
+        assert!(tick.progress.is_empty());
+    }
+
+    #[test]
+    fn a_pad_that_already_holds_a_seat_neither_fills_nor_claims_again() {
+        let mut assigner = Assigner::default();
+        assigner.feed(0, EV_KEY, A, 1, 0.0);
+        assigner.tick(HOLD_SECONDS + 0.01);
+        // Holding B to block in a fighting game must not reseat anybody.
+        assigner.feed(0, EV_KEY, B, 1, 1.0);
+        let tick = assigner.tick(1.0 + HOLD_SECONDS + 0.01);
+        assert!(tick.progress.is_empty(), "{:?}", tick.progress);
+        assert!(tick.claimed.is_empty());
+        assert!(tick.released.is_empty());
+    }
+
+    #[test]
+    fn three_holding_and_the_seats_go_in_press_order() {
+        let mut assigner = Assigner::default();
+        assigner.feed(2, EV_KEY, A, 1, 0.00);
+        assigner.feed(0, EV_KEY, A, 1, 0.01);
+        assigner.feed(1, EV_KEY, A, 1, 0.02);
+        let tick = assigner.tick(HOLD_SECONDS + 0.1);
+        assert_eq!(
+            tick.claimed
+                .iter()
+                .map(|claim| (claim.player, claim.pad))
+                .collect::<Vec<_>>(),
+            [(1, 2), (2, 0), (3, 1)]
+        );
+    }
+
+    #[test]
+    fn two_presses_the_clock_cannot_separate_are_ordered_by_pad() {
+        // Deterministic rather than correct: nothing else can be known.
+        let mut assigner = Assigner::default();
+        assigner.feed(1, EV_KEY, A, 1, 0.0);
+        assigner.feed(0, EV_KEY, A, 1, 0.0);
+        let tick = assigner.tick(HOLD_SECONDS + 0.01);
+        assert_eq!(
+            tick.claimed
+                .iter()
+                .map(|claim| claim.pad)
+                .collect::<Vec<_>>(),
+            [0, 1]
+        );
     }
 
     #[test]
@@ -325,20 +481,5 @@ mod tests {
         assert!(!assigner.is_claimed(0));
         assigner.feed(0, EV_KEY, A, 1, 2.0);
         assert_eq!(assigner.tick(2.0 + HOLD_SECONDS + 0.01).claimed.len(), 1);
-    }
-
-    #[test]
-    fn two_pads_holding_at_once_both_claim_in_pad_order() {
-        let mut assigner = Assigner::default();
-        assigner.feed(1, EV_KEY, A, 1, 0.0);
-        assigner.feed(0, EV_KEY, A, 1, 0.0);
-        let tick = assigner.tick(HOLD_SECONDS + 0.01);
-        assert_eq!(
-            tick.claimed
-                .iter()
-                .map(|a| (a.player, a.pad))
-                .collect::<Vec<_>>(),
-            [(1, 0), (2, 1)]
-        );
     }
 }

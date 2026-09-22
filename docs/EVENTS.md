@@ -104,6 +104,49 @@ One thing to rely on: **a hold in flight when the length changes is dropped**,
 not re-measured. A press that became a claim because the number moved
 underneath it is the accident a longer hold exists to prevent.
 
+### `progress`: who is filling, and where they would sit
+
+One event per pad with a hold in flight, every tick:
+
+```json
+{"event": "progress", "frac": 0.42, "node": "event9",
+ "name": "Xbox Wireless Controller", "player": 2}
+```
+
+`frac` is that pad's own fraction of the hold. `node` is the pad, and is the
+field to key on: two people pressing at once are two fills, and without it a
+front-end sees one fill jumping between two values. `player` is the seat this
+hold takes **if it finishes now** -- not a reservation, which is the next
+paragraph.
+
+**Seats go in the order the buttons went down**, not the order the pads were
+plugged in, and nothing is reserved at press time. So a hold that does not
+finish claims nothing, and the seats go to whoever does finish, earliest press
+first. Two people hold, the one in front lets go at 80%, and the other takes
+seat *one*.
+
+**A release is said out loud**, as a final `frac: 0` for that pad with no
+`player`:
+
+```json
+{"event": "progress", "frac": 0.0, "node": "event9",
+ "name": "Xbox Wireless Controller"}
+```
+
+It is sent once, when the fill stops: a button released, or a pad that went
+away mid-hold. A hold that *completes* is not a release -- it ends on
+`frac: 1.0` and then a `claim`.
+
+Two things that do not fill at all, and are deliberate: a pad that already
+holds a seat (holding B to block in a fighting game must not reseat anybody),
+and a button that was already down when `seating` opened -- the hold begins at
+a press the daemon saw, so a button held across the open is ignored until it
+is let go and pressed again.
+
+The same events, in the same shape, come out of an assignment session
+(`begin`); there the seat a fill names is the next one that session will hand
+out.
+
 
 padmap's premise is that a program attaches to it and gets stable virtual
 gamepads instead of configuring controllers itself. That worked at launch and

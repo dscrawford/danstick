@@ -66,6 +66,18 @@ pub fn next_player(taken: &[u32]) -> u32 {
     player
 }
 
+/// The next `count` free seats, in order: who gets what when several hold at once.
+pub fn next_players(taken: &[u32], count: usize) -> Vec<u32> {
+    let mut taken = taken.to_vec();
+    (0..count)
+        .map(|_| {
+            let player = next_player(&taken);
+            taken.push(player);
+            player
+        })
+        .collect()
+}
+
 fn controller_fields(controller: &Controller, configured: bool) -> Value {
     json!({
         "name": controller.name,
