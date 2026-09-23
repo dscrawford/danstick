@@ -114,6 +114,17 @@ const BOTH_SECOND: PadId = PadId {
     pid: 0x0016,
     only: "RSTESTBOTH",
 };
+/// And two for somebody joining while somebody else is already playing.
+const JOIN_FIRST: PadId = PadId {
+    name: "PADMAP RSTESTJOIN one",
+    pid: 0x001d,
+    only: "RSTESTJOIN",
+};
+const JOIN_SECOND: PadId = PadId {
+    name: "PADMAP RSTESTJOIN two",
+    pid: 0x001e,
+    only: "RSTESTJOIN",
+};
 /// And two for the last seat going to one of two holds that finished together.
 const LAST_FIRST: PadId = PadId {
     name: "PADMAP RSTESTLAST one",
@@ -310,7 +321,23 @@ impl Daemon {
         Daemon::start_with_env(root, id, extra, &[])
     }
 
+    /// The daemon's own log, in this test's root. Making a clone is only said
+    /// out loud, so a test asking whether one was made again reads it there.
+    fn start_logging(root: &Path, id: PadId) -> Daemon {
+        Daemon::spawn(root, id, &[], &[], Some(&root.join("daemon.log")))
+    }
+
     fn start_with_env(root: &Path, id: PadId, extra: &[&str], env: &[(&str, &str)]) -> Daemon {
+        Daemon::spawn(root, id, extra, env, None)
+    }
+
+    fn spawn(
+        root: &Path,
+        id: PadId,
+        extra: &[&str],
+        env: &[(&str, &str)],
+        log: Option<&Path>,
+    ) -> Daemon {
         let runtime = root.join("run");
         let config = root.join("config");
         let profiles = root.join("devices");
@@ -334,7 +361,10 @@ impl Daemon {
             .env("RUST_LOG", "info,padmap_daemon=debug")
             .envs(env.iter().copied())
             .stdout(Stdio::null())
-            .stderr(Stdio::inherit())
+            .stderr(match log {
+                Some(path) => Stdio::from(std::fs::File::create(path).expect("a log")),
+                None => Stdio::inherit(),
+            })
             .spawn()
             .expect("spawn the daemon");
         let socket = runtime.join("padmap").join("padmap.sock");
@@ -1226,6 +1256,77 @@ fn one_person_taking_a_seat_leaves_the_next_person_still_holding() {
     drop(one);
     drop(two);
     let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Joining mid-game used to tear down every clone and make them again, so the
+/// people already playing had their controllers unplugged under them.
+#[test]
+fn a_join_leaves_the_players_already_in_the_game_plugged_in() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let _first = LiveGuard::new(JOIN_FIRST);
+    let _second = LiveGuard::new(JOIN_SECOND);
+    let root = std::env::temp_dir().join(format!("padmap-join-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let mut one = TestPad::new(JOIN_FIRST);
+    let mut two = TestPad::new(JOIN_SECOND);
+    let mut daemon = Daemon::start_logging(&root, JOIN_FIRST);
+    daemon.wait_for("state", |_| true, 5.0).expect("a greeting");
+    daemon.pump(2.5);
+    // The default hold, which is what `hold_until_claimed` holds for.
+    daemon.send(serde_json::json!({"cmd": "seating", "open": true, "players": 4}));
+
+    // Player one sits down and is republished: one clone, made once. Held until
+    // it takes rather than once, since a pad grabbed on arrival is read late.
+    daemon.hold_until_claimed(&mut one, |event| event["name"] == JOIN_FIRST.name);
+    daemon
+        .wait_for("state", |event| event["state"] == "ready", 5.0)
+        .expect("ready after the first seat");
+    daemon.pump(1.0);
+    let clones_before = clone_lines(&root, 1);
+    assert_eq!(clones_before.len(), 1, "{clones_before:?}");
+
+    // Player two joins while player one is playing.
+    daemon.hold_until_claimed(&mut two, |event| event["name"] == JOIN_SECOND.name);
+    daemon.pump(1.0);
+
+    let clones_after = clone_lines(&root, 1);
+    assert_eq!(
+        clones_after, clones_before,
+        "player one's clone was made again by somebody else joining"
+    );
+    let joined = clone_lines(&root, 2);
+    assert_eq!(
+        joined.len(),
+        1,
+        "player two got no clone, or several: {joined:?}"
+    );
+
+    // And still the same device once the join has fully settled.
+    daemon.pump(1.0);
+    assert_eq!(
+        clone_lines(&root, 1),
+        clones_before,
+        "player one's clone was replaced after the join"
+    );
+
+    drop(daemon);
+    drop(one);
+    drop(two);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Every line the daemon wrote when it made this player a clone.
+fn clone_lines(root: &Path, player: u32) -> Vec<String> {
+    let log = std::fs::read_to_string(root.join("daemon.log")).unwrap_or_default();
+    log.lines()
+        .filter(|line| line.contains(&format!("player {player}: event")))
+        .filter(|line| line.contains("-> padmap Player"))
+        .map(str::to_owned)
+        .collect()
 }
 
 /// A pad arriving rebuilds the watched set, which used to reset every hold with

@@ -1983,7 +1983,7 @@ impl Server {
                 profiles::is_known(&pad, None),
             );
             self.broadcast(&event);
-            if let Err(error) = self.start_republisher() {
+            if let Err(error) = self.join_republisher(player) {
                 warn!(
                     "seating: could not republish after {} joined: {error}",
                     clean(&pad.name)
@@ -2233,6 +2233,68 @@ impl Server {
         if fraction >= 1.0 {
             self.accept();
         }
+    }
+
+    /// Republish one newly seated player, leaving every clone already open at the
+    /// same device and node, since a game mid-read cannot follow them moving.
+    fn join_republisher(&mut self, player: u32) -> Result<(), clone::CloneError> {
+        let already = self
+            .republisher
+            .as_ref()
+            .is_some_and(|republisher| republisher.pads.iter().any(|pad| pad.player == player));
+        // A rebuild is the safe answer to both: nothing to add to, or a player
+        // that would end up with two clones.
+        if self.republisher.is_none() || already {
+            return self.start_republisher();
+        }
+        let Some(slot) = self
+            .slots_assigned
+            .iter()
+            .find(|slot| slot.player == player)
+            .cloned()
+        else {
+            return Ok(());
+        };
+        let axes = profiles::load(&slot.pad, None)
+            .map(|profile| profile.axes)
+            .unwrap_or_default();
+        let tuning = publish::tuning_for(&slot.pad);
+        let mapping = publish::resolved(&slot.pad, "", "").1;
+        let vpad = clone::create(
+            &slot.pad,
+            slot.player,
+            self.mode,
+            &axes,
+            tuning,
+            true,
+            &mapping,
+        )?;
+        let Some(republisher) = self.republisher.as_mut() else {
+            return Ok(());
+        };
+        let index = republisher.add(vpad);
+        let added = &republisher.pads[index];
+        let (source, clone_fd) = (added.source.as_fd(), added.clone.as_fd());
+        let sensor = added.sensor.as_ref().map(|sensor| sensor.as_fd());
+        if let Err(error) = self.reactor.watch(source, Watched::Source(index)) {
+            warn!("player {player}: could not watch its source: {error}");
+        }
+        if let Err(error) = self.reactor.watch(clone_fd, Watched::Clone(index)) {
+            warn!("player {player}: could not watch its clone: {error}");
+        }
+        if let Some(sensor) = sensor {
+            if let Err(error) = self.reactor.watch(sensor, Watched::Motion(index)) {
+                warn!("player {player}: could not watch its motion sensor: {error}");
+            }
+        }
+        self.sync_republish_pause();
+        let virtual_paths = self.virtual_paths();
+        self.rewrite_consumers(&virtual_paths);
+        info!(
+            "player {player} joined; {} pad(s) republished, the rest untouched",
+            self.slots_assigned.len()
+        );
+        Ok(())
     }
 
     fn start_republisher(&mut self) -> Result<(), clone::CloneError> {

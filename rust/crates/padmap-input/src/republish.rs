@@ -44,6 +44,14 @@ impl Republisher {
         }
     }
 
+    /// Take on one more pad, returning its index. Appended so that every index
+    /// already handed to the reactor still means the pad it meant.
+    pub fn add(&mut self, pad: VirtualPad) -> usize {
+        self.pads.push(pad);
+        self.held_back.push(false);
+        self.pads.len() - 1
+    }
+
     fn now_ms(&self) -> u64 {
         self.started.elapsed().as_millis() as u64
     }

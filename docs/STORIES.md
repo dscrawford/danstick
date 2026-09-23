@@ -195,6 +195,17 @@ pad's hold. Two claims completing in one tick are two positions in a list the
 first claim rebuilds, so `tick_seating` resolves them to pads before it touches
 the list (`two_people_pressing_on_go_are_two_seats_not_one`).
 
+**Joining does not unplug the people already playing.** A claim used to call
+`start_republisher`, which destroys every clone and makes them again — new
+nodes, new SDL instance ids, so a game mid-read saw all its controllers
+disappear: a dead fd for an emulator that does not reopen, a reshuffled port
+order for one that does. A seat now adds its own clone and leaves the rest at
+the same device and node (`join_republisher`,
+`a_join_leaves_the_players_already_in_the_game_plugged_in`). A joiner still
+reaches nothing *inside a launch*, because `exec` binds `/dev/input` as a
+tmpfs fixed at launch and a clone made later is not in it —
+`docs/requests/a-join-keeps-everybody-elses-clone.md` is open on that.
+
 ## S4 — Holding again confirms, and accepts
 
 **Actor and want.** The order is right; the user wants to be finished and go
