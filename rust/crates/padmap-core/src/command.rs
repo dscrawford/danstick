@@ -3,7 +3,7 @@
 use serde_json::Value;
 
 /// Every command the socket accepts.
-pub const COMMANDS: [&str; 19] = [
+pub const COMMANDS: [&str; 20] = [
     "begin",
     "reset",
     "accept",
@@ -23,6 +23,7 @@ pub const COMMANDS: [&str; 19] = [
     "unseat",
     "seat_keyboard",
     "bind",
+    "reserve",
 ];
 
 /// A parsed command, with its arguments already coerced.
@@ -90,6 +91,11 @@ pub enum Command {
         control: String,
         scope: String,
         add: bool,
+    },
+    /// Publish a clone per seat a launch allows, so the seats exist before the
+    /// people do and a game bound to them can be joined mid-play.
+    Reserve {
+        players: i64,
     },
 }
 
@@ -197,6 +203,9 @@ impl Command {
                 player: number("player", 0)?,
             },
             "seat_keyboard" => Command::SeatKeyboard,
+            "reserve" => Command::Reserve {
+                players: number("players", 0)?,
+            },
             "bind" => Command::Bind {
                 player: number("player", 0)?,
                 control: text("control"),

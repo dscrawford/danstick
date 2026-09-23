@@ -128,6 +128,10 @@ pub struct Server {
     sdl_lines: Vec<String>,
     /// Each player's files as last written, reused only when somebody joins.
     publish_cache: publish::Cache,
+    /// Clones for seats nobody has taken, so a later join reaches an already-bound node.
+    reserved: BTreeMap<u32, evdev::uinput::VirtualDevice>,
+    /// Each reserved seat's node, remembered because finding it waits on udev.
+    reserved_nodes: BTreeMap<u32, String>,
     mode: IdentityMode,
 
     prompted: BTreeSet<String>,
@@ -261,6 +265,8 @@ impl Server {
             pending_scope: String::new(),
             sdl_lines: Vec::new(),
             publish_cache: publish::Cache::default(),
+            reserved: BTreeMap::new(),
+            reserved_nodes: BTreeMap::new(),
             mode: IdentityMode::from_env(),
             prompted,
             prompted_stamp,
@@ -707,6 +713,7 @@ impl Server {
             }
             Command::Unseat { player } => self.unseat(as_player(player)),
             Command::SeatKeyboard => self.seat_keyboard(),
+            Command::Reserve { players } => self.reserve_seats(players),
             Command::Bind {
                 player,
                 control,
@@ -2238,6 +2245,57 @@ impl Server {
         }
     }
 
+    /// Publish a clone for every seat a launch allows, so they exist before it starts.
+    fn reserve_seats(&mut self, players: i64) {
+        let wanted = players.clamp(0, i64::from(padmap_core::retroarch::MAX_PLAYERS)) as u32;
+        if self.mode != IdentityMode::Xbox360 {
+            // Only the 360 identity's layout is known before the pad; mirror's is not.
+            self.broadcast(&events::error(format!(
+                "reserving seats needs the xbox360 identity; this daemon publishes {:?}",
+                self.mode
+            )));
+            return;
+        }
+        self.reserved.retain(|player, _| *player <= wanted);
+        self.reserved_nodes.retain(|player, _| *player <= wanted);
+        let taken: Vec<u32> = self.slots_assigned.iter().map(|slot| slot.player).collect();
+        // Published first and waited for once: finding a node waits on udev, and
+        // the daemon reads nobody's pad while this command runs.
+        let mut made: BTreeMap<u32, evdev::uinput::VirtualDevice> = BTreeMap::new();
+        for player in 1..=wanted {
+            if taken.contains(&player) || self.reserved.contains_key(&player) {
+                continue;
+            }
+            match clone::reserve(player) {
+                Ok(device) => {
+                    made.insert(player, device);
+                }
+                Err(error) => warn!("could not reserve seat {player}: {error}"),
+            }
+        }
+        let nodes = clone::nodes_of(&mut made);
+        for (player, device) in made {
+            match nodes.get(&player) {
+                Some(node) => {
+                    self.reserved_nodes.insert(player, node.clone());
+                    self.reserved.insert(player, device);
+                }
+                // Dropped on purpose: a device with no node is one no launch can
+                // bind, and keeping it would hold the seat against every retry.
+                None => warn!("seat {player}: no node appeared for it; not reserved"),
+            }
+        }
+        info!(
+            "reserved {} seat(s) for a launch: {:?}",
+            self.reserved.len(),
+            self.reserved.keys().collect::<Vec<_>>()
+        );
+        let virtual_paths = self.virtual_paths();
+        self.rewrite_consumers(&virtual_paths);
+        let state = self.state_event();
+        self.broadcast(&state);
+    }
+
     /// Republish one newly seated player, leaving every clone already open at the
     /// same device and node, since a game mid-read cannot follow them moving.
     fn join_republisher(&mut self, player: u32) -> Result<(), clone::CloneError> {
@@ -2269,7 +2327,9 @@ impl Server {
             .unwrap_or_default();
         let tuning = publish::tuning_for(&slot.pad);
         let mapping = publish::resolved(&slot.pad, "", "").1;
-        let vpad = clone::create(
+        let node = self.reserved_nodes.remove(&slot.player);
+        let mut reserved = self.reserved.remove(&slot.player);
+        let made = clone::create_on(
             &slot.pad,
             slot.player,
             self.mode,
@@ -2277,7 +2337,14 @@ impl Server {
             tuning,
             true,
             &mapping,
-        )?;
+            &mut reserved,
+        );
+        // Whatever went wrong, a seat a launch is bound to keeps its device.
+        if let (Some(device), Some(node)) = (reserved, node) {
+            self.reserved.insert(slot.player, device);
+            self.reserved_nodes.insert(slot.player, node);
+        }
+        let vpad = made?;
         let Some(republisher) = self.republisher.as_mut() else {
             return Ok(());
         };
@@ -2310,13 +2377,17 @@ impl Server {
         self.stop_republisher();
         let mut vpads = Vec::with_capacity(self.slots_assigned.len());
         let mut first_failure = None;
-        for slot in &self.slots_assigned {
+        let slots = self.slots_assigned.clone();
+        for slot in &slots {
             let axes = profiles::load(&slot.pad, None)
                 .map(|profile| profile.axes)
                 .unwrap_or_default();
             let tuning = publish::tuning_for(&slot.pad);
             let mapping = publish::resolved(&slot.pad, "", "").1;
-            match clone::create(
+            // A seat a launch is already bound to keeps its node through a rebuild.
+            let node = self.reserved_nodes.remove(&slot.player);
+            let mut reserved = self.reserved.remove(&slot.player);
+            let made = clone::create_on(
                 &slot.pad,
                 slot.player,
                 self.mode,
@@ -2324,7 +2395,13 @@ impl Server {
                 tuning,
                 true,
                 &mapping,
-            ) {
+                &mut reserved,
+            );
+            if let (Some(device), Some(node)) = (reserved, node) {
+                self.reserved.insert(slot.player, device);
+                self.reserved_nodes.insert(slot.player, node);
+            }
+            match made {
                 Ok(vpad) => vpads.push(vpad),
                 Err(error) => {
                     warn!(
@@ -2340,7 +2417,13 @@ impl Server {
                 return Err(error);
             }
         }
-        let mut virtual_paths: BTreeMap<u32, String> = BTreeMap::new();
+        // Seeded with the seats waiting for somebody, the same as `virtual_paths`:
+        // a rebuild must not drop the ports a launch is already bound to.
+        let mut virtual_paths: BTreeMap<u32, String> = self
+            .reserved_nodes
+            .iter()
+            .map(|(player, node)| (*player, node.clone()))
+            .collect();
         for vpad in &mut vpads {
             if let Some(node) = vpad.node() {
                 virtual_paths.insert(vpad.player, node);
@@ -2404,6 +2487,7 @@ impl Server {
 
     /// The same for a join, which changes nothing about anybody already seated.
     fn rewrite_consumers_reusing(&mut self, virtual_paths: &BTreeMap<u32, String>) {
+        let reserved: Vec<u32> = self.reserved_nodes.keys().copied().collect();
         let last = runtime::read_recent_games().into_iter().next();
         let written = publish::write_all(
             &self.slots_assigned,
@@ -2412,6 +2496,7 @@ impl Server {
             publish::Launch {
                 config: &self.launch_config_path,
                 args: &self.launch_args_path,
+                reserved: &reserved,
             },
             last.as_ref(),
             self.keyboard_seat,
@@ -3029,9 +3114,13 @@ impl Server {
         self.broadcast(&state);
     }
 
-    /// The clone node of every published player.
+    /// The clone node of every published player, and of every seat waiting for one.
     fn virtual_paths(&mut self) -> BTreeMap<u32, String> {
-        let mut paths = BTreeMap::new();
+        let mut paths: BTreeMap<u32, String> = self
+            .reserved_nodes
+            .iter()
+            .map(|(player, node)| (*player, node.clone()))
+            .collect();
         if let Some(republisher) = self.republisher.as_mut() {
             for vpad in &mut republisher.pads {
                 if let Some(node) = vpad.node() {
@@ -3052,7 +3141,29 @@ impl Server {
             self.follow,
             self.seating.is_open(),
             self.seating.hold_seconds(),
+            self.reserved_payload(),
         )
+    }
+
+    /// The seats published for a launch to bind, newest state of each.
+    fn reserved_payload(&self) -> Vec<padmap_core::state::ReservedSeat> {
+        self.reserved_nodes
+            .iter()
+            .map(|(player, node)| padmap_core::state::ReservedSeat {
+                player: *player,
+                node: node.clone(),
+                name: padmap_core::emit::virtual_name(*player),
+                guid: padmap_core::emit::virtual_guid(
+                    *player,
+                    padmap_core::emit::Identity {
+                        bustype: padmap_core::xbox::BUS_USB,
+                        vendor: padmap_core::xbox::VENDOR,
+                        product: padmap_core::xbox::PRODUCT,
+                        version: padmap_core::xbox::VERSION,
+                    },
+                ),
+            })
+            .collect()
     }
 
     fn save_assignments(&self) {

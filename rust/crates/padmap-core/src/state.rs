@@ -48,6 +48,20 @@ pub struct StateEvent {
     /// How long that hold has to run, in seconds.
     #[serde(default)]
     pub hold: f64,
+    /// Seats published before anybody took them, for a launch to bind.
+    #[serde(default)]
+    pub reserved: Vec<ReservedSeat>,
+}
+
+/// One seat a launch can bind before anybody sits down.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReservedSeat {
+    pub player: u32,
+    /// The clone's `/dev/input/eventN`.
+    pub node: String,
+    /// What SDL will call it, and the GUID it will match.
+    pub name: String,
+    pub guid: String,
 }
 
 impl StateEvent {
@@ -70,6 +84,7 @@ impl StateEvent {
             following: None,
             seating: false,
             hold: crate::assign::HOLD_SECONDS,
+            reserved: Vec::new(),
         }
     }
 }

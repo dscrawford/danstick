@@ -55,6 +55,7 @@ fn as_fields(command: &Command) -> Value {
         }
         Command::Unseat { player } => json!({"cmd": "unseat", "player": player}),
         Command::SeatKeyboard => json!({"cmd": "seat_keyboard"}),
+        Command::Reserve { players } => json!({"cmd": "reserve", "players": players}),
         Command::Bind {
             player,
             control,
@@ -201,4 +202,42 @@ fn the_shapes_python_accepts_are_accepted_too() {
     ] {
         assert_eq!(Command::parse(&message), Ok(want), "{name}");
     }
+}
+
+#[test]
+fn reserving_seats_carries_how_many_a_launch_allows() {
+    for (what, message, want) in [
+        (
+            "how many a launch asks for",
+            json!({"cmd": "reserve", "players": 4}),
+            4,
+        ),
+        // Nought is how a launcher gives the seats back when its game is over.
+        ("left out is none", json!({"cmd": "reserve"}), 0),
+        (
+            "a numeric string",
+            json!({"cmd": "reserve", "players": "10"}),
+            10,
+        ),
+        (
+            "past the slots there are, which the daemon clamps rather than refuses",
+            json!({"cmd": "reserve", "players": 999}),
+            999,
+        ),
+        (
+            "below one, likewise",
+            json!({"cmd": "reserve", "players": -3}),
+            -3,
+        ),
+    ] {
+        assert_eq!(
+            Command::parse(&message),
+            Ok(Command::Reserve { players: want }),
+            "{what}"
+        );
+    }
+    assert!(matches!(
+        Command::parse(&json!({"cmd": "reserve", "players": "four"})),
+        Err(Refused::NotANumber { field: "players" })
+    ));
 }

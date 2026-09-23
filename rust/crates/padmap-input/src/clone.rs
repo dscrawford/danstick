@@ -370,6 +370,33 @@ pub fn create(
     grab: bool,
     mapping: &Mapping,
 ) -> Result<VirtualPad, CloneError> {
+    create_on(
+        pad,
+        player,
+        mode,
+        profile_axes,
+        tuning,
+        grab,
+        mapping,
+        &mut None,
+    )
+}
+
+/// Like [`create`], but reuses a device [`reserve`] published, to keep its node.
+#[allow(clippy::too_many_arguments)]
+pub fn create_on(
+    pad: &Pad,
+    player: u32,
+    mode: IdentityMode,
+    profile_axes: &BTreeMap<u16, AxisCalibration>,
+    tuning: Tuning,
+    grab: bool,
+    mapping: &Mapping,
+    reserved: &mut Option<VirtualDevice>,
+) -> Result<VirtualPad, CloneError> {
+    // Taken only once there is a pad to feed it: everything above this can fail,
+    // and a reserved device dropped on the way out is a port a running game has
+    // bound and nothing can replace inside its sandbox.
     let source = open_source(pad, grab)?;
     let bindings = mapping.resolved();
     let extras = mapping.resolved_extra();
@@ -383,16 +410,13 @@ pub fn create(
             &bindings,
             &extras,
         ));
-        let axes: Vec<(u16, AbsInfo)> = xbox::AXES
-            .iter()
-            .map(|&(code, minimum, maximum, fuzz, flat)| {
-                let rest = if minimum < 0 { 0 } else { minimum };
-                (code, AbsInfo::new(rest, minimum, maximum, fuzz, flat, 0))
-            })
-            .collect();
         (
             Identity::XBOX360,
-            build_clone_from(&xbox::KEYS, &axes, player, Identity::XBOX360),
+            match reserved.take() {
+                // Reuse it: rebuilding would leave the launch's bound device silent.
+                Some(device) => Ok(device),
+                None => build_clone_from(&xbox::KEYS, &xbox_axes(), player, Identity::XBOX360),
+            },
         )
     } else {
         if !extras.is_empty() {
@@ -502,6 +526,74 @@ fn build_clone(source: &Device, player: u32, identity: Identity) -> std::io::Res
     })
 }
 
+/// A published device's own `/dev/input/eventN`, waited for: udev has to make it.
+pub fn node_of(device: &mut VirtualDevice) -> Option<String> {
+    for attempt in 0..50 {
+        if attempt > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        if let Some(node) = first_event_node(device) {
+            return Some(node);
+        }
+    }
+    None
+}
+
+/// This device's `eventN`, if udev has made it yet.
+fn first_event_node(device: &mut VirtualDevice) -> Option<String> {
+    device
+        .enumerate_dev_nodes_blocking()
+        .ok()?
+        .find_map(|path| {
+            path.ok().filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with("event"))
+            })
+        })
+        .map(|path| path.display().to_string())
+}
+
+/// Every device's node, waited for together: udev makes them at about the same
+/// time, so one wait finds them all in the time the slowest one takes.
+pub fn nodes_of(devices: &mut BTreeMap<u32, VirtualDevice>) -> BTreeMap<u32, String> {
+    let mut found: BTreeMap<u32, String> = BTreeMap::new();
+    for attempt in 0..50 {
+        if attempt > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        for (player, device) in devices.iter_mut() {
+            if found.contains_key(player) {
+                continue;
+            }
+            if let Some(node) = first_event_node(device) {
+                found.insert(*player, node);
+            }
+        }
+        if found.len() == devices.len() {
+            break;
+        }
+    }
+    found
+}
+
+/// The 360 layout's axes, which do not depend on the pad behind the clone.
+fn xbox_axes() -> Vec<(u16, AbsInfo)> {
+    xbox::AXES
+        .iter()
+        .map(|&(code, minimum, maximum, fuzz, flat)| {
+            let rest = if minimum < 0 { 0 } else { minimum };
+            (code, AbsInfo::new(rest, minimum, maximum, fuzz, flat, 0))
+        })
+        .collect()
+}
+
+/// A clone for a seat nobody has taken yet, in the 360 layout known before the pad.
+pub fn reserve(player: u32) -> Result<VirtualDevice, CloneError> {
+    build_clone_from(&xbox::KEYS, &xbox_axes(), player, Identity::XBOX360)
+        .map_err(|error| CloneError::Build(player, error))
+}
+
 /// A clone from a bare capability list, for a source the kernel never published a device for.
 fn build_clone_from(
     keys: &[u16],
@@ -587,28 +679,7 @@ fn assemble(
 
 impl VirtualPad {
     pub fn node(&mut self) -> Option<String> {
-        for attempt in 0..50 {
-            if attempt > 0 {
-                std::thread::sleep(std::time::Duration::from_millis(10));
-            }
-            let found = self
-                .clone
-                .enumerate_dev_nodes_blocking()
-                .ok()
-                .and_then(|mut nodes| {
-                    nodes.find_map(|path| {
-                        path.ok().filter(|path| {
-                            path.file_name()
-                                .and_then(|n| n.to_str())
-                                .is_some_and(|n| n.starts_with("event"))
-                        })
-                    })
-                });
-            if let Some(path) = found {
-                return Some(path.display().to_string());
-            }
-        }
-        None
+        node_of(&mut self.clone)
     }
 
     pub fn name(&self) -> String {

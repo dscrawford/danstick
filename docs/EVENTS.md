@@ -534,3 +534,62 @@ every emulator's config -- because the virtual pad still has one button for
 that control. A file with no second inputs is byte-for-byte what it was, so
 a rollback keeps working. Re-running the wizard keeps a control's second
 inputs, unless the new capture gave that input to some control as a first.
+
+## Seats that exist before the people do: `reserve`
+
+```json
+{"cmd": "reserve", "players": 4}
+```
+
+A launch is handed the `/dev/input` it starts with (`padmap-rs exec` binds
+every node present and covers the raw pads), and nothing can be added to that
+namespace afterwards. So a clone published *after* the game starts does not
+exist for it: somebody joining mid-play reaches nothing however well the seat
+is claimed. `reserve` publishes a clone per seat the launch allows, before it
+starts, so all of them are bound. Taking one keeps that exact device -- same
+node, same SDL instance id -- rather than replacing it.
+
+The reply is a `state` carrying the seats nobody has taken yet:
+
+```json
+{"event": "state", "...": "...", "reserved": [
+  {"player": 2, "node": "/dev/input/event21",
+   "name": "padmap Player 2", "guid": "0300000005ac0000c405000000000000"}
+]}
+```
+
+`name` and `guid` are what SDL will report, so ports 2-4 can be bound in an
+emulator's config at launch rather than only the seats already taken. A seat
+leaves `reserved` when somebody claims it; the device does not change.
+
+padmap writes the reserved seats into what it writes for anybody else: the SDL
+database and `env.sh`, and Cemu, Dolphin, ares and Ryujinx. **RetroArch's
+launch config is the exception** -- it reserves ports for *seated* players only,
+since its indices are worked out per launch from what is plugged in. A
+RetroArch game gets the joining player's pad at the index the launch config
+gave it, which is the seat they took.
+
+**`players: 0` gives them all back**, which is how a launch ends. Reserved
+seats are also adopted by a rebuild, so restoring or accepting a session does
+not strand a game bound to them.
+
+Two things to know:
+
+* **It needs the 360 identity** (`PADMAP_PAD_IDENTITY=xbox360`). A reserved
+  clone's layout has to be known before its pad is, and only that identity's
+  is; `mirror` takes the layout from the pad behind the clone, which nobody
+  has picked up yet. Asked for under another identity, `reserve` answers with
+  an `error` and changes nothing.
+* **Reserve before the launch, not after.** The nodes have to be there when
+  `exec` builds its bind plan.
+
+An empty seat is a connected pad that sends nothing, which is what an empty
+seat is. It starts sending when somebody takes it.
+
+**One edge, said out loud rather than found later.** `unseat` on a seat that
+was reserved destroys that clone like any other, and a clone published after
+the launch started is outside its `/dev/input` -- so a player leaving mid-game
+takes the seat with them and nobody can take it for the rest of that game.
+Joining works; leaving and being replaced does not. Reserve the seats again
+before the next launch. If a game needs a seat to survive its player leaving,
+say so and the device can be kept back instead of destroyed.

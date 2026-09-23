@@ -1258,6 +1258,194 @@ fn one_person_taking_a_seat_leaves_the_next_person_still_holding() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// One, for seats published before anybody takes them.
+const SEATS_FIRST: PadId = PadId {
+    name: "PADMAP RSTESTSEATS one",
+    pid: 0x0036,
+    only: "RSTESTSEATS",
+};
+const SEATS_SECOND: PadId = PadId {
+    name: "PADMAP RSTESTSEATS two",
+    pid: 0x0037,
+    only: "RSTESTSEATS",
+};
+
+/// A launch binds the `/dev/input` it starts with and nothing can be added to
+/// it afterwards, so a seat has to exist before the person does -- and taking
+/// one has to keep its node, or the game is bound to a device nobody feeds.
+#[test]
+fn a_seat_reserved_for_a_launch_keeps_its_node_when_somebody_takes_it() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let _guard = LiveGuard::new(SEATS_FIRST);
+    let _second = LiveGuard::new(SEATS_SECOND);
+    let root = std::env::temp_dir().join(format!("padmap-seats-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let mut pad = TestPad::new(SEATS_FIRST);
+    let mut joiner = TestPad::new(SEATS_SECOND);
+    // The 360 identity: a reserved seat's layout has to be known before its pad.
+    let mut daemon = Daemon::start_with_env(
+        &root,
+        SEATS_FIRST,
+        &[],
+        &[("PADMAP_PAD_IDENTITY", "xbox360")],
+    );
+    daemon.wait_for("state", |_| true, 5.0).expect("a greeting");
+    daemon.pump(2.0);
+
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "reserve", "players": 4}));
+    let state = daemon
+        .wait_for(
+            "state",
+            |event| {
+                event["reserved"]
+                    .as_array()
+                    .is_some_and(|seats| !seats.is_empty())
+            },
+            6.0,
+        )
+        .expect("the seats were never reserved");
+    let seats = state["reserved"].as_array().expect("reserved").clone();
+    assert_eq!(seats.len(), 4, "four seats were asked for: {state}");
+    for (index, seat) in seats.iter().enumerate() {
+        let player = index as u64 + 1;
+        assert_eq!(seat["player"], player);
+        assert_eq!(seat["name"], format!("padmap Player {player}"));
+        assert!(
+            seat["guid"].as_str().is_some_and(|guid| guid.len() == 32),
+            "a seat with no GUID for a launch to bind: {seat}"
+        );
+        let node = seat["node"].as_str().expect("a node");
+        assert!(
+            std::path::Path::new(node).exists(),
+            "the seat was announced but its node is not there: {seat}"
+        );
+    }
+    // Every seat's mapping is written, not only the ones with somebody in them:
+    // a game bound to port 3 needs SDL to know what port 3 is.
+    let sdl = std::fs::read_to_string(root.join("sdl_controllers.txt")).expect("the SDL database");
+    for player in 1..=4 {
+        assert!(
+            sdl.contains(&format!("padmap Player {player}")),
+            "seat {player} has no mapping for a launch to bind:\n{sdl}"
+        );
+    }
+    for seat in &seats {
+        let guid = seat["guid"].as_str().expect("a guid");
+        assert!(
+            sdl.contains(guid),
+            "the GUID announced for {seat} is not the one written:\n{sdl}"
+        );
+    }
+
+    let reserved_one = seats[0]["node"].as_str().expect("a node").to_owned();
+    // Held open the way a running game holds it: the kernel reuses event numbers,
+    // so only this fd -- not the node reappearing -- proves it is the same device.
+    let mut bound = evdev::Device::open(&reserved_one).expect("a launch opens the seat");
+    bound.set_nonblocking(true).expect("nonblocking");
+
+    // The device has to be the one already there.
+    daemon.send(serde_json::json!({"cmd": "seating", "open": true, "players": 4}));
+    daemon.events.clear();
+    daemon.hold_until_claimed(&mut pad, |event| event["name"] == SEATS_FIRST.name);
+    let seated = daemon
+        .wait_for("state", |event| event["state"] == "ready", 10.0)
+        .expect("ready after the seat was taken");
+    let left: Vec<u64> = seated["reserved"]
+        .as_array()
+        .expect("reserved")
+        .iter()
+        .filter_map(|seat| seat["player"].as_u64())
+        .collect();
+    assert_eq!(
+        left,
+        vec![2, 3, 4],
+        "seat one is taken, not reserved: {seated}"
+    );
+
+    assert!(
+        presses_reach(&mut bound, &mut pad),
+        "the seat was taken and the device the launch held went silent"
+    );
+
+    // Now the case that matters: a join while the game runs, not the seat-one
+    // rebuild. Every seat still waiting is opened first, because which one the
+    // joiner takes is the daemon's to decide, not this test's to assume.
+    let mut waiting: Vec<(u64, evdev::Device)> = seated["reserved"]
+        .as_array()
+        .expect("reserved")
+        .iter()
+        .filter_map(|seat| {
+            let player = seat["player"].as_u64()?;
+            let device = evdev::Device::open(seat["node"].as_str()?).ok()?;
+            device.set_nonblocking(true).ok()?;
+            Some((player, device))
+        })
+        .collect();
+    assert!(
+        !waiting.is_empty(),
+        "no seat was left to join into: {seated}"
+    );
+
+    daemon.events.clear();
+    let joined = daemon.hold_until_claimed(&mut joiner, |event| event["name"] == SEATS_SECOND.name);
+    daemon
+        .wait_for("state", |event| event["state"] == "ready", 10.0)
+        .expect("ready after the join");
+    let took = joined["player"].as_u64().expect("a player");
+    let (_, bound_joined) = waiting
+        .iter_mut()
+        .find(|(player, _)| *player == took)
+        .unwrap_or_else(|| panic!("the joiner took seat {took}, which was never reserved"));
+    assert!(
+        presses_reach(bound_joined, &mut joiner),
+        "somebody joined and the seat the game was bound to went silent"
+    );
+
+    // Nought gives the seats back, which is how a launch ends.
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "reserve", "players": 0}));
+    let after = daemon
+        .wait_for(
+            "state",
+            |event| {
+                event["reserved"]
+                    .as_array()
+                    .is_some_and(|seats| seats.is_empty())
+            },
+            6.0,
+        )
+        .expect("the seats were never given back");
+    assert!(after["reserved"].as_array().expect("reserved").is_empty());
+
+    drop(daemon);
+    drop(pad);
+    drop(joiner);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Whether a press on `pad` comes out of a device already open.
+fn presses_reach(device: &mut evdev::Device, pad: &mut TestPad) -> bool {
+    for _ in 0..40 {
+        pad.emit(EventType::KEY.0, FIRST_KEY, 1);
+        pad.emit(EventType::KEY.0, FIRST_KEY, 0);
+        std::thread::sleep(Duration::from_millis(100));
+        if let Ok(events) = device.fetch_events() {
+            if events
+                .filter(|event| event.event_type() == EventType::KEY)
+                .any(|event| event.value() == 1)
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 /// Two for a capture that must survive somebody else joining.
 const KEEP_FIRST: PadId = PadId {
     name: "PADMAP RSTESTKEEP one",
@@ -1660,18 +1848,30 @@ fn the_last_seat_goes_to_one_of_two_and_the_other_is_told_the_room_is_full() {
         "cmd": "seating", "open": true, "players": 1, "hold": 1.0
     }));
 
-    daemon.events.clear();
-    one.emit(EventType::KEY.0, FIRST_KEY, 1);
-    two.emit(EventType::KEY.0, FIRST_KEY, 1);
-
-    // Waited for rather than pumped for: how long a loaded machine takes to say
-    // these is not the promise, that it says both of them is.
-    daemon
-        .wait_for("claim", |_| true, 8.0)
-        .expect("the last seat went to nobody");
-    let full = daemon
-        .wait_for("full", |_| true, 8.0)
-        .expect("the pad that missed out was told nothing");
+    // Pressed together so both holds finish in one tick, and held until they are
+    // read: a pad grabbed on arrival is read late, and one press landing alone
+    // is this machine's load rather than anything promised.
+    let mut full = None;
+    for attempt in 0..4 {
+        daemon.events.clear();
+        one.emit(EventType::KEY.0, FIRST_KEY, 1);
+        two.emit(EventType::KEY.0, FIRST_KEY, 1);
+        if daemon.wait_for("claim", |_| true, 6.0).is_some() {
+            full = daemon.wait_for("full", |_| true, 6.0);
+            if full.is_some() {
+                break;
+            }
+        }
+        eprintln!("attempt {attempt}: the last seat went to nobody; again");
+        one.emit(EventType::KEY.0, FIRST_KEY, 0);
+        two.emit(EventType::KEY.0, FIRST_KEY, 0);
+        daemon.pump(1.2);
+        daemon.send(serde_json::json!({"cmd": "unseat"}));
+        daemon.send(serde_json::json!({
+            "cmd": "seating", "open": true, "players": 1, "hold": 1.0
+        }));
+    }
+    let full = full.expect("one seat, two holds, and nobody was told anything");
 
     let claims: Vec<&Value> = daemon
         .events
@@ -1744,6 +1944,29 @@ fn a_pad_cannot_take_a_seat_that_does_not_exist() {
     assert!(
         daemon.last("claim").is_none(),
         "a pad took a seat that was already held by an absent controller"
+    );
+
+    // This daemon publishes mirror identities, whose layout comes from the pad
+    // behind the clone -- so there is nothing to reserve a seat with, and the
+    // answer has to say so rather than publish a pad that mirrors nobody.
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "reserve", "players": 4}));
+    daemon.pump(0.8);
+    let refused = daemon.last("error").expect("reserving said nothing at all");
+    assert!(
+        refused["message"]
+            .as_str()
+            .is_some_and(|why| why.contains("xbox360")),
+        "the refusal does not say what would make it work: {refused}"
+    );
+    assert!(
+        !daemon.events.iter().any(|event| {
+            event["reserved"]
+                .as_array()
+                .is_some_and(|seats| !seats.is_empty())
+        }),
+        "a seat was published under an identity that cannot describe it: {:?}",
+        daemon.events
     );
 
     drop(daemon);

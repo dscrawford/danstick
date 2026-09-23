@@ -1158,3 +1158,26 @@ fn field_lookup_is_case_sensitive_and_exact() {
     assert_eq!(fields.get("dpu"), None);
     assert_eq!(fields.get("righty"), None, "-righty is not righty");
 }
+
+#[test]
+fn a_state_event_from_before_reserved_seats_existed_still_reads() {
+    // GOTG's client parses `state`; a field it has never sent must not make the
+    // whole event fail to read.
+    let old = r#"{"event":"state","state":"ready","slots":4,"players":[],
+                  "build":"x","pid":1,"identity":"mirror"}"#;
+    let parsed: padmap_core::state::StateEvent =
+        serde_json::from_str(old).expect("the old shape still parses");
+    assert!(parsed.reserved.is_empty());
+
+    let seat = padmap_core::state::ReservedSeat {
+        player: 3,
+        node: "/dev/input/event20".to_owned(),
+        name: "padmap Player 3".to_owned(),
+        guid: "0300000000000000ffff000000000000".to_owned(),
+    };
+    let text = serde_json::to_string(&seat).expect("json");
+    assert_eq!(
+        serde_json::from_str::<padmap_core::state::ReservedSeat>(&text).expect("round trip"),
+        seat
+    );
+}

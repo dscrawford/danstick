@@ -204,10 +204,18 @@ the same device and node (`join_republisher`,
 `a_join_leaves_the_players_already_in_the_game_plugged_in`). Nor does a seat cost more the fuller the
 room: what a seated player's files say cannot change because somebody else sat
 down, so a join writes them rather than working them out again
-(`publish::Cache`, `a_join_does_not_work_the_rest_of_the_room_out_again`). A
-joiner still reaches nothing *inside a launch*, because `exec` binds
-`/dev/input` as a tmpfs fixed at launch and a clone made later is not in it —
-`docs/requests/a-join-keeps-everybody-elses-clone.md` is open on that.
+(`publish::Cache`, `a_join_does_not_work_the_rest_of_the_room_out_again`).
+
+**Seats exist before the people do.** A launch is handed the `/dev/input` it
+starts with — `exec` binds every node present — and nothing can be added to
+that namespace afterwards, so a clone published once the game is running does
+not exist for it however well the seat is claimed. `{"cmd": "reserve",
+"players": N}` publishes a clone per seat the launch allows *before* it starts,
+with a mapping written for each, and taking one keeps that exact device rather
+than replacing it (`clone::reserve`/`create_on`,
+`a_seat_reserved_for_a_launch_keeps_its_node_when_somebody_takes_it`). It needs
+the 360 identity, because a reserved clone's layout has to be known before its
+pad is. `docs/EVENTS.md`, "Seats that exist before the people do".
 
 ## S4 — Holding again confirms, and accepts
 

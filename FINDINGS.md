@@ -3391,3 +3391,43 @@ standing in for a different physical pad is the failure this shape invites.
 process writes needs the file in the key, not the identity of the thing it
 describes. The tell here was that no code path connected the writer to the
 reader -- which had been survivable only because the reader recomputed so often.
+
+## A seat has to exist before the person does
+
+`padmap-rs exec` hands a game the `/dev/input` it starts with: a tmpfs holding
+the nodes that were there, with the raw pads covered. Nothing can be added to
+that namespace afterwards -- a bind mount into a running user namespace needs
+to be made from inside it -- and SDL's udev hotplug does not cross it either.
+So a clone published once the game is running does not exist for that game,
+however well the seat was claimed. Somebody joining mid-play got a seat, a
+`claim`, a fill that reached the end, and a controller that did nothing.
+
+The fix is not to reach into the sandbox but to have nothing to reach in with:
+`reserve` publishes a clone per seat the launch allows *before* it starts, so
+they are all bound, and taking a seat adopts that exact device rather than
+publishing another. `clone::create_on` takes the reserved device instead of
+building one.
+
+**What made it tractable was already there.** Under the 360 identity the clone
+is built from a fixed capability list -- `xbox::KEYS` and `xbox::AXES` -- and
+only the *translator* needs the pad behind it. So a device for a seat nobody
+has taken is the same device, minus the translator, and `VirtualPad` did not
+have to learn about sources that are not there yet. Under `mirror` it cannot be
+done at all: the layout and GUID come from a pad nobody has picked up.
+
+**Two tests that looked like they proved it and did not.** The first asserted
+the reserved node still existed after the seat was claimed. The kernel reuses
+`/dev/input/eventN`, so destroying the device and publishing another put a
+node back at the same path and the assertion passed either way. The second held
+the node's fd open across the claim -- which is what a running game does -- and
+that does tell them apart, because the old fd goes dead when its device is
+destroyed even if the number comes back. It still passed with the adoption
+deliberately broken, because the *first* seat goes through `start_republisher`
+rather than `join_republisher`, and only the latter had been sabotaged. Both
+paths adopt, so both had to be broken, one at a time, to see the test fail.
+
+**Worth generalising.** A device node's path is not its identity, and neither
+is its presence. Anything asserting that a device survived has to hold
+something the kernel invalidates -- an open fd -- rather than look the path up
+again. The same recycling is why a seating hold follows a pad by node *and*
+vid/pid/name/phys/uniq rather than by node alone.

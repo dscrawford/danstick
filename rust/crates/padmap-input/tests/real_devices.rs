@@ -962,3 +962,73 @@ fn under_the_360_identity_the_clone_is_an_xbox_pad_whatever_the_source() {
     );
     republisher.close();
 }
+
+#[test]
+fn a_reserved_seat_is_a_pad_in_the_360_layout_with_a_node_of_its_own() {
+    needs_uinput!();
+    let mut device = clone::reserve(3).expect("a seat can be published");
+    let node = clone::node_of(&mut device).expect("udev makes it a node");
+    // udev applies the ACL a moment after making the node; a launch opens it
+    // well after that, so waiting here is the test catching up, not a promise.
+    let mut opened = None;
+    for _ in 0..40 {
+        match Device::open(&node) {
+            Ok(device) => {
+                opened = Some(device);
+                break;
+            }
+            Err(_) => std::thread::sleep(Duration::from_millis(50)),
+        }
+    }
+    let Some(opened) = opened else {
+        eprintln!("skipping: {node} never became readable here");
+        return;
+    };
+    assert_eq!(
+        opened.name().unwrap_or_default(),
+        "padmap Player 3",
+        "a launch binds it by name"
+    );
+    let keys = opened.supported_keys().expect("keys");
+    assert!(keys.contains(KeyCode::BTN_SOUTH), "no A to press");
+    assert!(keys.contains(KeyCode::BTN_START));
+    let axes = opened.supported_absolute_axes().expect("axes");
+    assert!(axes.contains(AbsoluteAxisCode::ABS_X), "no left stick");
+    assert!(axes.contains(AbsoluteAxisCode::ABS_Z), "no left trigger");
+}
+
+#[test]
+fn a_claim_that_cannot_open_its_pad_leaves_the_reserved_seat_alone() {
+    needs_uinput!();
+    // The device a launch is bound to must outlive a failed claim: nothing can
+    // put a replacement inside a sandbox that has already started.
+    let mut reserved = Some(clone::reserve(2).expect("a seat can be published"));
+    let missing = pad::Pad {
+        path: std::path::PathBuf::from("/dev/input/event99997"),
+        name: "Not Here".to_owned(),
+        phys: String::new(),
+        uniq: String::new(),
+        vid: 1,
+        pid: 2,
+        syspath: std::path::PathBuf::from("/sys"),
+        retroarch_visible: true,
+        motion: None,
+    };
+    let made = clone::create_on(
+        &missing,
+        2,
+        clone::IdentityMode::Xbox360,
+        &BTreeMap::new(),
+        Default::default(),
+        false,
+        &Default::default(),
+        &mut reserved,
+    );
+    assert!(made.is_err(), "a pad that is not there was cloned");
+    assert!(
+        reserved.is_some(),
+        "the failed claim took the seat's device with it"
+    );
+    let node = clone::node_of(reserved.as_mut().expect("still there"));
+    assert!(node.is_some(), "the device was left without a node");
+}

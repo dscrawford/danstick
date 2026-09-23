@@ -228,4 +228,31 @@ mod tests {
         assert!(line.contains("--bind /dev/null /dev/hidraw2"));
         assert!(line.ends_with("-- dolphin-emu game.rvz"));
     }
+
+    #[test]
+    fn a_seat_nobody_has_taken_is_still_bound_into_the_launch() {
+        // A clone made after a launch starts is not in its /dev/input, so this has to hold.
+        let nodes = vec![
+            (
+                PathBuf::from("/dev/input/event20"),
+                "padmap Player 1".to_owned(),
+            ),
+            (
+                PathBuf::from("/dev/input/event21"),
+                "padmap Player 2".to_owned(),
+            ),
+            (
+                PathBuf::from("/dev/input/event9"),
+                "Xbox 360 Controller".to_owned(),
+            ),
+        ];
+        let raw = vec![PathBuf::from("/dev/input/event9")];
+        let plan = plan(&nodes, &raw, &[]);
+        assert!(
+            plan.keep.contains(&PathBuf::from("/dev/input/event21")),
+            "an empty seat was left outside the launch: {plan:?}"
+        );
+        assert!(!plan.keep.contains(&PathBuf::from("/dev/input/event9")));
+        assert!(plan.worth_it());
+    }
 }

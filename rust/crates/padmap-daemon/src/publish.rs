@@ -30,6 +30,16 @@ pub struct PadFacts {
     pub physical_guid: Option<String>,
 }
 
+/// The 360 identity, which a reserved seat wears before it has a pad.
+pub fn xbox_identity() -> Identity {
+    Identity {
+        bustype: padmap_core::xbox::BUS_USB,
+        vendor: padmap_core::xbox::VENDOR,
+        product: padmap_core::xbox::PRODUCT,
+        version: padmap_core::xbox::VERSION,
+    }
+}
+
 /// The 360 clone's capabilities, the same for every pad behind one.
 pub fn xbox_facts() -> PadFacts {
     PadFacts {
@@ -370,11 +380,14 @@ fn derive(
     }
 }
 
-/// Where a launch's two files go.
+/// Where a launch's two files go, and which seats it has waiting.
 #[derive(Debug, Clone, Copy)]
 pub struct Launch<'a> {
     pub config: &'a Path,
     pub args: &'a Path,
+    /// Seats published for the launch that nobody has taken. They are written
+    /// like any other player, so a game can bind ports nobody is sitting at.
+    pub reserved: &'a [u32],
 }
 
 /// Write every file the roster implies.
@@ -388,6 +401,13 @@ pub fn write_all(
     cache: &mut Cache,
 ) -> Written {
     let (launch_config_path, launch_args_path) = (launch.config, launch.args);
+    let seated: Vec<u32> = slots.iter().map(|slot| slot.player).collect();
+    let reserved: Vec<u32> = launch
+        .reserved
+        .iter()
+        .copied()
+        .filter(|player| !seated.contains(player))
+        .collect();
     let console = last.map(|game| game.console.as_str()).unwrap_or("");
     let game = last.map(|game| game.key.as_str()).unwrap_or("");
     let context = last.map(|game| game.title.as_str()).unwrap_or("");
@@ -478,6 +498,23 @@ pub fn write_all(
         }
         published.push(one.published.clone());
     }
+    for player in &reserved {
+        let identity = xbox_identity();
+        let facts = xbox_facts();
+        let line = sdl_line_for(*player, identity, &padmap_core::xbox::bindings(), &facts);
+        if !line.is_empty() {
+            lines.insert(*player, line.clone());
+        }
+        published.push(emulators::Published {
+            player: *player,
+            guid: emit::virtual_guid(*player, identity),
+            name: emit::virtual_name(*player),
+            keys: facts.keys.clone(),
+            axes: facts.axes.clone(),
+            sdl_line: line,
+        });
+    }
+
     let fallback = Identity {
         bustype: 0x06,
         vendor: clone::PADMAP_VID,

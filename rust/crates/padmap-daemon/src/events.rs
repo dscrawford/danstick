@@ -24,11 +24,13 @@ pub fn state(
     following: Option<u32>,
     seating: bool,
     hold: f64,
+    reserved: Vec<padmap_core::state::ReservedSeat>,
 ) -> Value {
     let mut event = StateEvent::new(state, slots, players, build, std::process::id(), identity);
     event.following = following;
     event.seating = seating;
     event.hold = hold;
+    event.reserved = reserved;
     serde_json::to_value(event).unwrap_or_else(|_| json!({ "event": "state" }))
 }
 
