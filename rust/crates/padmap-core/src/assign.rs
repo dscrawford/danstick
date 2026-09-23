@@ -97,6 +97,15 @@ impl Assigner {
         self.holding.clear();
     }
 
+    /// The highest player number handed out, or 0 when none has been.
+    fn highest_player(&self) -> u32 {
+        self.assignments
+            .iter()
+            .map(|assignment| assignment.player)
+            .max()
+            .unwrap_or(0)
+    }
+
     /// Whether this pad has already claimed a slot.
     pub fn is_claimed(&self, pad: usize) -> bool {
         self.claimed.contains(&pad)
@@ -147,7 +156,10 @@ impl Assigner {
                 continue;
             }
             let assignment = Assignment {
-                player: self.assignments.len() as u32 + 1,
+                // Past the highest given out rather than the count, so dropping
+                // one of several does not hand the next claim a number somebody
+                // still seated already has.
+                player: self.highest_player() + 1,
                 pad,
                 button: code,
             };
@@ -178,12 +190,43 @@ impl Assigner {
         self.assignments.retain(|assignment| assignment.pad != pad);
     }
 
+    /// Carries each hold to its pad's new index via `moved`, so a pad leaving the
+    /// watched set does not end everybody else's: no down edge comes back for a
+    /// thumb that never lifted.
+    pub fn remap(&mut self, moved: impl Fn(usize) -> Option<usize>) {
+        self.holding = self
+            .holding
+            .iter()
+            .filter_map(|(pad, held)| Some((moved(*pad)?, *held)))
+            .collect();
+        self.claimed = self.claimed.iter().filter_map(|pad| moved(*pad)).collect();
+        self.assignments = self
+            .assignments
+            .iter()
+            .filter_map(|assignment| {
+                Some(Assignment {
+                    pad: moved(assignment.pad)?,
+                    ..*assignment
+                })
+            })
+            .collect();
+        self.filling = self.filling.iter().filter_map(|pad| moved(*pad)).collect();
+    }
+
     /// Drop every claim. Caller must discard queued pad events.
     pub fn reset(&mut self) {
         self.assignments.clear();
         self.claimed.clear();
         self.holding.clear();
     }
+}
+
+/// Where each of `before`'s pads sits in `after`, by identity, for [`Assigner::remap`].
+pub fn moved_indices<T: PartialEq>(before: &[T], after: &[T]) -> Vec<Option<usize>> {
+    before
+        .iter()
+        .map(|pad| after.iter().position(|kept| kept == pad))
+        .collect()
 }
 
 #[cfg(test)]
@@ -549,5 +592,135 @@ mod tests {
         assert!(!assigner.is_claimed(0));
         assigner.feed(0, EV_KEY, A, 1, 2.0);
         assert_eq!(assigner.tick(2.0 + HOLD_SECONDS + 0.01).claimed.len(), 1);
+    }
+
+    #[test]
+    fn two_holds_finishing_together_both_claim_in_one_tick() {
+        // The daemon seats these one at a time and rebuilds its pad list as it
+        // goes, so it has to resolve both to pads before it touches the list.
+        let mut assigner = Assigner::default();
+        assigner.feed(0, EV_KEY, A, 1, 0.0);
+        assigner.feed(1, EV_KEY, B, 1, 0.0);
+        let out = assigner.tick(HOLD_SECONDS + 0.01);
+        assert_eq!(out.claimed.len(), 2, "one tick, one claim");
+        assert_eq!(out.claimed[0].pad, 0);
+        assert_eq!(out.claimed[1].pad, 1);
+        assert_eq!(out.claimed[0].player, 1);
+        assert_eq!(out.claimed[1].player, 2);
+    }
+
+    #[test]
+    fn a_claim_after_one_was_dropped_does_not_reuse_a_number_still_held() {
+        // Player numbers are stamped once and `remap`/`forget` drop assignments
+        // without renumbering, so counting them would collide with a survivor.
+        let mut assigner = Assigner::default();
+        assigner.feed(0, EV_KEY, A, 1, 0.0);
+        assigner.feed(1, EV_KEY, B, 1, 0.01);
+        assigner.tick(HOLD_SECONDS + 0.1);
+        assert_eq!(
+            assigner
+                .assignments()
+                .iter()
+                .map(|claim| claim.player)
+                .collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+
+        assigner.forget(0);
+        assigner.feed(2, EV_KEY, A, 1, 10.0);
+        let claim = assigner.tick(10.0 + HOLD_SECONDS + 0.01);
+        assert_eq!(claim.claimed[0].player, 3, "it took the survivor's number");
+        let players: Vec<u32> = assigner
+            .assignments()
+            .iter()
+            .map(|claim| claim.player)
+            .collect();
+        assert_eq!(players, vec![2, 3], "two pads, one player number");
+    }
+
+    #[test]
+    fn moved_indices_says_where_each_pad_went() {
+        // One pad in the middle claims a seat and stops being watched.
+        let before = ["event1", "event2", "event3"];
+        let after = ["event1", "event3"];
+        assert_eq!(moved_indices(&before, &after), vec![Some(0), None, Some(1)]);
+    }
+
+    #[test]
+    fn moved_indices_handles_a_set_that_grew_reordered_or_emptied() {
+        assert_eq!(
+            moved_indices(&["event2"], &["event1", "event2"]),
+            vec![Some(1)],
+            "a pad arriving in front pushes the other along"
+        );
+        assert_eq!(
+            moved_indices(&["event1", "event2"], &["event2", "event1"]),
+            vec![Some(1), Some(0)]
+        );
+        assert_eq!(moved_indices(&["event1"], &[] as &[&str]), vec![None]);
+        assert_eq!(moved_indices(&[] as &[&str], &["event1"]), vec![]);
+    }
+
+    #[test]
+    fn a_refresh_that_keeps_everything_moves_nothing() {
+        let same = ["event1", "event2"];
+        assert_eq!(moved_indices(&same, &same), vec![Some(0), Some(1)]);
+    }
+
+    #[test]
+    fn remapping_carries_a_hold_to_its_new_index_at_the_time_it_started() {
+        // Pad 1 claims and leaves the watched set, so pad 2 becomes pad 1. The
+        // kernel sends no second down edge for a thumb that never lifted.
+        let mut assigner = Assigner::default();
+        assigner.feed(1, EV_KEY, A, 1, 0.0);
+        assigner.feed(2, EV_KEY, B, 1, 0.5);
+        assigner.tick(0.6);
+        assigner.remap(|pad| match pad {
+            2 => Some(1),
+            _ => None,
+        });
+        // Still filling, still from 0.5: its own clock, not restarted here.
+        let mid = assigner.tick(0.7);
+        assert_eq!(mid.claimed, vec![], "it claimed early");
+        assert_eq!(mid.progress.len(), 1);
+        assert_eq!(mid.progress[0].0, 1, "the hold did not move");
+        assert!(mid.released.is_empty(), "a move looked like letting go");
+        let done = assigner.tick(0.5 + HOLD_SECONDS + 0.01);
+        assert_eq!(done.claimed.len(), 1, "the carried hold never claimed");
+        assert_eq!(done.claimed[0].pad, 1);
+        assert_eq!(done.claimed[0].button, B, "it kept its own button");
+    }
+
+    #[test]
+    fn remapping_drops_the_state_of_a_pad_that_is_gone() {
+        let mut assigner = Assigner::default();
+        assigner.feed(0, EV_KEY, A, 1, 0.0);
+        assigner.tick(HOLD_SECONDS + 0.01);
+        assert!(assigner.is_claimed(0));
+        assigner.feed(1, EV_KEY, B, 1, 0.0);
+        assigner.tick(0.1);
+
+        assigner.remap(|_| None);
+        assert!(
+            !assigner.is_claimed(0),
+            "a pad that has gone is still claimed"
+        );
+        assert!(assigner.assignments().is_empty());
+        let after = assigner.tick(HOLD_SECONDS + 1.0);
+        assert!(after.claimed.is_empty(), "a dropped hold still claimed");
+        assert!(after.progress.is_empty());
+    }
+
+    #[test]
+    fn remapping_moves_a_claim_so_the_pad_cannot_claim_twice() {
+        let mut assigner = Assigner::default();
+        assigner.feed(3, EV_KEY, A, 1, 0.0);
+        assigner.tick(HOLD_SECONDS + 0.01);
+        assigner.remap(|pad| (pad == 3).then_some(0));
+        assert!(assigner.is_claimed(0), "the claim did not follow the pad");
+        assert_eq!(assigner.assignments()[0].pad, 0);
+        assigner.feed(0, EV_KEY, A, 1, 10.0);
+        let again = assigner.tick(10.0 + HOLD_SECONDS + 0.01);
+        assert!(again.claimed.is_empty(), "one pad took two seats");
     }
 }

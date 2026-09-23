@@ -180,6 +180,21 @@ last — and the daemon now opens this screen itself from a state that already
 had players in it — so the theme tracks `claimedHere` and treats a player who
 did not press *on this screen* as absent.
 
+**A room holds at once, and each hold is its own.** Four people picking up pads
+on "go" is the ordinary case, not the edge one, and every way padmap had of
+dropping a hold used to drop all of them. A claim reset the whole assigner
+(`one_person_taking_a_seat_leaves_the_next_person_still_holding`); so did
+rebuilding the watched set when a pad arrived or left
+(`a_pad_switched_on_does_not_cancel_the_hold_already_running`); so did setting
+the same hold length again, and so did a fifth person finding the room full. No
+down edge comes back for a thumb that never lifted, so each of those cost
+somebody their fill with nothing on screen to explain it. Holds are keyed by a
+pad's place in the watched set, so a rebuild now *renumbers* them
+(`Assigner::remap`) rather than clearing them, and what a claim drops is its own
+pad's hold. Two claims completing in one tick are two positions in a list the
+first claim rebuilds, so `tick_seating` resolves them to pads before it touches
+the list (`two_people_pressing_on_go_are_two_seats_not_one`).
+
 ## S4 — Holding again confirms, and accepts
 
 **Actor and want.** The order is right; the user wants to be finished and go

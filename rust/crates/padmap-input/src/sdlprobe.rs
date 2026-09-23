@@ -82,25 +82,40 @@ pub fn isolated(guid: &str) -> Option<String> {
             return found.clone();
         }
     }
-    let line = ask(guid);
+    // Only an answer is remembered: caching a probe that could not run would deny
+    // that pad its mapping for the rest of the daemon's life.
+    let Ok(line) = ask(guid) else {
+        return None;
+    };
     if let Ok(mut cache) = known.lock() {
         cache.insert(guid.to_owned(), line.clone());
     }
     line
 }
 
-fn ask(guid: &str) -> Option<String> {
-    let exe = std::env::current_exe().ok()?;
+/// `Err` when the probe could not be run or failed; `Ok(None)` when it ran and
+/// SDL had nothing for this GUID.
+fn ask(guid: &str) -> Result<Option<String>, ()> {
+    let exe = std::env::current_exe().map_err(|_| ())?;
     let output = std::process::Command::new(exe)
         .args(["sdl-mapping", guid])
         .stdin(std::process::Stdio::null())
         .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
+        .map_err(|_| ())?;
+    answer(
+        output.status.success(),
+        &String::from_utf8_lossy(&output.stdout),
+    )
+}
+
+/// What the probe's exit and output mean, which is what decides whether the
+/// answer is worth remembering.
+fn answer(ran: bool, stdout: &str) -> Result<Option<String>, ()> {
+    if !ran {
+        return Err(());
     }
-    let line = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-    (!line.is_empty()).then_some(line)
+    let line = stdout.trim();
+    Ok((!line.is_empty()).then(|| line.to_owned()))
 }
 
 #[cfg(test)]
@@ -129,5 +144,27 @@ mod tests {
         assert_eq!(nobody, None);
 
         assert!(matches!(builtin_mapping("abc\0def"), Err(ProbeError::Nul)));
+    }
+
+    #[test]
+    fn a_probe_that_could_not_run_is_not_sdl_knowing_nothing() {
+        // Only `Ok` is remembered, so a probe that failed has to say so rather
+        // than answer None: otherwise one bad moment denies a pad its mapping
+        // for the rest of the daemon's life.
+        assert_eq!(
+            answer(false, ""),
+            Err(()),
+            "a failed probe is not an answer"
+        );
+        assert_eq!(
+            answer(false, "guid,Pad,a:b0,"),
+            Err(()),
+            "output without a zero exit"
+        );
+        assert_eq!(answer(true, "  "), Ok(None), "it ran; SDL knows nothing");
+        assert_eq!(
+            answer(true, " guid,Pad,a:b0, \n"),
+            Ok(Some("guid,Pad,a:b0,".to_owned()))
+        );
     }
 }

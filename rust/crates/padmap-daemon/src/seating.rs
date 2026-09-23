@@ -20,6 +20,22 @@ pub struct Seating {
     buffer: Vec<evdev::InputEvent>,
 }
 
+/// What makes a watched pad the same pad across a rebuild.
+type Identity = (PathBuf, u16, u16, String, String, String);
+
+/// The kernel reuses `/dev/input/eventN`, so a hold must not follow the node on
+/// its own: a pad unplugged and another plugged into its number would inherit it.
+fn identity(pad: &Pad) -> Identity {
+    (
+        pad.path.clone(),
+        pad.vid,
+        pad.pid,
+        pad.name.clone(),
+        pad.phys.clone(),
+        pad.uniq.clone(),
+    )
+}
+
 #[derive(Debug, Default)]
 pub struct Claimed {
     pub pads: Vec<usize>,
@@ -100,9 +116,10 @@ impl Seating {
             return false;
         }
         self.wanted = wanted.iter().map(|pad| pad.path.clone()).collect();
+        // Pads as watched before the rebuild, so holds can follow to their new index.
+        let before: Vec<Identity> = self.pads.iter().map(identity).collect();
         self.pads.clear();
         self.sources.clear();
-        self.assigner.reset();
         for pad in wanted {
             match clone::open_source(&pad, false) {
                 Ok(source) => {
@@ -114,6 +131,9 @@ impl Seating {
                 }
             }
         }
+        let after: Vec<Identity> = self.pads.iter().map(identity).collect();
+        let moved = padmap_core::assign::moved_indices(&before, &after);
+        self.assigner.remap(|pad| moved.get(pad).copied().flatten());
         true
     }
 
@@ -152,9 +172,14 @@ impl Seating {
         }
     }
 
-    /// Drop one pad's hold; the rest of the room keeps filling.
-    pub fn forget(&mut self, pad: usize) {
-        self.assigner.forget(pad);
+    /// Drop one pad's hold by path, since a refresh this tick may have renumbered.
+    pub fn forget(&mut self, path: &std::path::Path) {
+        match self.pads.iter().position(|pad| pad.path == path) {
+            Some(index) => self.assigner.forget(index),
+            // Not reachable today, and silent it would be a pad that can never
+            // retry: it keeps a claim on a seat it was refused.
+            None => warn!("seating: no pad at {} to forget", path.display()),
+        }
     }
 
     pub fn reset(&mut self) {

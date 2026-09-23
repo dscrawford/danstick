@@ -103,6 +103,50 @@ const PAIR_SECOND: PadId = PadId {
     pid: 0x0014,
     only: "RSTESTPAIR",
 };
+/// Two more, for two holds that both run all the way to a claim.
+const BOTH_FIRST: PadId = PadId {
+    name: "PADMAP RSTESTBOTH one",
+    pid: 0x0015,
+    only: "RSTESTBOTH",
+};
+const BOTH_SECOND: PadId = PadId {
+    name: "PADMAP RSTESTBOTH two",
+    pid: 0x0016,
+    only: "RSTESTBOTH",
+};
+/// And two for the last seat going to one of two holds that finished together.
+const LAST_FIRST: PadId = PadId {
+    name: "PADMAP RSTESTLAST one",
+    pid: 0x001b,
+    only: "RSTESTLAST",
+};
+const LAST_SECOND: PadId = PadId {
+    name: "PADMAP RSTESTLAST two",
+    pid: 0x001c,
+    only: "RSTESTLAST",
+};
+/// And two for a pad arriving while another is already holding.
+const ARRIVE_FIRST: PadId = PadId {
+    name: "PADMAP RSTESTCOME one",
+    pid: 0x0019,
+    only: "RSTESTCOME",
+};
+const ARRIVE_SECOND: PadId = PadId {
+    name: "PADMAP RSTESTCOME two",
+    pid: 0x001a,
+    only: "RSTESTCOME",
+};
+/// And two for two holds that finish inside one tick.
+const TICK_FIRST: PadId = PadId {
+    name: "PADMAP RSTESTTICK one",
+    pid: 0x0017,
+    only: "RSTESTTICK",
+};
+const TICK_SECOND: PadId = PadId {
+    name: "PADMAP RSTESTTICK two",
+    pid: 0x0018,
+    only: "RSTESTTICK",
+};
 const BINDER: PadId = PadId {
     name: "PADMAP RSTESTBIND",
     pid: 0x0011,
@@ -1107,6 +1151,282 @@ fn two_people_pairing_at_once_are_two_fills_in_the_order_they_pressed() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// The claim that landed first used to reset the whole assigner, so the second
+/// person's fill died on the spot and no down edge ever came back to restart it.
+#[test]
+fn one_person_taking_a_seat_leaves_the_next_person_still_holding() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let _first = LiveGuard::new(BOTH_FIRST);
+    let _second = LiveGuard::new(BOTH_SECOND);
+    let root = std::env::temp_dir().join(format!("padmap-both-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let mut one = TestPad::new(BOTH_FIRST);
+    let mut two = TestPad::new(BOTH_SECOND);
+    let mut daemon = Daemon::start(&root, BOTH_FIRST);
+    daemon.wait_for("state", |_| true, 5.0).expect("a greeting");
+    daemon.pump(2.5);
+
+    // Long enough both presses overlap under load; pressed after the open, since a
+    // button already down when seating opens is not a hold.
+    daemon.send(serde_json::json!({
+        "cmd": "seating", "open": true, "players": 4, "hold": 2.0
+    }));
+
+    // Both have to be readable at once, and a pad Steam grabbed on arrival is
+    // not (see seat_by_hold), so this is held until it takes rather than once.
+    let mut filling = 0;
+    for attempt in 0..4 {
+        daemon.events.clear();
+        one.emit(EventType::KEY.0, FIRST_KEY, 1);
+        std::thread::sleep(Duration::from_millis(300));
+        two.emit(EventType::KEY.0, FIRST_KEY, 1);
+        daemon.pump(0.8);
+        let nodes: BTreeSet<&str> = daemon
+            .events
+            .iter()
+            .filter(|event| event["event"] == "progress")
+            .filter_map(|event| event["node"].as_str())
+            .collect();
+        filling = nodes.len();
+        if filling == 2 {
+            break;
+        }
+        eprintln!("attempt {attempt}: {filling} pad(s) filling; again");
+        one.emit(EventType::KEY.0, FIRST_KEY, 0);
+        two.emit(EventType::KEY.0, FIRST_KEY, 0);
+        daemon.pump(0.8);
+    }
+    assert_eq!(filling, 2, "two holds never ran at once");
+
+    // Neither thumb lifts from here on: both claims have to arrive anyway.
+    let first_claim = daemon
+        .wait_for("claim", |_| true, 6.0)
+        .expect("nobody took a seat");
+    let first_name = first_claim["name"].as_str().expect("a name").to_owned();
+    let second_claim = daemon
+        .wait_for("claim", |event| event["name"] != first_name.as_str(), 6.0)
+        .expect("the second hold was thrown away by the first claim");
+
+    let mut players = [
+        first_claim["player"].as_u64().expect("a player"),
+        second_claim["player"].as_u64().expect("a player"),
+    ];
+    players.sort_unstable();
+    assert_eq!(players, [1, 2], "two claims, one seat each: {players:?}");
+    let second_name = second_claim["name"].as_str().expect("a name");
+    assert_ne!(first_name.as_str(), second_name, "one pad claimed twice");
+
+    one.emit(EventType::KEY.0, FIRST_KEY, 0);
+    two.emit(EventType::KEY.0, FIRST_KEY, 0);
+    drop(daemon);
+    drop(one);
+    drop(two);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// A pad arriving rebuilds the watched set, which used to reset every hold with
+/// it -- so somebody switching a pad on cancelled whoever was already holding.
+#[test]
+fn a_pad_switched_on_does_not_cancel_the_hold_already_running() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let _first = LiveGuard::new(ARRIVE_FIRST);
+    let _second = LiveGuard::new(ARRIVE_SECOND);
+    let root = std::env::temp_dir().join(format!("padmap-arrive-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let mut holder = TestPad::new(ARRIVE_FIRST);
+    let mut daemon = Daemon::start(&root, ARRIVE_FIRST);
+    daemon.wait_for("state", |_| true, 5.0).expect("a greeting");
+    daemon.pump(2.5);
+    daemon.send(serde_json::json!({
+        "cmd": "seating", "open": true, "players": 4, "hold": 3.0
+    }));
+
+    daemon.events.clear();
+    holder.emit(EventType::KEY.0, FIRST_KEY, 1);
+    let started = daemon
+        .wait_for("progress", |event| event["frac"].as_f64() > Some(0.0), 3.0)
+        .expect("the hold never started");
+    let before = started["frac"].as_f64().expect("a fraction");
+
+    // A second pad appears mid-hold, which is what rebuilds the watched set.
+    let arriving = TestPad::new(ARRIVE_SECOND);
+    daemon.pump(1.0);
+
+    // The thumb never lifted, so a release here is the bug, and the fill has to
+    // keep climbing from where it was rather than start again.
+    assert!(
+        !daemon
+            .events
+            .iter()
+            .any(|event| event["event"] == "progress" && event["frac"] == 0.0),
+        "the arriving pad cancelled the hold: {:?}",
+        daemon.events
+    );
+    let climbed = daemon
+        .events
+        .iter()
+        .filter(|event| event["event"] == "progress")
+        .filter_map(|event| event["frac"].as_f64())
+        .fold(0.0f64, f64::max);
+    assert!(climbed > before, "the fill stalled: {climbed} <= {before}");
+
+    let claim = daemon
+        .wait_for("claim", |_| true, 6.0)
+        .expect("the hold that carried on never claimed");
+    assert_eq!(claim["name"], ARRIVE_FIRST.name, "{claim}");
+
+    holder.emit(EventType::KEY.0, FIRST_KEY, 0);
+    drop(daemon);
+    drop(arriving);
+    drop(holder);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Two holds that finish inside one tick are two indices into a pad list the
+/// first claim rebuilds, so seating by position seated one pad and lost the other.
+#[test]
+fn two_people_pressing_on_go_are_two_seats_not_one() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let _first = LiveGuard::new(TICK_FIRST);
+    let _second = LiveGuard::new(TICK_SECOND);
+    let root = std::env::temp_dir().join(format!("padmap-tick-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let mut one = TestPad::new(TICK_FIRST);
+    let mut two = TestPad::new(TICK_SECOND);
+    let mut daemon = Daemon::start(&root, TICK_FIRST);
+    daemon.wait_for("state", |_| true, 5.0).expect("a greeting");
+    daemon.pump(2.5);
+    daemon.send(serde_json::json!({
+        "cmd": "seating", "open": true, "players": 4, "hold": 1.0
+    }));
+
+    let mut claims: Vec<Value> = Vec::new();
+    for attempt in 0..4 {
+        daemon.events.clear();
+        // As close to one tick as two writes get: no sleep between them.
+        one.emit(EventType::KEY.0, FIRST_KEY, 1);
+        two.emit(EventType::KEY.0, FIRST_KEY, 1);
+        daemon.pump(2.5);
+        claims = daemon
+            .events
+            .iter()
+            .filter(|event| event["event"] == "claim")
+            .cloned()
+            .collect();
+        if claims.len() >= 2 {
+            break;
+        }
+        eprintln!("attempt {attempt}: {} claim(s); again", claims.len());
+        one.emit(EventType::KEY.0, FIRST_KEY, 0);
+        two.emit(EventType::KEY.0, FIRST_KEY, 0);
+        daemon.pump(0.8);
+        daemon.send(serde_json::json!({"cmd": "unseat"}));
+        daemon.send(serde_json::json!({
+            "cmd": "seating", "open": true, "players": 4, "hold": 1.0
+        }));
+    }
+
+    let names: BTreeSet<&str> = claims.iter().filter_map(|c| c["name"].as_str()).collect();
+    assert_eq!(names.len(), 2, "two pads pressed, these claims: {claims:?}");
+    let seats: BTreeSet<u64> = claims.iter().filter_map(|c| c["player"].as_u64()).collect();
+    assert_eq!(seats.len(), 2, "both pads took the same seat: {claims:?}");
+
+    one.emit(EventType::KEY.0, FIRST_KEY, 0);
+    two.emit(EventType::KEY.0, FIRST_KEY, 0);
+    drop(daemon);
+    drop(one);
+    drop(two);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// One of two holds that finished together takes the last seat; the other is
+/// told the room is full, once, its hold dropped by path rather than stale index.
+#[test]
+fn the_last_seat_goes_to_one_of_two_and_the_other_is_told_the_room_is_full() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let _first = LiveGuard::new(LAST_FIRST);
+    let _second = LiveGuard::new(LAST_SECOND);
+    let root = std::env::temp_dir().join(format!("padmap-last-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let mut one = TestPad::new(LAST_FIRST);
+    let mut two = TestPad::new(LAST_SECOND);
+    let mut daemon = Daemon::start(&root, LAST_FIRST);
+    daemon.wait_for("state", |_| true, 5.0).expect("a greeting");
+    daemon.pump(2.5);
+    daemon.send(serde_json::json!({
+        "cmd": "seating", "open": true, "players": 1, "hold": 1.0
+    }));
+
+    daemon.events.clear();
+    one.emit(EventType::KEY.0, FIRST_KEY, 1);
+    two.emit(EventType::KEY.0, FIRST_KEY, 1);
+
+    // Waited for rather than pumped for: how long a loaded machine takes to say
+    // these is not the promise, that it says both of them is.
+    daemon
+        .wait_for("claim", |_| true, 8.0)
+        .expect("the last seat went to nobody");
+    let full = daemon
+        .wait_for("full", |_| true, 8.0)
+        .expect("the pad that missed out was told nothing");
+
+    let claims: Vec<&Value> = daemon
+        .events
+        .iter()
+        .filter(|event| event["event"] == "claim")
+        .collect();
+    assert_eq!(claims.len(), 1, "one seat, these claims: {claims:?}");
+    let fulls = [&full];
+    assert_ne!(
+        fulls[0]["name"], claims[0]["name"],
+        "the pad that took the seat was told the room was full"
+    );
+
+    // `tick` marked the refused pad claimed on its way to a seat it did not get,
+    // so being forgotten is what lets it take one when the room has room -- and
+    // by index that undid the wrong pad, the refresh having already renumbered.
+    let refused = fulls[0]["name"].as_str().expect("a name").to_owned();
+    one.emit(EventType::KEY.0, FIRST_KEY, 0);
+    two.emit(EventType::KEY.0, FIRST_KEY, 0);
+    daemon.pump(0.5);
+    daemon.send(serde_json::json!({
+        "cmd": "seating", "open": true, "players": 2, "hold": 1.0
+    }));
+    daemon.events.clear();
+    if refused == LAST_FIRST.name {
+        one.emit(EventType::KEY.0, FIRST_KEY, 1);
+    } else {
+        two.emit(EventType::KEY.0, FIRST_KEY, 1);
+    }
+    let second = daemon
+        .wait_for("claim", |event| event["name"] == refused.as_str(), 6.0)
+        .expect("the pad refused a seat could never take one");
+    assert_eq!(second["player"], 2, "{second}");
+
+    one.emit(EventType::KEY.0, FIRST_KEY, 0);
+    two.emit(EventType::KEY.0, FIRST_KEY, 0);
+    drop(daemon);
+    drop(one);
+    drop(two);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 #[test]
 fn a_pad_cannot_take_a_seat_that_does_not_exist() {
     if !uinput_writable() {
@@ -1916,11 +2236,13 @@ fn a_seated_pads_keyboard_sibling_is_held_and_released_with_the_seat() {
             5.0,
         )
         .expect("unseated");
-    daemon.pump(1.0);
-    assert!(
-        grabbable(&keyboard_node),
-        "the keyboard was not released with the seat"
-    );
+    // Waited for rather than pumped for: the promise is that the keyboard comes
+    // back, not that a loaded machine manages it inside a fixed second.
+    let released = (0..40).any(|_| {
+        daemon.pump(0.2);
+        grabbable(&keyboard_node)
+    });
+    assert!(released, "the keyboard was not released with the seat");
 
     drop(daemon);
     drop(pad);

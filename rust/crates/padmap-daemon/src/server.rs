@@ -162,22 +162,33 @@ impl std::fmt::Debug for Server {
 #[derive(Default)]
 struct Scan {
     pads: Option<Vec<Pad>>,
+    /// Whether the enumeration failed, as against finding nothing.
+    failed: bool,
 }
 
 impl Scan {
     fn pads(&mut self) -> &[Pad] {
-        self.pads.get_or_insert_with(discover)
+        if self.pads.is_none() {
+            match pad::discover(pad::Filter::default()) {
+                Ok(pads) => self.pads = Some(pads),
+                Err(error) => {
+                    warn!("enumerating input devices: {error}");
+                    self.failed = true;
+                    self.pads = Some(Vec::new());
+                }
+            }
+        }
+        self.pads.as_deref().unwrap_or_default()
+    }
+
+    fn failed(&self) -> bool {
+        self.failed
     }
 }
 
 fn discover() -> Vec<Pad> {
-    match pad::discover(pad::Filter::default()) {
-        Ok(pads) => pads,
-        Err(error) => {
-            warn!("enumerating input devices: {error}");
-            Vec::new()
-        }
-    }
+    let mut scan = Scan::default();
+    scan.pads().to_vec()
 }
 
 fn to_input_assignment(slot: &Slot) -> assignments::Assignment {
@@ -1874,6 +1885,11 @@ impl Server {
             .map(|slot| slot.pad.path.clone())
             .collect();
         let wanted = self.seating.wanted(scan.pads(), &seated);
+        // An enumeration that failed is not everybody unplugging: acting on it
+        // would drop the holds this rebuild exists to carry.
+        if scan.failed() {
+            return;
+        }
         // Only touch epoll when the set actually changes; the unwatch/rewatch
         // churn otherwise ran every tick for no reason.
         if !self.seating.would_change(&wanted) {
@@ -1928,16 +1944,20 @@ impl Server {
         for (fraction, name, node, player) in filling {
             self.broadcast(&events::progress(fraction, &name, &node, player));
         }
-        for index in claimed.pads {
-            let Some(pad) = self.seating.pads().get(index).cloned() else {
-                continue;
-            };
+        // Resolve to pads before the loop: the refresh after each claim renumbers
+        // the list, so acting by index seats the wrong pad or drops a finished hold.
+        let taking: Vec<Pad> = claimed
+            .pads
+            .iter()
+            .filter_map(|index| self.seating.pads().get(*index).cloned())
+            .collect();
+        for pad in taking {
             let player = padmap_core::announce::next_player(&self.taken_seats());
             if player > self.seating.seats() {
                 info!("{} held a button but every seat is taken", clean(&pad.name));
                 // This pad's hold and no other: the fifth person at the party
                 // must not cancel the fourth person joining.
-                self.seating.forget(index);
+                self.seating.forget(&pad.path);
                 let seats = self.seating.seats();
                 let event = events::full(&clean(&pad.name), pad.event(), seats);
                 self.broadcast(&event);
@@ -1978,7 +1998,7 @@ impl Server {
             self.broadcast(&announced);
             let state = self.state_event();
             self.broadcast(&state);
-            self.seating.reset();
+            // No reset: `tick` dropped this hold, and the refresh carries the rest.
             self.refresh_seating(&mut Scan::default());
         }
     }
