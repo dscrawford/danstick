@@ -1,6 +1,8 @@
 //! SDL's controller database lookup (last resort before guessing from capabilities).
 
+use std::collections::BTreeMap;
 use std::ffi::{c_char, c_void, CStr, CString};
+use std::sync::{Mutex, OnceLock};
 
 /// Sixteen bytes, passed by value.
 #[repr(C)]
@@ -71,6 +73,23 @@ pub fn builtin_mapping(guid: &str) -> Result<Option<String>, ProbeError> {
 
 /// Same answer from a subprocess (spawns `padmap-rs sdl-mapping <guid>`; never errors).
 pub fn isolated(guid: &str) -> Option<String> {
+    // Remembered per GUID: half a second in a subprocess, and the daemon
+    // rewrites every consumer's config on every seat change.
+    static KNOWN: OnceLock<Mutex<BTreeMap<String, Option<String>>>> = OnceLock::new();
+    let known = KNOWN.get_or_init(|| Mutex::new(BTreeMap::new()));
+    if let Ok(cache) = known.lock() {
+        if let Some(found) = cache.get(guid) {
+            return found.clone();
+        }
+    }
+    let line = ask(guid);
+    if let Ok(mut cache) = known.lock() {
+        cache.insert(guid.to_owned(), line.clone());
+    }
+    line
+}
+
+fn ask(guid: &str) -> Option<String> {
     let exe = std::env::current_exe().ok()?;
     let output = std::process::Command::new(exe)
         .args(["sdl-mapping", guid])
@@ -84,9 +103,57 @@ pub fn isolated(guid: &str) -> Option<String> {
     (!line.is_empty()).then_some(line)
 }
 
+/// What SDL calls this GUID's pad, cached per GUID since the lookup shells
+/// out to SDL; None if SDL has never heard of it.
+pub fn name_for(guid: &str) -> Option<String> {
+    isolated(guid).and_then(|line| parsed_name(&line))
+}
+
+/// The second field of an SDL database line: the name SDL reports.
+fn parsed_name(line: &str) -> Option<String> {
+    line.split(',')
+        .nth(1)
+        .map(|name| name.trim().to_owned())
+        .filter(|name| !name.is_empty())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_database_lines_second_field_is_the_name() {
+        assert_eq!(
+            parsed_name("030000004c050000c405000011810000,PS4 Controller,a:b0,platform:Linux,"),
+            Some("PS4 Controller".to_owned())
+        );
+        assert_eq!(
+            parsed_name("guid, spaced ,a:b0,"),
+            Some("spaced".to_owned())
+        );
+    }
+
+    #[test]
+    fn a_line_that_names_nothing_names_nothing() {
+        assert_eq!(parsed_name("justaguidwithnocommas"), None);
+        assert_eq!(
+            parsed_name("guid,,a:b0,"),
+            None,
+            "an empty field is unknown"
+        );
+        assert_eq!(parsed_name("guid,   ,a:b0,"), None);
+        assert_eq!(parsed_name(""), None);
+    }
+
+    #[test]
+    fn a_comma_in_a_name_truncates_it_and_that_is_known() {
+        // SDL writes its own database and has never put a comma in a name;
+        // splitting on commas is what SDL's own parser does too.
+        assert_eq!(
+            parsed_name("guid,Generic Joystick, rev 1.1,a:b0,"),
+            Some("Generic Joystick".to_owned())
+        );
+    }
 
     /// One test, sequential: `SDL_Init`/`SDL_Quit` are process-global and the harness runs tests on threads.
     #[test]

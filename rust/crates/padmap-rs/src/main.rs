@@ -184,8 +184,17 @@ fn cmd_emit(args: &[String]) -> Result<()> {
     let mut body = String::new();
     std::io::Read::read_to_string(&mut std::io::stdin(), &mut body)
         .context("reading the pad list from stdin")?;
-    let pads: Vec<emulators::Published> =
+    let mut pads: Vec<emulators::Published> =
         serde_json::from_str(&body).context("parsing the pad list")?;
+    // `emit` is one-shot, so the subprocess lookup the daemon skips is affordable here.
+    for pad in pads
+        .iter_mut()
+        .filter(|pad| (1..=padmap_core::dolphin::MAX_PLAYERS).contains(&pad.player))
+    {
+        if pad.sdl_name.is_empty() {
+            pad.sdl_name = padmap_input::sdlprobe::name_for(&pad.guid).unwrap_or_default();
+        }
+    }
 
     let destinations = emulators::Destinations {
         cemu_dir: flag_value(args, &["--cemu-dir"]).map(PathBuf::from),
@@ -481,7 +490,7 @@ fn cmd_run() -> Result<()> {
         anyhow::bail!("no pad could be republished");
     }
 
-    if let Err(error) = publish_artefacts(&vpads, assignments::keyboard_seat(&saved)) {
+    if let Err(error) = publish_artefacts(&mut vpads, assignments::keyboard_seat(&saved)) {
         warn!("could not write the mapping files: {error}");
     }
 
@@ -588,13 +597,13 @@ fn cmd_run() -> Result<()> {
     Ok(())
 }
 
-fn publish_artefacts(vpads: &[padmap_input::VirtualPad], keyboard: Option<u32>) -> Result<()> {
+fn publish_artefacts(vpads: &mut [padmap_input::VirtualPad], keyboard: Option<u32>) -> Result<()> {
     let mut sdl_lines = BTreeMap::new();
     let mut profiles_out = BTreeMap::new();
     let mut identities = BTreeMap::new();
     let mut published: Vec<emulators::Published> = Vec::new();
 
-    for vpad in vpads {
+    for vpad in vpads.iter_mut() {
         let identity = Identity {
             bustype: vpad.identity.bustype,
             vendor: vpad.identity.vendor,
@@ -644,6 +653,8 @@ fn publish_artefacts(vpads: &[padmap_input::VirtualPad], keyboard: Option<u32>) 
             keys,
             axes,
             sdl_line: line.clone(),
+            node: vpad.node().unwrap_or_default(),
+            sdl_name: String::new(),
         });
 
         sdl_lines.insert(vpad.player, line);

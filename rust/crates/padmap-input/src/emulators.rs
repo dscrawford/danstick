@@ -21,6 +21,12 @@ pub struct Published {
     /// The pad's line for the SDL database, or empty if it has no mapping.
     #[serde(default)]
     pub sdl_line: String,
+    /// The clone's own `/dev/input/eventN`, which decides its SDL slot.
+    #[serde(default)]
+    pub node: String,
+    /// What SDL calls this clone, when SDL knows the pad behind it.
+    #[serde(default)]
+    pub sdl_name: String,
 }
 
 /// Output paths (None = real location).
@@ -108,10 +114,24 @@ pub fn publish(pads: &[Published], dirs: &Destinations, seat: Option<u32>) -> Wr
         Err(error) => written.skipped.push(("cemu", error.to_string())),
     }
 
+    // Dolphin needs SDL's slot and name here, not padmap's.
+    let nodes: BTreeMap<u32, String> = by_player
+        .iter()
+        .map(|(player, pad)| (*player, pad.node.clone()))
+        .collect();
+    let slots = padmap_core::dolphin::sdl_slots(&nodes);
     match artefacts::write_dolphin_config(
         &players,
         seat,
-        |player| by_player[&player].name.clone(),
+        |player| {
+            let pad = by_player[&player];
+            let name = if pad.sdl_name.is_empty() {
+                &pad.name
+            } else {
+                &pad.sdl_name
+            };
+            padmap_core::dolphin::device(slots.get(&player).copied().unwrap_or(0), name)
+        },
         dirs.dolphin_dir.as_deref(),
     ) {
         Ok(paths) => written.paths.extend(paths),
@@ -192,7 +212,95 @@ mod tests {
             keys: vec![0x130, 0x131, 0x133, 0x134],
             axes: vec![0x00, 0x01, 0x10, 0x11],
             sdl_line: format!("guid{player},padmap Player {player},a:b0,"),
+            node: format!("/dev/input/event{}", 20 + player),
+            sdl_name: String::new(),
         }
+    }
+
+    #[test]
+    fn a_dolphin_port_names_the_pad_the_way_sdl_will() {
+        // SDL identifies the clone by the pad it mirrors, not by padmap's name.
+        let dir = scratch("dolphin-sdl-name");
+        let mut pads = vec![pad(1)];
+        pads[0].sdl_name = "Xbox 360 Controller".to_owned();
+        publish(&pads, &only(&dir), None);
+        let text = std::fs::read_to_string(dir.join("dolphin-emu/GCPadNew.ini")).expect("ini");
+        assert!(
+            text.contains("[GCPad1]\nDevice = SDL/0/Xbox 360 Controller\n"),
+            "{text}"
+        );
+        assert!(!text.contains("padmap Player 1"), "{text}");
+    }
+
+    #[test]
+    fn a_pad_sdl_has_never_heard_of_keeps_the_clones_own_name() {
+        let dir = scratch("dolphin-unknown-pad");
+        let pads = vec![pad(1)];
+        assert!(pads[0].sdl_name.is_empty(), "nothing resolved it");
+        publish(&pads, &only(&dir), None);
+        let text = std::fs::read_to_string(dir.join("dolphin-emu/GCPadNew.ini")).expect("ini");
+        assert!(
+            text.contains("[GCPad1]\nDevice = SDL/0/padmap Player 1\n"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn two_pads_of_one_model_get_a_slot_each() {
+        let dir = scratch("dolphin-two-of-a-kind");
+        let mut pads = vec![pad(1), pad(2)];
+        for entry in &mut pads {
+            entry.sdl_name = "Xbox 360 Controller".to_owned();
+        }
+        publish(&pads, &only(&dir), None);
+        let text = std::fs::read_to_string(dir.join("dolphin-emu/GCPadNew.ini")).expect("ini");
+        assert!(
+            text.contains("[GCPad1]\nDevice = SDL/0/Xbox 360 Controller\n"),
+            "{text}"
+        );
+        assert!(
+            text.contains("[GCPad2]\nDevice = SDL/1/Xbox 360 Controller\n"),
+            "one name and one slot is one port for two pads:\n{text}"
+        );
+    }
+
+    #[test]
+    fn a_pad_list_written_before_these_fields_existed_still_reads() {
+        // GOTG's `emit` payload predates `node` and `sdl_name`; both default
+        // to empty rather than failing the whole list to parse.
+        let old = r#"{
+            "player": 1,
+            "guid": "03000000000000000100000001000000",
+            "name": "padmap Player 1",
+            "keys": [304],
+            "axes": [0],
+            "sdl_line": "03000000000000000100000001000000,padmap Player 1,a:b0,"
+        }"#;
+        let pad: Published = serde_json::from_str(old).expect("the old shape still parses");
+        assert_eq!(pad.node, "");
+        assert_eq!(pad.sdl_name, "");
+    }
+
+    #[test]
+    fn two_pads_of_one_model_whose_nodes_are_unknown_still_get_a_port_each() {
+        // The old shape above, twice: without a node there is nothing to rank
+        // by, and one slot for two pads is one port for both.
+        let dir = scratch("dolphin-no-nodes");
+        let mut pads = vec![pad(1), pad(2)];
+        for entry in &mut pads {
+            entry.node = String::new();
+            entry.sdl_name = "Xbox 360 Controller".to_owned();
+        }
+        publish(&pads, &only(&dir), None);
+        let text = std::fs::read_to_string(dir.join("dolphin-emu/GCPadNew.ini")).expect("ini");
+        assert!(
+            text.contains("[GCPad1]\nDevice = SDL/0/Xbox 360 Controller\n"),
+            "{text}"
+        );
+        assert!(
+            text.contains("[GCPad2]\nDevice = SDL/1/Xbox 360 Controller\n"),
+            "both ports claimed one controller:\n{text}"
+        );
     }
 
     fn only(dir: &Path) -> Destinations {
