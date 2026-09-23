@@ -3354,3 +3354,40 @@ pad with no stored mapping, on every rewrite, at half a second a call -- and
 `dolphin::device` still strips control characters, since the name arrives in a
 caller's JSON and a newline in it would close the port's section and bind
 everything under it somewhere else.
+
+## Remembering what a player's files said, and what that nearly threw away
+
+A join used to work out every *seated* player's files again -- opening each pad
+to read its capabilities and asking SDL about its GUID in a half-second
+subprocess -- because `write_all` derives the whole roster from the slots it is
+given. Measured on four pads: claim-to-`state` grew about 50 ms a seat on top of
+the clone rebuild that was the other half. So `publish::Cache` keeps each
+player's derived profile text, SDL line and `Published` record, and only the
+join path reuses it; everything else clears it first.
+
+**The rule "everything else clears it" was not true, and the way it was untrue
+is the finding.** `finish_mapping` stores a capture and broadcasts events; it
+does not rewrite any consumer's config. Neither does `forget_pad`. Nor can it:
+`padmap map` from a terminal is a different process writing the same profile
+store. So before the cache, the *only* thing that ever carried a fresh capture
+into the SDL database and the emulators' configs was the incidental
+re-derivation on the next rewrite -- a join, a seat leaving, anything. Cache
+that derivation by roster identity alone and the capture is silently dropped:
+the wizard says stored, the file on disk has the bindings, and the next person
+to sit down writes the guess made before it.
+
+The fingerprint therefore includes the profile store's *contents*, not just the
+pad's signature. That is one small file read next to an `open_source` and a
+subprocess, and it is the only form that also covers the other process.
+
+Two more from the same reading. A derivation made when `pad_facts` could not
+open the pad has no keys, no axes and no mapping; cached, it would be served
+for the rest of the session, where before the next join healed it -- so an
+unsound one is not kept. And the identity was `vid:pid:name`, which two units
+of one model share; it carries `phys` and `uniq` now, since a cache entry
+standing in for a different physical pad is the failure this shape invites.
+
+**Worth generalising.** Memoising anything derived from a file that another
+process writes needs the file in the key, not the identity of the thing it
+describes. The tell here was that no code path connected the writer to the
+reader -- which had been survivable only because the reader recomputed so often.

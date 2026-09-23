@@ -201,9 +201,12 @@ nodes, new SDL instance ids, so a game mid-read saw all its controllers
 disappear: a dead fd for an emulator that does not reopen, a reshuffled port
 order for one that does. A seat now adds its own clone and leaves the rest at
 the same device and node (`join_republisher`,
-`a_join_leaves_the_players_already_in_the_game_plugged_in`). A joiner still
-reaches nothing *inside a launch*, because `exec` binds `/dev/input` as a
-tmpfs fixed at launch and a clone made later is not in it —
+`a_join_leaves_the_players_already_in_the_game_plugged_in`). Nor does a seat cost more the fuller the
+room: what a seated player's files say cannot change because somebody else sat
+down, so a join writes them rather than working them out again
+(`publish::Cache`, `a_join_does_not_work_the_rest_of_the_room_out_again`). A
+joiner still reaches nothing *inside a launch*, because `exec` binds
+`/dev/input` as a tmpfs fixed at launch and a clone made later is not in it —
 `docs/requests/a-join-keeps-everybody-elses-clone.md` is open on that.
 
 ## S4 — Holding again confirms, and accepts

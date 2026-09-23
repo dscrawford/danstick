@@ -263,16 +263,131 @@ pub struct Written {
     pub sdl_lines: Vec<String>,
 }
 
+/// What one player's files were written from, and what they came out as.
+#[derive(Debug, Clone)]
+struct Derived {
+    from: Source,
+    /// Whether the pad's capabilities could be read; a guess made without them
+    /// is not worth keeping, since the next join would otherwise repeat it.
+    sound: bool,
+    profile: String,
+    line: String,
+    note: Option<String>,
+    published: emulators::Published,
+}
+
+/// Everything a player's files depend on, so a stale one is never reused.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Source {
+    signature: String,
+    /// The stored profile as it was. A capture or a `forget` rewrites this file
+    /// and nothing else tells the daemon, not even when the CLI did it.
+    profile: Option<String>,
+    identity: Identity,
+    xbox: bool,
+    scope: (String, String, String),
+}
+
+/// Each player's files as last written, so a join never works the rest of the room out again.
+#[derive(Debug, Default)]
+pub struct Cache {
+    players: BTreeMap<u32, Derived>,
+}
+
+impl Cache {
+    /// Forget every player's cached files; only a join may reuse them unchanged.
+    pub fn clear(&mut self) {
+        self.players.clear();
+    }
+}
+
+/// Work one player's files out from scratch: reading the pad's capabilities and
+/// asking SDL about its GUID, which is most of what writing them costs.
+fn derive(
+    slot: &Slot,
+    identity: Identity,
+    from: Source,
+    xbox: bool,
+    console: &str,
+    game: &str,
+    context: &str,
+) -> Derived {
+    info!("player {}: working out its files", slot.player);
+    let profile = if xbox {
+        emit::retroarch_profile(
+            slot.player,
+            identity,
+            &padmap_core::xbox::bindings(),
+            "",
+            padmap_core::layout::default_id(),
+            "",
+            context,
+        )
+    } else {
+        profile_text(&slot.pad, slot.player, identity, console, game, context)
+    };
+    let facts = if xbox {
+        xbox_facts()
+    } else {
+        pad_facts(&slot.pad)
+    };
+    let stored = if xbox {
+        sdl_line_for(
+            slot.player,
+            identity,
+            &padmap_core::xbox::bindings(),
+            &facts,
+        )
+    } else {
+        stored_sdl_line(slot.player, &slot.pad, identity, &facts)
+    };
+    let (line, note) = if stored.is_empty() {
+        match fallback_line_for(slot.player, identity, &facts) {
+            Some((line, note)) => {
+                info!("player {}: no capture yet, SDL mapping {note}", slot.player);
+                (line, Some(note))
+            }
+            None => (String::new(), None),
+        }
+    } else {
+        (stored, None)
+    };
+    let published = emulators::Published {
+        player: slot.player,
+        guid: emit::virtual_guid(slot.player, identity),
+        name: emit::virtual_name(slot.player),
+        keys: facts.keys.clone(),
+        axes: facts.axes.clone(),
+        sdl_line: line.clone(),
+    };
+    Derived {
+        from,
+        sound: xbox || !facts.keys.is_empty(),
+        profile,
+        line,
+        note,
+        published,
+    }
+}
+
+/// Where a launch's two files go.
+#[derive(Debug, Clone, Copy)]
+pub struct Launch<'a> {
+    pub config: &'a Path,
+    pub args: &'a Path,
+}
+
 /// Write every file the roster implies.
 pub fn write_all(
     slots: &[Slot],
     virtual_paths: &BTreeMap<u32, String>,
     mode: IdentityMode,
-    launch_config_path: &Path,
-    launch_args_path: &Path,
+    launch: Launch<'_>,
     last: Option<&runtime::Game>,
     keyboard: Option<u32>,
+    cache: &mut Cache,
 ) -> Written {
+    let (launch_config_path, launch_args_path) = (launch.config, launch.args);
     let console = last.map(|game| game.console.as_str()).unwrap_or("");
     let game = last.map(|game| game.key.as_str()).unwrap_or("");
     let context = last.map(|game| game.title.as_str()).unwrap_or("");
@@ -285,31 +400,38 @@ pub fn write_all(
     // Under the 360 identity every consumer describes the clone's layout,
     // which is the same for every pad, rather than the pad behind it.
     let xbox = mode == IdentityMode::Xbox360;
-    let profiles_out: BTreeMap<u32, String> = slots
+    let scope = (console.to_owned(), game.to_owned(), context.to_owned());
+    let mut previous = std::mem::take(&mut cache.players);
+    let derived: BTreeMap<u32, Derived> = slots
         .iter()
         .map(|slot| {
-            let text = if xbox {
-                emit::retroarch_profile(
-                    slot.player,
-                    identities[&slot.player],
-                    &padmap_core::xbox::bindings(),
-                    "",
-                    padmap_core::layout::default_id(),
-                    "",
-                    context,
-                )
-            } else {
-                profile_text(
-                    &slot.pad,
-                    slot.player,
-                    identities[&slot.player],
-                    console,
-                    game,
-                    context,
-                )
+            let identity = identities[&slot.player];
+            let from = Source {
+                signature: format!(
+                    "{}|{}|{}",
+                    profiles::signature_of(&slot.pad),
+                    slot.pad.phys,
+                    slot.pad.uniq
+                ),
+                profile: std::fs::read_to_string(profiles::path_for(&slot.pad, None)).ok(),
+                identity,
+                xbox,
+                scope: scope.clone(),
             };
-            (slot.player, text)
+            if let Some(kept) = previous.remove(&slot.player) {
+                if kept.from == from {
+                    return (slot.player, kept);
+                }
+            }
+            (
+                slot.player,
+                derive(slot, identity, from, xbox, console, game, context),
+            )
         })
+        .collect();
+    let profiles_out: BTreeMap<u32, String> = derived
+        .iter()
+        .map(|(player, one)| (*player, one.profile.clone()))
         .collect();
     match artefacts::write_autoconfig(&profiles_out, None) {
         Ok(written) => info!("wrote {} autoconfig profile(s)", written.len()),
@@ -345,37 +467,16 @@ pub fn write_all(
     let mut notes: BTreeMap<u32, String> = BTreeMap::new();
     let mut published: Vec<emulators::Published> = Vec::new();
     for slot in slots {
-        let facts = if xbox {
-            xbox_facts()
-        } else {
-            pad_facts(&slot.pad)
+        let Some(one) = derived.get(&slot.player) else {
+            continue;
         };
-        let identity = identities[&slot.player];
-        let line = if xbox {
-            sdl_line_for(
-                slot.player,
-                identity,
-                &padmap_core::xbox::bindings(),
-                &facts,
-            )
-        } else {
-            stored_sdl_line(slot.player, &slot.pad, identity, &facts)
-        };
-        if !line.is_empty() {
-            lines.insert(slot.player, line);
-        } else if let Some((line, note)) = fallback_line_for(slot.player, identity, &facts) {
-            info!("player {}: no capture yet, SDL mapping {note}", slot.player);
-            lines.insert(slot.player, line);
-            notes.insert(slot.player, note);
+        if !one.line.is_empty() {
+            lines.insert(slot.player, one.line.clone());
         }
-        published.push(emulators::Published {
-            player: slot.player,
-            guid: emit::virtual_guid(slot.player, identity),
-            name: emit::virtual_name(slot.player),
-            keys: facts.keys.clone(),
-            axes: facts.axes.clone(),
-            sdl_line: lines.get(&slot.player).cloned().unwrap_or_default(),
-        });
+        if let Some(note) = one.note.as_ref() {
+            notes.insert(slot.player, note.clone());
+        }
+        published.push(one.published.clone());
     }
     let fallback = Identity {
         bustype: 0x06,
@@ -397,6 +498,9 @@ pub fn write_all(
         info!("{target}: not written ({why})");
     }
 
+    // A player whose pad could not be read is left out, so the next join has
+    // another go rather than keeping a mapping guessed from nothing.
+    cache.players = derived.into_iter().filter(|(_, one)| one.sound).collect();
     Written {
         sdl_lines: lines.into_values().collect(),
     }
@@ -564,4 +668,50 @@ pub fn mapped_layouts(pad: &Pad) -> std::collections::BTreeSet<String> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn source(profile: Option<&str>) -> Source {
+        Source {
+            signature: "1209:0001:Pad|phys|uniq".to_owned(),
+            profile: profile.map(str::to_owned),
+            identity: Identity {
+                bustype: 0x06,
+                vendor: 0x1209,
+                product: 0x0001,
+                version: 1,
+            },
+            xbox: false,
+            scope: (String::new(), String::new(), String::new()),
+        }
+    }
+
+    #[test]
+    fn a_profile_stored_or_forgotten_is_a_different_answer() {
+        // Nothing tells the daemon when the wizard stores one or `forget_pad`
+        // removes it, and the CLI writes the same file from another process --
+        // so the file's contents are what says whether a cached answer stands.
+        let none = source(None);
+        let stored = source(Some(r#"{"mappings":{"":{"buttons":{"a":{}}}}}"#));
+        let other = source(Some(r#"{"mappings":{"":{"buttons":{"b":{}}}}}"#));
+        assert_ne!(none, stored, "a capture was reused past");
+        assert_ne!(stored, none, "a forget was reused past");
+        assert_ne!(stored, other, "a remap was reused past");
+        assert_eq!(
+            stored,
+            source(Some(r#"{"mappings":{"":{"buttons":{"a":{}}}}}"#))
+        );
+    }
+
+    #[test]
+    fn two_units_of_one_model_are_not_one_answer() {
+        let mut one = source(None);
+        let mut two = source(None);
+        one.signature = "1209:0001:Pad|usb-0000:00:14.0-1|".to_owned();
+        two.signature = "1209:0001:Pad|usb-0000:00:14.0-2|".to_owned();
+        assert_ne!(one, two, "one pad's files stood in for another's");
+    }
 }

@@ -126,6 +126,8 @@ pub struct Server {
     scratch: Vec<evdev::InputEvent>,
     pending_scope: String,
     sdl_lines: Vec<String>,
+    /// Each player's files as last written, reused only when somebody joins.
+    publish_cache: publish::Cache,
     mode: IdentityMode,
 
     prompted: BTreeSet<String>,
@@ -258,6 +260,7 @@ impl Server {
             scratch: Vec::with_capacity(64),
             pending_scope: String::new(),
             sdl_lines: Vec::new(),
+            publish_cache: publish::Cache::default(),
             mode: IdentityMode::from_env(),
             prompted,
             prompted_stamp,
@@ -2238,14 +2241,20 @@ impl Server {
     /// Republish one newly seated player, leaving every clone already open at the
     /// same device and node, since a game mid-read cannot follow them moving.
     fn join_republisher(&mut self, player: u32) -> Result<(), clone::CloneError> {
+        // The first seat has nothing to add to.
+        if self.republisher.is_none() {
+            return self.start_republisher();
+        }
         let already = self
             .republisher
             .as_ref()
             .is_some_and(|republisher| republisher.pads.iter().any(|pad| pad.player == player));
-        // A rebuild is the safe answer to both: nothing to add to, or a player
-        // that would end up with two clones.
-        if self.republisher.is_none() || already {
-            return self.start_republisher();
+        // Already republished: rewrite the roster's files, but never rebuild --
+        // a second clone is wrong and a rebuild is the thing this avoids.
+        if already {
+            let virtual_paths = self.virtual_paths();
+            self.rewrite_consumers_reusing(&virtual_paths);
+            return Ok(());
         }
         let Some(slot) = self
             .slots_assigned
@@ -2289,7 +2298,7 @@ impl Server {
         }
         self.sync_republish_pause();
         let virtual_paths = self.virtual_paths();
-        self.rewrite_consumers(&virtual_paths);
+        self.rewrite_consumers_reusing(&virtual_paths);
         info!(
             "player {player} joined; {} pad(s) republished, the rest untouched",
             self.slots_assigned.len()
@@ -2385,16 +2394,28 @@ impl Server {
 
     /// Write every consumer's config for the seats as they are now -- with no
     /// seats, that is a launch config naming nobody, not yesterday's roster.
+    ///
+    /// Everything a player's files were worked out from is thrown away first,
+    /// since anything but a join may have changed it.
     fn rewrite_consumers(&mut self, virtual_paths: &BTreeMap<u32, String>) {
+        self.publish_cache.clear();
+        self.rewrite_consumers_reusing(virtual_paths);
+    }
+
+    /// The same for a join, which changes nothing about anybody already seated.
+    fn rewrite_consumers_reusing(&mut self, virtual_paths: &BTreeMap<u32, String>) {
         let last = runtime::read_recent_games().into_iter().next();
         let written = publish::write_all(
             &self.slots_assigned,
             virtual_paths,
             self.mode,
-            &self.launch_config_path,
-            &self.launch_args_path,
+            publish::Launch {
+                config: &self.launch_config_path,
+                args: &self.launch_args_path,
+            },
             last.as_ref(),
             self.keyboard_seat,
+            &mut self.publish_cache,
         );
         self.sdl_lines = written.sdl_lines;
         let lines = events::sdl_mapping(&self.sdl_lines);

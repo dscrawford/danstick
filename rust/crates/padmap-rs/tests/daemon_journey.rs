@@ -1258,6 +1258,190 @@ fn one_person_taking_a_seat_leaves_the_next_person_still_holding() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// Two for a capture that must survive somebody else joining.
+const KEEP_FIRST: PadId = PadId {
+    name: "PADMAP RSTESTKEEP one",
+    pid: 0x0034,
+    only: "RSTESTKEEP",
+};
+const KEEP_SECOND: PadId = PadId {
+    name: "PADMAP RSTESTKEEP two",
+    pid: 0x0035,
+    only: "RSTESTKEEP",
+};
+
+/// A room of four, for a join that must not cost more the fuller the room.
+const ROOM: [PadId; 4] = [
+    PadId {
+        name: "PADMAP RSTESTROOM one",
+        pid: 0x0030,
+        only: "RSTESTROOM",
+    },
+    PadId {
+        name: "PADMAP RSTESTROOM two",
+        pid: 0x0031,
+        only: "RSTESTROOM",
+    },
+    PadId {
+        name: "PADMAP RSTESTROOM three",
+        pid: 0x0032,
+        only: "RSTESTROOM",
+    },
+    PadId {
+        name: "PADMAP RSTESTROOM four",
+        pid: 0x0033,
+        only: "RSTESTROOM",
+    },
+];
+
+/// Every join used to work out every seated player's files again, so a seat cost
+/// more the fuller the room, and the fourth person waited longest to see their own.
+#[test]
+fn a_join_does_not_work_the_rest_of_the_room_out_again() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let _guards: Vec<LiveGuard> = ROOM.iter().map(|id| LiveGuard::new(*id)).collect();
+    let root = std::env::temp_dir().join(format!("padmap-room-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let mut pads: Vec<TestPad> = ROOM.iter().map(|id| TestPad::new(*id)).collect();
+    let mut daemon = Daemon::start_logging(&root, ROOM[0]);
+    daemon.wait_for("state", |_| true, 5.0).expect("a greeting");
+    daemon.pump(2.5);
+    daemon.send(serde_json::json!({"cmd": "seating", "open": true, "players": 4}));
+
+    for (index, pad) in pads.iter_mut().enumerate() {
+        seat_by_holding(&mut daemon, pad, ROOM[index].name);
+        daemon
+            .wait_for("state", |event| event["state"] == "ready", 10.0)
+            .expect("ready after a seat was taken");
+        daemon.pump(0.4);
+    }
+
+    // Counted rather than timed: how long a loaded machine takes is not the
+    // promise, that it does each player's once is.
+    for player in 1..=4 {
+        let times = worked_out(&root, player);
+        assert_eq!(
+            times, 1,
+            "player {player}'s files were worked out {times} times, once per join after it"
+        );
+    }
+
+    drop(daemon);
+    drop(pads);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Caching what a player's files were worked out from has to notice a capture:
+/// nothing rewrites the consumers when the wizard stores one, so the next join
+/// would otherwise write the guess it made before.
+#[test]
+fn a_capture_is_not_lost_when_the_next_person_joins() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let _first = LiveGuard::new(KEEP_FIRST);
+    let _second = LiveGuard::new(KEEP_SECOND);
+    let root = std::env::temp_dir().join(format!("padmap-keep-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let mut one = TestPad::new(KEEP_FIRST);
+    let mut two = TestPad::new(KEEP_SECOND);
+    let mut daemon = Daemon::start_logging(&root, KEEP_FIRST);
+    daemon.wait_for("state", |_| true, 5.0).expect("a greeting");
+    daemon.pump(2.5);
+    daemon.send(serde_json::json!({"cmd": "seating", "open": true, "players": 4}));
+    daemon.events.clear();
+    daemon.hold_until_claimed(&mut one, |event| event["name"] == KEEP_FIRST.name);
+    daemon
+        .wait_for("state", |event| event["state"] == "ready", 10.0)
+        .expect("ready after the first seat");
+    daemon.pump(0.6);
+
+    // A mapping stored for player one. Written straight to the profile store
+    // because `padmap map` from a terminal is another process: nothing tells
+    // the daemon, and nothing rewrites the consumers either way.
+    let before = worked_out(&root, 1);
+    let stored = serde_json::json!({
+        "signature": format!("1209:{:04x}:{}", KEEP_FIRST.pid, KEEP_FIRST.name),
+        "name": KEEP_FIRST.name,
+        "mappings": {"": {"layout": "snes", "buttons": {"a": {"kind": "button", "index": 4}}}}
+    });
+    std::fs::write(
+        root.join("devices").join(profile_filename(KEEP_FIRST)),
+        serde_json::to_string_pretty(&stored).expect("json"),
+    )
+    .expect("store a mapping");
+
+    // Somebody else joins. Player one's files have to be written from the
+    // capture, which means working them out again rather than reusing.
+    daemon.events.clear();
+    daemon.hold_until_claimed(&mut two, |event| event["name"] == KEEP_SECOND.name);
+    daemon
+        .wait_for("state", |event| event["state"] == "ready", 10.0)
+        .expect("ready after the second seat");
+    daemon.pump(0.8);
+    assert!(
+        worked_out(&root, 1) > before,
+        "the join reused what player one's files said before its capture"
+    );
+
+    drop(daemon);
+    drop(one);
+    drop(two);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Hold a button down until this pad takes a seat, rather than in pulses: four
+/// pads at once is the heaviest journey here and a fixed pulse is this machine's
+/// load rather than a promise. The buffer is cleared first, since an earlier
+/// seat's claim would otherwise answer for this one.
+fn seat_by_holding(daemon: &mut Daemon, pad: &mut TestPad, name: &'static str) {
+    for attempt in 0..5 {
+        daemon.events.clear();
+        pad.emit(EventType::KEY.0, FIRST_KEY, 1);
+        let claimed = daemon
+            .wait_for("claim", |event| event["name"] == name, 5.0)
+            .is_some();
+        pad.emit(EventType::KEY.0, FIRST_KEY, 0);
+        if claimed {
+            return;
+        }
+        eprintln!("attempt {attempt}: {name} claimed nothing; holding again");
+        daemon.pump(0.8);
+    }
+    panic!("{name} never took a seat");
+}
+
+/// The profile store's filename for a pad, as `padmap-core::profile` makes it.
+fn profile_filename(id: PadId) -> String {
+    let signature = format!("{PAD_VID:04x}:{:04x}:{}", id.pid, id.name);
+    let mut out = String::new();
+    let mut in_run = false;
+    for character in signature.chars() {
+        if character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | '-') {
+            out.push(character);
+            in_run = false;
+        } else if !in_run {
+            out.push('_');
+            in_run = true;
+        }
+    }
+    format!("{}.json", out.chars().take(120).collect::<String>())
+}
+
+/// How many times the daemon worked this player's files out from scratch.
+fn worked_out(root: &Path, player: u32) -> usize {
+    let log = std::fs::read_to_string(root.join("daemon.log")).unwrap_or_default();
+    log.lines()
+        .filter(|line| line.contains(&format!("player {player}: working out its files")))
+        .count()
+}
+
 /// Joining mid-game used to tear down every clone and make them again, so the
 /// people already playing had their controllers unplugged under them.
 #[test]
@@ -1281,6 +1465,7 @@ fn a_join_leaves_the_players_already_in_the_game_plugged_in() {
 
     // Player one sits down and is republished: one clone, made once. Held until
     // it takes rather than once, since a pad grabbed on arrival is read late.
+    daemon.events.clear();
     daemon.hold_until_claimed(&mut one, |event| event["name"] == JOIN_FIRST.name);
     daemon
         .wait_for("state", |event| event["state"] == "ready", 5.0)
@@ -1290,6 +1475,7 @@ fn a_join_leaves_the_players_already_in_the_game_plugged_in() {
     assert_eq!(clones_before.len(), 1, "{clones_before:?}");
 
     // Player two joins while player one is playing.
+    daemon.events.clear();
     daemon.hold_until_claimed(&mut two, |event| event["name"] == JOIN_SECOND.name);
     daemon.pump(1.0);
 
