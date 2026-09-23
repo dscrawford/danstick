@@ -67,23 +67,17 @@ the opposite of ares.
 
 Two things have to be right, and neither is the bindings:
 
-* **The device line**, `SDL/<slot>/<name>`, and **both halves have to be what
-  SDL will say**. A binding naming a device Dolphin cannot see is silently
-  inert: the file is complete, the pad is seated and forwarding, and the game
-  does not move.
+* **The device line**, `SDL/<n>/<name>`, where `n` counts devices already
+  sharing that *name*. Every padmap pad is named for its player, so `n` is
+  always 0 -- simpler than counting devices that share a GUID, which is what
+  binding physical pads requires. A binding naming a device Dolphin cannot see
+  is silently inert.
 
-  The *name* is not the clone's. A clone mirrors the pad behind it, so SDL
-  finds that pad in its own database and reports it as, say,
-  `Xbox 360 Controller`; the name the clone was made with is gone by the time
-  anything can read it. `padmap-rs emit` therefore asks SDL what the clone is
-  called (`sdlprobe::name_for`, by GUID) and writes that. For a pad SDL has
-  never heard of the two are the same string and nothing changes.
-
-  The *slot* is the clone's rank in `/dev/input` order among the clones, since
-  a launch sees padmap's pads and nothing else (`isolate`). It used to be
-  hard-coded to 0 on the grounds that each pad is named for its player -- which
-  stops being true the moment the name comes from SDL, because two pads of one
-  model then share it and only the slot tells them apart.
+  The name is the *clone's*, `padmap Player N`, not what SDL's database calls
+  the pad behind it. Measured against Dolphin's own controller log
+  (`[Logs] CI = True` in `Logger.ini`), which lists `SDL/0/padmap Player 1`
+  and `SDL/0/padmap Player 2` beside the grabbed raw pad. A tool that reports
+  SDL's *joystick* name is not the oracle here: Dolphin does not use it.
 * **The port's device type.** `SIDevice0..3` in `Dolphin.ini`, and a port with
   no controller declared in it is ignored however well its pad is bound. Note
   `SIDeviceN` is zero-based where `[GCPadN]` is one-based.

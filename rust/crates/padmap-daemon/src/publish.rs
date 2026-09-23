@@ -375,10 +375,6 @@ pub fn write_all(
             keys: facts.keys.clone(),
             axes: facts.axes.clone(),
             sdl_line: lines.get(&slot.player).cloned().unwrap_or_default(),
-            node: virtual_paths.get(&slot.player).cloned().unwrap_or_default(),
-            // Left for `emit` to fill: asking SDL is half a second in a
-            // subprocess, and this runs on every seat change.
-            sdl_name: String::new(),
         });
     }
     let fallback = Identity {

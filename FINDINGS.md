@@ -3317,56 +3317,40 @@ None of the three was found by a failing test -- they were found by reading the
 diff against what each file assumed. All three have one now, and each fails
 without its fix.
 
-## Dolphin's ports named a clone the way the kernel does, and Dolphin never heard it
+## A Dolphin port was renamed to please a tool that Dolphin does not consult
 
-`emit --dolphin-dir` wrote `Device = SDL/0/padmap Player 1`. Dolphin stores a
-controller as `<backend>/<slot>/<name>` and looks it up by that whole string,
-and SDL does not call the clone `padmap Player 1`: a clone *mirrors* the pad
-behind it, so SDL finds 045e:028e in its own database and reports
-`Xbox 360 Controller`. The port was bound to a device id nothing answered to.
+`e7a79e1` changed `emit --dolphin-dir` to write `Device = SDL/0/Xbox 360
+Controller` instead of `SDL/0/padmap Player 1`, on the reasoning that a clone
+mirrors the pad behind it, so SDL finds that pad in its own database and reports
+the model. That reasoning is right about SDL's *joystick* name and wrong about
+Dolphin, which names a device by the clone. Every player one was then bound to a
+device that sends nothing: the file complete, the pad seated and forwarding, and
+the game still.
 
-Nothing said so. The file was complete, the pad was seated and forwarding, and
-the game did not move -- which is the worst shape a bug can take here, because
-every visible thing is correct. Measured on Four Swords Adventures with one
-Xbox pad seated: `GBA.ini`, written from a live SDL enumeration, worked;
-`GCPadNew.ini`, written by `emit`, had no controls.
+The measurement that settles it is Dolphin's own controller log (`[Logs] CI =
+True` in `Logger.ini`), on Four Swords Adventures with an Xbox pad and a Steam
+Controller seated:
 
-The clone's GUID keeps the name-CRC of `padmap Player 1`, which is how SDL
-matches it -- the GUID is right and only the *name* is wrong. So padmap can
-ask: `sdlprobe::name_for(guid)` reads the name out of SDL's own database line.
+```
+Added device: SDL/0/Xbox 360 Controller     <- the raw pad, grabbed by padmap
+Added device: SDL/0/padmap Player 1         <- its clone
+Added device: SDL/0/padmap Player 2         <- the Steam Controller's clone
+```
 
-**Where the asking happens is the whole design.** The obvious place is where
-the file is written, and that is wrong: `isolated()` is a subprocess and it
-measures at half a second. Put in the daemon's rewrite path -- which runs on
-every seat change -- it reproducibly broke a journey that expects a keyboard
-released within a second of `unseat`, and a cache did not save it, because the
-first call still lands on a tick that has something to do. It is in `cmd_emit`
-now, a one-shot command with nothing else to answer, and `Published.sdl_name`
-carries the answer as data. The daemon leaves it empty and writes exactly what
-it always did.
+Both clones are slot 0, which is the other half of the answer: the slot counts
+devices already sharing a *name*, so while every pad is named for its player it
+is always 0. `dolphin::sdl_slots`, which ranked clones by `/dev/input` order,
+was solving a collision that only the wrong name created.
 
-**Which leaves a gap worth knowing.** A launcher that passes `--dolphin-dir`
-gets the right name; the daemon's own rewrite of the *default* config does
-not, so a seat change puts `padmap Player N` back there. GOTG launches
-through `--dolphin-dir` and is answered. Closing it properly means resolving
-the name once when the clone is made rather than when the file is written,
-which is plumbing nobody has needed yet.
+**The generalisable part is the oracle, not the string.** The original evidence
+was `gotg-pads`, which enumerates SDL and does report the model -- so it agreed
+with the change and disagreed with the consumer. Both readings were of SDL; only
+one was of Dolphin. A binding whose failure mode is silence has to be checked
+against the program that reads it, and Dolphin will say what it heard if asked.
 
-The same measurement caught something older on the same path: `carried()`
-asks `sdlprobe::isolated` for any pad with no stored mapping, uncached, on
-every rewrite. `isolated` remembers per GUID now.
-
-The slot was the second half and only became wrong once the name was right:
-`SDL/0/` was fine while every pad was named for its player, and two pads of
-one model now share a name, so only the slot tells them apart.
-`dolphin::sdl_slots` ranks each clone by its node in `/dev/input` order, which
-is what SDL numbers inside a launch's sandbox, where padmap's pads are the
-only pads.
-
-**Worth generalising.** `dolphin::sections` took a closure returning a name and
-now takes one returning the whole device string. Both are `Fn(u32) -> String`,
-so every caller still compiled and three tests silently asserted a line with
-no `SDL/0/` prefix at all. A signature whose *type* did not change but whose
-*meaning* did is a rename waiting to be skipped; the parameter is `device_for`
-rather than `name_for` now, which is the only thing that would have caught it
-by eye.
+Two things from that commit are kept, because neither is about the name:
+`sdlprobe::isolated` still remembers per GUID -- `carried()` asks it for every
+pad with no stored mapping, on every rewrite, at half a second a call -- and
+`dolphin::device` still strips control characters, since the name arrives in a
+caller's JSON and a newline in it would close the port's section and bind
+everything under it somewhere else.

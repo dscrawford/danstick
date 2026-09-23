@@ -1,7 +1,5 @@
 //! Dolphin GameCube pad bindings via SDL backend.
 
-use std::collections::BTreeMap;
-
 /// Unmanaged ports emptied to avoid phantom controllers from prior sessions.
 pub const SI_GC_CONTROLLER: u32 = 6;
 pub const SI_NONE: u32 = 0;
@@ -94,36 +92,11 @@ pub fn keyboard_port(players: &[u32], seat: Option<u32>) -> Option<u32> {
     crate::keyboard::port(seat, players, MAX_PLAYERS)
 }
 
-/// A controller id, `<backend>/<slot>/<name>`, exactly as SDL would say it.
-///
-/// One line: a name arrives from a caller's JSON and a newline in it would
-/// close the section and open whatever came next.
-pub fn device(slot: u32, name: &str) -> String {
+/// Slot always 0 (it counts devices sharing a name; padmap pads are unique per
+/// player), on one line so a name cannot close the section it is written into.
+pub fn device(name: &str) -> String {
     let name: String = name.chars().filter(|c| !c.is_control()).collect();
-    format!("SDL/{slot}/{}", name.trim())
-}
-
-/// Each player's SDL slot: the rank of its clone's node among the clones'.
-///
-/// A slot of its own for every player, node or no node: two pads of one model
-/// share a name, so a repeated slot is two ports claiming one controller.
-pub fn sdl_slots(nodes: &BTreeMap<u32, String>) -> BTreeMap<u32, u32> {
-    let mut order: Vec<(u32, Option<u64>)> = nodes
-        .iter()
-        .map(|(player, node)| (*player, event_number(node)))
-        .collect();
-    // Unreadable nodes last, in player order, which is the order clones are made.
-    order.sort_by_key(|(player, number)| (number.is_none(), *number, *player));
-    order
-        .iter()
-        .enumerate()
-        .map(|(slot, (player, _))| (*player, slot as u32))
-        .collect()
-}
-
-/// The number in `/dev/input/event12`, for ordering.
-fn event_number(node: &str) -> Option<u64> {
-    node.rsplit('/').next()?.strip_prefix("event")?.parse().ok()
+    format!("SDL/0/{}", name.trim())
 }
 
 /// One `[GCPadN]` section, ending in a newline.
@@ -136,7 +109,7 @@ pub fn section(port: u32, device_line: &str) -> String {
 }
 
 /// Every managed port's section, in player order.
-pub fn sections(players: &[u32], seat: Option<u32>, device_for: impl Fn(u32) -> String) -> String {
+pub fn sections(players: &[u32], seat: Option<u32>, name_for: impl Fn(u32) -> String) -> String {
     let mut sorted: Vec<u32> = players
         .iter()
         .copied()
@@ -148,7 +121,7 @@ pub fn sections(players: &[u32], seat: Option<u32>, device_for: impl Fn(u32) -> 
     (1..=MAX_PLAYERS)
         .filter_map(|port| {
             if sorted.contains(&port) {
-                Some(section(port, &device_for(port)))
+                Some(section(port, &device(&name_for(port))))
             } else if keyboard == Some(port) {
                 Some(keyboard_section(port))
             } else {
@@ -330,123 +303,28 @@ mod tests {
     }
 
     #[test]
+    fn a_padmap_pad_is_always_slot_zero() {
+        assert_eq!(device("padmap Player 3"), "SDL/0/padmap Player 3");
+    }
+
+    #[test]
     fn a_name_cannot_close_the_section_it_is_written_into() {
         // The name comes from a caller's JSON; a newline in it would end the
         // port's section and everything under it would bind somewhere else.
-        let forged = device(0, "X\n[GCPad2]\nDevice = SDL/0/X");
-        assert!(!forged.contains('\n'), "{forged}");
+        let forged = device("X\n[GCPad2]\nDevice = SDL/0/X");
         assert_eq!(forged, "SDL/0/X[GCPad2]Device = SDL/0/X");
-        // One seated pad is one SDL device, whatever its name says; port 2 is
-        // the keyboard's and is the only other section here.
-        let text = sections(&[1], None, |_| forged.clone());
+        let text = sections(&[1], None, |_| "X\n[GCPad2]\nDevice = SDL/0/X".to_owned());
         let sdl = text
             .lines()
             .filter(|line| line.starts_with("Device = SDL/"))
             .count();
         assert_eq!(sdl, 1, "a name bound a second port:\n{text}");
-        assert_eq!(device(0, "  spaced  "), "SDL/0/spaced");
+        assert_eq!(device("  spaced  "), "SDL/0/spaced");
         assert_eq!(
-            device(0, "Bluetooth [x]"),
+            device("Bluetooth [x]"),
             "SDL/0/Bluetooth [x]",
             "a real name"
         );
-    }
-
-    #[test]
-    fn a_device_is_the_backend_the_slot_and_the_name_sdl_uses() {
-        assert_eq!(device(0, "padmap Player 3"), "SDL/0/padmap Player 3");
-        assert_eq!(
-            device(1, "Xbox 360 Controller"),
-            "SDL/1/Xbox 360 Controller"
-        );
-    }
-
-    #[test]
-    fn a_slot_is_where_the_clones_node_sorts_among_the_clones() {
-        // SDL numbers nodes in isolate's order, not player order.
-        let nodes: BTreeMap<u32, String> = [
-            (1, "/dev/input/event30".to_owned()),
-            (2, "/dev/input/event9".to_owned()),
-            (3, "/dev/input/event12".to_owned()),
-        ]
-        .into_iter()
-        .collect();
-        let slots = sdl_slots(&nodes);
-        assert_eq!(slots[&2], 0, "event9 sorts first, not event30");
-        assert_eq!(slots[&3], 1);
-        assert_eq!(slots[&1], 2);
-    }
-
-    #[test]
-    fn a_clone_whose_node_is_unknown_sorts_after_the_ones_that_are_known() {
-        let nodes: BTreeMap<u32, String> =
-            [(1, String::new()), (2, "/dev/input/event9".to_owned())]
-                .into_iter()
-                .collect();
-        let slots = sdl_slots(&nodes);
-        assert_eq!(slots[&2], 0, "the node there is sorts first");
-        assert_eq!(slots[&1], 1);
-    }
-
-    #[test]
-    fn every_player_gets_a_slot_of_its_own_even_with_no_node_at_all() {
-        // A caller from before `node` existed sends none, and two pads of one
-        // model share a name -- so one slot for both is one port for two pads.
-        let nodes: BTreeMap<u32, String> =
-            [(1, String::new()), (2, String::new()), (3, String::new())]
-                .into_iter()
-                .collect();
-        let slots = sdl_slots(&nodes);
-        assert_eq!(slots[&1], 0, "player order is the order clones are made");
-        assert_eq!(slots[&2], 1);
-        assert_eq!(slots[&3], 2);
-    }
-
-    #[test]
-    fn a_node_that_is_not_an_event_node_is_treated_as_no_node() {
-        let nodes: BTreeMap<u32, String> = [
-            (1, "/dev/input/js0".to_owned()),
-            (2, "/dev/input/event".to_owned()),
-            (3, "/dev/input/event12x".to_owned()),
-            (4, "event9".to_owned()),
-        ]
-        .into_iter()
-        .collect();
-        let slots = sdl_slots(&nodes);
-        assert_eq!(slots[&4], 0, "a bare event9 with no directory still reads");
-        let mut seen: Vec<u32> = slots.values().copied().collect();
-        seen.sort_unstable();
-        assert_eq!(seen, [0, 1, 2, 3], "every player got its own slot");
-    }
-
-    #[test]
-    fn two_nodes_of_the_same_number_still_get_a_slot_each() {
-        // Nothing enforces uniqueness, and a collision is worse than a guess:
-        // it is two ports claiming one controller.
-        let nodes: BTreeMap<u32, String> = [
-            (1, "/dev/input/event9".to_owned()),
-            (2, "/dev/input/event9".to_owned()),
-        ]
-        .into_iter()
-        .collect();
-        let slots = sdl_slots(&nodes);
-        assert_ne!(slots[&1], slots[&2]);
-    }
-
-    #[test]
-    fn two_pads_of_one_model_are_told_apart_by_their_slots() {
-        let nodes: BTreeMap<u32, String> = [
-            (1, "/dev/input/event20".to_owned()),
-            (2, "/dev/input/event21".to_owned()),
-        ]
-        .into_iter()
-        .collect();
-        let slots = sdl_slots(&nodes);
-        let one = device(slots[&1], "Xbox 360 Controller");
-        let two = device(slots[&2], "Xbox 360 Controller");
-        assert_ne!(one, two, "one name, two ports, one device id");
-        assert_eq!(one, "SDL/0/Xbox 360 Controller");
-        assert_eq!(two, "SDL/1/Xbox 360 Controller");
     }
 
     #[test]
@@ -506,7 +384,7 @@ mod tests {
 
     #[test]
     fn the_keyboard_takes_the_first_free_port_in_dolphins_own_keys() {
-        let text = sections(&[1], None, |p| device(0, &format!("padmap Player {p}")));
+        let text = sections(&[1], None, |p| format!("padmap Player {p}"));
         assert!(text.contains("[GCPad1]\nDevice = SDL/0/padmap Player 1\n"));
         assert!(text.contains("[GCPad2]\nDevice = XInput2/0/Virtual core pointer\n"));
         assert!(text.contains("Buttons/A = `X`\n"), "{text}");
@@ -516,10 +394,10 @@ mod tests {
         let none = sections(&[], None, |_| String::new());
         assert!(none.starts_with("[GCPad1]\nDevice = XInput2/0/Virtual core pointer\n"));
 
-        let full = sections(&[1, 2, 3, 4], None, |p| device(0, &format!("p{p}")));
+        let full = sections(&[1, 2, 3, 4], None, |p| format!("p{p}"));
         assert!(!full.contains("XInput2"), "no port left for the keyboard");
 
-        let seated = sections(&[2], Some(1), |p| device(0, &format!("p{p}")));
+        let seated = sections(&[2], Some(1), |p| format!("p{p}"));
         assert!(seated.starts_with("[GCPad1]\nDevice = XInput2/0/Virtual core pointer\n"));
         assert!(seated.contains("[GCPad2]\nDevice = SDL/0/p2\n"));
     }
@@ -569,7 +447,7 @@ mod tests {
     #[test]
     fn only_the_four_real_ports_get_a_section() {
         let text = sections(&[1, 2, 5, 0], None, |player| {
-            device(0, &format!("padmap Player {player}"))
+            format!("padmap Player {player}")
         });
         assert!(text.contains("[GCPad1]") && text.contains("[GCPad2]"));
         assert!(!text.contains("[GCPad5]"), "Dolphin has four ports");

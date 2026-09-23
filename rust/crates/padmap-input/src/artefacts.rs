@@ -176,7 +176,7 @@ pub fn dolphin_config_dir() -> PathBuf {
 pub fn write_dolphin_config(
     players: &[u32],
     seat: Option<u32>,
-    device_for: impl Fn(u32) -> String,
+    name_for: impl Fn(u32) -> String,
     dir: Option<&Path>,
 ) -> Result<Vec<PathBuf>, WriteError> {
     use padmap_core::dolphin;
@@ -186,7 +186,7 @@ pub fn write_dolphin_config(
 
     let bindings = target.join("GCPadNew.ini");
     let existing = read_lossy(&bindings).unwrap_or_default();
-    let body = dolphin::sections(players, seat, device_for);
+    let body = dolphin::sections(players, seat, name_for);
     std::fs::write(&bindings, dolphin::rewrite_bindings(&existing, &body))
         .map_err(io_at(&bindings))?;
 
