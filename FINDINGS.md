@@ -3431,3 +3431,36 @@ is its presence. Anything asserting that a device survived has to hold
 something the kernel invalidates -- an open fd -- rather than look the path up
 again. The same recycling is why a seating hold follows a pad by node *and*
 vid/pid/name/phys/uniq rather than by node alone.
+
+## The mouse belonged to no seat
+
+padmap has moved the keyboard off a pad's port since `keyboard::port` existed.
+The mouse it never moved, because it never bound it at all -- and every
+emulator that has a pointer defaults it to port 1. RetroArch seeds
+`input_mouse_index[i] = i`; Dolphin emulates Wii Remote 1 on the mouse and
+keyboard and leaves 2-4 off. So seating a pad first handed the pointer to the
+pad's player, and the person actually holding the mouse got none. A lightgun
+core, a Wii pointer, an N64 mouse: all answered to the wrong seat, silently,
+and nothing in the socket protocol said the seat had a mouse in it at all.
+
+**The defaults were the trap, twice over.** `keyboard_config` used to return
+an empty string when the keyboard was player 1, on the grounds that
+RetroArch's own defaults already said so. That was true of the *keys* and
+false of the *mice*, whose defaults spread one per port. A rule of "write
+nothing when the default agrees" only holds while every default in the file
+agrees; the file now writes all sixteen indices, which also survives
+`--appendconfig` merging into a config carrying a stale index from an
+earlier session.
+
+**Where there was nothing to bind, that is now written down.** Cemu's
+`InputAPI::Type` has no mouse at all, and its mouse-to-touch is window-level
+in `InputManager` rather than anything a controller profile carries.
+Ryujinx's touchscreen is the handheld screen, always player 1's; its one
+mouse setting is global and its own comment says "Independent from controllers
+binding". Neither is a gap padmap can close, so `docs/EMULATORS.md` says so
+per emulator rather than leaving a reader to assume it was missed.
+
+**Worth generalising.** An emulator's default is a claim about one setting,
+not about the file. padmap moved the keyboard and assumed the person moved
+with it; half of that person stayed on port 1 for as long as the keyboard's
+seat has existed.

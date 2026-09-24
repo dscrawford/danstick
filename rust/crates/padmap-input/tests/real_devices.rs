@@ -381,6 +381,100 @@ fn rewriting_ares_settings_touches_only_the_ports_padmap_manages() {
 }
 
 #[test]
+fn rewriting_ares_settings_survives_ordering_and_missing_sections() {
+    use padmap_input::artefacts::rewrite_ares_settings;
+    use std::collections::BTreeMap;
+
+    struct Case {
+        name: &'static str,
+        existing: &'static str,
+        blocks: &'static [(u32, &'static str)],
+        must_contain: &'static [&'static str],
+        must_not_contain: &'static [&'static str],
+    }
+
+    const NEW1: &str = "VirtualPad1\n  A..South: new1;;\nVirtualMouse1\n  X: 0x2/0/0;;\n";
+    const NEW2: &str = "VirtualPad2\n  A..South: new2;;\nVirtualMouse2\n  X: 0x2/0/1;;\n";
+
+    let cases = [
+        Case {
+            name: "the mouse block comes before the pad block in the file",
+            existing: "Video\n  Driver: OpenGL\n\
+                       VirtualMouse1\n  X: stale;;\n\
+                       VirtualPad1\n  A..South: old;;\n\
+                       Audio\n  Driver: SDL\n",
+            blocks: &[(1, NEW1)],
+            must_contain: &[
+                "Video\n  Driver: OpenGL",
+                "Audio\n  Driver: SDL",
+                "A..South: new1;;",
+                "VirtualMouse1\n  X: 0x2/0/0;;",
+            ],
+            must_not_contain: &["stale", "A..South: old;;"],
+        },
+        Case {
+            name: "the file has a pad block but ares never wrote it a mouse block",
+            existing: "Video\n  Driver: OpenGL\n\
+                       VirtualPad1\n  A..South: old;;\n\
+                       Audio\n  Driver: SDL\n",
+            blocks: &[(1, NEW1)],
+            must_contain: &[
+                "Video\n  Driver: OpenGL",
+                "Audio\n  Driver: SDL",
+                "A..South: new1;;",
+                "VirtualMouse1\n  X: 0x2/0/0;;",
+            ],
+            must_not_contain: &["A..South: old;;"],
+        },
+        Case {
+            name: "the managed player is entirely absent from a fresh file",
+            existing: "Video\n  Driver: OpenGL\nAudio\n  Driver: SDL\n",
+            blocks: &[(1, NEW1)],
+            must_contain: &["Video\n  Driver: OpenGL", "Audio\n  Driver: SDL", NEW1],
+            must_not_contain: &[],
+        },
+        Case {
+            name: "the file has no trailing newline before an appended block",
+            existing: "Video\n  Driver: OpenGL",
+            blocks: &[(1, NEW1)],
+            must_contain: &["Video\n  Driver: OpenGL\nVirtualPad1"],
+            must_not_contain: &["OpenGLVirtualPad1"],
+        },
+        Case {
+            name: "two managed players interleaved by type rather than by port",
+            existing: "VirtualPad1\n  A..South: old1;;\nVirtualPad2\n  A..South: old2;;\n\
+                       VirtualMouse1\n  X: stale1;;\nVirtualMouse2\n  X: stale2;;\n",
+            blocks: &[(1, NEW1), (2, NEW2)],
+            must_contain: &["new1", "new2", "0x2/0/0", "0x2/0/1"],
+            must_not_contain: &["old1", "old2", "stale1", "stale2"],
+        },
+    ];
+
+    for case in cases {
+        let blocks: BTreeMap<u32, String> = case
+            .blocks
+            .iter()
+            .map(|(player, text)| (*player, (*text).to_owned()))
+            .collect();
+        let out = rewrite_ares_settings(case.existing, &blocks);
+        for expected in case.must_contain {
+            assert!(
+                out.contains(expected),
+                "[{}] missing {expected:?}:\n{out}",
+                case.name
+            );
+        }
+        for forbidden in case.must_not_contain {
+            assert!(
+                !out.contains(forbidden),
+                "[{}] should not contain {forbidden:?}:\n{out}",
+                case.name
+            );
+        }
+    }
+}
+
+#[test]
 fn rewriting_ryujinx_config_keeps_every_other_setting() {
     use padmap_input::artefacts;
 

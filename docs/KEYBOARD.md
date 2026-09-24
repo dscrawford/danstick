@@ -87,8 +87,9 @@ are combined aliases Dolphin registers itself. With no ini, only **controller
 Wii Remote 1 is emulated by default (`WiimoteNew.ini`, `Source = 1`) on
 mouse and keyboard: A/B = left/right click, 1/2 = `1`/`2`, −/+ = Q/E, Home =
 Return, IR = cursor, shake = middle click, Nunchuk stick = WASD, C/Z =
-Control_L/Shift_L. Remotes 2–4 are `Source = 0`. padmap does not write this
-file, so it is untouched.
+Control_L/Shift_L. Remotes 2–4 are `Source = 0`. padmap writes this file
+too, moving that section to whichever seat holds the keyboard and mouse and
+giving the other remotes their pads (`dolphin::wiimote_sections`).
 
 Hotkeys (`Hotkeys.ini`): F1–F8 load state, Shift+F1–F8 save, F12 undo load,
 F9 screenshot, F10 pause, Esc stop, Alt+Return fullscreen, Tab unlimit speed.

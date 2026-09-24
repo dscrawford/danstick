@@ -100,6 +100,16 @@ still has it, and every emulator above either binds it to port 1 by default
 (RetroArch, Dolphin, Ryujinx) or not at all (ares, Cemu). Seating a pad on
 port 1 used to take the keyboard's port with it, silently.
 
+**The seat is the keyboard and the mouse.** The person sitting there has
+the mouse under their other hand, and games want it: a PC port's camera,
+Dolphin's Wii pointer, the N64 and SNES mice in ares, a RetroArch core with
+a mouse or lightgun. So the seat is called "Keyboard and Mouse" on the
+socket (`docs/EVENTS.md`), and the pointer goes to that player wherever an
+emulator has one for a port. Nothing is grabbed: the mouse stays the
+compositor's, exactly as the keyboard does. A seated *pad's* own mouse
+nodes -- a Steam Controller in lizard mode, an Xbox pad over Bluetooth --
+are still held, which is a different thing and stays as it was.
+
 Now **the keyboard takes the first port no pad holds**, in every emulator, in
 that emulator's own keys where it has them:
 
@@ -111,6 +121,17 @@ that emulator's own keys where it has them:
 | ares | `VirtualPad{N}` as `0x1/0/<key index>` | padmap's layout (below) |
 | Cemu | `controller{N-1}.xml` with `<api>Keyboard</api>`, marked as padmap's | padmap's layout (below) |
 
+And the mouse, per emulator -- there is no common answer, because two of
+the five have no per-port pointer at all:
+
+| | where the mouse goes |
+|---|---|
+| RetroArch | `input_player{N}_mouse_index = "0"`, the desk's pointer. Every other port is sent to index 16, past the end of `MAX_INPUT_DEVICES`, which is the only way a cfg says "no mouse": RetroArch otherwise seeds port *i* with mouse *i*, so port 1 held the pointer whoever sat there |
+| Dolphin | Wii Remote `N` on `XInput2/0/Virtual core pointer` with `IR` on the cursor -- the section Dolphin writes for remote 1 itself, moved to the seat that owns the mouse. A pad's remote points with its right stick and reads no cursor |
+| ares | `VirtualMouse{N}` on `0x2` -- its generic mouse -- axes in group 0, buttons in group 1. A port device ares maps through a virtual port (N64 Mouse, SNES Mouse) reads it, so there is no per-system table to keep. Every other port's mouse block is cleared |
+| Cemu | **nothing to bind.** `InputAPI::Type` has no mouse: Keyboard, SDLController, XInput, DirectInput, DSUClient, GameCube, Wiimote and the WGI pair, and that is all. Cemu's mouse-to-touch is window-level, in `InputManager`, not something a controller profile can carry |
+| Ryujinx | **nothing to bind.** The touchscreen is the handheld screen, always player 1's, and not per-port. The one mouse setting, `enable_mouse`, is global and its own comment says "Independent from controllers binding" -- it hands games the mouse as an HID pointing device rather than seating it, and padmap leaves it as the user set it |
+
 padmap's layout, for the two that have none: arrows for direction -- the d-pad
 and the left stick both, since which one is "the direction" depends on the
 game -- Z/X/A/S for south/east/west/north, Q/W bumpers, E/R triggers, Enter
@@ -121,8 +142,10 @@ positions in its xlib key table, and Cemu's are GDK keysyms. With every port
 seated the keyboard drives nobody rather than doubling a pad, and a keyboard
 block padmap left at another port last time is removed, so the keyboard is
 never two players at once. A Cemu keyboard profile the user made themselves is
-not touched. Dolphin's Wii Remote 1, which padmap does not write, stays on the
-mouse and keyboard as Dolphin ships it.
+not touched. Dolphin's Wii Remotes are written too, by the same rule as its
+GameCube ports, so one person is one player on both sides of it: a remote
+nobody holds is `Source = 0`, for the reason an unmanaged GameCube port is
+`SIDEVICE_NONE`.
 
 A front-end can also seat the keyboard on purpose with `seat_keyboard`
 (`docs/EVENTS.md`), which pins it to a seat of its own ahead of pads seated

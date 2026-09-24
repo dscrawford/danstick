@@ -542,6 +542,52 @@ mod tests {
     }
 
     #[test]
+    fn every_wiimote_section_is_replaced_and_everything_else_is_kept() {
+        // `[BalanceBoard]` is not a numbered remote. A real remote's own
+        // pairing lives *inside* a `[WiimoteN]` block padmap owns, so it goes
+        // with the rest of that block rather than surviving as a real
+        // controller on a port padmap has given to somebody.
+        let existing = "[BalanceBoard]\nSource = 0\n\
+                        [Wiimote1]\nSource = 2\nID0 = 1122334455\nID1 = 6\n\
+                        [Wiimote4]\nSource = 1\nDevice = SDL/0/gone\n\
+                        [DSUClient]\nServer = 127.0.0.1\n";
+        let body = wiimote_sections(&[], None, |_| String::new());
+        let out = rewrite_wiimotes(existing, &body);
+        assert!(out.contains("[BalanceBoard]\nSource = 0\n"), "{out}");
+        assert!(out.contains("[DSUClient]\nServer = 127.0.0.1"), "{out}");
+        assert!(
+            !out.contains("ID0 = 1122334455"),
+            "a real remote's pairing outlived padmap's own section: {out}"
+        );
+        assert!(!out.contains("SDL/0/gone"), "{out}");
+        assert_eq!(out.matches("[Wiimote1]").count(), 1, "{out}");
+        assert_eq!(out.matches("[Wiimote4]").count(), 1, "{out}");
+    }
+
+    #[test]
+    fn a_section_that_is_not_a_remote_is_left_alone() {
+        assert!(is_wiimote_section("[Wiimote1]"));
+        assert!(is_wiimote_section("[Wiimote4]"));
+        assert!(
+            !is_wiimote_section("[Wiimote5]"),
+            "Dolphin has four remotes"
+        );
+        assert!(!is_wiimote_section("[Wiimote0]"));
+        assert!(!is_wiimote_section("[BalanceBoard]"));
+        assert!(
+            !is_wiimote_section("[GCPad1]"),
+            "a pad section is not a remote's"
+        );
+        assert!(!is_pad_section("[Wiimote1]"), "nor a remote's a pad's");
+    }
+
+    #[test]
+    fn writing_wiimotes_into_nothing_at_all_still_produces_a_file() {
+        let out = rewrite_wiimotes("", &wiimote_sections(&[1], None, |p| format!("p{p}")));
+        assert!(out.starts_with("[Wiimote1]"), "{out}");
+    }
+
+    #[test]
     fn writing_into_nothing_at_all_still_produces_a_file() {
         let out = rewrite_bindings("", &section(2, "SDL/0/padmap Player 2"));
         assert!(out.starts_with("[GCPad2]"), "{out}");
