@@ -14,6 +14,32 @@
 //! Q/W bumpers, E/R triggers, Enter start, right Shift select, I/J/K/L right
 //! stick, B/N stick clicks.
 
+/// What the seat is called, in `claim` and in `state`'s `players[]`.
+///
+/// The person at the keyboard has the mouse under their other hand, and the
+/// seat carries both: the keys in every emulator, and the pointer wherever an
+/// emulator has one for a port.
+pub const SEAT_NAME: &str = "Keyboard and Mouse";
+
+/// The seat's icon, drawn by the front-end; not one of `icons::ICON_NAMES`,
+/// which are a pad's.
+pub const SEAT_ICON: &str = "keyboard-mouse";
+
+/// What `state.players[]` and `claim` say of the keyboard's seat.
+pub fn seat_state(player: u32) -> crate::state::PlayerState {
+    crate::state::PlayerState {
+        player,
+        name: SEAT_NAME.to_owned(),
+        node: String::new(),
+        icon: SEAT_ICON.to_owned(),
+        configured: true,
+        mappings: Vec::new(),
+        published: false,
+        keyboard: true,
+        mouse: true,
+    }
+}
+
 /// The lowest port in `1..=max` that no seated player holds.
 pub fn first_free(players: &[u32], max: u32) -> Option<u32> {
     (1..=max).find(|port| !players.contains(port))
@@ -33,6 +59,18 @@ pub fn port(seat: Option<u32>, players: &[u32], max: u32) -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::first_free;
+
+    #[test]
+    fn the_seat_is_the_keyboard_and_the_mouse_and_says_so() {
+        let state = super::seat_state(2);
+        assert_eq!(state.player, 2);
+        assert_eq!(state.name, "Keyboard and Mouse");
+        assert_eq!(state.icon, "keyboard-mouse");
+        assert!(state.keyboard, "a front-end keying on keyboard still works");
+        assert!(state.mouse, "the mouse is this seat's too");
+        assert!(state.node.is_empty(), "no device is read");
+        assert!(state.configured && !state.published);
+    }
 
     #[test]
     fn the_keyboard_takes_the_lowest_port_nobody_holds() {

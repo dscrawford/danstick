@@ -26,6 +26,9 @@ pub struct PlayerState {
     /// The keyboard's seat: no device behind it, bound in every emulator by name.
     #[serde(default)]
     pub keyboard: bool,
+    /// The same seat's mouse: the desk's pointer, bound wherever a port has one.
+    #[serde(default)]
+    pub mouse: bool,
 }
 
 /// The whole event.

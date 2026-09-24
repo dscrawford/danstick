@@ -82,6 +82,7 @@ fn a_player_with_no_mappings_says_so_rather_than_omitting_them() {
         mappings: Vec::new(),
         published: true,
         keyboard: false,
+        mouse: false,
     };
     let value = serde_json::to_value(&player).expect("serialises");
     assert_eq!(value["mappings"], json!([]));

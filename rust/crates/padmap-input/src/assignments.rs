@@ -39,7 +39,7 @@ pub fn keyboard_assignment(player: u32) -> Assignment {
     Assignment {
         player,
         path: PathBuf::from(KEYBOARD_PATH),
-        name: "Keyboard".to_owned(),
+        name: padmap_core::keyboard::SEAT_NAME.to_owned(),
         phys: String::new(),
         vid: 0,
         pid: 0,

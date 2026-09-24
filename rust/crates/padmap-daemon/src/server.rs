@@ -3067,10 +3067,11 @@ impl Server {
                 mappings: publish::mapping_scopes(&pad),
                 published: live.contains(&player),
                 keyboard: false,
+                mouse: false,
             })
             .collect();
         if let Some(seat) = self.keyboard_seat.filter(|_| self.session.is_none()) {
-            players.push(keyboard_state(seat));
+            players.push(padmap_core::keyboard::seat_state(seat));
         }
         players.sort_by_key(|state| state.player);
         players
@@ -3100,7 +3101,7 @@ impl Server {
         }
         self.keyboard_seat = Some(player);
         info!("seating: player {player} <- the keyboard");
-        let state = keyboard_state(player);
+        let state = padmap_core::keyboard::seat_state(player);
         self.broadcast(&events::claim(player, &state.name, "", &state.icon, true));
         if self.republisher.is_some() {
             // Consumers are rewritten for the seat change; the clones are untouched.
@@ -3183,20 +3184,6 @@ impl Server {
 
 fn as_player(player: i64) -> u32 {
     u32::try_from(player).unwrap_or(0)
-}
-
-/// What `state.players[]` says of the keyboard's seat.
-fn keyboard_state(player: u32) -> PlayerState {
-    PlayerState {
-        player,
-        name: "Keyboard".to_owned(),
-        node: String::new(),
-        icon: "keyboard".to_owned(),
-        configured: true,
-        mappings: Vec::new(),
-        published: false,
-        keyboard: true,
-    }
 }
 
 const FOLLOW_POLL_SECONDS: f64 = 0.25;

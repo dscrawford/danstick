@@ -170,6 +170,9 @@ const SIBLING: PadId = PadId {
     only: "RSTESTSIB",
 };
 const SIBLING_KEYBOARD_NAME: &str = "PADMAP RSTESTSIB keyboard";
+
+/// What the keyboard's seat calls itself, in `claim` and in `state`.
+const KEYBOARD_SEAT_NAME: &str = "Keyboard and Mouse";
 /// No pad is made for this one; the daemon under test only needs a filter.
 const FOLLOWER: PadId = PadId {
     name: "PADMAP RSTESTFOLLOW",
@@ -482,7 +485,7 @@ impl Daemon {
         self.pump(1.5);
         self.events.clear();
         self.send(serde_json::json!({"cmd": "seating", "open": true, "players": 4}));
-        let claim = self.hold_until_claimed(pad, |e| e["name"] != "Keyboard");
+        let claim = self.hold_until_claimed(pad, |e| e["name"] != KEYBOARD_SEAT_NAME);
         assert_eq!(claim["player"], player);
         self.wait_for("state", |e| e["state"] == "ready", 5.0)
             .expect("ready after the seat was taken");
@@ -2533,10 +2536,10 @@ fn the_keyboard_takes_a_seat_by_command_and_a_pad_sits_after_it() {
     daemon.events.clear();
     daemon.send(serde_json::json!({"cmd": "seat_keyboard"}));
     let claim = daemon
-        .wait_for("claim", |e| e["name"] == "Keyboard", 5.0)
+        .wait_for("claim", |e| e["name"] == KEYBOARD_SEAT_NAME, 5.0)
         .expect("the keyboard took a seat");
     assert_eq!(claim["player"], 1);
-    assert_eq!(claim["icon"], "keyboard");
+    assert_eq!(claim["icon"], "keyboard-mouse");
     let state = daemon
         .wait_for(
             "state",
@@ -2546,7 +2549,12 @@ fn the_keyboard_takes_a_seat_by_command_and_a_pad_sits_after_it() {
         .expect("a state with the keyboard seated");
     assert_eq!(state["players"][0]["player"], 1);
     assert_eq!(state["players"][0]["keyboard"], true);
-    assert_eq!(state["players"][0]["name"], "Keyboard");
+    assert_eq!(
+        state["players"][0]["mouse"], true,
+        "the desk's mouse belongs to this seat too"
+    );
+    assert_eq!(state["players"][0]["name"], KEYBOARD_SEAT_NAME);
+    assert_eq!(state["players"][0]["icon"], "keyboard-mouse");
     let saved = std::fs::read_to_string(state_dir.join("assignments.json")).expect("saved");
     assert!(
         saved.contains("\"keyboard\""),

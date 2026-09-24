@@ -449,14 +449,24 @@ emulator's own default keys where it has them and padmap's where it does not
 (`docs/EMULATORS.md`, "The keyboard"). A `claim` goes out first:
 
 ```json
-{"event": "claim", "player": 1, "name": "Keyboard", "node": "", "icon": "keyboard", "configured": true}
+{"event": "claim", "player": 1, "name": "Keyboard and Mouse", "node": "", "icon": "keyboard-mouse", "configured": true}
 ```
 
 then `state`, whose `players[]` entry for the seat is
-`{"player": 1, "name": "Keyboard", "icon": "keyboard", "configured": true,
-"published": false, "keyboard": true}`. A pad seated after it takes the seat
-after: keyboard first then pad gives player 1 keyboard, player 2 pad, carried
-into ports that number by device (ares, RetroArch) as well as by seat.
+`{"player": 1, "name": "Keyboard and Mouse", "icon": "keyboard-mouse",
+"configured": true, "published": false, "keyboard": true, "mouse": true}`.
+A pad seated after it takes the seat after: keyboard first then pad gives
+player 1 keyboard, player 2 pad, carried into ports that number by device
+(ares, RetroArch) as well as by seat.
+
+**The seat is both devices.** The person at the keyboard has the mouse under
+their other hand, and some games want it -- a PC port's camera, Dolphin's
+Wii pointer, the N64 and SNES mice in ares, a RetroArch core with a mouse or
+lightgun. So the seat is named for both, and the mouse is bound to that
+player wherever an emulator has a pointer for a port (`docs/EMULATORS.md`,
+"The keyboard"). `keyboard` and `mouse` are both true on it; either one
+tells a front-end this seat has no pad behind it. Nothing is grabbed: the
+mouse stays the compositor's, exactly as the keyboard does.
 
 Refused, with an `error`, while a session is open, when the keyboard already
 holds a seat, and when every seat is taken. `unseat` and `unseat` with its
