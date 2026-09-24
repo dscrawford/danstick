@@ -83,6 +83,21 @@ every pad and is about to rewrite the roster, so reading underneath it would
 claim a seat the user is in the middle of assigning. `begin` is still the way
 to *reorder* seats, which is something done with everybody's attention.
 
+### The order a seat is announced in
+
+`claim`, then `state` with the new seat in it, then the consumers' files are
+written, then `controller` with `"action": "added"`. The seat is live -- its
+clone is on the air and forwarding -- by the time `state` says so, and nothing
+in `state` depends on the emulators' files, so it does not wait for them: how
+full the room is no longer decides how soon a front-end sees somebody sit
+down. On one desk, `claim` to `state` is about a millisecond for the first
+seat and the fourth alike; the files follow some tens of milliseconds later.
+
+**Wait for `controller` `added` before reading the files.** It is the event
+that names them -- the clone's node, the RetroArch profile, the SDL line --
+and it is sent after they are written. A launch that reads `launch.cfg` or
+`env.sh` the moment it sees `state` can read the previous room's.
+
 ### How long the hold is
 
 `hold` is that length in seconds, `0.05` to `10.0`, and `0.25` for anybody who
@@ -335,6 +350,9 @@ not these events.
 * Nothing is announced while the setup screen is open; that session owns every
   pad and is about to rewrite the roster.
 * A failed republish is not fatal and produces no `added` event.
+* A seat's `state` is sent before its consumers' files are written, and its
+  `added` event after them: `added` is the one to wait for before reading
+  a file padmap writes.
 
 All of these are checked by `tests/check_controller_events.py`.
 

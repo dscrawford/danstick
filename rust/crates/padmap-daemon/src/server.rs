@@ -179,6 +179,16 @@ impl std::fmt::Debug for Server {
     }
 }
 
+/// The consumers' files a seat change leaves to write.
+#[derive(Debug)]
+enum ToWrite {
+    /// The first seat: nothing derived yet worth keeping.
+    Afresh(BTreeMap<u32, String>),
+    /// A join: everybody else's derivations still stand.
+    Reusing(BTreeMap<u32, String>),
+    Nothing,
+}
+
 #[derive(Default)]
 struct Scan {
     pads: Option<Vec<Pad>>,
@@ -2028,21 +2038,26 @@ impl Server {
                 profiles::is_known(&pad, None),
             );
             self.broadcast(&event);
-            if let Err(error) = self.join_republisher(player) {
+            let write = self.join_republisher(player).unwrap_or_else(|error| {
                 warn!(
                     "seating: could not republish after {} joined: {error}",
                     clean(&pad.name)
                 );
-            }
+                ToWrite::Nothing
+            });
             if self.republisher.is_some() {
                 self.state = STATE_READY;
             }
+            // The seat first: it is live, and nothing in `state` depends on the
+            // emulators' files. The `controller` announcement carries those, so
+            // it follows them.
+            let state = self.state_event();
+            self.broadcast(&state);
+            self.write_after_join(write);
             self.save_assignments();
             let announced =
                 self.controller_event(padmap_core::announce::ACTION_ADDED, player, &pad, "");
             self.broadcast(&announced);
-            let state = self.state_event();
-            self.broadcast(&state);
             // No reset: `tick` dropped this hold, and the refresh carries the rest.
             self.refresh_seating(&mut Scan::default());
         }
@@ -2335,10 +2350,13 @@ impl Server {
 
     /// Republish one newly seated player, leaving every clone already open at the
     /// same device and node, since a game mid-read cannot follow them moving.
-    fn join_republisher(&mut self, player: u32) -> Result<(), clone::CloneError> {
+    /// Put a new seat's clone on the air, and say which files that leaves to
+    /// write -- written by the caller once the seat has been announced, so how
+    /// full the room is never decides how soon anybody sees it taken.
+    fn join_republisher(&mut self, player: u32) -> Result<ToWrite, clone::CloneError> {
         // The first seat has nothing to add to.
         if self.republisher.is_none() {
-            return self.start_republisher();
+            return self.bring_up_republisher().map(ToWrite::Afresh);
         }
         let already = self
             .republisher
@@ -2347,9 +2365,7 @@ impl Server {
         // Already republished: rewrite the roster's files, but never rebuild --
         // a second clone is wrong and a rebuild is the thing this avoids.
         if already {
-            let virtual_paths = self.virtual_paths();
-            self.rewrite_consumers_reusing(&virtual_paths);
-            return Ok(());
+            return Ok(ToWrite::Reusing(self.virtual_paths()));
         }
         let Some(slot) = self
             .slots_assigned
@@ -2357,7 +2373,7 @@ impl Server {
             .find(|slot| slot.player == player)
             .cloned()
         else {
-            return Ok(());
+            return Ok(ToWrite::Nothing);
         };
         let axes = profiles::load(&slot.pad, None)
             .map(|profile| profile.axes)
@@ -2383,7 +2399,7 @@ impl Server {
         }
         let vpad = made?;
         let Some(republisher) = self.republisher.as_mut() else {
-            return Ok(());
+            return Ok(ToWrite::Nothing);
         };
         let index = republisher.add(vpad);
         let added = &republisher.pads[index];
@@ -2401,16 +2417,36 @@ impl Server {
             }
         }
         self.sync_republish_pause();
-        let virtual_paths = self.virtual_paths();
-        self.rewrite_consumers_reusing(&virtual_paths);
         info!(
             "player {player} joined; {} pad(s) republished, the rest untouched",
             self.slots_assigned.len()
         );
-        Ok(())
+        Ok(ToWrite::Reusing(self.virtual_paths()))
+    }
+
+    /// Write what a join left to write.
+    fn write_after_join(&mut self, write: ToWrite) {
+        match write {
+            ToWrite::Afresh(virtual_paths) => self.rewrite_consumers(&virtual_paths),
+            ToWrite::Reusing(virtual_paths) => self.rewrite_consumers_reusing(&virtual_paths),
+            ToWrite::Nothing => {}
+        }
     }
 
     fn start_republisher(&mut self) -> Result<(), clone::CloneError> {
+        let virtual_paths = self.bring_up_republisher()?;
+        self.rewrite_consumers(&virtual_paths);
+        info!(
+            "republishing {} pad(s); launch config at {}",
+            self.slots_assigned.len(),
+            self.launch_config_path.display()
+        );
+        Ok(())
+    }
+
+    /// Every seat's clone on the air and watched, and the paths the consumers'
+    /// files should name -- everything `start_republisher` does but the writing.
+    fn bring_up_republisher(&mut self) -> Result<BTreeMap<u32, String>, clone::CloneError> {
         self.stop_republisher();
         let mut vpads = Vec::with_capacity(self.slots_assigned.len());
         let mut first_failure = None;
@@ -2502,14 +2538,7 @@ impl Server {
         );
         self.republisher = Some(republisher);
         self.sync_republish_pause();
-
-        self.rewrite_consumers(&virtual_paths);
-        info!(
-            "republishing {} pad(s); launch config at {}",
-            self.slots_assigned.len(),
-            self.launch_config_path.display()
-        );
-        Ok(())
+        Ok(virtual_paths)
     }
 
     /// Write every consumer's config for the seats as they are now -- with no

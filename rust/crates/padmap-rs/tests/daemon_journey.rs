@@ -189,6 +189,12 @@ const MIDCLAIM: PadId = PadId {
     pid: 0x0f20,
     only: "RSTESTMIDCLAIM",
 };
+/// Four pads for the order a seat is announced in.
+const STATEFIRST: PadId = PadId {
+    name: "PADMAP RSTESTSTATEFIRST a",
+    pid: 0x0f30,
+    only: "RSTESTSTATEFIRST",
+};
 
 /// Four distinct pads under one test's own filter, so tests running beside it
 /// cannot see them.
@@ -3173,5 +3179,55 @@ fn a_press_made_while_a_claim_is_handled_still_takes_a_seat() {
         claim.is_some(),
         "a press made during another claim was lost: that one hold never took a seat"
     );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// A seat's `state` goes out before its files are written, so how full the room
+/// is does not decide how soon a front-end sees somebody sit down. The
+/// `controller` `added` announcement, which carries the written files, follows.
+#[test]
+fn a_seats_state_comes_before_its_files_however_full_the_room() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let root = std::env::temp_dir().join(format!("padmap-statefirst-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+
+    let mut pads = four_pads(STATEFIRST);
+    let mut daemon = Daemon::start(&root, STATEFIRST);
+    daemon.pump(1.5);
+
+    for (at, pad) in pads.iter_mut().enumerate() {
+        let player = at as u64 + 1;
+        daemon.seat_by_hold_as(pad, player);
+        daemon
+            .wait_for(
+                "controller",
+                |e| e["action"] == "added" && e["player"] == player,
+                5.0,
+            )
+            .expect("the seat's files were never announced");
+        let seated = daemon
+            .events
+            .iter()
+            .position(|e| {
+                e["event"] == "state"
+                    && e["players"]
+                        .as_array()
+                        .is_some_and(|players| players.iter().any(|p| p["player"] == player))
+            })
+            .expect("no state with the new seat");
+        let announced = daemon
+            .events
+            .iter()
+            .position(|e| e["event"] == "controller" && e["player"] == player)
+            .expect("no announcement");
+        assert!(
+            seated < announced,
+            "player {player}'s state waited for its files (state at {seated}, files at {announced})"
+        );
+    }
     let _ = std::fs::remove_dir_all(&root);
 }
