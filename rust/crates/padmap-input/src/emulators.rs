@@ -345,6 +345,19 @@ mod tests {
             dolphin.contains("[GCPad2]\nDevice = XInput2/0/Virtual core pointer\n"),
             "{dolphin}"
         );
+        // The Wii side: the keyboard's seat holds the remote with the cursor.
+        let wii = std::fs::read_to_string(dir.join("dolphin-emu/WiimoteNew.ini")).expect("ini");
+        assert!(
+            wii.contains("[Wiimote2]\nSource = 1\nDevice = XInput2/0/Virtual core pointer\n"),
+            "{wii}"
+        );
+        assert!(wii.contains("IR/Up = `Cursor Y-`\n"), "{wii}");
+        assert!(
+            wii.contains("[Wiimote1]\nSource = 1\nDevice = SDL/0/"),
+            "the pad has no remote: {wii}"
+        );
+        assert!(wii.contains("[Wiimote4]\nSource = 0\n"), "{wii}");
+
         let core = std::fs::read_to_string(dir.join("dolphin-emu/Dolphin.ini")).expect("ini");
         assert!(core.contains("SIDevice1 = 6"), "{core}");
         assert!(core.contains("SIDevice2 = 0"), "{core}");

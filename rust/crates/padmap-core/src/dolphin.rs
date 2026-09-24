@@ -78,6 +78,179 @@ pub const KEYBOARD_BINDINGS: [(&str, &str); 24] = [
     ("D-Pad/Right", "`H`"),
 ];
 
+/// Dolphin has four Wii Remotes, as it has four GameCube ports.
+pub const MAX_WIIMOTES: u32 = 4;
+
+/// `[WiimoteN] Source`: 0 none, 1 emulated, 2 a real remote (`WiimoteSource`).
+pub const WIIMOTE_NONE: u32 = 0;
+pub const WIIMOTE_EMULATED: u32 = 1;
+
+/// The square gate Dolphin sets when a stick is driven by keys, in its own
+/// words: "Because our defaults use keyboard input, set calibration shapes to
+/// squares."
+const SQUARE_GATE: &str = "100.00 141.42 100.00 141.42 100.00 141.42 100.00 141.42";
+
+/// One `[WiimoteN]` binding for a padmap clone, in the SDL backend's own
+/// element names -- the same vocabulary as `BINDINGS`, so the per-model lookup
+/// is still Dolphin's job and not padmap's.
+///
+/// The remote points with the right stick because a pad has no pointer, and
+/// the signs are the ones `BINDINGS` already uses for the C-stick. Everything
+/// else follows a Wii Remote held upright: A under the thumb, B the trigger,
+/// 1 and 2 the remaining face buttons, the Nunchuk on the left stick.
+pub const WIIMOTE_BINDINGS: [(&str, &str); 19] = [
+    ("Buttons/A", "`Button S`"),
+    ("Buttons/B", "`Trigger R`"),
+    ("Buttons/1", "`Button E`"),
+    ("Buttons/2", "`Button W`"),
+    ("Buttons/-", "`Select`"),
+    ("Buttons/+", "`Start`"),
+    ("Buttons/Home", "`Button N`"),
+    ("D-Pad/Up", "`Pad N`"),
+    ("D-Pad/Down", "`Pad S`"),
+    ("D-Pad/Left", "`Pad W`"),
+    ("D-Pad/Right", "`Pad E`"),
+    ("IR/Up", "`Right Y+`"),
+    ("IR/Down", "`Right Y-`"),
+    ("IR/Left", "`Right X-`"),
+    ("IR/Right", "`Right X+`"),
+    ("Shake/X", "`Shoulder L`"),
+    ("Shake/Y", "`Shoulder L`"),
+    ("Shake/Z", "`Shoulder L`"),
+    ("Extension", "Nunchuk"),
+];
+
+/// The Nunchuk on a clone: the left stick, with C and Z on the shoulder and
+/// trigger the remote's own B does not use.
+pub const WIIMOTE_NUNCHUK: [(&str, &str); 6] = [
+    ("Nunchuk/Stick/Up", "`Left Y+`"),
+    ("Nunchuk/Stick/Down", "`Left Y-`"),
+    ("Nunchuk/Stick/Left", "`Left X-`"),
+    ("Nunchuk/Stick/Right", "`Left X+`"),
+    ("Nunchuk/Buttons/C", "`Shoulder R`"),
+    ("Nunchuk/Buttons/Z", "`Trigger L`"),
+];
+
+/// Dolphin's own Wii Remote defaults on the mouse and keyboard
+/// (`WiimoteEmu::Wiimote::LoadDefaults`, the `HAVE_X11` branch, and
+/// `Nunchuk::LoadDefaults`). This is the section Dolphin writes for remote 1
+/// on a fresh install; padmap only moves it to the seat that owns the mouse.
+pub const WIIMOTE_KEYBOARD_BINDINGS: [(&str, &str); 25] = [
+    ("Buttons/A", "`Click 1`"),
+    ("Buttons/B", "`Click 3`"),
+    ("Buttons/1", "`1`"),
+    ("Buttons/2", "`2`"),
+    ("Buttons/-", "`Q`"),
+    ("Buttons/+", "`E`"),
+    ("Buttons/Home", "`Return`"),
+    ("Shake/X", "`Click 2`"),
+    ("Shake/Y", "`Click 2`"),
+    ("Shake/Z", "`Click 2`"),
+    ("IR/Up", "`Cursor Y-`"),
+    ("IR/Down", "`Cursor Y+`"),
+    ("IR/Left", "`Cursor X-`"),
+    ("IR/Right", "`Cursor X+`"),
+    ("D-Pad/Up", "`Up`"),
+    ("D-Pad/Down", "`Down`"),
+    ("D-Pad/Left", "`Left`"),
+    ("D-Pad/Right", "`Right`"),
+    ("Extension", "Nunchuk"),
+    ("Nunchuk/Stick/Up", "`W`"),
+    ("Nunchuk/Stick/Down", "`S`"),
+    ("Nunchuk/Stick/Left", "`A`"),
+    ("Nunchuk/Stick/Right", "`D`"),
+    ("Nunchuk/Buttons/C", "`Control_L`"),
+    ("Nunchuk/Buttons/Z", "`Shift_L`"),
+];
+
+/// One `[WiimoteN]` section, ending in a newline. `Source` leads it: a remote
+/// Dolphin is not sourcing is ignored however well it is bound.
+fn wiimote_section(port: u32, device_line: &str, bindings: &[(&str, &str)]) -> String {
+    let mut out = format!("[Wiimote{port}]\nSource = {WIIMOTE_EMULATED}\nDevice = {device_line}\n");
+    for (key, value) in bindings {
+        out.push_str(&format!("{key} = {value}\n"));
+    }
+    out
+}
+
+/// A remote nobody holds: sourced from nothing, for the same reason an
+/// unmanaged GameCube port is `SIDEVICE_NONE` -- a remote still declared from
+/// a session with more players is a phantom in the next game.
+fn wiimote_off(port: u32) -> String {
+    format!("[Wiimote{port}]\nSource = {WIIMOTE_NONE}\n")
+}
+
+/// The remote the keyboard's seat takes: its seat, else the first of the four
+/// no pad holds. The same rule as the GameCube port, so one person is one
+/// player on both sides of Dolphin.
+pub fn wiimote_port(players: &[u32], seat: Option<u32>) -> Option<u32> {
+    crate::keyboard::port(seat, players, MAX_WIIMOTES)
+}
+
+/// Every remote, in port order: a pad's clone, the keyboard and mouse on the
+/// seat that owns them, and nothing on the rest.
+///
+/// Dolphin emulates remote 1 on the mouse and keyboard on a fresh install and
+/// leaves 2-4 off, so seating a pad first gave the pad's player the mouse's
+/// remote and the person at the keyboard none.
+pub fn wiimote_sections(
+    players: &[u32],
+    seat: Option<u32>,
+    name_for: impl Fn(u32) -> String,
+) -> String {
+    let mut sorted: Vec<u32> = players
+        .iter()
+        .copied()
+        .filter(|player| (1..=MAX_WIIMOTES).contains(player))
+        .collect();
+    sorted.sort_unstable();
+    sorted.dedup();
+    let keyboard = wiimote_port(&sorted, seat);
+    (1..=MAX_WIIMOTES)
+        .map(|port| {
+            if sorted.contains(&port) {
+                let mut section = wiimote_section(
+                    port,
+                    &device(&name_for(port)),
+                    &[WIIMOTE_BINDINGS.as_slice(), WIIMOTE_NUNCHUK.as_slice()].concat(),
+                );
+                section.push_str("Nunchuk/Stick/Calibration = ");
+                section.push_str(SQUARE_GATE);
+                section.push('\n');
+                section
+            } else if keyboard == Some(port) {
+                let mut section =
+                    wiimote_section(port, KEYBOARD_DEVICE, &WIIMOTE_KEYBOARD_BINDINGS);
+                // Dolphin squares the gate itself when keys drive a stick.
+                section.push_str("Nunchuk/Stick/Calibration = ");
+                section.push_str(SQUARE_GATE);
+                section.push('\n');
+                section
+            } else {
+                wiimote_off(port)
+            }
+        })
+        .collect()
+}
+
+/// Replace all `[Wiimote1..4]` sections, keeping everything else in the file
+/// -- `[BalanceBoard]` and a real remote's pairing among it.
+pub fn rewrite_wiimotes(existing: &str, body: &str) -> String {
+    rewrite_sections(existing, body, is_wiimote_section)
+}
+
+fn is_wiimote_section(header: &str) -> bool {
+    numbered_section(header, "[Wiimote", MAX_WIIMOTES)
+}
+
+fn numbered_section(header: &str, prefix: &str, max: u32) -> bool {
+    header
+        .strip_prefix(prefix)
+        .and_then(|rest| rest.strip_suffix(']'))
+        .and_then(|number| number.parse::<u32>().ok())
+        .is_some_and(|port| (1..=max).contains(&port))
+}
+
 /// The keyboard's `[GCPadN]` section: what Dolphin itself writes for port 1 on a fresh install.
 pub fn keyboard_section(port: u32) -> String {
     let mut out = format!("[GCPad{port}]\nDevice = {KEYBOARD_DEVICE}\n");
@@ -133,12 +306,18 @@ pub fn sections(players: &[u32], seat: Option<u32>, name_for: impl Fn(u32) -> St
 
 /// Replace all `[GCPad1..4]` sections to clear unplugged controller ports.
 pub fn rewrite_bindings(existing: &str, body: &str) -> String {
+    rewrite_sections(existing, body, is_pad_section)
+}
+
+/// Drop every section `ours` claims and append `body`, keeping the rest of
+/// the file: neither ini is only padmap's.
+fn rewrite_sections(existing: &str, body: &str, ours: impl Fn(&str) -> bool) -> String {
     let mut out = String::with_capacity(existing.len() + body.len());
     let mut dropping = false;
     for line in existing.split_inclusive('\n') {
         let bare = line.trim_end_matches(['\n', '\r']);
         if bare.starts_with('[') {
-            dropping = is_pad_section(bare);
+            dropping = ours(bare);
         }
         if !dropping {
             out.push_str(line);
@@ -152,15 +331,7 @@ pub fn rewrite_bindings(existing: &str, body: &str) -> String {
 }
 
 fn is_pad_section(header: &str) -> bool {
-    let Some(rest) = header.strip_prefix("[GCPad") else {
-        return false;
-    };
-    let Some(number) = rest.strip_suffix(']') else {
-        return false;
-    };
-    number
-        .parse::<u32>()
-        .is_ok_and(|port| (1..=MAX_PLAYERS).contains(&port))
+    numbered_section(header, "[GCPad", MAX_PLAYERS)
 }
 
 /// `SIDeviceN` zero-based; `GCPadN` one-based. The keyboard's port counts as a controller.

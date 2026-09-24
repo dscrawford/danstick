@@ -186,9 +186,17 @@ pub fn write_dolphin_config(
 
     let bindings = target.join("GCPadNew.ini");
     let existing = read_lossy(&bindings).unwrap_or_default();
-    let body = dolphin::sections(players, seat, name_for);
+    let body = dolphin::sections(players, seat, &name_for);
     std::fs::write(&bindings, dolphin::rewrite_bindings(&existing, &body))
         .map_err(io_at(&bindings))?;
+
+    // The Wii side of the same seats: Dolphin emulates remote 1 on the mouse
+    // and keyboard, which is the wrong player the moment a pad sits there.
+    let wiimotes = target.join("WiimoteNew.ini");
+    let existing = read_lossy(&wiimotes).unwrap_or_default();
+    let body = dolphin::wiimote_sections(players, seat, &name_for);
+    std::fs::write(&wiimotes, dolphin::rewrite_wiimotes(&existing, &body))
+        .map_err(io_at(&wiimotes))?;
 
     let core = target.join("Dolphin.ini");
     let mut text = read_lossy(&core).unwrap_or_default();
@@ -201,7 +209,7 @@ pub fn write_dolphin_config(
     let existing = read_lossy(&dsu).unwrap_or_default();
     std::fs::write(&dsu, dolphin::dsu_client_ini(&existing)).map_err(io_at(&dsu))?;
 
-    Ok(vec![bindings, core, dsu])
+    Ok(vec![bindings, wiimotes, core, dsu])
 }
 
 pub fn ares_settings_path() -> PathBuf {

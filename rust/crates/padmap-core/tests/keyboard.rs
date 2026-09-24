@@ -146,6 +146,71 @@ fn dolphin_writes_what_it_would_have_written_itself_for_port_one() {
     assert_eq!(dolphin::keyboard_port(&[1, 2, 3, 4], None), None);
 }
 
+#[test]
+fn dolphins_wii_remote_follows_the_keyboards_seat_and_the_pads_keep_theirs() {
+    // The request's own check: keyboard on seat 2, a pad on seat 1.
+    let text = dolphin::wiimote_sections(&[1], Some(2), |p| format!("padmap Player {p}"));
+
+    // Remote 2 is the mouse and keyboard's, pointing with the cursor.
+    assert!(
+        text.contains("[Wiimote2]\nSource = 1\nDevice = XInput2/0/Virtual core pointer\n"),
+        "{text}"
+    );
+    for line in [
+        "IR/Up = `Cursor Y-`",
+        "IR/Down = `Cursor Y+`",
+        "IR/Left = `Cursor X-`",
+        "IR/Right = `Cursor X+`",
+        "Buttons/A = `Click 1`",
+        "Buttons/B = `Click 3`",
+        "Buttons/Home = `Return`",
+        "Extension = Nunchuk",
+        "Nunchuk/Stick/Up = `W`",
+        "Nunchuk/Buttons/C = `Control_L`",
+    ] {
+        assert!(
+            text.contains(&format!("{line}\n")),
+            "{line} missing:\n{text}"
+        );
+    }
+
+    // Remote 1 is the pad's: its own clone, and no cursor anywhere in it.
+    let pad_section = text
+        .split("[Wiimote2]")
+        .next()
+        .expect("remote 1 comes first");
+    assert!(
+        pad_section.contains("[Wiimote1]\nSource = 1\nDevice = SDL/0/padmap Player 1\n"),
+        "{text}"
+    );
+    assert!(
+        !pad_section.contains("Cursor") && !pad_section.contains("Click"),
+        "the pad's remote reads the desk's mouse: {pad_section}"
+    );
+    assert!(
+        pad_section.contains("IR/Up = `Right Y+`\n"),
+        "the pad points with nothing: {pad_section}"
+    );
+
+    // Remotes nobody holds are declared off, not left from a bigger session.
+    assert!(text.contains("[Wiimote3]\nSource = 0\n"), "{text}");
+    assert!(text.contains("[Wiimote4]\nSource = 0\n"), "{text}");
+    assert!(!text.contains("[Wiimote5]"), "Dolphin has four remotes");
+
+    // Unseated, the keyboard still lands on the first remote no pad holds,
+    // rather than on remote 1 the way Dolphin ships it.
+    let text = dolphin::wiimote_sections(&[1, 2], None, |p| format!("padmap Player {p}"));
+    assert!(
+        text.contains("[Wiimote3]\nSource = 1\nDevice = XInput2/0/Virtual core pointer\n"),
+        "{text}"
+    );
+
+    // Every remote seated: nobody gets the cursor.
+    let text = dolphin::wiimote_sections(&[1, 2, 3, 4], None, |p| format!("padmap Player {p}"));
+    assert!(!text.contains("Cursor"), "{text}");
+    assert!(!text.contains("Source = 0"), "{text}");
+}
+
 // ---- Ryujinx ----
 
 fn pad(player: u32) -> Value {
