@@ -499,7 +499,7 @@ keyboard arriving without knowing it is not a pad:
 {"event": "progress", "frac": 0.4, "name": "Keyboard and Mouse", "node": "", "player": 1}
 ```
 
-then `frac: 0` with `"player": null` if it is let go early, and the `claim`
+then `frac: 0` with no `player` if it is let go early, and the `claim`
 and `state` above when it runs its length. The `node` is empty: the seat has
 no device of its own, and a front-end keying a fill by node and falling back
 to name draws it as the keyboard.

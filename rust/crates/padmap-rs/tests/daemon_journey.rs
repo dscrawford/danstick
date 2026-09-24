@@ -1795,11 +1795,15 @@ fn a_pad_switched_on_does_not_cancel_the_hold_already_running() {
 
     // The thumb never lifted, so a release here is the bug, and the fill has to
     // keep climbing from where it was rather than start again.
+    // A release is a fill at zero naming no seat. The hold's own first tick
+    // can read 0.0 too -- it is still in `events` -- but it names a seat.
     assert!(
         !daemon
             .events
             .iter()
-            .any(|event| event["event"] == "progress" && event["frac"] == 0.0),
+            .any(|event| event["event"] == "progress"
+                && event["frac"] == 0.0
+                && event.get("player").is_none()),
         "the arriving pad cancelled the hold: {:?}",
         daemon.events
     );
