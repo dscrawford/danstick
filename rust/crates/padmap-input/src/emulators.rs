@@ -132,7 +132,9 @@ pub fn publish(pads: &[Published], dirs: &Destinations, seat: Option<u32>) -> Wr
                 None if keyboard == Some(port) => ares::keyboard_pad(port),
                 None => ares::empty_pad(port),
             };
-            (port, block)
+            // The desk's mouse rides with the keyboard, on that port only.
+            let mouse = ares::virtual_mouse(port, keyboard == Some(port));
+            (port, block + &mouse)
         })
         .collect();
     written.record(
@@ -354,6 +356,16 @@ mod tests {
         );
         assert!(ares.contains("VirtualPad3\n  Pad.Up: ;;\n"), "{ares}");
         assert!(ares.contains("VirtualPad5\n"));
+        // The desk's mouse sits on the keyboard's port and nowhere else, so
+        // an N64 or SNES Mouse there answers to the person at the keyboard.
+        assert!(
+            ares.contains("VirtualMouse2\n  X: 0x2/0/0;;\n"),
+            "the keyboard's port has no mouse: {ares}"
+        );
+        assert!(
+            ares.contains("VirtualMouse1\n  X: ;;\n") && ares.contains("VirtualMouse3\n  X: ;;\n"),
+            "a port a pad holds kept the desk's mouse: {ares}"
+        );
 
         let text = std::fs::read_to_string(dir.join("Config.json")).expect("json");
         let config: serde_json::Value = serde_json::from_str(&text).expect("json");

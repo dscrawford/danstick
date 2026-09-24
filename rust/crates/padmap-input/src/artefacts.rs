@@ -214,24 +214,36 @@ pub fn ryujinx_config_path() -> PathBuf {
         .unwrap_or_else(|| config_home().join("Ryujinx").join("Config.json"))
 }
 
-/// Replace the `VirtualPadN` blocks padmap manages; blocks ares never wrote are appended.
+/// A port's own header in settings.bml, if padmap manages that port. Both of
+/// ares' virtual devices are one port to padmap: the pad and the mouse.
+fn ares_managed_port(header: &str, blocks: &BTreeMap<u32, String>) -> Option<u32> {
+    let rest = header
+        .strip_prefix("VirtualPad")
+        .or_else(|| header.strip_prefix("VirtualMouse"))?;
+    let player: u32 = rest.parse().ok()?;
+    blocks.contains_key(&player).then_some(player)
+}
+
+/// Replace the `VirtualPadN` and `VirtualMouseN` blocks padmap manages;
+/// blocks ares never wrote are appended.
+///
+/// A port's block carries both devices, and lands where its pad was: ares
+/// writes the mouse after the pad, and a mouse block left behind would bind
+/// the pointer on a port padmap has since given to somebody else.
 pub fn rewrite_ares_settings(existing: &str, blocks: &BTreeMap<u32, String>) -> String {
     let mut out = String::with_capacity(existing.len());
     let mut skipping: Option<u32> = None;
     let mut replaced: BTreeSet<u32> = BTreeSet::new();
     for line in existing.split_inclusive('\n') {
         let bare = line.trim_end_matches(['\n', '\r']);
-        if let Some(rest) = bare.strip_prefix("VirtualPad") {
-            skipping = rest
-                .parse()
-                .ok()
-                .filter(|player| blocks.contains_key(player));
-            if let Some(player) = skipping {
+        if let Some(player) = ares_managed_port(bare, blocks) {
+            skipping = Some(player);
+            if replaced.insert(player) {
                 out.push_str(&blocks[&player]);
-                replaced.insert(player);
-                continue;
             }
-        } else if skipping.is_some() && !bare.starts_with("  ") {
+            continue;
+        }
+        if skipping.is_some() && !bare.starts_with("  ") {
             skipping = None;
         }
         if skipping.is_none() {

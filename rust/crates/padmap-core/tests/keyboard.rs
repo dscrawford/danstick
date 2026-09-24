@@ -235,6 +235,37 @@ fn ares_binds_every_control_to_the_generic_keyboard() {
 }
 
 #[test]
+fn ares_gives_the_desks_mouse_to_the_keyboards_port_and_clears_the_rest() {
+    // ares' generic mouse is vendor 0, product 2, path 0 -- id 0x2 -- with
+    // its axes in group 0 and its buttons in group 1 (ruby's xlib driver).
+    let block = ares::virtual_mouse(2, true);
+    assert!(block.starts_with("VirtualMouse2\n"), "{block}");
+    for (name, binding) in [
+        ("X", "0x2/0/0"),
+        ("Y", "0x2/0/1"),
+        ("Left", "0x2/1/0"),
+        ("Middle", "0x2/1/1"),
+        ("Right", "0x2/1/2"),
+    ] {
+        assert!(
+            block.contains(&format!("  {name}: {binding};;\n")),
+            "{name} unbound: {block}"
+        );
+    }
+    assert!(
+        block.contains("  Extra: ;;\n"),
+        "xlib's mouse has no Extra button to bind: {block}"
+    );
+
+    // Every other port names the controls and binds none, so a mouse left
+    // at another port last time cannot make the mouse two players.
+    let empty = ares::virtual_mouse(3, false);
+    assert!(empty.starts_with("VirtualMouse3\n"), "{empty}");
+    assert!(!empty.contains("0x2"), "{empty}");
+    assert_eq!(empty.lines().count(), 1 + ares::MOUSE_CONTROLS.len());
+}
+
+#[test]
 fn ares_empty_pad_names_every_control_and_binds_none() {
     let block = ares::empty_pad(4);
     assert!(block.starts_with("VirtualPad4\n"));

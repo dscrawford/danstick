@@ -202,6 +202,44 @@ pub const KEYBOARD: [(&str, u8); 24] = [
     ("R-Right", xlib::L),
 ];
 
+/// ares' generic mouse: vendor 0, product 2, path 0, an `Axis` group then a
+/// `Button` one (`nall::HID::Mouse`, bound by `ruby/input/mouse/xlib.cpp`).
+const MOUSE_ID: &str = "0x2";
+const GROUP_MOUSE_AXIS: u8 = 0;
+const GROUP_MOUSE_BUTTON: u8 = 1;
+
+/// `VirtualMouseN`'s controls, and where each reads from on that mouse.
+///
+/// `Extra` is last and binds nothing: ares' xlib mouse appends Left, Middle,
+/// Right, Up, Down, so buttons 3 and 4 are the wheel and there is no extra
+/// button to give it.
+pub const MOUSE_CONTROLS: [(&str, Option<(u8, u8)>); 6] = [
+    ("X", Some((GROUP_MOUSE_AXIS, 0))),
+    ("Y", Some((GROUP_MOUSE_AXIS, 1))),
+    ("Left", Some((GROUP_MOUSE_BUTTON, 0))),
+    ("Middle", Some((GROUP_MOUSE_BUTTON, 1))),
+    ("Right", Some((GROUP_MOUSE_BUTTON, 2))),
+    ("Extra", None),
+];
+
+/// The `VirtualMouseN` block for one port: the desk's mouse where the
+/// keyboard's seat is, nothing anywhere else.
+///
+/// A port device ares maps through a virtual port -- an N64 Mouse, a SNES
+/// Mouse -- reads `virtualPorts[N-1].mouse`, so binding this is binding the
+/// mouse on that port, with no per-system table to keep.
+pub fn virtual_mouse(player: u32, bound: bool) -> String {
+    let mut out = format!("VirtualMouse{player}\n");
+    for (name, source) in MOUSE_CONTROLS {
+        let value = match source.filter(|_| bound) {
+            Some((group, input)) => format!("{MOUSE_ID}/{group}/{input}"),
+            None => String::new(),
+        };
+        out.push_str(&format!("  {name}: {value};;\n"));
+    }
+    out
+}
+
 /// The `VirtualPadN` block for the keyboard.
 pub fn keyboard_pad(player: u32) -> String {
     let mut out = format!("VirtualPad{player}\n");

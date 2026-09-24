@@ -343,19 +343,31 @@ fn rewriting_ares_settings_touches_only_the_ports_padmap_manages() {
 
     let existing = "Video\n  Driver: OpenGL 3.2\n  Shader: None\n\
                     VirtualPad1\n  A..South: ;;\n  Start: ;;\n\
+                    VirtualMouse1\n  X: stale;;\n\
                     VirtualPad2\n  A..South: old;;\n\
-                    VirtualMouse1\n  X: ;;\n\
+                    VirtualMouse2\n  X: theirs;;\n\
                     Audio\n  Driver: SDL\n";
     let mut blocks = BTreeMap::new();
-    blocks.insert(1u32, "VirtualPad1\n  A..South: new;;\n".to_owned());
+    blocks.insert(
+        1u32,
+        "VirtualPad1\n  A..South: new;;\nVirtualMouse1\n  X: 0x2/0/0;;\n".to_owned(),
+    );
 
     let out = artefacts::rewrite_ares_settings(existing, &blocks);
 
     assert!(out.contains("Video\n  Driver: OpenGL 3.2"), "{out}");
     assert!(out.contains("Audio\n  Driver: SDL"), "{out}");
     assert!(
-        out.contains("VirtualMouse1\n  X: ;;"),
-        "the mouse is not ours"
+        out.contains("VirtualMouse1\n  X: 0x2/0/0;;"),
+        "the managed port's mouse was not replaced: {out}"
+    );
+    assert!(
+        !out.contains("stale"),
+        "a mouse padmap manages survived from last time: {out}"
+    );
+    assert!(
+        out.contains("VirtualMouse2\n  X: theirs;;"),
+        "an unmanaged port's mouse is not ours: {out}"
     );
     assert!(out.contains("A..South: new;;"), "player 1 was not replaced");
     assert!(
