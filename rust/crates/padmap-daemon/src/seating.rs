@@ -118,19 +118,33 @@ impl Seating {
         self.wanted = wanted.iter().map(|pad| pad.path.clone()).collect();
         // Pads as watched before the rebuild, so holds can follow to their new index.
         let before: Vec<Identity> = self.pads.iter().map(identity).collect();
+        // A pad that stays watched keeps its descriptor. Closing it to rebuild
+        // the list threw away whatever was queued on it, and a button that went
+        // down in that moment stays down and never sends another edge.
+        let mut kept: Vec<Option<Source>> = std::mem::take(&mut self.sources)
+            .into_iter()
+            .map(Some)
+            .collect();
         self.pads.clear();
-        self.sources.clear();
         for pad in wanted {
-            match clone::open_source(&pad, false) {
-                Ok(source) => {
-                    self.pads.push(pad);
-                    self.sources.push(source);
-                }
-                Err(error) => {
-                    warn!("seating: {} cannot be watched ({error})", pad.name);
-                }
-            }
+            let reused = before
+                .iter()
+                .position(|was| *was == identity(&pad))
+                .and_then(|at| kept[at].take());
+            let source = match reused {
+                Some(source) => source,
+                None => match clone::open_source(&pad, false) {
+                    Ok(source) => source,
+                    Err(error) => {
+                        warn!("seating: {} cannot be watched ({error})", pad.name);
+                        continue;
+                    }
+                },
+            };
+            self.pads.push(pad);
+            self.sources.push(source);
         }
+        // Whatever is left in `kept` has stopped being watched and closes here.
         let after: Vec<Identity> = self.pads.iter().map(identity).collect();
         let moved = padmap_core::assign::moved_indices(&before, &after);
         self.assigner.remap(|pad| moved.get(pad).copied().flatten());

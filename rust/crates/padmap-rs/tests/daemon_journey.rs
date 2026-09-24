@@ -3113,3 +3113,53 @@ fn a_seated_players_presses_while_others_hold_to_join() {
     }
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// A press made while another pad's claim is being handled is kept: the pad
+/// is already being watched, and closing its descriptor to rebuild the list
+/// threw away a button that then stayed down and sent no new edge.
+#[test]
+fn a_press_made_while_a_claim_is_handled_still_takes_a_seat() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let root = std::env::temp_dir().join(format!("padmap-midclaim-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+
+    let mut pads: Vec<TestPad> = ["a", "b", "c", "d"]
+        .iter()
+        .enumerate()
+        .map(|(at, letter)| {
+            TestPad::with_id(
+                &format!("PADMAP RSTESTLAT {letter}"),
+                0x1209,
+                LATENCY.pid + at as u16,
+            )
+        })
+        .collect();
+    let mut daemon = Daemon::start(&root, LATENCY);
+    daemon.pump(1.5);
+    daemon.seat_by_hold_as(&mut pads[0], 1);
+    daemon.seat_by_hold_as(&mut pads[1], 2);
+    daemon.send(serde_json::json!({"cmd": "seating", "open": true, "players": 4, "hold": 0.5}));
+    daemon.pump(0.5);
+
+    // The third pad claims; the fourth goes down the moment that is announced,
+    // while the claim's own work is still running, and never lets go.
+    daemon.events.clear();
+    pads[2].emit(EventType::KEY.0, FIRST_KEY, 1);
+    daemon
+        .wait_for("claim", |e| e["player"] == 3, 5.0)
+        .expect("the third pad never claimed");
+    pads[3].emit(EventType::KEY.0, FIRST_KEY, 1);
+    pads[2].emit(EventType::KEY.0, FIRST_KEY, 0);
+
+    let claim = daemon.wait_for("claim", |e| e["player"] == 4, 6.0);
+    pads[3].emit(EventType::KEY.0, FIRST_KEY, 0);
+    assert!(
+        claim.is_some(),
+        "a press made during another claim was lost: that one hold never took a seat"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
