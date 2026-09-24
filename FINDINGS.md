@@ -3511,3 +3511,43 @@ node -- 124ms once, 27ms per hotplug after.
 reads one device and does nothing else, and both are wrong inside an event loop
 that owns a machine. Read the API's own doc for what it *inserts*, not just what
 it returns.
+
+## The loop that forwards presses was waiting on everything else
+
+GOTG reported a seated player's tail latency crossing a frame while others
+held to join. The span it pointed at did add work, but measuring per phase
+inside `tick()` found that the problem was older and much larger, and that
+it was three different things sharing one symptom.
+
+**Seating ran a full device discovery on every tick.** `refresh_seating`
+asked the lazy `Scan` for the present pads every 20ms, so for as long as
+seating was open -- the whole game, for GOTG -- `pad::discover` opened
+devices fifty times a second. On this desk that is 19.5ms of each 20ms tick,
+and forwarding has no thread of its own: a press is handled when the loop
+next returns to `wait()`. Quiet latency was 27ms. `hotplug::ScanGate` now
+discovers when the input nodes or the seated pads change, follows up while
+udev settles, and otherwise not at all: 0.04ms.
+
+**A claim spawned a process.** A pad with no captured mapping asks SDL's
+built-in database, and asking means a subprocess that initialises SDL --
+"half a second in a subprocess", said the comment beside the cache that was
+meant to make it rare. It was cached per GUID, so every new pad model paid it,
+on the event loop, in the middle of its claim. That was the whole of GOTG's
+"claim to state grows with the room" as well: not the files, which take a
+millisecond, but the probe in front of them. SDL is now asked on a thread of
+its own; a claim that finds no answer yet uses the capability guess at once
+and is written again when SDL replies, and seating warms the answer as soon
+as it starts watching a pad, so it is usually there before anyone claims.
+
+**Rebuilding the watched list closed every descriptor.** See the fix for a
+press made during a claim; it also cost about 10ms a pad, per claim.
+
+**How the measurement lied first.** The journey that times a seated pad's
+presses dropped any press that missed its 200ms deadline, and reported a
+p95 of 0.07ms for a run in which one press in eight had stalled. A timeout
+is the worst case, not a missing sample. It counts them now.
+
+**Worth generalising.** Anything on the event loop is on every player's
+input path. A cache in front of a slow call is not the same as the slow call
+being off the loop: it only decides how often the stall happens, and "once
+per new controller" is exactly when a room of people are picking them up.

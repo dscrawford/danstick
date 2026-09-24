@@ -151,49 +151,75 @@ pub fn stored_sdl_line(player: u32, pad: &Pad, identity: Identity, facts: &PadFa
     sdl_line_for(player, identity, &bindings, facts)
 }
 
+/// A usable SDL line for an unmapped pad, and why it is what it is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Fallback {
+    pub line: String,
+    pub note: String,
+    /// A guess made while SDL was still being asked; replaced once it answers.
+    pub provisional: bool,
+}
+
 /// A usable SDL line for unmapped pads.
-pub fn fallback_line_for(
-    player: u32,
-    identity: Identity,
-    facts: &PadFacts,
-) -> Option<(String, String)> {
+pub fn fallback_line_for(player: u32, identity: Identity, facts: &PadFacts) -> Option<Fallback> {
     if facts.keys.is_empty() {
         return None;
     }
-    let (fields, source) = carried(facts.physical_guid.as_deref())
-        .map(|(fields, from)| (fields, format!("carried over from {from}")))
-        .unwrap_or_else(|| {
-            (
-                guess::guessed_fields(&facts.keys, &facts.axes, Some(&facts.spans)),
-                "guessed from the controller's own capabilities".to_owned(),
-            )
-        });
+    let found = carried(facts.physical_guid.as_deref());
+    let provisional = found == Carried::Pending;
+    let (fields, source) = match found {
+        Carried::Found(fields, from) => (fields, format!("carried over from {from}")),
+        Carried::Pending | Carried::Absent => (
+            guess::guessed_fields(&facts.keys, &facts.axes, Some(&facts.spans)),
+            if provisional {
+                "guessed from the controller's own capabilities while SDL is asked".to_owned()
+            } else {
+                "guessed from the controller's own capabilities".to_owned()
+            },
+        ),
+    };
     let line = emit::sdl_line(
         &emit::virtual_guid(player, identity),
         &emit::virtual_name(player),
         &fields,
     );
-    Some((
+    Some(Fallback {
         line,
-        format!("{source}; run the mapping wizard to replace it"),
-    ))
+        note: format!("{source}; run the mapping wizard to replace it"),
+        provisional,
+    })
 }
 
-/// Mapping already on disk or in SDL's database for this GUID.
-fn carried(guid: Option<&str>) -> Option<(Fields, String)> {
-    let guid = guid?;
-    if let Some(found) = artefacts::carried_fields(guid) {
-        return Some(found);
+/// Whether a mapping for this GUID is on disk, in SDL's database, or not yet known.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Carried {
+    Found(Fields, String),
+    /// SDL is being asked off the event loop and has not answered.
+    Pending,
+    Absent,
+}
+
+/// Mapping already on disk or in SDL's database for this GUID. SDL is never
+/// asked here: a probe is a subprocess, and this runs on the event loop.
+fn carried(guid: Option<&str>) -> Carried {
+    let Some(guid) = guid else {
+        return Carried::Absent;
+    };
+    if let Some((fields, from)) = artefacts::carried_fields(guid) {
+        return Carried::Found(fields, from);
     }
-    let line = sdlprobe::isolated(guid)?;
-    let (_, name, fields) = sdl::parse_line(&line)?;
-    if name.starts_with(emit::VIRTUAL_PREFIX) {
-        return None;
+    let line = match sdlprobe::shared().lookup(guid) {
+        sdlprobe::Lookup::Pending => return Carried::Pending,
+        sdlprobe::Lookup::Known(None) => return Carried::Absent,
+        sdlprobe::Lookup::Known(Some(line)) => line,
+    };
+    match sdl::parse_line(&line) {
+        Some((_, name, fields)) if !name.starts_with(emit::VIRTUAL_PREFIX) => Carried::Found(
+            artefacts::binding_fields(&fields),
+            "SDL's built-in database".to_owned(),
+        ),
+        _ => Carried::Absent,
     }
-    Some((
-        artefacts::binding_fields(&fields),
-        "SDL's built-in database".to_owned(),
-    ))
 }
 
 /// The autoconfig profile for one clone, as text.
@@ -271,6 +297,9 @@ pub fn visible_order() -> BTreeMap<usize, String> {
 #[derive(Debug, Default, Clone)]
 pub struct Written {
     pub sdl_lines: Vec<String>,
+    /// Some seated player's mapping was guessed while SDL was still being
+    /// asked, so these files are worth writing again when it answers.
+    pub awaiting_sdl: bool,
 }
 
 /// What one player's files were written from, and what they came out as.
@@ -280,6 +309,8 @@ struct Derived {
     /// Whether the pad's capabilities could be read; a guess made without them
     /// is not worth keeping, since the next join would otherwise repeat it.
     sound: bool,
+    /// Guessed while SDL was being asked about this pad.
+    provisional: bool,
     profile: String,
     line: String,
     note: Option<String>,
@@ -351,16 +382,19 @@ fn derive(
     } else {
         stored_sdl_line(slot.player, &slot.pad, identity, &facts)
     };
-    let (line, note) = if stored.is_empty() {
+    let (line, note, provisional) = if stored.is_empty() {
         match fallback_line_for(slot.player, identity, &facts) {
-            Some((line, note)) => {
-                info!("player {}: no capture yet, SDL mapping {note}", slot.player);
-                (line, Some(note))
+            Some(fallback) => {
+                info!(
+                    "player {}: no capture yet, SDL mapping {}",
+                    slot.player, fallback.note
+                );
+                (fallback.line, Some(fallback.note), fallback.provisional)
             }
-            None => (String::new(), None),
+            None => (String::new(), None, false),
         }
     } else {
-        (stored, None)
+        (stored, None, false)
     };
     let published = emulators::Published {
         player: slot.player,
@@ -372,7 +406,10 @@ fn derive(
     };
     Derived {
         from,
-        sound: xbox || !facts.keys.is_empty(),
+        // A guess made while SDL is asked is not kept: when it answers, the
+        // next write works this player out again and gets the real line.
+        sound: (xbox || !facts.keys.is_empty()) && !provisional,
+        provisional,
         profile,
         line,
         note,
@@ -537,9 +574,11 @@ pub fn write_all(
 
     // A player whose pad could not be read is left out, so the next join has
     // another go rather than keeping a mapping guessed from nothing.
+    let awaiting_sdl = derived.values().any(|one| one.provisional);
     cache.players = derived.into_iter().filter(|(_, one)| one.sound).collect();
     Written {
         sdl_lines: lines.into_values().collect(),
+        awaiting_sdl,
     }
 }
 

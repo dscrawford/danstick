@@ -132,6 +132,11 @@ pub struct Server {
     /// When seating's watched set is worth recomputing: the input nodes and the
     /// seated pads are all a rediscovery would find different.
     seating_gate: hotplug::ScanGate<(BTreeSet<String>, Vec<PathBuf>)>,
+    /// How many answers SDL's database had given when the files were last
+    /// written, so a pad guessed at while it was asked is upgraded once it has.
+    sdl_answers: u64,
+    /// Whether the files last written hold a guess made while SDL was asked.
+    awaiting_sdl: bool,
     scratch: Vec<evdev::InputEvent>,
     pending_scope: String,
     sdl_lines: Vec<String>,
@@ -278,6 +283,8 @@ impl Server {
             keyboard_hold: padmap_core::keyboard::Hold::default(),
             held_for: None,
             seating_gate: hotplug::ScanGate::default(),
+            sdl_answers: 0,
+            awaiting_sdl: false,
             scratch: Vec::with_capacity(64),
             pending_scope: String::new(),
             sdl_lines: Vec::new(),
@@ -2163,6 +2170,7 @@ impl Server {
         self.tick_seating();
         self.hold_siblings();
         self.tick_keyboard_hold();
+        self.upgrade_guessed_mappings();
 
         let clock = now();
         self.tick_mapping(clock);
@@ -2532,6 +2540,7 @@ impl Server {
             &mut self.publish_cache,
         );
         self.sdl_lines = written.sdl_lines;
+        self.awaiting_sdl = written.awaiting_sdl;
         let lines = events::sdl_mapping(&self.sdl_lines);
         self.broadcast(&lines);
     }
@@ -2705,6 +2714,22 @@ impl Server {
             self.deskkeys.close_all();
         }
         self.held_for = Some((nodes, paths, listening));
+    }
+
+    /// SDL answered for a pad whose mapping was guessed while it was asked:
+    /// write the files again, and only that player is worked out afresh.
+    fn upgrade_guessed_mappings(&mut self) {
+        let answers = padmap_input::sdlprobe::answered();
+        if answers == self.sdl_answers {
+            return;
+        }
+        self.sdl_answers = answers;
+        // Most answers are for pads only being watched; nothing was guessed
+        // for them, and rewriting the room for each would be a stall apiece.
+        if self.awaiting_sdl && self.republisher.is_some() {
+            let virtual_paths = self.virtual_paths();
+            self.rewrite_consumers_reusing(&virtual_paths);
+        }
     }
 
     /// Whether a held space bar could seat the keyboard right now.

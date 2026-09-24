@@ -134,7 +134,14 @@ impl Seating {
             let source = match reused {
                 Some(source) => source,
                 None => match clone::open_source(&pad, false) {
-                    Ok(source) => source,
+                    Ok(source) => {
+                        // Ask SDL about it now, off the loop, so the answer is
+                        // there by the time this pad claims.
+                        if let Some(guid) = source.physical_guid() {
+                            padmap_input::sdlprobe::shared().prefetch(&guid);
+                        }
+                        source
+                    }
                     Err(error) => {
                         warn!("seating: {} cannot be watched ({error})", pad.name);
                         continue;
