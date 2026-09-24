@@ -8,9 +8,20 @@ const GUID: &str = "03000000120900000100000001000000";
 // ---- RetroArch ----
 
 #[test]
-fn retroarch_leaves_its_own_defaults_alone_when_player_one_is_free() {
-    assert_eq!(retroarch::keyboard_config(&[], None), "");
-    assert_eq!(retroarch::keyboard_config(&[2, 3], None), "");
+fn retroarch_leaves_its_own_key_defaults_alone_when_player_one_is_free() {
+    // The keys are RetroArch's own on player 1 already; only the mouse,
+    // whose defaults spread one per port, still has to be said.
+    for text in [
+        retroarch::keyboard_config(&[], None),
+        retroarch::keyboard_config(&[2, 3], None),
+    ] {
+        assert!(!text.contains(" = \"nul\""), "the keys moved: {text}");
+        assert!(!text.contains("input_player1_a"), "{text}");
+        assert!(
+            text.contains("input_player1_mouse_index = \"0\"\n"),
+            "{text}"
+        );
+    }
 }
 
 #[test]
@@ -32,7 +43,53 @@ fn retroarch_moves_the_keyboard_off_a_seated_player_one() {
         !text.contains("input_player2_b_btn"),
         "a keyboard bind has no suffix"
     );
-    assert!(!text.contains("input_player3_"));
+    assert!(
+        !text.contains("input_player3_a"),
+        "only the keyboard's own port gets keys: {text}"
+    );
+}
+
+#[test]
+fn retroarch_gives_the_desks_mouse_to_the_keyboards_player_and_to_nobody_else() {
+    // RetroArch defaults port i to mouse i, so player 1 holds the desk's
+    // mouse whoever is sitting there. The keyboard's seat takes it instead.
+    let text = retroarch::keyboard_config(&[1], Some(2));
+    assert!(
+        text.contains("input_player2_mouse_index = \"0\"\n"),
+        "the keyboard's player has no mouse: {text}"
+    );
+    let none = format!("mouse_index = \"{}\"", retroarch::NO_MOUSE);
+    assert!(
+        text.contains(&format!("input_player1_{none}\n")),
+        "the pad's port kept the desk's mouse: {text}"
+    );
+    for player in [3, 16] {
+        assert!(
+            text.contains(&format!("input_player{player}_{none}\n")),
+            "player {player} kept a mouse: {text}"
+        );
+    }
+    assert!(
+        !text.contains("input_player17_mouse_index"),
+        "RetroArch has sixteen ports: {text}"
+    );
+
+    // Unseated, the keyboard still sits on the first free port, and the
+    // mouse follows it there rather than staying on the pad's player 1.
+    let text = retroarch::keyboard_config(&[1], None);
+    assert!(
+        text.contains("input_player2_mouse_index = \"0\"\n"),
+        "{text}"
+    );
+    assert!(text.contains(&format!("input_player1_{none}\n")), "{text}");
+
+    // Every port seated: the keyboard drives nobody, and so does the mouse.
+    let all: Vec<u32> = (1..=retroarch::MAX_PLAYERS).collect();
+    let text = retroarch::keyboard_config(&all, None);
+    assert!(
+        !text.contains("mouse_index = \"0\""),
+        "nobody is at the keyboard, so nobody has the mouse: {text}"
+    );
 }
 
 #[test]
@@ -47,10 +104,14 @@ fn retroarch_with_every_port_seated_gives_the_keyboard_nobody() {
 #[test]
 fn a_seated_keyboard_keeps_its_seat_ahead_of_pads_seated_later() {
     // Keyboard seated first as player 1, a pad after it as player 2.
-    assert_eq!(
-        retroarch::keyboard_config(&[2], Some(1)),
-        "",
-        "player 1's defaults stand"
+    let text = retroarch::keyboard_config(&[2], Some(1));
+    assert!(
+        !text.contains(" = \"nul\""),
+        "player 1's key defaults stand: {text}"
+    );
+    assert!(
+        text.contains("input_player1_mouse_index = \"0\"\n"),
+        "{text}"
     );
     let text = retroarch::keyboard_config(&[1, 2], Some(3));
     assert!(text.contains("input_player3_a = \"x\"\n"), "{text}");

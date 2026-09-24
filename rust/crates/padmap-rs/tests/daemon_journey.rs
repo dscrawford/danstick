@@ -2593,7 +2593,16 @@ fn the_keyboard_takes_a_seat_by_command_and_a_pad_sits_after_it() {
     let launch = std::fs::read_to_string(state_dir.join("launch.cfg")).expect("launch.cfg");
     assert!(
         !launch.contains("input_player1_b = \"nul\""),
-        "the keyboard is player 1, so RetroArch's own defaults stand: {launch}"
+        "the keyboard is player 1, so RetroArch's own key defaults stand: {launch}"
+    );
+    // The mouse is the keyboard's seat's, and the pad on player 2 has none.
+    assert!(
+        launch.contains("input_player1_mouse_index = \"0\"\n"),
+        "the keyboard's seat has no mouse: {launch}"
+    );
+    assert!(
+        launch.contains("input_player2_mouse_index = \"16\"\n"),
+        "the pad's port kept the desk's mouse: {launch}"
     );
 
     // Unseating the keyboard frees seat 1; the pad keeps seat 2.

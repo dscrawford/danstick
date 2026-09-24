@@ -344,7 +344,46 @@ pub const KEYBOARD_DEFAULTS: [(&str, &str); 12] = [
     ("r", "w"),
 ];
 
-/// The keyboard's binds for the first port no managed pad holds.
+/// The desk's mouse: first in udev's pointer list, and RetroArch's own
+/// default for player 1.
+pub const DESK_MOUSE: u32 = 0;
+
+/// The first mouse index RetroArch can have no device for. `udev_get_mouse`
+/// reads `pointers[index]` only while `index < MAX_INPUT_DEVICES` (16), and
+/// otherwise leaves its `dev_index` at -1, giving the port no mouse rather
+/// than falling back to the first one. A cfg has no other way to say "this
+/// port has no mouse".
+pub const NO_MOUSE: u32 = 16;
+
+/// Which mouse each port reads: the desk's for the keyboard's player, none
+/// for everybody else.
+///
+/// RetroArch seeds `input_mouse_index[i] = i`, so player 1 holds the desk's
+/// mouse whoever is sitting there. Every port is written rather than only
+/// the ones that differ from the default: `--appendconfig` merges into a
+/// live config that may carry a stale index from an earlier session, and a
+/// port silently reading the desk's mouse is what this is here to stop.
+pub fn mouse_config(keyboard: Option<u32>) -> Vec<String> {
+    let mut lines = vec![
+        String::new(),
+        "# The desk's mouse belongs to the keyboard's seat: the person".to_owned(),
+        "# sitting there has it under their other hand. RetroArch gives".to_owned(),
+        "# port i mouse i by default, so every other port is sent past".to_owned(),
+        "# the end of the pointer list, which is how a cfg says none.".to_owned(),
+    ];
+    for player in 1..=MAX_PLAYERS {
+        let index = if keyboard == Some(player) {
+            DESK_MOUSE
+        } else {
+            NO_MOUSE
+        };
+        lines.push(format!("input_player{player}_mouse_index = \"{index}\""));
+    }
+    lines
+}
+
+/// The keyboard's binds for the first port no managed pad holds, and the
+/// mouse that sits beside it.
 ///
 /// RetroArch compiles the keyboard into player 1 and nowhere else, and a
 /// keyboard bind is independent of the pad bind on the same port, so a pad
@@ -356,7 +395,7 @@ pub const KEYBOARD_DEFAULTS: [(&str, &str); 12] = [
 pub fn keyboard_config(managed: &[u32], seat: Option<u32>) -> String {
     let free = crate::keyboard::port(seat, managed, MAX_PLAYERS);
     if free == Some(1) {
-        return String::new();
+        return mouse_config(free).join("\n") + "\n";
     }
     let mut lines = vec![
         String::new(),
@@ -380,6 +419,7 @@ pub fn keyboard_config(managed: &[u32], seat: Option<u32>) -> String {
         }
         None => lines.push("# Every port is seated; the keyboard drives nobody.".to_owned()),
     }
+    lines.extend(mouse_config(free));
     lines.join("\n") + "\n"
 }
 
