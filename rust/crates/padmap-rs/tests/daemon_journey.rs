@@ -41,9 +41,9 @@ const SLEEPER: PadId = PadId {
     only: "RSTESTSLEEPER",
 };
 const JOINER: PadId = PadId {
-    name: "PADMAP RSTESTJOINER",
+    name: "PADMAP RSTESTSOLOSEAT",
     pid: 0x0006,
-    only: "RSTESTJOINER",
+    only: "RSTESTSOLOSEAT",
 };
 const TUNER: PadId = PadId {
     name: "PADMAP RSTESTTUNER",
@@ -179,10 +179,32 @@ const DESK: PadId = PadId {
 const DESK_KEYBOARD_NAME: &str = "PADMAP RSTESTDESK keyboard";
 /// Four pads for the seated-player latency measurement.
 const LATENCY: PadId = PadId {
-    name: "PADMAP RSTESTLAT a",
+    name: "PADMAP RSTESTPRESSTIME a",
     pid: 0x0f10,
-    only: "RSTESTLAT",
+    only: "RSTESTPRESSTIME",
 };
+/// Four pads for a press made during somebody else's claim.
+const MIDCLAIM: PadId = PadId {
+    name: "PADMAP RSTESTMIDCLAIM a",
+    pid: 0x0f20,
+    only: "RSTESTMIDCLAIM",
+};
+
+/// Four distinct pads under one test's own filter, so tests running beside it
+/// cannot see them.
+fn four_pads(id: PadId) -> Vec<TestPad> {
+    ["a", "b", "c", "d"]
+        .iter()
+        .enumerate()
+        .map(|(at, letter)| {
+            TestPad::with_id(
+                &format!("PADMAP {} {letter}", id.only),
+                0x1209,
+                id.pid + at as u16,
+            )
+        })
+        .collect()
+}
 
 /// What the keyboard's seat calls itself, in `claim` and in `state`.
 const KEYBOARD_SEAT_NAME: &str = "Keyboard and Mouse";
@@ -3014,7 +3036,7 @@ fn a_seated_players_presses_while_others_hold_to_join() {
         .enumerate()
         .map(|(at, letter)| {
             TestPad::with_id(
-                &format!("PADMAP RSTESTLAT {letter}"),
+                &format!("PADMAP RSTESTPRESSTIME {letter}"),
                 0x1209,
                 LATENCY.pid + 1 + at as u16,
             )
@@ -3127,18 +3149,8 @@ fn a_press_made_while_a_claim_is_handled_still_takes_a_seat() {
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).expect("mkdir");
 
-    let mut pads: Vec<TestPad> = ["a", "b", "c", "d"]
-        .iter()
-        .enumerate()
-        .map(|(at, letter)| {
-            TestPad::with_id(
-                &format!("PADMAP RSTESTLAT {letter}"),
-                0x1209,
-                LATENCY.pid + at as u16,
-            )
-        })
-        .collect();
-    let mut daemon = Daemon::start(&root, LATENCY);
+    let mut pads = four_pads(MIDCLAIM);
+    let mut daemon = Daemon::start(&root, MIDCLAIM);
     daemon.pump(1.5);
     daemon.seat_by_hold_as(&mut pads[0], 1);
     daemon.seat_by_hold_as(&mut pads[1], 2);
