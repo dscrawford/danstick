@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# Run padmap's tests in a pod on the cluster instead of on this machine.
+#
+#   tools/cluster-test                                    # every test
+#   tools/cluster-test -p padmap-core                     # any `cargo test` arguments
+#   tools/cluster-test -p padmap-rs --test daemon_journey -- exec_reserves
+#   PADMAP_CLUSTER_LINT=1 tools/cluster-test              # fmt and clippy there too
+#
+# The working tree goes in as it is, uncommitted edits included. The exit
+# status is cargo's. See k8s/tests/README.md.
+set -euo pipefail
+
+root=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
+cd "$root"
+registry=192.168.0.2:30500
+
+# The environment only changes with Cargo.lock, so this is a no-op most runs.
+image=$(nix build "path:$root#test-image" --no-link --print-out-paths --max-jobs 2 --cores 4)
+tag=$(basename "$image" | cut -c1-12)
+if ! curl -sfk -o /dev/null \
+    -H 'Accept: application/vnd.docker.distribution.manifest.v2+json' \
+    "https://$registry/v2/padmap-tests/manifests/$tag"; then
+  echo "cluster-test: pushing the test image ($tag)" >&2
+  # skopeo reads /etc/docker/certs.d/$registry, whose client key only root can
+  # read, so it is pointed at a directory holding the CA certificate alone.
+  certs="${XDG_CACHE_HOME:-$HOME/.cache}/padmap/regcerts"
+  mkdir -p "$certs"
+  cp "/etc/docker/certs.d/$registry/registry.crt" "$certs/"
+  nix run nixpkgs#skopeo -- copy --dest-cert-dir="$certs" --dest-tls-verify=false \
+    "docker-archive:$image" "docker://$registry/padmap-tests:$tag" >&2
+fi
+
+name="padmap-tests-$(date +%s)-$$"
+cleanup() { kubectl delete pod "$name" --wait=false >/dev/null 2>&1 || true; }
+# EXIT alone misses a run that is interrupted, and that pod holds a node's uinput.
+trap cleanup EXIT
+trap 'exit 130' INT TERM
+sed -e "s/@NAME@/$name/" -e "s/@TAG@/$tag/" k8s/tests/pod.yaml | kubectl apply -f - >/dev/null
+kubectl wait --for=condition=Ready "pod/$name" --timeout=300s >/dev/null
+
+tar -C "$root" \
+  --exclude=./rust/target --exclude=./.cargo-home --exclude=./.git \
+  --exclude=./.direnv --exclude='./result*' --exclude=./.claude \
+  --exclude=./.swarm --exclude=./ruvector.db \
+  -czf - . | kubectl exec -i "$name" -- tar -xzf - -C /src
+
+if [ "${PADMAP_CLUSTER_LINT:-}" = 1 ]; then
+  kubectl exec "$name" -- cargo fmt --all --check
+  kubectl exec "$name" -- cargo clippy --offline --all-targets --all-features -- -D warnings
+fi
+kubectl exec "$name" -- cargo test --offline "$@"

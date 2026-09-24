@@ -29,6 +29,17 @@ Other flake outputs: `padmap-play`, `paddump`, `icons`, `nixosModules.padmap`.
 
 ## Test
 
+**Run the suite on the cluster, not on a desk.** The journeys make real pads
+through `/dev/uinput` and start real daemons, several at once: on somebody's
+desktop that is load they feel and fake pads their games can see.
+
+    tools/cluster-test                                      # everything, in a pod (k8s/tests/README.md)
+    tools/cluster-test -p padmap-rs --test daemon_journey -- <name>
+    PADMAP_CLUSTER_LINT=1 tools/cluster-test                # fmt and clippy there too
+
+Locally: build, fmt, clippy. The commands below run the same suite in place,
+for a machine nobody is using:
+
     cd rust && cargo test                                   # everything
     python3 tests/run.py [--coverage] [--lint]              # same, one answer from the root
     cargo test -p padmap-core <filter>                      # unit tests by name

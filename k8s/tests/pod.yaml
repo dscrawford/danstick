@@ -1,0 +1,54 @@
+# A pod to run padmap's tests in; `tools/cluster-test` fills in @NAME@ and
+# @TAG@, streams the working tree in, and runs cargo inside it.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: @NAME@
+  namespace: default
+  labels:
+    app: padmap-tests
+spec:
+  restartPolicy: Never
+  # A run that is abandoned is not left holding a node's uinput forever.
+  activeDeadlineSeconds: 3600
+  containers:
+    - name: tests
+      image: localhost:30500/padmap-tests:@TAG@
+      imagePullPolicy: Always
+      securityContext:
+        # containerd's device cgroup denies /dev/uinput to anything less.
+        privileged: true
+      volumeMounts:
+        - name: uinput
+          mountPath: /dev/uinput
+        - name: input
+          mountPath: /dev/input
+        # padmap reads udev's properties for the pads it makes; the node's
+        # udevd writes them, so its database is mounted rather than faked.
+        - name: udev
+          mountPath: /run/udev
+          readOnly: true
+        - name: tmp
+          mountPath: /tmp
+      resources:
+        requests:
+          cpu: "2"
+          memory: 2Gi
+        limits:
+          cpu: "4"
+          memory: 6Gi
+  volumes:
+    - name: uinput
+      hostPath:
+        path: /dev/uinput
+        type: CharDevice
+    - name: input
+      hostPath:
+        path: /dev/input
+        type: Directory
+    - name: udev
+      hostPath:
+        path: /run/udev
+        type: Directory
+    - name: tmp
+      emptyDir: {}

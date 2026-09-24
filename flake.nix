@@ -322,6 +322,11 @@
         packages.default = self.packages.${system}.padmap;
 
         packages.padmap-rs = padmap-rs;
+        # Tests run in a pod, not on a desk: see k8s/tests/README.md.
+        packages.test-image = import ./nix/test-image.nix {
+          inherit pkgs;
+          cargoLock = ./rust/Cargo.lock;
+        };
 
         # padmap itself. Kept under this name as well as `packages.padmap`
         # so `nix run .#padmap-rs` still works for anyone who scripted it.
