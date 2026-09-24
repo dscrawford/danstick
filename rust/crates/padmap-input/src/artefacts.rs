@@ -232,12 +232,10 @@ fn ares_managed_port(header: &str, blocks: &BTreeMap<u32, String>) -> Option<u32
     blocks.contains_key(&player).then_some(player)
 }
 
-/// Replace the `VirtualPadN` and `VirtualMouseN` blocks padmap manages;
-/// blocks ares never wrote are appended.
-///
-/// A port's block carries both devices, and lands where its pad was: ares
-/// writes the mouse after the pad, and a mouse block left behind would bind
-/// the pointer on a port padmap has since given to somebody else.
+/// Replace the `VirtualPadN` and `VirtualMouseN` blocks padmap manages,
+/// appending any it does not find. A port's block carries both devices and
+/// lands where its pad was: ares writes the mouse after the pad, and a
+/// leftover mouse block would point a port padmap has since given away.
 pub fn rewrite_ares_settings(existing: &str, blocks: &BTreeMap<u32, String>) -> String {
     let mut out = String::with_capacity(existing.len());
     let mut skipping: Option<u32> = None;

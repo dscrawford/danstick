@@ -1,24 +1,12 @@
 //! The keyboard takes the first port no pad holds, in each emulator's own keys.
 //!
-//! padmap binds pads. A person with no pad still has the keyboard, and every
-//! emulator padmap writes for either binds it to port 1 by default (RetroArch,
-//! Dolphin, Ryujinx) or not at all (ares, Cemu). Seating a pad on port 1 used
-//! to silently take the keyboard's port with it. Now the keyboard moves to the
-//! first free port, so it is always somebody's, and never the same somebody as
-//! a pad.
-//!
-//! Where an emulator has a keyboard layout of its own, that layout is written
-//! (see `docs/KEYBOARD.md` for the tables). Where it has none, padmap's layout
-//! is: arrows for direction (d-pad and left stick both, so it is right whatever
-//! the system calls its primary direction), Z/X/A/S for south/east/west/north,
-//! Q/W bumpers, E/R triggers, Enter start, right Shift select, I/J/K/L right
-//! stick, B/N stick clicks.
+//! Every emulator padmap writes for either binds the keyboard to port 1 by
+//! default (RetroArch, Dolphin, Ryujinx) or not at all (ares, Cemu), so seating
+//! a pad on port 1 used to take the keyboard's port with it. The per-emulator
+//! key tables are in `docs/KEYBOARD.md`.
 
-/// What the seat is called, in `claim` and in `state`'s `players[]`.
-///
-/// The person at the keyboard has the mouse under their other hand, and the
-/// seat carries both: the keys in every emulator, and the pointer wherever an
-/// emulator has one for a port.
+/// What the seat is called in `claim` and `state`: one person with both hands
+/// busy, so the seat carries the keys and the pointer alike.
 pub const SEAT_NAME: &str = "Keyboard and Mouse";
 
 /// The seat's icon, drawn by the front-end; not one of `icons::ICON_NAMES`,

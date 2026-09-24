@@ -92,12 +92,8 @@ const SQUARE_GATE: &str = "100.00 141.42 100.00 141.42 100.00 141.42 100.00 141.
 
 /// One `[WiimoteN]` binding for a padmap clone, in the SDL backend's own
 /// element names -- the same vocabulary as `BINDINGS`, so the per-model lookup
-/// is still Dolphin's job and not padmap's.
-///
-/// The remote points with the right stick because a pad has no pointer, and
-/// the signs are the ones `BINDINGS` already uses for the C-stick. Everything
-/// else follows a Wii Remote held upright: A under the thumb, B the trigger,
-/// 1 and 2 the remaining face buttons, the Nunchuk on the left stick.
+/// is still Dolphin's job. It points with the right stick, on the signs
+/// `BINDINGS` already uses for the C-stick, because a pad has no pointer.
 pub const WIIMOTE_BINDINGS: [(&str, &str); 19] = [
     ("Buttons/A", "`Button S`"),
     ("Buttons/B", "`Trigger R`"),
@@ -131,10 +127,9 @@ pub const WIIMOTE_NUNCHUK: [(&str, &str); 6] = [
     ("Nunchuk/Buttons/Z", "`Trigger L`"),
 ];
 
-/// Dolphin's own Wii Remote defaults on the mouse and keyboard
-/// (`WiimoteEmu::Wiimote::LoadDefaults`, the `HAVE_X11` branch, and
-/// `Nunchuk::LoadDefaults`). This is the section Dolphin writes for remote 1
-/// on a fresh install; padmap only moves it to the seat that owns the mouse.
+/// Dolphin's own Wii Remote 1 defaults on the mouse and keyboard
+/// (`WiimoteEmu::Wiimote::LoadDefaults`, `HAVE_X11`, `Nunchuk::LoadDefaults`);
+/// padmap only moves the section to the seat that owns the mouse.
 pub const WIIMOTE_KEYBOARD_BINDINGS: [(&str, &str); 25] = [
     ("Buttons/A", "`Click 1`"),
     ("Buttons/B", "`Click 3`"),
@@ -165,7 +160,11 @@ pub const WIIMOTE_KEYBOARD_BINDINGS: [(&str, &str); 25] = [
 
 /// One `[WiimoteN]` section, ending in a newline. `Source` leads it: a remote
 /// Dolphin is not sourcing is ignored however well it is bound.
-fn wiimote_section(port: u32, device_line: &str, bindings: &[(&str, &str)]) -> String {
+fn wiimote_section<'a>(
+    port: u32,
+    device_line: &str,
+    bindings: impl Iterator<Item = &'a (&'a str, &'a str)>,
+) -> String {
     let mut out = format!("[Wiimote{port}]\nSource = {WIIMOTE_EMULATED}\nDevice = {device_line}\n");
     for (key, value) in bindings {
         out.push_str(&format!("{key} = {value}\n"));
@@ -187,12 +186,9 @@ pub fn wiimote_port(players: &[u32], seat: Option<u32>) -> Option<u32> {
     crate::keyboard::port(seat, players, MAX_WIIMOTES)
 }
 
-/// Every remote, in port order: a pad's clone, the keyboard and mouse on the
-/// seat that owns them, and nothing on the rest.
-///
-/// Dolphin emulates remote 1 on the mouse and keyboard on a fresh install and
-/// leaves 2-4 off, so seating a pad first gave the pad's player the mouse's
-/// remote and the person at the keyboard none.
+/// Every remote, in port order. Dolphin emulates remote 1 on the mouse and
+/// keyboard on a fresh install and leaves 2-4 off, so seating a pad there
+/// first gave that player the mouse's remote and the keyboard's seat none.
 pub fn wiimote_sections(
     players: &[u32],
     seat: Option<u32>,
@@ -209,18 +205,16 @@ pub fn wiimote_sections(
     (1..=MAX_WIIMOTES)
         .map(|port| {
             if sorted.contains(&port) {
-                let mut section = wiimote_section(
+                // No calibration: a stick's gate is round, and Dolphin's
+                // default already says so.
+                wiimote_section(
                     port,
                     &device(&name_for(port)),
-                    &[WIIMOTE_BINDINGS.as_slice(), WIIMOTE_NUNCHUK.as_slice()].concat(),
-                );
-                section.push_str("Nunchuk/Stick/Calibration = ");
-                section.push_str(SQUARE_GATE);
-                section.push('\n');
-                section
+                    WIIMOTE_BINDINGS.iter().chain(WIIMOTE_NUNCHUK.iter()),
+                )
             } else if keyboard == Some(port) {
                 let mut section =
-                    wiimote_section(port, KEYBOARD_DEVICE, &WIIMOTE_KEYBOARD_BINDINGS);
+                    wiimote_section(port, KEYBOARD_DEVICE, WIIMOTE_KEYBOARD_BINDINGS.iter());
                 // Dolphin squares the gate itself when keys drive a stick.
                 section.push_str("Nunchuk/Stick/Calibration = ");
                 section.push_str(SQUARE_GATE);
@@ -233,8 +227,10 @@ pub fn wiimote_sections(
         .collect()
 }
 
-/// Replace all `[Wiimote1..4]` sections, keeping everything else in the file
-/// -- `[BalanceBoard]` and a real remote's pairing among it.
+/// Replace all `[Wiimote1..4]` sections, keeping everything else in the file,
+/// `[BalanceBoard]` among it. A remote the user paired for real lives *in* one
+/// of these sections as `Source = 2` and is replaced with the seat padmap has
+/// given that port: padmap's answer to who player N is has to be the only one.
 pub fn rewrite_wiimotes(existing: &str, body: &str) -> String {
     rewrite_sections(existing, body, is_wiimote_section)
 }
@@ -471,6 +467,30 @@ mod tests {
             );
         }
         assert!(text.contains("`Left Y+`|`Pad N`"));
+    }
+
+    #[test]
+    fn a_name_cannot_close_the_remote_it_is_written_into() {
+        // The sibling of the GCPad test below: a remote's device line comes
+        // from the same caller-supplied name, so it gets the same scrubbing.
+        let forged = "X\n[Wiimote3]\nSource = 1\nDevice = SDL/0/X";
+        let text = wiimote_sections(&[1, 2, 3, 4], None, |_| forged.to_owned());
+        let headers: Vec<&str> = text.lines().filter(|line| line.starts_with('[')).collect();
+        assert_eq!(
+            headers,
+            ["[Wiimote1]", "[Wiimote2]", "[Wiimote3]", "[Wiimote4]"],
+            "a name opened a section of its own:\n{text}"
+        );
+        let sourced = text
+            .lines()
+            .filter(|line| line.starts_with("Source"))
+            .count();
+        assert_eq!(sourced, 4, "a name sourced a remote of its own:\n{text}");
+        let devices = text
+            .lines()
+            .filter(|line| line.starts_with("Device"))
+            .count();
+        assert_eq!(devices, 4, "a name bound a device of its own:\n{text}");
     }
 
     #[test]

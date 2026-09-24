@@ -191,6 +191,10 @@ fn dolphins_wii_remote_follows_the_keyboards_seat_and_the_pads_keep_theirs() {
         pad_section.contains("IR/Up = `Right Y+`\n"),
         "the pad points with nothing: {pad_section}"
     );
+    assert!(
+        !pad_section.contains("Calibration"),
+        "a stick's gate is round; the square one is for keys: {pad_section}"
+    );
 
     // Remotes nobody holds are declared off, not left from a bigger session.
     assert!(text.contains("[Wiimote3]\nSource = 0\n"), "{text}");

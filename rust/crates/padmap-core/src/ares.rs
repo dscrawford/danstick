@@ -208,11 +208,9 @@ const MOUSE_ID: &str = "0x2";
 const GROUP_MOUSE_AXIS: u8 = 0;
 const GROUP_MOUSE_BUTTON: u8 = 1;
 
-/// `VirtualMouseN`'s controls, and where each reads from on that mouse.
-///
-/// `Extra` is last and binds nothing: ares' xlib mouse appends Left, Middle,
-/// Right, Up, Down, so buttons 3 and 4 are the wheel and there is no extra
-/// button to give it.
+/// `VirtualMouseN`'s controls and where each reads on that mouse. `Extra`
+/// binds nothing: ares' xlib mouse appends Left, Middle, Right, Up, Down, so
+/// buttons 3 and 4 are the wheel and no button is left for it.
 pub const MOUSE_CONTROLS: [(&str, Option<(u8, u8)>); 6] = [
     ("X", Some((GROUP_MOUSE_AXIS, 0))),
     ("Y", Some((GROUP_MOUSE_AXIS, 1))),
@@ -223,11 +221,9 @@ pub const MOUSE_CONTROLS: [(&str, Option<(u8, u8)>); 6] = [
 ];
 
 /// The `VirtualMouseN` block for one port: the desk's mouse where the
-/// keyboard's seat is, nothing anywhere else.
-///
-/// A port device ares maps through a virtual port -- an N64 Mouse, a SNES
-/// Mouse -- reads `virtualPorts[N-1].mouse`, so binding this is binding the
-/// mouse on that port, with no per-system table to keep.
+/// keyboard's seat is, nothing anywhere else. Every per-system mouse device
+/// (N64 Mouse, SNES Mouse) reads `virtualPorts[N-1].mouse`, so one block
+/// covers all of them with no per-system table.
 pub fn virtual_mouse(player: u32, bound: bool) -> String {
     let mut out = format!("VirtualMouse{player}\n");
     for (name, source) in MOUSE_CONTROLS {

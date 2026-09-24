@@ -348,21 +348,16 @@ pub const KEYBOARD_DEFAULTS: [(&str, &str); 12] = [
 /// default for player 1.
 pub const DESK_MOUSE: u32 = 0;
 
-/// The first mouse index RetroArch can have no device for. `udev_get_mouse`
-/// reads `pointers[index]` only while `index < MAX_INPUT_DEVICES` (16), and
-/// otherwise leaves its `dev_index` at -1, giving the port no mouse rather
-/// than falling back to the first one. A cfg has no other way to say "this
-/// port has no mouse".
+/// The first mouse index RetroArch has no device for: `udev_get_mouse` reads
+/// `pointers[index]` only while `index < MAX_INPUT_DEVICES` (16), else leaves
+/// `dev_index` at -1 -- a cfg's only way to say a port has no mouse.
 pub const NO_MOUSE: u32 = 16;
 
-/// Which mouse each port reads: the desk's for the keyboard's player, none
-/// for everybody else.
-///
-/// RetroArch seeds `input_mouse_index[i] = i`, so player 1 holds the desk's
-/// mouse whoever is sitting there. Every port is written rather than only
-/// the ones that differ from the default: `--appendconfig` merges into a
-/// live config that may carry a stale index from an earlier session, and a
-/// port silently reading the desk's mouse is what this is here to stop.
+/// Which mouse each port reads: the desk's for the keyboard's seat, none
+/// elsewhere. RetroArch seeds `input_mouse_index[i] = i`, so player 1 holds
+/// the desk's mouse whoever sits there; every port is written rather than
+/// only the ones that differ, because `--appendconfig` merges into a live
+/// config that may still carry a stale index from an earlier session.
 pub fn mouse_config(keyboard: Option<u32>) -> Vec<String> {
     let mut lines = vec![
         String::new(),
@@ -385,13 +380,11 @@ pub fn mouse_config(keyboard: Option<u32>) -> Vec<String> {
 /// The keyboard's binds for the first port no managed pad holds, and the
 /// mouse that sits beside it.
 ///
-/// RetroArch compiles the keyboard into player 1 and nowhere else, and a
-/// keyboard bind is independent of the pad bind on the same port, so a pad
-/// seated as player 1 shared the port with the keyboard. With player 1 taken
-/// the keyboard moves: its player-1 binds are nulled and its defaults are
-/// written on the free port. With player 1 free nothing is written, since
-/// the defaults already say so. Every port taken: the keyboard is nulled and
-/// drives nobody, rather than doubling a pad.
+/// RetroArch compiles the keyboard into player 1 only, independent of
+/// whatever pad also binds that port, so a pad seated there needs the
+/// keyboard's defaults nulled and rewritten on the port it moved to. The
+/// mouse indices are written either way: the keys' defaults agree with
+/// padmap when the keyboard is player 1 and the mice's do not.
 pub fn keyboard_config(managed: &[u32], seat: Option<u32>) -> String {
     let free = crate::keyboard::port(seat, managed, MAX_PLAYERS);
     if free == Some(1) {
