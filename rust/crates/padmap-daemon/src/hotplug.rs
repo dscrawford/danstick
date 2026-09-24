@@ -13,6 +13,43 @@ pub fn event_nodes() -> BTreeSet<String> {
         .collect()
 }
 
+/// How long after the input nodes change a rescan keeps following up, because a
+/// node can appear before udev has finished describing it.
+pub const SETTLE_SECONDS: f64 = 1.0;
+
+/// When a full device discovery is worth running: at once when what it would
+/// find may have changed, a few more times while that settles, and never
+/// otherwise. Discovery opens devices, and running it every tick left the
+/// event loop inside a tick nearly all the time.
+#[derive(Debug, Default, Clone)]
+pub struct ScanGate<K> {
+    seen: Option<K>,
+    settle_until: f64,
+    last: f64,
+}
+
+impl<K: PartialEq> ScanGate<K> {
+    /// Whether to discover now, given what discovery depends on and the clock.
+    pub fn due(&mut self, key: K, clock: f64) -> bool {
+        if self.seen.as_ref() != Some(&key) {
+            self.seen = Some(key);
+            self.settle_until = clock + SETTLE_SECONDS;
+            self.last = clock;
+            return true;
+        }
+        if clock < self.settle_until && clock - self.last >= ATTACH_SCAN_SECONDS {
+            self.last = clock;
+            return true;
+        }
+        false
+    }
+
+    /// Forget what was seen, so the next call discovers.
+    pub fn reset(&mut self) {
+        self.seen = None;
+    }
+}
+
 pub const ATTACH_ATTEMPTS: u32 = 20;
 pub const ATTACH_SCAN_SECONDS: f64 = 0.25;
 
@@ -63,6 +100,54 @@ impl Attached {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn nothing_changing_is_never_rediscovered() {
+        let mut gate = ScanGate::default();
+        assert!(gate.due(1, 0.0), "the first look discovers");
+        let rescans = (1..=500)
+            .filter(|tick| gate.due(1, SETTLE_SECONDS + *tick as f64 * 0.02))
+            .count();
+        assert_eq!(rescans, 0, "ten quiet seconds rediscovered {rescans} times");
+    }
+
+    #[test]
+    fn a_change_rediscovers_at_once_and_follows_up_while_it_settles() {
+        let mut gate = ScanGate::default();
+        gate.due(1, 0.0);
+        let at = 100.0;
+        assert!(
+            gate.due(2, at),
+            "a new node is looked at on the tick it appears"
+        );
+        let follow_ups: Vec<f64> = (1..200)
+            .map(|tick| at + tick as f64 * 0.02)
+            .filter(|clock| gate.due(2, *clock))
+            .collect();
+        assert!(
+            !follow_ups.is_empty(),
+            "a node udev has not finished with is never looked at again"
+        );
+        assert!(
+            follow_ups.iter().all(|clock| *clock <= at + SETTLE_SECONDS),
+            "kept rediscovering after it settled: {follow_ups:?}"
+        );
+        assert!(
+            follow_ups
+                .windows(2)
+                .all(|w| w[1] - w[0] >= ATTACH_SCAN_SECONDS - 1e-9),
+            "followed up faster than the attach scan does: {follow_ups:?}"
+        );
+    }
+
+    #[test]
+    fn a_reset_discovers_on_the_next_look() {
+        let mut gate = ScanGate::default();
+        gate.due(1, 0.0);
+        assert!(!gate.due(1, 5.0));
+        gate.reset();
+        assert!(gate.due(1, 5.02), "seating reopened and looked at nothing");
+    }
+
     use super::*;
 
     fn set(items: &[&str]) -> BTreeSet<String> {

@@ -177,6 +177,12 @@ const DESK: PadId = PadId {
     only: "RSTESTDESK",
 };
 const DESK_KEYBOARD_NAME: &str = "PADMAP RSTESTDESK keyboard";
+/// Four pads for the seated-player latency measurement.
+const LATENCY: PadId = PadId {
+    name: "PADMAP RSTESTLAT a",
+    pid: 0x0f10,
+    only: "RSTESTLAT",
+};
 
 /// What the keyboard's seat calls itself, in `claim` and in `state`.
 const KEYBOARD_SEAT_NAME: &str = "Keyboard and Mouse";
@@ -2972,5 +2978,138 @@ fn a_held_space_bar_seats_the_keyboard_and_is_never_grabbed() {
         grabbable(&node),
         "padmap grabbed the keyboard once it was seated"
     );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Percentile of an already-sorted sample.
+fn percentile(sorted: &[f64], fraction: f64) -> f64 {
+    if sorted.is_empty() {
+        return f64::NAN;
+    }
+    let at = ((sorted.len() - 1) as f64 * fraction).round() as usize;
+    sorted[at]
+}
+
+/// A seated player's presses, timed from the source pad's write to the clone's
+/// read, while three more people hold to join and claim. GOTG measures the same
+/// thing on its cluster; a frame is 16.7ms. A measurement, not a promise, so it
+/// is ignored by default and prints rather than asserts -- this machine's load
+/// is not padmap's contract.
+///
+///     cargo test -p padmap-rs --test daemon_journey -- --ignored --nocapture seated_player
+#[test]
+#[ignore]
+fn a_seated_players_presses_while_others_hold_to_join() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let root = std::env::temp_dir().join(format!("padmap-latency-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+
+    let mut seated = TestPad::with_id(LATENCY.name, 0x1209, LATENCY.pid);
+    let mut joiners: Vec<TestPad> = ["b", "c", "d"]
+        .iter()
+        .enumerate()
+        .map(|(at, letter)| {
+            TestPad::with_id(
+                &format!("PADMAP RSTESTLAT {letter}"),
+                0x1209,
+                LATENCY.pid + 1 + at as u16,
+            )
+        })
+        .collect();
+    let mut daemon = Daemon::start_logging(&root, LATENCY);
+    daemon.pump(1.5);
+    daemon.seat_by_hold_as(&mut seated, 1);
+    let state = daemon.last("state").expect("state").clone();
+    let node = format!(
+        "/dev/input/{}",
+        state["players"][0]["node"]
+            .as_str()
+            .expect("player 1's node")
+    );
+    // The clone, not the source: `node` is the physical pad.
+    let clone_path = padmap_input::pad::clone_nodes()
+        .get("padmap Player 1")
+        .cloned()
+        .unwrap_or_else(|| PathBuf::from(&node));
+    let mut clone = evdev::Device::open(&clone_path).expect("player 1's clone");
+    clone.set_nonblocking(true).expect("nonblocking");
+    while clone.fetch_events().is_ok_and(|mut e| e.next().is_some()) {}
+
+    daemon.send(serde_json::json!({"cmd": "seating", "open": true, "players": 4, "hold": 1.0}));
+    daemon.pump(0.5);
+
+    let mut quiet: Vec<f64> = Vec::new();
+    let mut busy: Vec<f64> = Vec::new();
+    let start = Instant::now();
+    let mut next_join = 0usize;
+    let mut value = 0;
+    let mut lost = 0usize;
+    while start.elapsed() < Duration::from_secs_f64(4.0) {
+        let t = start.elapsed().as_secs_f64();
+        // Three people pick up pads 0.3s apart, a second into the run.
+        if next_join < joiners.len() && t >= 1.0 + 0.3 * next_join as f64 {
+            joiners[next_join].emit(EventType::KEY.0, FIRST_KEY, 1);
+            next_join += 1;
+        }
+        value = 1 - value;
+        let wrote = Instant::now();
+        seated.emit(EventType::KEY.0, FIRST_KEY, value);
+        let mut seen = None;
+        while wrote.elapsed() < Duration::from_millis(200) {
+            if let Ok(events) = clone.fetch_events() {
+                if events
+                    .filter(|e| e.event_type() == EventType::KEY)
+                    .any(|e| e.value() == value)
+                {
+                    seen = Some(wrote.elapsed().as_secs_f64() * 1000.0);
+                    break;
+                }
+            }
+            std::hint::spin_loop();
+        }
+        // A press that never arrived is the worst case, not a missing one:
+        // counted at the deadline so the tail cannot hide it.
+        let ms = seen.unwrap_or(200.0);
+        if seen.is_none() {
+            lost += 1;
+        }
+        if t < 1.0 {
+            quiet.push(ms)
+        } else {
+            busy.push(ms)
+        }
+        daemon.pump(0.0);
+        std::thread::sleep(Duration::from_millis(15));
+    }
+    for pad in &mut joiners {
+        pad.emit(EventType::KEY.0, FIRST_KEY, 0);
+    }
+    daemon.pump(0.5);
+
+    quiet.sort_by(f64::total_cmp);
+    busy.sort_by(f64::total_cmp);
+    let claims = daemon
+        .events
+        .iter()
+        .filter(|e| e["event"] == "claim")
+        .count();
+    eprintln!(
+        "LATENCY quiet n={} p50={:.2} p95={:.2} | three holding n={} p50={:.2} p95={:.2} max={:.2} | late>200ms={lost} | claims={claims}",
+        quiet.len(),
+        percentile(&quiet, 0.5),
+        percentile(&quiet, 0.95),
+        busy.len(),
+        percentile(&busy, 0.5),
+        percentile(&busy, 0.95),
+        busy.last().copied().unwrap_or(f64::NAN),
+    );
+    let log = std::fs::read_to_string(root.join("daemon.log")).unwrap_or_default();
+    for line in log.lines().filter(|l| l.contains("PHASE")) {
+        eprintln!("{line}");
+    }
     let _ = std::fs::remove_dir_all(&root);
 }

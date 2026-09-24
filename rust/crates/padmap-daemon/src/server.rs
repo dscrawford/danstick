@@ -129,6 +129,9 @@ pub struct Server {
     keyboard_hold: padmap_core::keyboard::Hold,
     /// What `held` was last computed for: the event nodes and the pads that matter.
     held_for: Option<(BTreeSet<String>, Vec<PathBuf>, bool)>,
+    /// When seating's watched set is worth recomputing: the input nodes and the
+    /// seated pads are all a rediscovery would find different.
+    seating_gate: hotplug::ScanGate<(BTreeSet<String>, Vec<PathBuf>)>,
     scratch: Vec<evdev::InputEvent>,
     pending_scope: String,
     sdl_lines: Vec<String>,
@@ -195,6 +198,11 @@ impl Scan {
 
     fn failed(&self) -> bool {
         self.failed
+    }
+
+    /// Whether this tick has already enumerated, so another look costs nothing.
+    fn scanned(&self) -> bool {
+        self.pads.is_some()
     }
 }
 
@@ -269,6 +277,7 @@ impl Server {
             deskkeys: padmap_input::deskkeys::Keyboards::default(),
             keyboard_hold: padmap_core::keyboard::Hold::default(),
             held_for: None,
+            seating_gate: hotplug::ScanGate::default(),
             scratch: Vec::with_capacity(64),
             pending_scope: String::new(),
             sdl_lines: Vec::new(),
@@ -711,6 +720,8 @@ impl Server {
                         self.seating.seats(),
                         self.seating.hold_seconds()
                     );
+                    // Opening is a change in itself: look at once.
+                    self.seating_gate.reset();
                     self.refresh_seating(&mut Scan::default());
                 } else {
                     self.close_seating();
@@ -1882,6 +1893,7 @@ impl Server {
             let _ = self.reactor.unwatch(source.as_fd());
         }
         self.seating.close();
+        self.seating_gate.reset();
     }
 
     fn refresh_seating(&mut self, scan: &mut Scan) {
@@ -1902,6 +1914,14 @@ impl Server {
             .iter()
             .map(|slot| slot.pad.path.clone())
             .collect();
+        // Discovery opens devices. Run it when the input nodes or the seated
+        // pads change, not on every tick of a whole game.
+        let due = self
+            .seating_gate
+            .due((hotplug::event_nodes(), seated.clone()), now());
+        if !due && !scan.scanned() {
+            return;
+        }
         let wanted = self.seating.wanted(scan.pads(), &seated);
         // An enumeration that failed is not everybody unplugging: acting on it
         // would drop the holds this rebuild exists to carry.
