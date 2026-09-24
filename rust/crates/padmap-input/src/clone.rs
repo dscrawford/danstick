@@ -59,19 +59,23 @@ impl IdentityMode {
         }
     }
 
+    /// The mode a name asks for, or `None` for a name that is none of them.
+    pub fn parse(name: &str) -> Option<Self> {
+        match name.trim().to_lowercase().as_str() {
+            "mirror" => Some(IdentityMode::Mirror),
+            "padmap" => Some(IdentityMode::Padmap),
+            "xbox360" => Some(IdentityMode::Xbox360),
+            _ => None,
+        }
+    }
+
     /// Read once at startup, so two clones in one session cannot get different answers.
     pub fn from_env() -> Self {
-        match std::env::var(ENV_IDENTITY)
-            .unwrap_or_default()
-            .trim()
-            .to_lowercase()
-            .as_str()
-        {
-            "mirror" => IdentityMode::Mirror,
-            "padmap" => IdentityMode::Padmap,
-            "xbox360" => IdentityMode::Xbox360,
-            _ if std::env::var(ENV_ONLY_VIRTUAL).as_deref() == Ok("1") => IdentityMode::Padmap,
-            _ => IdentityMode::Mirror,
+        let named = IdentityMode::parse(&std::env::var(ENV_IDENTITY).unwrap_or_default());
+        match named {
+            Some(mode) => mode,
+            None if std::env::var(ENV_ONLY_VIRTUAL).as_deref() == Ok("1") => IdentityMode::Padmap,
+            None => IdentityMode::Mirror,
         }
     }
 }
@@ -877,6 +881,23 @@ pub fn held_keys(source: &Device) -> AttributeSet<evdev::KeyCode> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_identity_is_named_as_it_is_printed_and_nothing_else_parses() {
+        for mode in [
+            IdentityMode::Mirror,
+            IdentityMode::Padmap,
+            IdentityMode::Xbox360,
+        ] {
+            assert_eq!(IdentityMode::parse(mode.as_str()), Some(mode));
+        }
+        assert_eq!(
+            IdentityMode::parse(" XBOX360 "),
+            Some(IdentityMode::Xbox360)
+        );
+        assert_eq!(IdentityMode::parse(""), None, "no name is not mirror");
+        assert_eq!(IdentityMode::parse("xbox"), None);
+    }
 
     #[test]
     fn a_clone_is_named_and_physed_predictably() {

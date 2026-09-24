@@ -649,11 +649,11 @@ not strand a game bound to them.
 
 Two things to know:
 
-* **It needs the 360 identity** (`PADMAP_PAD_IDENTITY=xbox360`). A reserved
-  clone's layout has to be known before its pad is, and only that identity's
-  is; `mirror` takes the layout from the pad behind the clone, which nobody
-  has picked up yet. Asked for under another identity, `reserve` answers with
-  an `error` and changes nothing.
+* **It needs the 360 identity** (`PADMAP_PAD_IDENTITY=xbox360`, or
+  `identity` below). A reserved clone's layout has to be known before its pad
+  is, and only that identity's is; `mirror` takes the layout from the pad
+  behind the clone, which nobody has picked up yet. Asked for under another
+  identity, `reserve` answers with an `error` and changes nothing.
 * **Reserve before the launch, not after.** The nodes have to be there when
   `exec` builds its bind plan.
 
@@ -667,3 +667,48 @@ takes the seat with them and nobody can take it for the rest of that game.
 Joining works; leaving and being replaced does not. Reserve the seats again
 before the next launch. If a game needs a seat to survive its player leaving,
 say so and the device can be kept back instead of destroyed.
+
+### From the launch itself: `padmap-rs exec --reserve N`
+
+```sh
+padmap-rs exec --reserve 4 -- dolphin-emu -e game.rvz
+```
+
+The one step that knows when the bind plan is built is `exec`, so it can do
+all of the above itself. Before it reads `env.sh` or looks at `/dev/input` it
+makes seats 1 to N exist -- the seated ones as they are, the rest reserved --
+switching the daemon to the 360 identity first if it publishes another. Then
+it runs the game as it always did. When the game exits, `exec` gives back
+what it took: the reservation goes back to what it was, and the identity to
+the one it found. A launcher needs nothing else; `--reserve` only ever touches
+the daemon already running, and with none running the game still starts,
+with a warning, just without the extra seats. Past sixteen it asks for
+sixteen, RetroArch's limit.
+
+If `exec` is killed rather than let finish it cannot give anything back; a
+daemon started with `--follow` ends with the session anyway, and otherwise
+`{"cmd": "reserve", "players": 0}` and `identity` put it right.
+
+## Changing identity without losing anybody: `identity`
+
+```json
+{"cmd": "identity", "mode": "xbox360"}
+```
+
+`mirror`, `padmap` or `xbox360`, as `PADMAP_PAD_IDENTITY` names them. Every
+clone is made again under the new identity and **every seat is kept**: the
+same players, the same pads, still published. A front-end sees one `state`,
+with the new `identity` and the same `players[]`; an unknown mode is an
+`error`, and asking for the identity already in use changes nothing but
+still answers with `state`. Refused while a session is open.
+
+The clones are new devices at new nodes, so do this before a launch rather
+than during one: a game that already has a clone open keeps the old device,
+which no longer sends anything. Switching away from `xbox360` gives back any
+reserved seats, since only that identity can have them.
+
+**`ensure-daemon` compares identities.** It replaces a running daemon whose
+`identity` differs from the one it would start, so an `ensure-daemon` run
+while a launch has borrowed the 360 identity -- from an environment without
+`PADMAP_PAD_IDENTITY=xbox360` -- replaces the daemon and ends every seat. Run
+it before the launch, or with the same identity the launch uses.

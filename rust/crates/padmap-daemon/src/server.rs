@@ -750,6 +750,7 @@ impl Server {
             Command::Unseat { player } => self.unseat(as_player(player)),
             Command::SeatKeyboard => self.seat_keyboard(),
             Command::Reserve { players } => self.reserve_seats(players),
+            Command::Identity { mode } => self.set_identity(&mode),
             Command::Bind {
                 player,
                 control,
@@ -2298,6 +2299,45 @@ impl Server {
     }
 
     /// Publish a clone for every seat a launch allows, so they exist before it starts.
+    /// Publish every clone under another identity, keeping every seat. The
+    /// clones are made again, at new nodes, so it belongs before a launch:
+    /// a game already holding one would lose it.
+    fn set_identity(&mut self, mode: &str) {
+        if self.session.is_some() {
+            self.broadcast(&events::error("a session is open; cancel it first"));
+            return;
+        }
+        let Some(wanted) = IdentityMode::parse(mode) else {
+            self.broadcast(&events::error(format!(
+                "unknown identity {mode:?}; one of mirror, padmap, xbox360"
+            )));
+            return;
+        };
+        if wanted != self.mode {
+            info!("identity: {} -> {}", self.mode.as_str(), wanted.as_str());
+            // Reserved seats are the 360 layout's and cannot outlive it.
+            if wanted != IdentityMode::Xbox360 {
+                self.reserved.clear();
+                self.reserved_nodes.clear();
+            }
+            let running = self.republisher.is_some();
+            self.stop_republisher();
+            self.mode = wanted;
+            // Every derivation names the old identity's GUIDs.
+            self.publish_cache.clear();
+            if running {
+                if let Err(error) = self.start_republisher() {
+                    warn!("could not republish under {}: {error}", wanted.as_str());
+                }
+            } else {
+                let virtual_paths = self.virtual_paths();
+                self.rewrite_consumers(&virtual_paths);
+            }
+        }
+        let state = self.state_event();
+        self.broadcast(&state);
+    }
+
     fn reserve_seats(&mut self, players: i64) {
         let wanted = players.clamp(0, i64::from(padmap_core::retroarch::MAX_PLAYERS)) as u32;
         if self.mode != IdentityMode::Xbox360 {
@@ -2350,9 +2390,8 @@ impl Server {
 
     /// Republish one newly seated player, leaving every clone already open at the
     /// same device and node, since a game mid-read cannot follow them moving.
-    /// Put a new seat's clone on the air, and say which files that leaves to
-    /// write -- written by the caller once the seat has been announced, so how
-    /// full the room is never decides how soon anybody sees it taken.
+    /// Hands back which files that leaves to write, written by the caller once
+    /// the seat has been announced.
     fn join_republisher(&mut self, player: u32) -> Result<ToWrite, clone::CloneError> {
         // The first seat has nothing to add to.
         if self.republisher.is_none() {

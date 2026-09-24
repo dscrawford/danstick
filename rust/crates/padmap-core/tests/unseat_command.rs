@@ -58,3 +58,25 @@ fn bind_names_a_control_and_says_whether_it_replaces_or_adds() {
         Err(Refused::NotANumber { .. })
     ));
 }
+
+#[test]
+fn identity_names_the_mode_and_is_the_last_command_added() {
+    assert_eq!(
+        COMMANDS.last(),
+        Some(&"identity"),
+        "commands are only appended"
+    );
+    assert_eq!(
+        Command::parse(&json!({"cmd": "identity", "mode": "xbox360"})),
+        Ok(Command::Identity {
+            mode: "xbox360".to_owned()
+        })
+    );
+    // An unknown mode is the daemon's to refuse, with the modes it has.
+    assert_eq!(
+        Command::parse(&json!({"cmd": "identity"})),
+        Ok(Command::Identity {
+            mode: String::new()
+        })
+    );
+}

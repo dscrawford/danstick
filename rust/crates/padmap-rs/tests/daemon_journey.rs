@@ -196,6 +196,20 @@ const STATEFIRST: PadId = PadId {
     only: "RSTESTSTATEFIRST",
 };
 
+/// A pad whose daemon changes identity under it.
+const SWITCH: PadId = PadId {
+    name: "PADMAP RSTESTSWITCH",
+    pid: 0x0f40,
+    only: "RSTESTSWITCH",
+};
+
+/// A seated pad in the picker, then a launch that reserves the rest.
+const EXEC_RESERVE: PadId = PadId {
+    name: "PADMAP RSTESTEXECRES",
+    pid: 0x0f50,
+    only: "RSTESTEXECRES",
+};
+
 /// Four distinct pads under one test's own filter, so tests running beside it
 /// cannot see them.
 fn four_pads(id: PadId) -> Vec<TestPad> {
@@ -3229,5 +3243,165 @@ fn a_seats_state_comes_before_its_files_however_full_the_room() {
             "player {player}'s state waited for its files (state at {seated}, files at {announced})"
         );
     }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// The 360's GUID fragment -- vendor 045e, product 028e -- in an SDL line.
+const XBOX360_GUID: &str = "5e0400008e02";
+
+/// A daemon asked for another identity republishes every clone under it and
+/// keeps every seat: nobody seated has to sit down again.
+#[test]
+fn switching_identity_keeps_every_seat() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let root = std::env::temp_dir().join(format!("padmap-switch-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let sdl = root.join("sdl_controllers.txt");
+
+    let mut pad = TestPad::new(SWITCH);
+    let mut daemon =
+        Daemon::start_with_env(&root, SWITCH, &[], &[("PADMAP_PAD_IDENTITY", "mirror")]);
+    daemon.pump(1.5);
+    daemon.seat_by_hold_as(&mut pad, 1);
+    assert_eq!(daemon.last("state").expect("state")["identity"], "mirror");
+    let before = std::fs::read_to_string(&sdl).unwrap_or_default();
+    assert!(
+        !before.contains(XBOX360_GUID),
+        "a mirror clone is not a 360: {before}"
+    );
+
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "identity", "mode": "xbox360"}));
+    let state = daemon
+        .wait_for("state", |e| e["identity"] == "xbox360", 8.0)
+        .expect("the identity never changed");
+    assert_eq!(state["players"][0]["player"], 1, "{state}");
+    assert_eq!(
+        state["players"][0]["published"], true,
+        "the seat's clone did not come back: {state}"
+    );
+    let after = std::fs::read_to_string(&sdl).expect("the SDL database");
+    assert!(
+        after.contains(XBOX360_GUID),
+        "player 1's clone is not the 360 now: {after}"
+    );
+
+    // A name that is no identity is refused, with nothing changed.
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "identity", "mode": "xbox"}));
+    assert!(
+        daemon.last("error").is_some(),
+        "an unknown identity was taken"
+    );
+
+    // And back again, still seated.
+    daemon.send(serde_json::json!({"cmd": "identity", "mode": "mirror"}));
+    let state = daemon
+        .wait_for("state", |e| e["identity"] == "mirror", 8.0)
+        .expect("the identity never came back");
+    assert_eq!(state["players"][0]["player"], 1, "{state}");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// `padmap-rs exec`, pointed at the daemon under `root` the way a launch is.
+fn exec_under(root: &Path, id: PadId, args: &[&str]) -> std::process::Child {
+    Command::new(env!("CARGO_BIN_EXE_padmap-rs"))
+        .arg("exec")
+        .args(args)
+        .env("XDG_RUNTIME_DIR", root.join("run"))
+        .env("XDG_CONFIG_HOME", root.join("config"))
+        .env("XDG_DATA_HOME", root.join("data"))
+        .env("PADMAP_PROFILE_DIR", root.join("profiles"))
+        .env("PADMAP_ONLY_DEVICE", id.only)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("padmap-rs exec")
+}
+
+/// A launch that wants N seats makes them exist before it builds its bind
+/// plan -- the seated player kept, the rest reserved, the daemon on the 360
+/// identity for it -- and gives all of it back when the game ends.
+#[test]
+fn exec_reserves_the_seats_a_launch_wants_and_gives_them_back() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let root = std::env::temp_dir().join(format!("padmap-execres-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let seen = root.join("seen");
+
+    let mut pad = TestPad::new(EXEC_RESERVE);
+    let mut daemon = Daemon::start_with_env(
+        &root,
+        EXEC_RESERVE,
+        &[],
+        &[("PADMAP_PAD_IDENTITY", "mirror")],
+    );
+    daemon.pump(1.5);
+    daemon.seat_by_hold_as(&mut pad, 1);
+    assert_eq!(daemon.last("state").expect("state")["identity"], "mirror");
+
+    // The probe records what it sees in /dev/input and stays up a moment.
+    daemon.events.clear();
+    let probe = format!("ls /dev/input > {}; sleep 3", seen.display());
+    let mut exec = exec_under(
+        &root,
+        EXEC_RESERVE,
+        &["--reserve", "2", "--", "sh", "-c", &probe],
+    );
+
+    let during = daemon
+        .wait_for(
+            "state",
+            |e| {
+                e["identity"] == "xbox360"
+                    && e["reserved"]
+                        .as_array()
+                        .is_some_and(|seats| seats.iter().any(|seat| seat["player"] == 2))
+            },
+            20.0,
+        )
+        .expect("the launch never had a second seat");
+    assert_eq!(
+        during["players"][0]["player"], 1,
+        "the seated player lost their seat: {during}"
+    );
+    let reserved_node = during["reserved"][0]["node"]
+        .as_str()
+        .expect("the reserved seat's node")
+        .rsplit('/')
+        .next()
+        .unwrap_or_default()
+        .to_owned();
+
+    let status = exec.wait().expect("exec ran");
+    assert!(status.success(), "the game's own exit is exec's: {status}");
+    let listed = std::fs::read_to_string(&seen).expect("the probe ran");
+    assert!(
+        listed.lines().any(|line| line.trim() == reserved_node),
+        "the reserved seat {reserved_node} was not there when the game started: {listed}"
+    );
+
+    // Handed back: nothing reserved, the identity it found.
+    let after = daemon
+        .wait_for(
+            "state",
+            |e| {
+                e["identity"] == "mirror"
+                    && e["reserved"]
+                        .as_array()
+                        .is_none_or(|seats| seats.is_empty())
+            },
+            20.0,
+        )
+        .expect("the launch kept what it borrowed");
+    assert_eq!(after["players"][0]["player"], 1, "{after}");
     let _ = std::fs::remove_dir_all(&root);
 }

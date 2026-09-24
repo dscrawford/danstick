@@ -216,12 +216,100 @@ fn which_bwrap() -> Option<std::path::PathBuf> {
     })
 }
 
+/// What `exec --reserve` changed on the daemon, to put back when the game ends.
+#[derive(Debug, Default)]
+struct Borrowed {
+    /// The identity the daemon had before it was asked for the 360's.
+    identity: Option<String>,
+    /// How many seats were reserved before, restored with `reserve`.
+    reserved: Option<u32>,
+}
+
+/// Make seats 1..=`seats` exist before the game starts: the seated ones as they
+/// are, the rest reserved. Reserving needs the 360 identity, and a daemon that
+/// publishes another is switched in place, keeping every seat. Nothing here is
+/// fatal -- a game with fewer seats than it wanted still runs.
+fn borrow_seats(seats: u32) -> Borrowed {
+    let mut borrowed = Borrowed::default();
+    let seats = seats.min(padmap_core::retroarch::MAX_PLAYERS);
+    if seats == 0 {
+        return borrowed;
+    }
+    let Some(state) = commands::daemon_state(3.0) else {
+        warn!("--reserve {seats}: no daemon is running, so no seats are reserved");
+        return borrowed;
+    };
+    let identity = state["identity"].as_str().unwrap_or_default().to_owned();
+    let reserved_before = state["reserved"]
+        .as_array()
+        .and_then(|seats| {
+            seats
+                .iter()
+                .filter_map(|seat| seat["player"].as_u64())
+                .max()
+        })
+        .unwrap_or(0) as u32;
+    if identity != "xbox360" {
+        let asked = serde_json::json!({"cmd": "identity", "mode": "xbox360"});
+        match commands::daemon_ask_until(&asked, |state| state["identity"] == "xbox360", 15.0) {
+            Ok(_) => {
+                info!("--reserve {seats}: the daemon publishes the 360 identity until this ends");
+                borrowed.identity = Some(identity);
+            }
+            Err(error) => {
+                warn!("--reserve {seats}: no 360 identity ({error}); no seats reserved");
+                return borrowed;
+            }
+        }
+    }
+    let asked = serde_json::json!({"cmd": "reserve", "players": seats});
+    match commands::daemon_ask_until(&asked, |state| commands::covers_seats(state, seats), 15.0) {
+        Ok(_) => {
+            info!("--reserve {seats}: every seat exists before the launch");
+            borrowed.reserved = Some(reserved_before);
+        }
+        Err(error) => warn!("--reserve {seats}: {error}; the game may not see every seat"),
+    }
+    borrowed
+}
+
+/// Give back what `borrow_seats` took. A daemon that has already ended with
+/// the session has nothing to give back to, and that is fine.
+fn hand_back(borrowed: Borrowed) {
+    if let Some(before) = borrowed.reserved {
+        let asked = serde_json::json!({"cmd": "reserve", "players": before});
+        let _ = commands::daemon_ask_until(
+            &asked,
+            |state| {
+                state["reserved"].as_array().is_none_or(|seats| {
+                    seats
+                        .iter()
+                        .all(|seat| seat["player"].as_u64().unwrap_or(0) <= u64::from(before))
+                })
+            },
+            5.0,
+        );
+    }
+    if let Some(identity) = borrowed.identity {
+        let asked = serde_json::json!({"cmd": "identity", "mode": identity});
+        let _ = commands::daemon_ask_until(&asked, |state| state["identity"] == identity, 15.0);
+    }
+}
+
 fn cmd_exec(args: Vec<String>) -> Result<()> {
-    let args: Vec<String> = args.into_iter().skip_while(|arg| arg == "--").collect();
+    let (reserve, args) = match commands::exec_args(args) {
+        Ok(parsed) => parsed,
+        Err(why) => {
+            eprintln!("{why}\nusage: padmap-rs exec [--reserve N] -- <program> [args...]");
+            std::process::exit(2);
+        }
+    };
     let Some((program, rest)) = args.split_first() else {
-        eprintln!("usage: padmap-rs exec -- <program> [args...]");
         std::process::exit(2);
     };
+    // Before anything reads the files or /dev/input: the seats have to exist
+    // when the bind plan is built, and their mappings have to be in `env.sh`.
+    let borrowed = reserve.map(borrow_seats).unwrap_or_default();
 
     let value = match std::fs::read_to_string(emulators::env_path()) {
         Ok(text) => emulators::value_from_script(&text).unwrap_or_default(),
@@ -270,9 +358,9 @@ fn cmd_exec(args: Vec<String>) -> Result<()> {
     if !value.is_empty() {
         command.env(emulators::CONFIG_ENV, value);
     }
-    let status = command
-        .status()
-        .with_context(|| format!("running {program}"))?;
+    let status = command.status();
+    hand_back(borrowed);
+    let status = status.with_context(|| format!("running {program}"))?;
     std::process::exit(status.code().unwrap_or(1));
 }
 

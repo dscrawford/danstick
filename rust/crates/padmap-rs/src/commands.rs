@@ -811,6 +811,94 @@ pub fn daemon_ask(
     None
 }
 
+/// `exec`'s own flags, then the program and everything after it untouched.
+/// `--` ends exec's flags and is optional when the program is not a flag.
+pub fn exec_args(args: Vec<String>) -> std::result::Result<(Option<u32>, Vec<String>), String> {
+    let mut reserve = None;
+    let mut rest = args.into_iter().peekable();
+    while let Some(arg) = rest.peek() {
+        if arg == "--" {
+            rest.next();
+            break;
+        }
+        let value = if let Some(value) = arg.strip_prefix("--reserve=") {
+            let value = value.to_owned();
+            rest.next();
+            value
+        } else if arg == "--reserve" {
+            rest.next();
+            rest.next().ok_or("--reserve needs a number of seats")?
+        } else {
+            break;
+        };
+        let seats = value
+            .parse::<u32>()
+            .map_err(|_| format!("--reserve needs a number of seats, not {value:?}"))?;
+        reserve = Some(seats);
+    }
+    let program: Vec<String> = rest.collect();
+    if program.is_empty() {
+        return Err("no program to run".to_owned());
+    }
+    Ok((reserve, program))
+}
+
+/// Whether every seat 1..=`seats` is either somebody's or reserved for somebody.
+pub fn covers_seats(state: &serde_json::Value, seats: u32) -> bool {
+    let held = |list: &str, player: u32| {
+        state[list]
+            .as_array()
+            .is_some_and(|entries| entries.iter().any(|entry| entry["player"] == player))
+    };
+    (1..=seats).all(|player| held("players", player) || held("reserved", player))
+}
+
+/// Send `command` and wait for a `state` that satisfies `until`. The daemon
+/// greets every client with its current `state`, so the first one to arrive
+/// may predate the command; asking by predicate is what tells them apart.
+pub fn daemon_ask_until(
+    command: &serde_json::Value,
+    until: impl Fn(&serde_json::Value) -> bool,
+    timeout: f64,
+) -> std::result::Result<serde_json::Value, String> {
+    use std::io::Read;
+    use std::os::unix::net::UnixStream;
+
+    let mut sock = UnixStream::connect(runtime::socket_path())
+        .map_err(|error| format!("no daemon to ask: {error}"))?;
+    let window = std::time::Duration::from_secs_f64(timeout);
+    sock.set_read_timeout(Some(window))
+        .map_err(|error| error.to_string())?;
+    let mut line = serde_json::to_string(command).map_err(|error| error.to_string())?;
+    line.push('\n');
+    sock.write_all(line.as_bytes())
+        .map_err(|error| format!("could not ask the daemon: {error}"))?;
+    let mut reader = padmap_core::wire::LineReader::new();
+    let deadline = std::time::Instant::now() + window;
+    let mut chunk = [0u8; 65536];
+    while std::time::Instant::now() < deadline {
+        let count = match sock.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(count) => count,
+            Err(_) => break,
+        };
+        for message in reader.feed(&chunk[..count]) {
+            let message = serde_json::Value::Object(message);
+            match message["event"].as_str() {
+                Some("error") => {
+                    return Err(message["message"]
+                        .as_str()
+                        .unwrap_or("the daemon refused it")
+                        .to_owned())
+                }
+                Some("state") if until(&message) => return Ok(message),
+                _ => {}
+            }
+        }
+    }
+    Err(format!("the daemon did not answer within {timeout:.0}s"))
+}
+
 pub fn daemon_state(timeout: f64) -> Option<serde_json::Value> {
     use std::io::Read;
     use std::os::unix::net::UnixStream;
@@ -1130,5 +1218,60 @@ mod lifetime_tests {
             .args(),
             vec!["--fresh", "--follow", "7"]
         );
+    }
+}
+
+#[cfg(test)]
+mod exec_tests {
+    use super::{covers_seats, exec_args};
+
+    fn words(text: &str) -> Vec<String> {
+        text.split_whitespace().map(str::to_owned).collect()
+    }
+
+    #[test]
+    fn exec_takes_the_program_after_its_own_flags_and_leaves_the_programs_alone() {
+        assert_eq!(
+            exec_args(words("-- game --fast")),
+            Ok((None, words("game --fast")))
+        );
+        assert_eq!(
+            exec_args(words("game --fast")),
+            Ok((None, words("game --fast")))
+        );
+        assert_eq!(
+            exec_args(words("--reserve 2 -- dolphin-emu --reserve 9")),
+            Ok((Some(2), words("dolphin-emu --reserve 9"))),
+            "the game's own --reserve is the game's"
+        );
+        assert_eq!(
+            exec_args(words("--reserve=4 -- game")),
+            Ok((Some(4), words("game")))
+        );
+        assert_eq!(
+            exec_args(words("--reserve 3 game")),
+            Ok((Some(3), words("game")))
+        );
+    }
+
+    #[test]
+    fn exec_refuses_a_reserve_it_cannot_read() {
+        assert!(exec_args(words("--reserve -- game")).is_err());
+        assert!(exec_args(words("--reserve two -- game")).is_err());
+        assert!(exec_args(words("--reserve")).is_err());
+        assert!(exec_args(words("--reserve 2")).is_err(), "no program");
+        assert!(exec_args(Vec::new()).is_err());
+    }
+
+    #[test]
+    fn a_state_covers_the_seats_when_each_is_seated_or_reserved() {
+        let state = serde_json::json!({
+            "players": [{"player": 1}],
+            "reserved": [{"player": 2, "node": "event9"}],
+        });
+        assert!(covers_seats(&state, 2));
+        assert!(!covers_seats(&state, 3), "seat 3 is nobody's yet");
+        assert!(covers_seats(&state, 0));
+        assert!(!covers_seats(&serde_json::json!({}), 1));
     }
 }
