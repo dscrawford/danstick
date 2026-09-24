@@ -36,6 +36,9 @@ use crate::{clean, events, now};
 
 pub const ENV_NO_AUTOSETUP: &str = "PADMAP_NO_AUTOSETUP";
 pub const ENV_NO_AUTOATTACH: &str = "PADMAP_NO_AUTOATTACH";
+/// Turns off reading keyboards for a held space bar; the seat is still
+/// available over the socket with `seat_keyboard`.
+pub const ENV_NO_KEYBOARD_HOLD: &str = "PADMAP_NO_KEYBOARD_HOLD";
 
 pub const PAD_SCAN_SECONDS: f64 = 1.0;
 pub const TRITON_SCAN_SECONDS: f64 = 1.0;
@@ -121,8 +124,11 @@ pub struct Server {
     late_attempts: BTreeMap<PathBuf, u32>,
     /// The keyboard and mouse nodes of seated and candidate pads, grabbed beside their joysticks.
     held: siblings::Held,
+    /// The desk's keyboards, read for a held space bar and never grabbed.
+    deskkeys: padmap_input::deskkeys::Keyboards,
+    keyboard_hold: padmap_core::keyboard::Hold,
     /// What `held` was last computed for: the event nodes and the pads that matter.
-    held_for: Option<(BTreeSet<String>, Vec<PathBuf>)>,
+    held_for: Option<(BTreeSet<String>, Vec<PathBuf>, bool)>,
     scratch: Vec<evdev::InputEvent>,
     pending_scope: String,
     sdl_lines: Vec<String>,
@@ -260,6 +266,8 @@ impl Server {
             last_input: None,
             late_attempts: BTreeMap::new(),
             held: siblings::Held::default(),
+            deskkeys: padmap_input::deskkeys::Keyboards::default(),
+            keyboard_hold: padmap_core::keyboard::Hold::default(),
             held_for: None,
             scratch: Vec::with_capacity(64),
             pending_scope: String::new(),
@@ -2134,6 +2142,7 @@ impl Server {
         self.refresh_seating(&mut scan);
         self.tick_seating();
         self.hold_siblings();
+        self.tick_keyboard_hold();
 
         let clock = now();
         self.tick_mapping(clock);
@@ -2653,7 +2662,8 @@ impl Server {
             .last_attach_nodes
             .clone()
             .unwrap_or_else(hotplug::event_nodes);
-        if self.held_for.as_ref() == Some(&(nodes.clone(), paths.clone())) {
+        let listening = self.listening_for_space();
+        if self.held_for.as_ref() == Some(&(nodes.clone(), paths.clone(), listening)) {
             return;
         }
         // Nothing seated and nothing listened to: nothing to look for.
@@ -2667,7 +2677,66 @@ impl Server {
             .flat_map(|pad| siblings::of(pad, &known))
             .collect();
         self.held.sync(&wanted);
-        self.held_for = Some((nodes, paths));
+        // The desk's keyboards are read, not held, and only while a hold could
+        // seat one: a pad's own lizard keyboards stay the pad's.
+        if listening {
+            self.deskkeys.refresh(&wanted);
+        } else {
+            self.deskkeys.close_all();
+        }
+        self.held_for = Some((nodes, paths, listening));
+    }
+
+    /// Whether a held space bar could seat the keyboard right now.
+    fn listening_for_space(&self) -> bool {
+        if std::env::var(ENV_NO_KEYBOARD_HOLD).as_deref() == Ok("1") {
+            return false;
+        }
+        self.seating.is_open()
+            && self.keyboard_seat.is_none()
+            && self.session.is_none()
+            // No seat left to fill towards: nothing to read a keyboard for.
+            && padmap_core::announce::next_player(&self.taken_seats())
+                <= self.slots.max(self.seating.seats())
+    }
+
+    /// A held space bar seats the keyboard, reported as a hold so a front-end
+    /// draws it like a pad's without a special case.
+    fn tick_keyboard_hold(&mut self) {
+        if !self.listening_for_space() || self.state == STATE_ASSIGNING {
+            self.keyboard_hold.reset();
+            return;
+        }
+        let mut hold = std::mem::take(&mut self.keyboard_hold);
+        self.deskkeys
+            .drain(|device, kind, code, value| hold.feed(device, kind, code, value, now()));
+        let tick = hold.tick(now(), self.seating.hold_seconds());
+        self.keyboard_hold = hold;
+
+        if let Some(fraction) = tick.progress {
+            let player = padmap_core::announce::next_player(&self.taken_seats());
+            self.broadcast(&events::progress(
+                fraction,
+                padmap_core::keyboard::SEAT_NAME,
+                "",
+                Some(player),
+            ));
+        }
+        if tick.released {
+            self.broadcast(&events::progress(
+                0.0,
+                padmap_core::keyboard::SEAT_NAME,
+                "",
+                None,
+            ));
+        }
+        if tick.claimed {
+            info!("seating: a held space bar <- the keyboard");
+            // Before `seat_keyboard`, whose own work can outlast a tick.
+            self.deskkeys.close_all();
+            self.held_for = None;
+            self.seat_keyboard();
+        }
     }
 
     /// A pad switched on during a session joins it: grabbed and watched like

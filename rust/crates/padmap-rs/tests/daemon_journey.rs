@@ -170,6 +170,13 @@ const SIBLING: PadId = PadId {
     only: "RSTESTSIB",
 };
 const SIBLING_KEYBOARD_NAME: &str = "PADMAP RSTESTSIB keyboard";
+/// A keyboard with no pad anywhere near it: the desk's own.
+const DESK: PadId = PadId {
+    name: "PADMAP RSTESTDESK pad",
+    pid: 0x0f02,
+    only: "RSTESTDESK",
+};
+const DESK_KEYBOARD_NAME: &str = "PADMAP RSTESTDESK keyboard";
 
 /// What the keyboard's seat calls itself, in `claim` and in `state`.
 const KEYBOARD_SEAT_NAME: &str = "Keyboard and Mouse";
@@ -2686,6 +2693,7 @@ fn test_keyboard(name: &str, vid: u16) -> VirtualDevice {
     }
     keys.insert(KeyCode::KEY_A);
     keys.insert(KeyCode::KEY_ENTER);
+    keys.insert(KeyCode::KEY_SPACE);
     let device = VirtualDevice::builder()
         .expect("uinput")
         .name(name)
@@ -2859,5 +2867,110 @@ fn one_control_is_bound_on_its_own_and_can_take_a_second_input() {
 
     drop(daemon);
     drop(pad);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Emit a key press or release on a uinput keyboard.
+fn key(device: &mut VirtualDevice, code: u16, value: i32) {
+    device
+        .emit(&[evdev::InputEvent::new(evdev::EventType::KEY.0, code, value)])
+        .expect("emit");
+}
+
+/// A held space bar seats the keyboard mid-game, reported like a pad's hold,
+/// and the key still reaches whoever has focus.
+#[test]
+fn a_held_space_bar_seats_the_keyboard_and_is_never_grabbed() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let root = std::env::temp_dir().join(format!("padmap-desk-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+
+    let mut keyboard = test_keyboard(DESK_KEYBOARD_NAME, 0x1209);
+    let node = keyboard
+        .enumerate_dev_nodes_blocking()
+        .expect("nodes")
+        .flatten()
+        .find(|path| path.to_string_lossy().contains("/dev/input/event"))
+        .expect("the keyboard's node");
+
+    let mut daemon = Daemon::start(&root, DESK);
+    daemon.pump(1.0);
+    // Seating open with a hold GOTG's length, so the fill is worth watching.
+    daemon.send(serde_json::json!({"cmd": "seating", "open": true, "players": 4, "hold": 1.5}));
+    daemon.pump(1.5);
+
+    // Read, not grabbed: the space bar still reaches the game and the desktop.
+    assert!(
+        grabbable(&node),
+        "padmap grabbed the desk's keyboard: {}",
+        node.display()
+    );
+
+    // Let go half way: a fill that stops is reported as stopping, and claims
+    // nothing.
+    daemon.events.clear();
+    key(&mut keyboard, KeyCode::KEY_SPACE.0, 1);
+    daemon.pump(0.6);
+    let climbing = daemon
+        .last("progress")
+        .cloned()
+        .expect("a held space bar filled nothing");
+    assert_eq!(climbing["name"], KEYBOARD_SEAT_NAME, "{climbing}");
+    assert_eq!(climbing["node"], "", "the keyboard has no node of its own");
+    assert_eq!(climbing["player"], 1, "{climbing}");
+    assert!(
+        climbing["frac"]
+            .as_f64()
+            .is_some_and(|f| f > 0.0 && f < 1.0),
+        "a fill that was already finished or empty: {climbing}"
+    );
+    key(&mut keyboard, KeyCode::KEY_SPACE.0, 0);
+    daemon.pump(0.6);
+    assert_eq!(
+        daemon.last("progress").map(|e| e["frac"].clone()),
+        Some(serde_json::json!(0.0)),
+        "letting go did not stop the fill"
+    );
+    assert!(daemon.last("claim").is_none(), "a half hold took a seat");
+
+    // Hold it the whole way: a claim and a state, as `seat_keyboard` sends.
+    daemon.events.clear();
+    key(&mut keyboard, KeyCode::KEY_SPACE.0, 1);
+    let claim = daemon
+        .wait_for("claim", |e| e["name"] == KEYBOARD_SEAT_NAME, 6.0)
+        .expect("a full hold took no seat");
+    assert_eq!(claim["player"], 1, "{claim}");
+    assert_eq!(claim["icon"], "keyboard-mouse", "{claim}");
+    let state = daemon
+        .wait_for("state", |e| e["players"][0]["keyboard"] == true, 5.0)
+        .expect("no state with the keyboard seated");
+    assert_eq!(state["players"][0]["player"], 1, "{state}");
+    assert_eq!(state["players"][0]["mouse"], true, "{state}");
+
+    // Not twice: holding again with the keyboard seated fills nothing.
+    daemon.events.clear();
+    key(&mut keyboard, KeyCode::KEY_SPACE.0, 0);
+    daemon.pump(0.3);
+    daemon.events.clear();
+    key(&mut keyboard, KeyCode::KEY_SPACE.0, 1);
+    daemon.pump(2.5);
+    key(&mut keyboard, KeyCode::KEY_SPACE.0, 0);
+    assert!(
+        daemon.last("progress").is_none(),
+        "a seated keyboard filled again: {:?}",
+        daemon.last("progress")
+    );
+    assert!(
+        daemon.last("claim").is_none(),
+        "the keyboard took a second seat"
+    );
+    assert!(
+        grabbable(&node),
+        "padmap grabbed the keyboard once it was seated"
+    );
     let _ = std::fs::remove_dir_all(&root);
 }

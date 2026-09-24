@@ -969,7 +969,9 @@ S1-S23. Grouped by where it lives.
 
 ## Environment switches
 
-`PADMAP_NO_AUTOSETUP` (suppress S1), `PADMAP_ONLY_VIRTUAL` (SDL-level pad
+`PADMAP_NO_AUTOSETUP` (suppress S1), `PADMAP_NO_KEYBOARD_HOLD` (stop reading
+keyboards for a held space bar; `seat_keyboard` still works),
+`PADMAP_ONLY_VIRTUAL` (SDL-level pad
 hiding), `PADMAP_PAD_IDENTITY` (what the virtual pads advertise, and therefore
 every SDL GUID), `PADMAP_SKIP_DAEMON_CHECK` (skip S18 in both wrappers),
 `PADMAP_BUILD_ID` (S18's staleness comparison), `PADMAP_AUTOCONFIG_DIRS`,

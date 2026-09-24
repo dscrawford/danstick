@@ -3464,3 +3464,50 @@ per emulator rather than leaving a reader to assume it was missed.
 not about the file. padmap moved the keyboard and assumed the person moved
 with it; half of that person stayed on port 1 for as long as the keyboard's
 seat has existed.
+
+## Reading a keyboard is three bugs, none of them the reading
+
+`docs/requests/keyboard-joins-mid-game.md` asked for a held space bar to seat
+the keyboard, because once the picker has `execvp`'d into the game there is
+nothing of GOTG left to time a hold. padmap had never read a keyboard. Each of
+the three things that went wrong was in the plumbing, not the idea.
+
+**`evdev::Device::open` blocks, and one blocking read is the whole daemon.**
+The first working version stalled the 50Hz tick inside `fetch_events` until
+somebody touched a key: two ticks in two seconds. At the socket it looked like
+a timing bug -- a single `progress` stuck at `frac: 0.0` -- and the only way to
+see it was logging the tick and finding the gap. The devices are opened
+`O_NONBLOCK` now. `siblings::Held` had never hit this because it grabs nodes
+and never reads them.
+
+**`evdev::Device::fetch_events` invents presses.** It is the *synchronizing*
+API: after a `SYN_DROPPED` it diffs the kernel's key state against its own and
+emits an `EV_KEY / KEY_SPACE / 1` for a key that was merely still down. A
+player holding space in a game produces ~66 autorepeats a second against a
+64-event buffer, and this daemon does stall for longer than that when it
+rewrites every emulator's config. That is a seat taken by nobody. `RawDevice`
+inserts nothing and keeps no key bitmap, which is also the answer to "why does
+a controller daemon hold a copy of every key that is down".
+
+**One hold for every keyboard is one hold too few.** The first version kept a
+single press time, so a release on any keyboard cancelled a fill running on
+another. This is not a two-people edge case: the keyboard on this desk
+publishes *two* event nodes, both carrying its space bar, so the release that
+killed the fill was the same person's other node. The hold is per device now,
+filling from the earliest press still down.
+
+**And the measurement that changed the design.** Classifying keyboards by
+opening every input node costs ~280-410ms here, inline on the tick, because
+closing an evdev node costs about 10ms and there are 28 of them. udev's
+`ID_INPUT_KEY` narrows that to 13 before anything is opened. `ID_INPUT_KEYBOARD`
+would narrow it to 2 and would have been wrong: a real Bluetooth keyboard on
+this desk carries `ID_INPUT_KEY` alone, so trusting the tag would have silently
+dropped the space bar on the machine the feature was written for. The answer is
+the cheap tag as a filter and the device itself as the oracle, memoised per
+node -- 124ms once, 27ms per hotplug after.
+
+**Worth generalising.** A library's convenience API is a policy. Blocking and
+"helpfully" synthesizing events are both reasonable defaults for a program that
+reads one device and does nothing else, and both are wrong inside an event loop
+that owns a machine. Read the API's own doc for what it *inserts*, not just what
+it returns.

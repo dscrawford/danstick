@@ -3,6 +3,7 @@
 pub mod artefacts;
 pub mod assignments;
 pub mod clone;
+pub mod deskkeys;
 pub mod emulators;
 pub mod fakepad;
 pub mod isolate;

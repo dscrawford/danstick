@@ -441,9 +441,8 @@ changes nothing. Without either flag `ensure-daemon` behaves as it always has.
 {"cmd": "seat_keyboard"}
 ```
 
-Seats the keyboard as the next free player. No device is read and nothing is
-grabbed -- the keyboard stays the compositor's, and padmap never sees its
-keys; the front-end times the hold itself. What changes is every emulator's
+Seats the keyboard as the next free player. Nothing is grabbed -- the keyboard
+stays the compositor's and the game's. What changes is every emulator's
 configuration: player N is now the emulator's own keyboard device, in the
 emulator's own default keys where it has them and padmap's where it does not
 (`docs/EMULATORS.md`, "The keyboard"). A `claim` goes out first:
@@ -468,8 +467,55 @@ player wherever an emulator has a pointer for a port (`docs/EMULATORS.md`,
 tells a front-end this seat has no pad behind it. Nothing is grabbed: the
 mouse stays the compositor's, exactly as the keyboard does.
 
+**A held space bar does the same thing, from anywhere.** While seating is
+open and the keyboard has no seat yet, padmap reads every keyboard on the
+machine and times a held `KEY_SPACE` for the same `hold` the pads use. A
+front-end no longer has to time it, and no longer has to be the thing with
+focus: the picker has `execvp`'d into the game by the time somebody wants to
+join, and there is nothing of GOTG left listening.
+
+It is reported exactly as a pad's hold is, so an overlay can draw the
+keyboard arriving without knowing it is not a pad:
+
+```json
+{"event": "progress", "frac": 0.4, "name": "Keyboard and Mouse", "node": "", "player": 1}
+```
+
+then `frac: 0` with `"player": null` if it is let go early, and the `claim`
+and `state` above when it runs its length. The `node` is empty: the seat has
+no device of its own, and a front-end keying a fill by node and falling back
+to name draws it as the keyboard.
+
+**Read, never grabbed.** The space bar reaches the game too, so a character
+may jump while somebody joins. That is deliberate: grabbing the keyboard
+would take it from the game and from the desktop, which is worse than a
+stray jump. Only `KEY_SPACE` is looked at, so typing cannot take a seat.
+A pad's own keyboards -- a Steam Controller in lizard mode publishes four --
+are left out of this: padmap already grabs those beside the pad, and reading
+them here would let a trackpad click bound to space seat "the keyboard".
+
+**`PADMAP_NO_KEYBOARD_HOLD=1` turns it off**, and `seat_keyboard` still
+works over the socket. Worth knowing before you decide:
+
+- padmap holds a read-only fd on every keyboard while it is listening, and
+  it is listening for as long as seating is open -- which, for GOTG, is the
+  whole game. No keystroke is stored, logged or sent anywhere: the only
+  thing looked at is `KEY_SPACE`, and the only thing on the socket is the
+  `frac` above. A client does learn when the space bar goes down and up,
+  to about 20ms.
+- anything that can put a space bar into evdev can take a seat, a
+  remote-input daemon included -- Sunshine, Input Leap, `ydotool` all
+  publish keyboards indistinguishable from the desk's. This is the trust
+  padmap already places in pads, said out loud.
+- a space bar already held when padmap starts reading is invisible until it
+  is let go and pressed again. Linux reports edges from the moment a reader
+  opens the node, and padmap deliberately does not ask the kernel what is
+  already down -- the same reason a pad held before seating opened does not
+  claim.
+
 Refused, with an `error`, while a session is open, when the keyboard already
-holds a seat, and when every seat is taken. `unseat` and `unseat` with its
+holds a seat, and when every seat is taken. A keyboard that has a seat is no
+longer read at all, so it types into the game as it always did. `unseat` and `unseat` with its
 player drop it like any seat; `--fresh` forgets it; `--follow` ends with it.
 `seating` ignores it and is not closed by it.
 
