@@ -2,97 +2,54 @@
 
 Controller assignment for Linux, as stable virtual gamepads.
 
-Plug in four identical adapter ports and nothing can tell them apart: they
-report the same name, phys, uniq, vendor, product, version and properties, and
-only their `inputN` ordinal differs — on a global counter that libudev sorts as
-a string. No configuration file can pin player order to hardware that is
-genuinely indistinguishable.
+- Linux can't tell identical controllers apart, so no config file can pin player order.
+- padmap asks instead: hold a button on each controller, in the order you want.
+- Each controller is republished through uinput as `padmap Player 1`, `padmap Player 2`, …
+- Games and emulators bind to those names, which never change.
+- Button mappings and stick calibration are learned once per controller model and reused.
 
-So padmap asks. You hold a button on each controller in the order you want
-them, and padmap republishes each one through uinput as `padmap Player 1`,
-`padmap Player 2`, … — pads whose identity *is* stable, because padmap made it.
-Everything downstream binds to those.
+## Usage
 
-    padmap list        what is plugged in, and what a game would make of it
-    padmap setup       assign player order by pressing and holding a button
-    padmap map         record which button is which
-    padmap calibrate   measure where the sticks actually rest
-    padmap tune        a deadzone, a debounce, or a broken part to ignore
-    padmap run         republish the assigned pads and keep them alive
-    padmap serve       the same, as a daemon with a socket
-    padmap hide        udev rules hiding the physical pads from everything else
-    padmap launch      run, then start RetroArch bound to the assigned order
+    nix run .#padmap -- list       # what is plugged in
+    nix run .#padmap-start         # start the daemon, hide the physical pads
 
-## What it gives other programs
-
-padmap is a gamepad layer, not an application. It produces four things, and
-anything can consume them:
-
-| | where |
+| Command | What it does |
 | --- | --- |
-| virtual pads | `/dev/input/event*`, named `padmap Player N` |
-| an SDL controller database | `~/.config/padmap/sdl_controllers.txt` |
-| RetroArch autoconfig profiles | `$XDG_RUNTIME_DIR/padmap/autoconfig/udev/` |
-| a control socket | `$XDG_RUNTIME_DIR/padmap/padmap.sock` |
+| `list [--json]` | controllers and their players |
+| `setup` | assign player order by holding a button |
+| `map` / `calibrate` / `tune` | record buttons, stick centres, deadzones |
+| `forget` | drop what was learned about a controller |
+| `run` / `serve` | republish the pads (`serve` adds a socket) |
+| `ensure-daemon` | start the daemon, or replace a stale one |
+| `play` / `launch` | start a game bound to the assigned order |
+| `exec -- <program>` | run a program seeing only padmap's pads |
+| `hide` | udev rules hiding the physical pads |
 
-A controller that follows the kernel's gamepad convention binds itself the
-moment it is plugged in — no wizard, nothing to configure. `BTN_SOUTH` *is*
-the bottom face button, so padmap reads the controls off the codes rather than
-guessing at them, and `padmap map` is there to change the result rather than
-to produce one.
+## What it produces
 
-`padmap list --json` answers the same questions for a script that runs once
-and should not have to start a daemon:
+- Virtual pads: `/dev/input/event*`, named `padmap Player N`
+- SDL database: `~/.config/padmap/sdl_controllers.txt`
+- RetroArch autoconfig: `$XDG_RUNTIME_DIR/padmap/autoconfig/udev/`
+- Emulator configs: Cemu, Dolphin, ares, Ryujinx ([docs/EMULATORS.md](docs/EMULATORS.md))
+- Control socket: `$XDG_RUNTIME_DIR/padmap/padmap.sock` ([docs/EVENTS.md](docs/EVENTS.md))
+- Learned profiles: `~/.local/share/padmap/devices/`
 
-    padmap list --json | jq -r '.[] | select(.player) | "\(.player) \(.virtual.node)"'
+## Project structure
 
+    rust/crates/padmap-core/     pure logic: assignment, mappings, config formats, protocol
+    rust/crates/padmap-input/    evdev, uinput, udev: discovery and republishing
+    rust/crates/padmap-daemon/   the event loop behind the socket
+    rust/crates/padmap-rs/       the `padmap` CLI
+    tools/                       probes, socket watcher, cluster test runner
+    k8s/tests/                   the pod the test suite runs in
+    docs/                        socket contract, emulators, Steam Deck, latency
+    FINDINGS.md                  incident record: why each guard exists
 
-Point any SDL program at the database and it gets the mappings padmap
-captured:
+## Development
 
-    SDL_GAMECONTROLLERCONFIG_FILE=~/.config/padmap/sdl_controllers.txt yourgame
-
-The socket is newline-delimited JSON, documented in
-`rust/crates/padmap-core/src/command.rs` (what a client may ask) and
-`state.rs` (what it is told).
-A client sends commands and renders the events it gets back; the daemon is
-authoritative and holds no expectation about who is listening. `tools/padctl.py`
-is a working client in a hundred lines.
-
-## Why the mappings are captured rather than guessed
-
-A vendor id names a *model*, not a controller. 0x0079 is DragonRise, resold in
-a great many unrelated adapters, so `0079:1879` is an N64 adapter on one
-machine and a generic pad on the next. And a worn N64 stick here rests at 174
-on a 0–255 axis whose nominal centre is 128 — 36% deflected, which a front-end
-acts on as a held direction. Neither is a property of a product line, and both
-are settled in a second by the person holding the controller.
-
-Everything learned that way is stored per controller model under
-`~/.local/share/padmap/devices/`, and follows the controller rather than the
-player slot it happened to claim.
-
-## Building
-
-    nix run .#padmap -- list
-    nix run .#padmap-start          # daemon + udev hide rules
-    nix develop                     # cargo, clippy, evemu, perf
-
-padmap is a single Rust binary; the workspace is under `rust/`. Inside the dev
-shell `padmap` is on `PATH` and is built from the working tree rather than a
-store copy, so `padmap list` reflects the file you just edited. It stays
-pointed at the directory the shell was entered from, so `cd rust` does not
-change which padmap you are running.
-
-    padmap list                     # same CLI as `nix run .#padmap --`
-    (cd rust && cargo test)         # the tests
-
-See [docs/RUSTIFY.md](docs/RUSTIFY.md) for how it got here and
-[docs/LATENCY.md](docs/LATENCY.md) for what padmap actually costs a
-controller, measured.
-
-`FINDINGS.md` is the incident record: every guard in this codebase has a
-wound behind it, and that is where they are written down.
+- `nix develop`: the toolchain, with `padmap` on `PATH` built from the working tree.
+- `tools/cluster-test`: the test suite, in a Kubernetes pod ([k8s/tests/README.md](k8s/tests/README.md)).
+- `(cd rust && cargo test)`: the same locally. It creates real uinput pads, so use an idle machine.
 
 ## License
 
