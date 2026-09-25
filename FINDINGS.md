@@ -3608,3 +3608,24 @@ scan, under 300ms together, which is inside GOTG's worst case.
 
 **Worth generalising.** Time the thing a person did from when they did it.
 Any other clock measures the program as well.
+
+## Turning an Xbox pad on made the Deck disappear
+
+On a Deck in Game Mode Steam holds the built-in controls' hidraw node, so
+hid-steam publishes no `Steam Deck` event node and Steam's virtual pad 0 is
+the only way those presses reach anything. `without_steam_mirrors` dropped
+every `28de:11ff` node as soon as one other pad was readable, on the theory
+that a mirror always mirrors a pad padmap already reads. The Deck's mirror
+mirrors one padmap cannot read, so a friend's Xbox pad cost the Deck its seat.
+
+Which mirror stands for which controller is not written anywhere padmap can
+see; the count is. Discovery now keeps as many mirrors as there are
+controllers padmap cannot read -- the surplus of mirrors over readable pads,
+or one when a `28de:1205` hidraw node exists with no Deck event node --
+lowest Steam slot first, since Steam opens the built-in first. Guessing one
+mirror too many shows a pad twice; guessing one too few hides a person.
+Checked over ssh on the Deck: three `HID_ID=0003:000028DE:00001205` hidraw
+nodes and no event node while Steam ran.
+
+**Worth generalising.** A filter that removes duplicates has to know what
+each one duplicates, or it removes the only copy.

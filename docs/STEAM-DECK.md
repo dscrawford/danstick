@@ -31,9 +31,9 @@ Steam's virtual `28de:11ff` mirror standing in for the built-in controls.
 
 That is not a fault and there is nothing to fix in the kernel: it is how one
 device gets driven by one thing at a time. It does mean the two representations
-are never both present, and that padmap's rule for Steam's mirror — drop it
-when any other pad is here — costs a Deck its own controls if a second pad is
-plugged in while Steam is up. See "What is not done" below.
+are never both present. So padmap keeps one Steam mirror standing in for the
+Deck whenever a `28de:1205` hidraw node is present with no `Steam Deck` event
+node, even beside another pad; see `pad::without_steam_mirrors`.
 
 ## Why it is not an Xbox pad
 
@@ -88,12 +88,6 @@ in padmap today.
 those indices at all and falls back to `BTN_TL2`/`BTN_TR2`. Fixing it means
 teaching the axis numbering the same rule `guess.rs` just learned, and that
 changes frozen corpus answers.
-
-**The mirror rule.** A Deck with Steam up and a second pad plugged in loses its
-built-in controls, because `without_steam_mirrors` drops the mirror as soon as
-any real pad is present and the Deck's own node is not one. The fix needs a way
-to know that a `28de:1205` exists with no joypad node — `lizard::has_joypad`
-already asks that question of a syspath.
 
 ## Reproducing the capture
 

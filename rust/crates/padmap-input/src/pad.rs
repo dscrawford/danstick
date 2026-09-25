@@ -68,21 +68,42 @@ pub struct Discovery {
     pub dropped: Vec<Dropped>,
 }
 
-/// One physical controller is one pad: Steam's mirror goes when the pad it mirrors is here.
+/// One physical controller is one pad: Steam's mirror goes when the pad it
+/// mirrors is one padmap reads, and stays when it is the only way to reach one.
 ///
-/// The mirror is kept when it is the only pad, since a controller Steam alone
-/// can drive is still a controller.
-pub fn without_steam_mirrors(pads: Vec<Pad>) -> Discovery {
-    if !pads.iter().any(|pad| !is_steam_virtual(pad)) {
+/// `unreadable` counts controllers Steam drives that padmap cannot read itself
+/// -- the Deck's own controls in Game Mode, which Steam holds -- each reachable
+/// only through its mirror. Steam mirrors at most one per pad padmap reads, so
+/// a surplus of mirrors is kept too. Kept lowest slot first: Steam numbers them
+/// in the order it opened the controllers, and it opens the Deck's first. One
+/// mirror too many shows a pad twice; one too few hides somebody's controller.
+pub fn without_steam_mirrors(pads: Vec<Pad>, unreadable: usize) -> Discovery {
+    let mirrors: Vec<&Pad> = pads.iter().filter(|pad| is_steam_virtual(pad)).collect();
+    let readable = pads.len() - mirrors.len();
+    if readable == 0 {
         return Discovery {
             pads,
             dropped: Vec::new(),
         };
     }
-    let (mirrors, pads): (Vec<Pad>, Vec<Pad>) = pads.into_iter().partition(is_steam_virtual);
+    let keep = mirrors
+        .len()
+        .saturating_sub(readable)
+        .max(unreadable)
+        .min(mirrors.len());
+    let mut by_slot = mirrors.clone();
+    by_slot.sort_by_key(|pad| (steam_slot(pad), pad.syspath.clone()));
+    let kept: Vec<PathBuf> = by_slot
+        .iter()
+        .take(keep)
+        .map(|pad| pad.path.clone())
+        .collect();
+    let (pads, dropped): (Vec<Pad>, Vec<Pad>) = pads
+        .into_iter()
+        .partition(|pad| !is_steam_virtual(pad) || kept.contains(&pad.path));
     Discovery {
         pads,
-        dropped: mirrors
+        dropped: dropped
             .into_iter()
             .map(|pad| Dropped {
                 pad,
@@ -90,6 +111,62 @@ pub fn without_steam_mirrors(pads: Vec<Pad>) -> Discovery {
             })
             .collect(),
     }
+}
+
+/// Steam's slot for a mirror, from the index it appends to the name.
+fn steam_slot(pad: &Pad) -> u32 {
+    pad.name
+        .rsplit(' ')
+        .next()
+        .and_then(|slot| slot.parse().ok())
+        .unwrap_or(u32::MAX)
+}
+
+/// A HID device's `HID_ID` property -- `bus:vendor:product`, eight hex digits
+/// each -- as vendor and product.
+pub fn hid_id(text: &str) -> Option<(u16, u16)> {
+    let mut parts = text.split(':');
+    let _bus = parts.next()?;
+    let vendor = u32::from_str_radix(parts.next()?, 16).ok()?;
+    let product = u32::from_str_radix(parts.next()?, 16).ok()?;
+    Some((u16::try_from(vendor).ok()?, u16::try_from(product).ok()?))
+}
+
+/// The Steam Deck's own controls, as the HID device Steam holds.
+const STEAM_DECK_ID: (u16, u16) = (0x28DE, 0x1205);
+
+/// How many controllers Steam drives that padmap reads no gamepad node for: a
+/// Deck whose hidraw is there when no `Steam Deck` event node is. In Game Mode
+/// Steam holds the hidraw, hid-steam publishes nothing, and the Deck exists
+/// only as a Steam mirror (docs/STEAM-DECK.md).
+fn steam_driven_unreadable(pads: &[Pad]) -> usize {
+    if pads.iter().any(|pad| (pad.vid, pad.pid) == STEAM_DECK_ID) {
+        return 0;
+    }
+    let Ok(mut enumerator) = udev::Enumerator::new() else {
+        return 0;
+    };
+    if enumerator.match_subsystem("hidraw").is_err() {
+        return 0;
+    }
+    let Ok(devices) = enumerator.scan_devices() else {
+        return 0;
+    };
+    let decks = devices
+        .filter(|device| {
+            device
+                .parent_with_subsystem("hid")
+                .ok()
+                .flatten()
+                .and_then(|hid| {
+                    hid.property_value("HID_ID")
+                        .and_then(|id| hid_id(&id.to_string_lossy()))
+                })
+                == Some(STEAM_DECK_ID)
+        })
+        .count();
+    // The Deck's controls publish more than one HID interface; it is one Deck.
+    decks.min(1)
 }
 
 /// Would `PADMAP_ONLY_DEVICE` let a pad with this name through?
@@ -192,13 +269,21 @@ pub fn discover_all(filter: Filter) -> std::io::Result<Discovery> {
         pads.extend(crate::triton::slots(true));
     }
 
+    let scoped = std::env::var(ENV_ONLY).is_ok_and(|only| !only.is_empty());
     if let Ok(only) = std::env::var(ENV_ONLY) {
         if !only.is_empty() {
             pads.retain(|pad| pad.name.contains(&only));
             debug!("{ENV_ONLY} is set: {} pad(s) after filtering", pads.len());
         }
     }
-    let found = without_steam_mirrors(pads);
+    // A scoped discovery sees only its own pads, and a Deck elsewhere on the
+    // machine is none of its business.
+    let unreadable = if scoped {
+        0
+    } else {
+        steam_driven_unreadable(&pads)
+    };
+    let found = without_steam_mirrors(pads, unreadable);
     for dropped in &found.dropped {
         debug!(
             "{} ({}) left out: {}",
@@ -468,8 +553,10 @@ mod tests {
     #[test]
     fn steams_mirror_goes_when_any_other_pad_is_here() {
         use crate::fakepad::{STEAM_VIRTUAL, XBOX_360};
-        let found =
-            without_steam_mirrors(vec![STEAM_VIRTUAL.pad("event25"), XBOX_360.pad("event24")]);
+        let found = without_steam_mirrors(
+            vec![STEAM_VIRTUAL.pad("event25"), XBOX_360.pad("event24")],
+            0,
+        );
         assert_eq!(found.pads, vec![XBOX_360.pad("event24")]);
         assert_eq!(found.dropped.len(), 1);
         assert_eq!(found.dropped[0].pad, STEAM_VIRTUAL.pad("event25"));
@@ -487,7 +574,7 @@ mod tests {
             0x1304,
             "event0",
         );
-        let found = without_steam_mirrors(vec![puck.clone(), STEAM_VIRTUAL.pad("event25")]);
+        let found = without_steam_mirrors(vec![puck.clone(), STEAM_VIRTUAL.pad("event25")], 0);
         assert_eq!(found.pads, vec![puck]);
         assert_eq!(found.dropped.len(), 1);
     }
@@ -496,12 +583,12 @@ mod tests {
     fn steams_mirror_stays_when_it_stands_alone() {
         use crate::fakepad::STEAM_VIRTUAL;
         let alone = vec![STEAM_VIRTUAL.pad("event25")];
-        let found = without_steam_mirrors(alone.clone());
+        let found = without_steam_mirrors(alone.clone(), 0);
         assert_eq!(found.pads, alone);
         assert!(found.dropped.is_empty());
 
         let two = vec![STEAM_VIRTUAL.pad("event25"), STEAM_VIRTUAL.pad("event26")];
-        let found = without_steam_mirrors(two.clone());
+        let found = without_steam_mirrors(two.clone(), 0);
         assert_eq!(
             found.pads, two,
             "two mirrors and nothing else are still pads"
@@ -509,14 +596,79 @@ mod tests {
         assert!(found.dropped.is_empty());
     }
 
+    fn mirror(slot: u32, event: &str) -> Pad {
+        let mut pad = crate::fakepad::STEAM_VIRTUAL.pad(event);
+        pad.name = format!("Microsoft X-Box 360 pad {slot}");
+        pad
+    }
+
+    #[test]
+    fn the_decks_mirror_stays_beside_a_pad_padmap_reads() {
+        use crate::fakepad::XBOX_360;
+        // The Deck in Game Mode with an Xbox pad: Steam mirrors both, and only
+        // the Xbox pad is readable. Listed out of slot order on purpose.
+        let pads = vec![
+            mirror(1, "event18"),
+            XBOX_360.pad("event11"),
+            mirror(0, "event10"),
+        ];
+        let found = without_steam_mirrors(pads, 1);
+        assert_eq!(
+            found.pads,
+            vec![XBOX_360.pad("event11"), mirror(0, "event10")],
+            "the Deck's mirror, slot 0, went with the Xbox pad's"
+        );
+        assert_eq!(found.dropped.len(), 1);
+        assert_eq!(found.dropped[0].pad, mirror(1, "event18"));
+    }
+
+    #[test]
+    fn more_mirrors_than_pads_padmap_reads_keeps_the_surplus() {
+        use crate::fakepad::XBOX_360;
+        // Steam mirrors at most one per pad padmap reads, so a mirror over
+        // that count is a controller padmap cannot see any other way.
+        let pads = vec![
+            mirror(0, "event10"),
+            mirror(1, "event18"),
+            XBOX_360.pad("event11"),
+        ];
+        let found = without_steam_mirrors(pads, 0);
+        assert_eq!(
+            found.pads,
+            vec![mirror(0, "event10"), XBOX_360.pad("event11")]
+        );
+    }
+
+    #[test]
+    fn the_decks_mirror_stays_even_when_steam_mirrors_nothing_else() {
+        use crate::fakepad::XBOX_360;
+        // Steam Input off for the Xbox pad: one mirror, one pad, and the count
+        // alone would hide the Deck again. Knowing the Deck is there keeps it.
+        let pads = vec![mirror(0, "event10"), XBOX_360.pad("event11")];
+        let found = without_steam_mirrors(pads.clone(), 1);
+        assert_eq!(found.pads, pads);
+        assert!(found.dropped.is_empty());
+        // Without that knowledge it is the mirror of the pad padmap reads.
+        assert_eq!(without_steam_mirrors(pads, 0).pads.len(), 1);
+    }
+
+    #[test]
+    fn a_hid_id_is_read_as_bus_vendor_product() {
+        assert_eq!(hid_id("0003:000028DE:00001205"), Some((0x28DE, 0x1205)));
+        assert_eq!(hid_id("0005:0000045E:00000B13"), Some((0x045E, 0x0B13)));
+        assert_eq!(hid_id(""), None);
+        assert_eq!(hid_id("0003:28DE"), None);
+        assert_eq!(hid_id("0003:0000ZZZZ:00001205"), None);
+    }
+
     #[test]
     fn a_room_with_no_mirror_is_left_exactly_as_it_was() {
         use crate::fakepad::{MAYFLASH_GAMECUBE, XBOX_360};
         let pads = vec![XBOX_360.pad("event3"), MAYFLASH_GAMECUBE.pad("event4")];
-        let found = without_steam_mirrors(pads.clone());
+        let found = without_steam_mirrors(pads.clone(), 0);
         assert_eq!(found.pads, pads);
         assert!(found.dropped.is_empty());
-        assert!(without_steam_mirrors(Vec::new()).pads.is_empty());
+        assert!(without_steam_mirrors(Vec::new(), 0).pads.is_empty());
     }
 
     #[test]

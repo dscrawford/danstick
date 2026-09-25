@@ -142,9 +142,11 @@ Runtime state lives in `$XDG_RUNTIME_DIR/padmap/` (socket, `assignments.json`,
   hold made under that grab reaches nobody, padmap included.
 - A daemon restoring real pads republishes them before greeting its first
   client; wait for the `state` event rather than reading it immediately.
-- A Steam Virtual Gamepad (`28de:11ff`) mirrors a real pad; discovery drops
-  it when any other pad is present. A triton pad (2026 Steam Controller)
-  cannot be grabbed at all.
+- A Steam Virtual Gamepad (`28de:11ff`) mirrors a real pad. Discovery keeps
+  as many mirrors as there are controllers padmap cannot read itself (more
+  mirrors than readable pads, or a Deck whose `28de:1205` hidraw has no event
+  node), lowest Steam slot first, and drops the rest. A triton pad (2026 Steam
+  Controller) cannot be grabbed at all.
 - A Steam Deck's own controls (`28de:1205`) are a pad only while nothing holds
   the hidraw node, and Steam holds it: with Steam up there is no `Steam Deck`
   node, just the lizard keyboard and mouse and Steam's mirror. Its d-pad is
