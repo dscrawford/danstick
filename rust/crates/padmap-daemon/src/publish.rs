@@ -30,14 +30,15 @@ pub struct PadFacts {
     pub physical_guid: Option<String>,
 }
 
-/// The 360 identity, which a reserved seat wears before it has a pad.
-pub fn xbox_identity() -> Identity {
-    Identity {
-        bustype: padmap_core::xbox::BUS_USB,
-        vendor: padmap_core::xbox::VENDOR,
-        product: padmap_core::xbox::PRODUCT,
-        version: padmap_core::xbox::VERSION,
-    }
+/// The 360 identity a player's clone wears under `mode`, which a reserved
+/// seat wears before it has a pad; `None` when it depends on the pad.
+pub fn xbox_identity(mode: IdentityMode, player: u32) -> Option<Identity> {
+    mode.xbox_identity(player).map(|identity| Identity {
+        bustype: identity.bustype,
+        vendor: identity.vendor,
+        product: identity.product,
+        version: identity.version,
+    })
 }
 
 /// The 360 clone's capabilities, the same for every pad behind one.
@@ -75,23 +76,20 @@ pub fn identity_of(pad: &Pad, player: u32, mode: IdentityMode) -> Identity {
         product: clone::PADMAP_PID,
         version: emit::version_for(player),
     };
-    if mode == IdentityMode::Xbox360 {
-        return Identity {
-            bustype: padmap_core::xbox::BUS_USB,
-            vendor: padmap_core::xbox::VENDOR,
-            product: padmap_core::xbox::PRODUCT,
-            version: padmap_core::xbox::VERSION,
-        };
+    if let Some(identity) = xbox_identity(mode, player) {
+        return identity;
     }
     if triton::owns(pad) {
         return match mode {
             IdentityMode::Padmap => padmap_own,
-            IdentityMode::Mirror | IdentityMode::Xbox360 => Identity {
-                bustype: 0x03,
-                vendor: pad.vid,
-                product: pad.pid,
-                version: emit::version_for(player),
-            },
+            IdentityMode::Mirror | IdentityMode::Xbox360 | IdentityMode::Xbox360Numbered => {
+                Identity {
+                    bustype: 0x03,
+                    vendor: pad.vid,
+                    product: pad.pid,
+                    version: emit::version_for(player),
+                }
+            }
         };
     }
     match Device::open(&pad.path) {
@@ -463,7 +461,7 @@ pub fn write_all(
 
     // Under the 360 identity every consumer describes the clone's layout,
     // which is the same for every pad, rather than the pad behind it.
-    let xbox = mode == IdentityMode::Xbox360;
+    let xbox = mode.is_xbox_layout();
     let scope = (console.to_owned(), game.to_owned(), context.to_owned());
     let mut previous = std::mem::take(&mut cache.players);
     let derived: BTreeMap<u32, Derived> = slots
@@ -543,7 +541,9 @@ pub fn write_all(
         published.push(one.published.clone());
     }
     for player in &reserved {
-        let identity = xbox_identity();
+        let Some(identity) = xbox_identity(mode, *player) else {
+            continue;
+        };
         let facts = xbox_facts();
         let line = sdl_line_for(*player, identity, &padmap_core::xbox::bindings(), &facts);
         if !line.is_empty() {

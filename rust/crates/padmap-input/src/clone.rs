@@ -48,6 +48,8 @@ pub enum IdentityMode {
     Padmap,
     /// A wired Xbox 360 pad, layout and all: what every SDL maps out of the box.
     Xbox360,
+    /// The 360 pad with the player in its version, so every clone has its own GUID.
+    Xbox360Numbered,
 }
 
 impl IdentityMode {
@@ -56,6 +58,25 @@ impl IdentityMode {
             IdentityMode::Mirror => "mirror",
             IdentityMode::Padmap => "padmap",
             IdentityMode::Xbox360 => "xbox360",
+            IdentityMode::Xbox360Numbered => "xbox360-numbered",
+        }
+    }
+
+    /// Whether every clone wears the 360 layout, known before any pad is behind it.
+    pub const fn is_xbox_layout(self) -> bool {
+        matches!(self, IdentityMode::Xbox360 | IdentityMode::Xbox360Numbered)
+    }
+
+    /// The identity a player's clone wears under a 360 layout; `None` when it
+    /// depends on the pad behind it.
+    pub fn xbox_identity(self, player: u32) -> Option<Identity> {
+        match self {
+            IdentityMode::Xbox360 => Some(Identity::XBOX360),
+            IdentityMode::Xbox360Numbered => Some(Identity {
+                version: version_for(player),
+                ..Identity::XBOX360
+            }),
+            IdentityMode::Mirror | IdentityMode::Padmap => None,
         }
     }
 
@@ -65,6 +86,7 @@ impl IdentityMode {
             "mirror" => Some(IdentityMode::Mirror),
             "padmap" => Some(IdentityMode::Padmap),
             "xbox360" => Some(IdentityMode::Xbox360),
+            "xbox360-numbered" => Some(IdentityMode::Xbox360Numbered),
             _ => None,
         }
     }
@@ -107,9 +129,12 @@ impl Identity {
     };
 
     pub fn for_source(mode: IdentityMode, source: &Device, player: u32) -> Identity {
+        if let Some(identity) = mode.xbox_identity(player) {
+            return identity;
+        }
         let version = version_for(player);
         match mode {
-            IdentityMode::Xbox360 => Identity::XBOX360,
+            IdentityMode::Xbox360 | IdentityMode::Xbox360Numbered => Identity::XBOX360,
             IdentityMode::Padmap => Identity {
                 version,
                 ..Identity::PADMAP
@@ -418,7 +443,7 @@ pub fn create_on(
     let extras = mapping.resolved_extra();
     let mut translator = None;
     let mut twins = None;
-    let (identity, clone) = if mode == IdentityMode::Xbox360 {
+    let (identity, clone) = if let Some(identity) = mode.xbox_identity(player) {
         let (keys, _) = source.capabilities();
         translator = Some(xbox::Translator::new(
             &keys,
@@ -427,11 +452,11 @@ pub fn create_on(
             &extras,
         ));
         (
-            Identity::XBOX360,
+            identity,
             match reserved.take() {
                 // Reuse it: rebuilding would leave the launch's bound device silent.
                 Some(device) => Ok(device),
-                None => build_clone_from(&xbox::KEYS, &xbox_axes(), player, Identity::XBOX360),
+                None => build_clone_from(&xbox::KEYS, &xbox_axes(), player, identity),
             },
         )
     } else {
@@ -447,7 +472,9 @@ pub fn create_on(
                         version,
                         ..Identity::PADMAP
                     },
-                    IdentityMode::Mirror | IdentityMode::Xbox360 => Identity {
+                    IdentityMode::Mirror
+                    | IdentityMode::Xbox360
+                    | IdentityMode::Xbox360Numbered => Identity {
                         vendor: pad.vid,
                         product: pad.pid,
                         bustype: BusType::BUS_USB.0,
@@ -605,8 +632,8 @@ fn xbox_axes() -> Vec<(u16, AbsInfo)> {
 }
 
 /// A clone for a seat nobody has taken yet, in the 360 layout known before the pad.
-pub fn reserve(player: u32) -> Result<VirtualDevice, CloneError> {
-    build_clone_from(&xbox::KEYS, &xbox_axes(), player, Identity::XBOX360)
+pub fn reserve(player: u32, identity: Identity) -> Result<VirtualDevice, CloneError> {
+    build_clone_from(&xbox::KEYS, &xbox_axes(), player, identity)
         .map_err(|error| CloneError::Build(player, error))
 }
 
@@ -909,6 +936,7 @@ mod tests {
             IdentityMode::Mirror,
             IdentityMode::Padmap,
             IdentityMode::Xbox360,
+            IdentityMode::Xbox360Numbered,
         ] {
             assert_eq!(IdentityMode::parse(mode.as_str()), Some(mode));
         }
@@ -918,6 +946,35 @@ mod tests {
         );
         assert_eq!(IdentityMode::parse(""), None, "no name is not mirror");
         assert_eq!(IdentityMode::parse("xbox"), None);
+    }
+
+    #[test]
+    fn the_numbered_360_tells_its_players_apart_by_version_alone() {
+        let one = IdentityMode::Xbox360Numbered.xbox_identity(1);
+        let two = IdentityMode::Xbox360Numbered.xbox_identity(2);
+        assert_ne!(one, two);
+        for identity in [one, two].into_iter().flatten() {
+            assert_eq!(
+                (identity.vendor, identity.product, identity.bustype),
+                (
+                    Identity::XBOX360.vendor,
+                    Identity::XBOX360.product,
+                    Identity::XBOX360.bustype
+                ),
+            );
+        }
+        assert_eq!(
+            IdentityMode::Xbox360.xbox_identity(1),
+            Some(Identity::XBOX360)
+        );
+        assert_eq!(
+            IdentityMode::Xbox360.xbox_identity(2),
+            Some(Identity::XBOX360)
+        );
+        assert_eq!(IdentityMode::Mirror.xbox_identity(1), None);
+        assert_eq!(IdentityMode::Padmap.xbox_identity(1), None);
+        assert!(IdentityMode::Xbox360Numbered.is_xbox_layout());
+        assert!(!IdentityMode::Mirror.is_xbox_layout());
     }
 
     #[test]

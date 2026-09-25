@@ -3305,6 +3305,23 @@ fn switching_identity_keeps_every_seat() {
         "player 1's clone is not the 360 now: {after}"
     );
 
+    // The numbered 360 is the same pad with player 1's number in its version.
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "identity", "mode": "xbox360-numbered"}));
+    let state = daemon
+        .wait_for("state", |e| e["identity"] == "xbox360-numbered", 8.0)
+        .expect("the numbered identity was never taken");
+    assert_eq!(state["players"][0]["published"], true, "{state}");
+    let numbered = std::fs::read_to_string(&sdl).expect("the SDL database");
+    assert!(
+        numbered.contains(&format!("{XBOX360_GUID}00000100")),
+        "player 1's clone does not carry its number: {numbered}"
+    );
+    assert!(
+        !numbered.contains(&format!("{XBOX360_GUID}00001001")),
+        "player 1's clone still wears the shared 360 version: {numbered}"
+    );
+
     // A name that is no identity is refused, with nothing changed.
     daemon.events.clear();
     daemon.send(serde_json::json!({"cmd": "identity", "mode": "xbox"}));

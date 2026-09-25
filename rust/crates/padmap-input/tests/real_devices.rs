@@ -1072,7 +1072,7 @@ fn under_the_360_identity_the_clone_is_an_xbox_pad_whatever_the_source() {
 #[test]
 fn a_reserved_seat_is_a_pad_in_the_360_layout_with_a_node_of_its_own() {
     needs_uinput!();
-    let mut device = clone::reserve(3).expect("a seat can be published");
+    let mut device = clone::reserve(3, clone::Identity::XBOX360).expect("a seat can be published");
     let node = clone::node_of(&mut device).expect("udev makes it a node");
     // udev applies the ACL a moment after making the node; a launch opens it
     // well after that, so waiting here is the test catching up, not a promise.
@@ -1108,7 +1108,8 @@ fn a_claim_that_cannot_open_its_pad_leaves_the_reserved_seat_alone() {
     needs_uinput!();
     // The device a launch is bound to must outlive a failed claim: nothing can
     // put a replacement inside a sandbox that has already started.
-    let mut reserved = Some(clone::reserve(2).expect("a seat can be published"));
+    let mut reserved =
+        Some(clone::reserve(2, clone::Identity::XBOX360).expect("a seat can be published"));
     let missing = pad::Pad {
         path: std::path::PathBuf::from("/dev/input/event99997"),
         name: "Not Here".to_owned(),

@@ -249,7 +249,8 @@ fn borrow_seats(seats: u32) -> Borrowed {
                 .max()
         })
         .unwrap_or(0) as u32;
-    if identity != "xbox360" {
+    // Either 360 identity's layout is known before the pad; only the others are switched.
+    if !matches!(identity.as_str(), "xbox360" | "xbox360-numbered") {
         let asked = serde_json::json!({"cmd": "identity", "mode": "xbox360"});
         match commands::daemon_ask_until(&asked, |state| state["identity"] == "xbox360", 15.0) {
             Ok(_) => {

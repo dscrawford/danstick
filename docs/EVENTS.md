@@ -325,8 +325,13 @@ translated onto that layout through its stored capture (or code for code for
 a pad that follows the kernel's convention); a control the source lacks is
 never pressed. Two clones share one GUID under it -- SDL tells them apart by
 index, ares by slot, RetroArch by name; Ryujinx, which blanks the name CRC,
-cannot, and is the one consumer this identity does not suit. `identity_mode`
-says which is in force. Match on `guid`, which is computed from it.
+cannot, and is the one consumer this identity does not suit.
+`PADMAP_PAD_IDENTITY=xbox360-numbered` is the same pad with the player number
+in its version (`0x0001` for player 1, and so on), so every clone has a GUID of
+its own and Ryujinx tells them apart too. SDL finds its mapping all the same:
+when no database entry has the exact version it matches one with the version
+set aside. `identity_mode` says which is in force. Match on `guid`, which is
+computed from it.
 
 **`index` is not `port`.** RetroArch's `input_playerN_joypad_index` is a
 0-based position in its own enumeration, and hidden pads are not in it. `-1`
@@ -656,8 +661,8 @@ not strand a game bound to them.
 
 Two things to know:
 
-* **It needs the 360 identity** (`PADMAP_PAD_IDENTITY=xbox360`, or
-  `identity` below). A reserved clone's layout has to be known before its pad
+* **It needs a 360 identity** (`PADMAP_PAD_IDENTITY=xbox360` or
+  `xbox360-numbered`, or `identity` below). A reserved clone's layout has to be known before its pad
   is, and only that identity's is; `mirror` takes the layout from the pad
   behind the clone, which nobody has picked up yet. Asked for under another
   identity, `reserve` answers with an `error` and changes nothing.
@@ -684,7 +689,8 @@ padmap-rs exec --reserve 4 -- dolphin-emu -e game.rvz
 The one step that knows when the bind plan is built is `exec`, so it can do
 all of the above itself. Before it reads `env.sh` or looks at `/dev/input` it
 makes seats 1 to N exist -- the seated ones as they are, the rest reserved --
-switching the daemon to the 360 identity first if it publishes another. Then
+switching the daemon to the 360 identity first if it publishes neither 360
+identity. Then
 it runs the game as it always did. When the game exits, `exec` gives back
 what it took: the reservation goes back to what it was, and the identity to
 the one it found. A launcher needs nothing else; `--reserve` only ever touches
@@ -702,7 +708,8 @@ daemon started with `--follow` ends with the session anyway, and otherwise
 {"cmd": "identity", "mode": "xbox360"}
 ```
 
-`mirror`, `padmap` or `xbox360`, as `PADMAP_PAD_IDENTITY` names them. Every
+`mirror`, `padmap`, `xbox360` or `xbox360-numbered`, as `PADMAP_PAD_IDENTITY`
+names them. Every
 clone is made again under the new identity and **every seat is kept**: the
 same players, the same pads, still published. A front-end sees one `state`,
 with the new `identity` and the same `players[]`; an unknown mode is an
@@ -711,8 +718,8 @@ still answers with `state`. Refused while a session is open.
 
 The clones are new devices at new nodes, so do this before a launch rather
 than during one: a game that already has a clone open keeps the old device,
-which no longer sends anything. Switching away from `xbox360` gives back any
-reserved seats, since only that identity can have them.
+which no longer sends anything. Switching to `mirror` or `padmap` gives back
+any reserved seats, since only a 360 identity can have them.
 
 **`ensure-daemon` compares identities.** It replaces a running daemon whose
 `identity` differs from the one it would start, so an `ensure-daemon` run

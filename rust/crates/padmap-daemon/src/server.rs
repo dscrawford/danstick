@@ -2323,14 +2323,14 @@ impl Server {
         }
         let Some(wanted) = IdentityMode::parse(mode) else {
             self.broadcast(&events::error(format!(
-                "unknown identity {mode:?}; one of mirror, padmap, xbox360"
+                "unknown identity {mode:?}; one of mirror, padmap, xbox360, xbox360-numbered"
             )));
             return;
         };
         if wanted != self.mode {
             info!("identity: {} -> {}", self.mode.as_str(), wanted.as_str());
             // Reserved seats are the 360 layout's and cannot outlive it.
-            if wanted != IdentityMode::Xbox360 {
+            if !wanted.is_xbox_layout() {
                 self.reserved.clear();
                 self.reserved_nodes.clear();
             }
@@ -2354,11 +2354,12 @@ impl Server {
 
     fn reserve_seats(&mut self, players: i64) {
         let wanted = players.clamp(0, i64::from(padmap_core::retroarch::MAX_PLAYERS)) as u32;
-        if self.mode != IdentityMode::Xbox360 {
+        if !self.mode.is_xbox_layout() {
             // Only the 360 identity's layout is known before the pad; mirror's is not.
             self.broadcast(&events::error(format!(
-                "reserving seats needs the xbox360 identity; this daemon publishes {:?}",
-                self.mode
+                "reserving seats needs a 360 identity (xbox360, xbox360-numbered); \
+                 this daemon publishes {}",
+                self.mode.as_str()
             )));
             return;
         }
@@ -2372,7 +2373,10 @@ impl Server {
             if taken.contains(&player) || self.reserved.contains_key(&player) {
                 continue;
             }
-            match clone::reserve(player) {
+            let Some(identity) = self.mode.xbox_identity(player) else {
+                continue;
+            };
+            match clone::reserve(player, identity) {
                 Ok(device) => {
                     made.insert(player, device);
                 }
