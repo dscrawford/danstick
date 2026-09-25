@@ -217,6 +217,20 @@ const EXEC_RESERVE: PadId = PadId {
     only: "RSTESTEXECRES",
 };
 
+/// Fixed slots, standing before anybody holds a button.
+const FIXED: PadId = PadId {
+    name: "PADMAP RSTESTFIXED",
+    pid: 0x0f70,
+    only: "RSTESTFIXED",
+};
+
+/// Slots chosen on a running daemon, and a slot destroyed as its player leaves.
+const SLOTSWITCH: PadId = PadId {
+    name: "PADMAP RSTESTSLOTSWITCH",
+    pid: 0x0f80,
+    only: "RSTESTSLOTSWITCH",
+};
+
 /// Four distinct pads under one test's own filter, so tests running beside it
 /// cannot see them.
 fn four_pads(id: PadId) -> Vec<TestPad> {
@@ -3492,6 +3506,215 @@ fn claims_land_at_their_holds_length() {
         late[2],
         late[3],
         (sorted[1] + sorted[2]) / 2.0
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// A reader on one clone's node, opened the way a game opens it: it is the
+/// evidence that a seat drives the device that was already there.
+struct Watcher {
+    device: evdev::Device,
+}
+
+impl Watcher {
+    fn open(node: &str) -> Watcher {
+        let device = evdev::Device::open(node).unwrap_or_else(|error| panic!("{node}: {error}"));
+        device.set_nonblocking(true).expect("nonblocking");
+        Watcher { device }
+    }
+
+    /// Whether `code` goes down on this node within `seconds`.
+    fn sees_press(&mut self, daemon: &mut Daemon, code: u16, seconds: f64) -> bool {
+        let deadline = Instant::now() + Duration::from_secs_f64(seconds);
+        while Instant::now() < deadline {
+            if let Ok(events) = self.device.fetch_events() {
+                if events
+                    .into_iter()
+                    .any(|e| e.event_type() == EventType::KEY && e.code() == code && e.value() == 1)
+                {
+                    return true;
+                }
+            }
+            daemon.pump(0.02);
+        }
+        false
+    }
+
+    /// Whether the node is still the device it was: a destroyed one reads ENODEV.
+    fn still_there(&mut self) -> bool {
+        match self.device.fetch_events() {
+            Ok(_) => true,
+            Err(error) => error.kind() == std::io::ErrorKind::WouldBlock,
+        }
+    }
+}
+
+/// Each standing slot's node, by player.
+fn standing(state: &Value) -> std::collections::BTreeMap<u64, String> {
+    state["reserved"]
+        .as_array()
+        .map(|seats| {
+            seats
+                .iter()
+                .filter_map(|seat| {
+                    Some((seat["player"].as_u64()?, seat["node"].as_str()?.to_owned()))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Under `PADMAP_SLOTS=fixed` four 360 clones, each its own GUID, stand
+/// before anybody holds a button. A hold drives slot 1's clone where it
+/// already was; leaving keeps it there, quiet, and the next hold takes it.
+#[test]
+fn fixed_slots_stand_before_anybody_and_outlive_their_players() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let root = std::env::temp_dir().join(format!("padmap-fixed-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+
+    let mut pads = four_pads(FIXED);
+    let mut daemon = Daemon::start_with_env(&root, FIXED, &[], &[("PADMAP_SLOTS", "fixed")]);
+    let before = daemon
+        .wait_for("state", |e| standing(e).len() == 4, 8.0)
+        .expect("four slots never stood");
+    assert_eq!(before["identity"], "xbox360-numbered", "{before}");
+    assert_eq!(before["slot_mode"], "fixed", "{before}");
+    assert!(
+        before["players"].as_array().is_some_and(Vec::is_empty),
+        "{before}"
+    );
+    let guids: BTreeSet<&str> = before["reserved"]
+        .as_array()
+        .expect("reserved")
+        .iter()
+        .filter_map(|seat| seat["guid"].as_str())
+        .collect();
+    assert_eq!(guids.len(), 4, "every slot is its own pad: {before}");
+    let nodes = standing(&before);
+    let mut slot_one = Watcher::open(&nodes[&1]);
+
+    daemon.seat_by_hold_as(&mut pads[0], 1);
+    let seated = daemon.last("state").expect("state");
+    let rest = standing(seated);
+    assert!(!rest.contains_key(&1), "slot 1 is taken: {seated}");
+    for player in 2..=4 {
+        assert_eq!(
+            rest.get(&player),
+            nodes.get(&player),
+            "slot {player} moved: {seated}"
+        );
+    }
+    pads[0].emit(EventType::KEY.0, FIRST_KEY, 0);
+    daemon.pump(0.3);
+    pads[0].emit(EventType::KEY.0, FIRST_KEY, 1);
+    assert!(
+        slot_one.sees_press(&mut daemon, FIRST_KEY, 3.0),
+        "the seated pad does not drive slot 1's clone"
+    );
+    pads[0].emit(EventType::KEY.0, FIRST_KEY, 0);
+
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "unseat", "player": 1}));
+    let left = daemon
+        .wait_for("state", |e| standing(e).len() == 4, 8.0)
+        .expect("slot 1 did not stand again");
+    assert_eq!(standing(&left), nodes, "a leave moved a slot: {left}");
+    assert!(slot_one.still_there(), "slot 1's clone was destroyed");
+
+    daemon.seat_by_hold_as(&mut pads[1], 1);
+    pads[1].emit(EventType::KEY.0, FIRST_KEY, 0);
+    daemon.pump(0.3);
+    pads[1].emit(EventType::KEY.0, FIRST_KEY, 1);
+    assert!(
+        slot_one.sees_press(&mut daemon, FIRST_KEY, 3.0),
+        "the next pad does not drive the slot its player left"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// `slots` changes a running daemon: fixed makes the slots at once, on a
+/// 360 identity; `destroy` makes a left slot again at a new node; on-demand
+/// gives back every slot nobody sits in.
+#[test]
+fn slots_are_chosen_on_a_running_daemon() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let root = std::env::temp_dir().join(format!("padmap-slotswitch-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+
+    let mut pad = TestPad::new(SLOTSWITCH);
+    let mut daemon =
+        Daemon::start_with_env(&root, SLOTSWITCH, &[], &[("PADMAP_PAD_IDENTITY", "mirror")]);
+    let idle = daemon.wait_for("state", |_| true, 5.0).expect("state");
+    assert_eq!(idle["slot_mode"], "on-demand", "{idle}");
+    assert!(
+        standing(&idle).is_empty(),
+        "nothing stands on demand: {idle}"
+    );
+
+    // Past sixteen is refused whole: nothing stands after it.
+    daemon.send(serde_json::json!({"cmd": "slots", "mode": "fixed", "count": 17}));
+    assert!(
+        daemon.wait_for("error", |_| true, 3.0).is_some(),
+        "seventeen slots were taken"
+    );
+    daemon.events.clear();
+
+    daemon.send(
+        serde_json::json!({"cmd": "slots", "mode": "fixed", "count": 2, "on_leave": "destroy"}),
+    );
+    let fixed = daemon
+        .wait_for(
+            "state",
+            |e| e["slot_mode"] == "fixed" && standing(e).len() == 2,
+            8.0,
+        )
+        .expect("fixed slots never stood");
+    assert_eq!(fixed["identity"], "xbox360-numbered", "{fixed}");
+    assert_eq!(fixed["on_leave"], "destroy", "{fixed}");
+    let nodes = standing(&fixed);
+    let mut slot_one = Watcher::open(&nodes[&1]);
+
+    daemon.send(serde_json::json!({"cmd": "identity", "mode": "mirror"}));
+    assert!(
+        daemon.wait_for("error", |_| true, 3.0).is_some(),
+        "a fixed slot cannot mirror a pad nobody holds yet"
+    );
+
+    daemon.seat_by_hold_as(&mut pad, 1);
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "unseat", "player": 1}));
+    let left = daemon
+        .wait_for("state", |e| standing(e).len() == 2, 8.0)
+        .expect("slot 1 was not made again");
+    // The kernel may hand the new clone the old node's number; the old device is gone.
+    daemon.pump(0.3);
+    assert!(
+        !slot_one.still_there(),
+        "destroy kept slot 1's clone: {left}"
+    );
+    assert_eq!(
+        standing(&left).get(&2),
+        nodes.get(&2),
+        "a slot nobody left moved: {left}"
+    );
+
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "slots", "mode": "on-demand"}));
+    let back = daemon
+        .wait_for("state", |e| e["slot_mode"] == "on-demand", 8.0)
+        .expect("on-demand never came back");
+    assert!(
+        standing(&back).is_empty(),
+        "on demand keeps no empty slot: {back}"
     );
     let _ = std::fs::remove_dir_all(&root);
 }

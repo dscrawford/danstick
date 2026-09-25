@@ -54,6 +54,19 @@ pub struct StateEvent {
     /// Seats published before anybody took them, for a launch to bind.
     #[serde(default)]
     pub reserved: Vec<ReservedSeat>,
+    /// When a seat's clone is made: `fixed` slots exist before anybody sits in them.
+    #[serde(default = "on_demand")]
+    pub slot_mode: String,
+    /// How many slots a `fixed` daemon keeps published.
+    #[serde(default)]
+    pub slot_count: u32,
+    /// What a fixed slot does when its player leaves: `stay` or `destroy`.
+    #[serde(default)]
+    pub on_leave: String,
+}
+
+fn on_demand() -> String {
+    crate::slots::Mode::OnDemand.as_str().to_owned()
 }
 
 /// One seat a launch can bind before anybody sits down.
@@ -88,6 +101,17 @@ impl StateEvent {
             seating: false,
             hold: crate::assign::HOLD_SECONDS,
             reserved: Vec::new(),
+            slot_mode: on_demand(),
+            slot_count: crate::slots::DEFAULT_COUNT,
+            on_leave: crate::slots::OnLeave::Stay.as_str().to_owned(),
         }
+    }
+
+    /// Report `policy` as the slots in force.
+    pub fn with_slots(mut self, policy: crate::slots::Policy) -> StateEvent {
+        self.slot_mode = policy.mode.as_str().to_owned();
+        self.slot_count = policy.count;
+        self.on_leave = policy.on_leave.as_str().to_owned();
+        self
     }
 }

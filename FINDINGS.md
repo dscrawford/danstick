@@ -3629,3 +3629,26 @@ nodes and no event node while Steam ran.
 
 **Worth generalising.** A filter that removes duplicates has to know what
 each one duplicates, or it removes the only copy.
+
+## A seat taken mid-game reached nothing, and a leave moved everybody
+
+GOTG found joining mid-level dead in Four Swords, and likely in Ryujinx on
+the Deck: a game is handed the `/dev/input` it starts with, and a seat's
+clone was made when the seat was claimed, so a clone published after the
+launch is outside it. `exec --reserve` covered joining, but only under the
+shared-GUID 360 identity Ryujinx cannot use, only for one launch, and
+`unseat` destroyed a reserved clone like any other.
+
+Looking at why unseat destroyed it found the wider wound: every unseat,
+reconnect or attach rebuilt the whole republisher, and a rebuild dropped
+every clone and made them again. Unseating player 2 moved player 1 to a new
+node too, and a running game kept the old one, silent.
+
+Fixed slots make the clone the slot's, not the claim's. A stopped pipeline
+hands its clone back, quiet, to wait at its node, and the next claim or
+rebuild drives it again; the numbered 360 identity gives each slot its own
+GUID. On-demand is left exactly as it was.
+
+**Worth generalising.** A device a program has open is a promise. Tie its
+life to the thing the program bound to -- the slot -- not to whoever is
+holding the pad behind it.

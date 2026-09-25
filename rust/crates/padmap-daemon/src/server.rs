@@ -14,6 +14,7 @@ use log::{debug, info, warn};
 use padmap_core::announce;
 use padmap_core::capture::{self, Chooser, MappingRun, Outcome};
 use padmap_core::command::{Command, Refused};
+use padmap_core::slots;
 use padmap_core::state::{PlayerState, STATE_ASSIGNING, STATE_IDLE, STATE_READY};
 use padmap_core::tuning::Request;
 use padmap_core::wire::{self, LineReader};
@@ -151,6 +152,8 @@ pub struct Server {
     /// Each reserved seat's node, remembered because finding it waits on udev.
     reserved_nodes: BTreeMap<u32, String>,
     mode: IdentityMode,
+    /// Whether slots stand before anybody sits in them, and what a leave does.
+    slot_policy: slots::Policy,
 
     prompted: BTreeSet<String>,
     prompted_stamp: i128,
@@ -308,6 +311,7 @@ impl Server {
             reserved: BTreeMap::new(),
             reserved_nodes: BTreeMap::new(),
             mode: IdentityMode::from_env(),
+            slot_policy: configured_slots(),
             prompted,
             prompted_stamp,
             last_scan_signature: None,
@@ -351,7 +355,32 @@ impl Server {
         self.listener = Some(listener);
         info!("listening on {}", self.socket_path.display());
         self.start_motion();
+        self.stand_slots();
         Ok(())
+    }
+
+    /// Set how slots are published before `start`, as `serve`'s flags ask.
+    pub fn configure_slots(&mut self, change: &slots::Change) -> Result<(), String> {
+        self.slot_policy = self.slot_policy.with(change)?;
+        self.mode = self.mode.for_slots(self.slot_policy.mode);
+        Ok(())
+    }
+
+    /// Publish every fixed slot nobody holds, and tell the consumers where they are.
+    fn stand_slots(&mut self) {
+        let standing = self.slot_policy.standing();
+        if standing == 0 {
+            return;
+        }
+        self.fill_reserved(standing);
+        info!(
+            "{} fixed slot(s) standing as {}: {:?}",
+            self.reserved.len(),
+            self.mode.as_str(),
+            self.reserved.keys().collect::<Vec<_>>()
+        );
+        let virtual_paths = self.virtual_paths();
+        self.rewrite_consumers(&virtual_paths);
     }
 
     fn start_motion(&mut self) {
@@ -757,6 +786,7 @@ impl Server {
             Command::SeatKeyboard => self.seat_keyboard(),
             Command::Reserve { players } => self.reserve_seats(players),
             Command::Identity { mode } => self.set_identity(&mode),
+            Command::Slots(change) => self.set_slots(&change),
             Command::Bind {
                 player,
                 control,
@@ -938,9 +968,16 @@ impl Server {
         {
             info!("player {seat}: unseated (was away)");
         }
+        self.stop_republisher();
+        self.replace_left_slots(&targets);
         if self.slots_assigned.is_empty() {
-            self.stop_republisher();
-            self.rewrite_consumers(&BTreeMap::new());
+            // Fixed slots are still there to be bound, seated or not.
+            let virtual_paths = if self.slot_policy.standing() > 0 {
+                self.virtual_paths()
+            } else {
+                BTreeMap::new()
+            };
+            self.rewrite_consumers(&virtual_paths);
             self.state = STATE_IDLE;
         } else {
             if let Err(error) = self.start_republisher() {
@@ -961,6 +998,22 @@ impl Server {
         self.refresh_seating(&mut Scan::default());
         let state = self.state_event();
         self.broadcast(&state);
+    }
+
+    /// Under `destroy`, a fixed slot its player left is made again at a new
+    /// node; under `stay` it is already waiting where it was.
+    fn replace_left_slots(&mut self, left: &[u32]) {
+        let standing = self.slot_policy.standing();
+        if standing == 0 || self.slot_policy.on_leave == slots::OnLeave::Stay {
+            return;
+        }
+        for player in left.iter().filter(|player| **player <= standing) {
+            if self.reserved.remove(player).is_some() {
+                info!("slot {player}: destroyed as its player left, and made again");
+            }
+            self.reserved_nodes.remove(player);
+        }
+        self.fill_reserved(standing);
     }
 
     fn accept(&mut self) {
@@ -2327,16 +2380,26 @@ impl Server {
             )));
             return;
         };
+        if wanted.for_slots(self.slot_policy.mode) != wanted {
+            self.broadcast(&events::error(format!(
+                "fixed slots stand before their pads, so they need a 360 identity \
+                 (xbox360, xbox360-numbered), not {}; switch slots to on-demand first",
+                wanted.as_str()
+            )));
+            return;
+        }
         if wanted != self.mode {
             info!("identity: {} -> {}", self.mode.as_str(), wanted.as_str());
-            // Reserved seats are the 360 layout's and cannot outlive it.
-            if !wanted.is_xbox_layout() {
-                self.reserved.clear();
-                self.reserved_nodes.clear();
-            }
             let running = self.republisher.is_some();
             self.stop_republisher();
+            // Every reserved clone wears the old identity; a 360 one is made again.
+            let had = self.reserved_nodes.keys().max().copied().unwrap_or(0);
+            self.reserved.clear();
+            self.reserved_nodes.clear();
             self.mode = wanted;
+            if wanted.is_xbox_layout() {
+                self.fill_reserved(had.max(self.slot_policy.standing()));
+            }
             // Every derivation names the old identity's GUIDs.
             self.publish_cache.clear();
             if running {
@@ -2363,8 +2426,25 @@ impl Server {
             )));
             return;
         }
+        // A fixed slot outlives every launch, so giving a launch's seats back keeps it.
+        let wanted = self.slot_policy.reserving(wanted);
         self.reserved.retain(|player, _| *player <= wanted);
         self.reserved_nodes.retain(|player, _| *player <= wanted);
+        self.fill_reserved(wanted);
+        info!(
+            "reserved {} seat(s) for a launch: {:?}",
+            self.reserved.len(),
+            self.reserved.keys().collect::<Vec<_>>()
+        );
+        let virtual_paths = self.virtual_paths();
+        self.rewrite_consumers(&virtual_paths);
+        let state = self.state_event();
+        self.broadcast(&state);
+    }
+
+    /// Publish a clone for every seat from 1 to `wanted` that has neither a
+    /// player nor one already, under the identity in force.
+    fn fill_reserved(&mut self, wanted: u32) {
         let taken: Vec<u32> = self.slots_assigned.iter().map(|slot| slot.player).collect();
         // Published first and waited for once: finding a node waits on udev, and
         // the daemon reads nobody's pad while this command runs.
@@ -2395,11 +2475,45 @@ impl Server {
                 None => warn!("seat {player}: no node appeared for it; not reserved"),
             }
         }
+    }
+
+    /// Change how slots are published. Fixed slots are made at once, and a
+    /// daemon on an identity that cannot stand before its pad is moved to
+    /// the numbered 360 first.
+    fn set_slots(&mut self, change: &slots::Change) {
+        if self.session.is_some() {
+            self.broadcast(&events::error("a session is open; cancel it first"));
+            return;
+        }
+        let next = match self.slot_policy.with(change) {
+            Ok(next) => next,
+            Err(why) => {
+                self.broadcast(&events::error(why));
+                return;
+            }
+        };
+        let identity = self.mode.for_slots(next.mode);
+        if identity != self.mode {
+            self.set_identity(identity.as_str());
+        }
+        let before = self.slot_policy;
+        self.slot_policy = next;
         info!(
-            "reserved {} seat(s) for a launch: {:?}",
-            self.reserved.len(),
-            self.reserved.keys().collect::<Vec<_>>()
+            "slots: {} x{} ({} on leave) -> {} x{} ({} on leave)",
+            before.mode.as_str(),
+            before.count,
+            before.on_leave.as_str(),
+            next.mode.as_str(),
+            next.count,
+            next.on_leave.as_str()
         );
+        // Slots given up that nobody sits in go; a seated player keeps theirs.
+        if next.standing() < before.standing() {
+            let keep = next.standing();
+            self.reserved.retain(|player, _| *player <= keep);
+            self.reserved_nodes.retain(|player, _| *player <= keep);
+        }
+        self.fill_reserved(next.standing());
         let virtual_paths = self.virtual_paths();
         self.rewrite_consumers(&virtual_paths);
         let state = self.state_event();
@@ -2642,7 +2756,32 @@ impl Server {
                 let _ = self.reactor.unwatch(sensor.as_fd());
             }
         }
-        republisher.close();
+        let standing = self.slot_policy.standing();
+        if standing == 0 {
+            republisher.close();
+            return;
+        }
+        // A fixed slot's clone outlives its pad: back to waiting, quiet, at its node.
+        let mut kept: BTreeMap<u32, evdev::uinput::VirtualDevice> = BTreeMap::new();
+        for (player, mut device) in republisher.into_clones() {
+            if player > standing {
+                continue;
+            }
+            if let Err(error) = clone::quiet(&mut device) {
+                warn!("slot {player}: could not quiet its clone: {error}");
+            }
+            kept.insert(player, device);
+        }
+        let nodes = clone::nodes_of(&mut kept);
+        for (player, device) in kept {
+            match nodes.get(&player) {
+                Some(node) => {
+                    self.reserved_nodes.insert(player, node.clone());
+                    self.reserved.insert(player, device);
+                }
+                None => warn!("slot {player}: its clone has no node; it is made again"),
+            }
+        }
     }
 
     /// Only the pad a modal flow is reading is held back from its clone; everyone else plays on.
@@ -3365,6 +3504,7 @@ impl Server {
             self.seating.is_open(),
             self.seating.hold_seconds(),
             self.reserved_payload(),
+            self.slot_policy,
         )
     }
 
@@ -3372,19 +3512,14 @@ impl Server {
     fn reserved_payload(&self) -> Vec<padmap_core::state::ReservedSeat> {
         self.reserved_nodes
             .iter()
-            .map(|(player, node)| padmap_core::state::ReservedSeat {
-                player: *player,
-                node: node.clone(),
-                name: padmap_core::emit::virtual_name(*player),
-                guid: padmap_core::emit::virtual_guid(
-                    *player,
-                    padmap_core::emit::Identity {
-                        bustype: padmap_core::xbox::BUS_USB,
-                        vendor: padmap_core::xbox::VENDOR,
-                        product: padmap_core::xbox::PRODUCT,
-                        version: padmap_core::xbox::VERSION,
-                    },
-                ),
+            .filter_map(|(player, node)| {
+                let identity = publish::xbox_identity(self.mode, *player)?;
+                Some(padmap_core::state::ReservedSeat {
+                    player: *player,
+                    node: node.clone(),
+                    name: padmap_core::emit::virtual_name(*player),
+                    guid: padmap_core::emit::virtual_guid(*player, identity),
+                })
             })
             .collect()
     }
@@ -3402,6 +3537,16 @@ impl Server {
             warn!("could not save assignments: {error}");
         }
     }
+}
+
+/// The slots `PADMAP_SLOTS` and its siblings ask for; one nobody can read is
+/// said and left at its default.
+fn configured_slots() -> slots::Policy {
+    let (policy, complaints) = slots::Policy::from_env(|name| std::env::var(name).ok());
+    for complaint in complaints {
+        warn!("{complaint}; left at its default");
+    }
+    policy
 }
 
 fn as_player(player: i64) -> u32 {

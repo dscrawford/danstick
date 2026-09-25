@@ -29,6 +29,7 @@ pub mod retroarch;
 pub mod ryujinx;
 pub mod scope;
 pub mod sdl;
+pub mod slots;
 pub mod standard;
 pub mod state;
 pub mod tuning;

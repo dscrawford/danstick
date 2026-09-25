@@ -25,8 +25,10 @@ pub fn state(
     seating: bool,
     hold: f64,
     reserved: Vec<padmap_core::state::ReservedSeat>,
+    policy: padmap_core::slots::Policy,
 ) -> Value {
-    let mut event = StateEvent::new(state, slots, players, build, std::process::id(), identity);
+    let mut event = StateEvent::new(state, slots, players, build, std::process::id(), identity)
+        .with_slots(policy);
     event.following = following;
     event.seating = seating;
     event.hold = hold;

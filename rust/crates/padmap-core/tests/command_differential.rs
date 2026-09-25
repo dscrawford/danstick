@@ -57,6 +57,9 @@ fn as_fields(command: &Command) -> Value {
         Command::SeatKeyboard => json!({"cmd": "seat_keyboard"}),
         Command::Reserve { players } => json!({"cmd": "reserve", "players": players}),
         Command::Identity { mode } => json!({"cmd": "identity", "mode": mode}),
+        Command::Slots(change) => json!({
+            "cmd": "slots", "mode": change.mode, "count": change.count, "on_leave": change.on_leave
+        }),
         Command::Bind {
             player,
             control,
@@ -241,4 +244,33 @@ fn reserving_seats_carries_how_many_a_launch_allows() {
         Command::parse(&json!({"cmd": "reserve", "players": "four"})),
         Err(Refused::NotANumber { field: "players" })
     ));
+}
+
+#[test]
+fn slots_takes_only_what_it_is_told_and_refuses_a_count_that_is_not_a_number() {
+    let parsed = Command::parse(&json!({"cmd": "slots", "mode": "fixed"})).expect("slots");
+    assert_eq!(
+        parsed,
+        Command::Slots(padmap_core::slots::Change {
+            mode: Some("fixed".into()),
+            count: None,
+            on_leave: None,
+        })
+    );
+    let every = Command::parse(
+        &json!({"cmd": "slots", "mode": "fixed", "count": 6, "on_leave": "destroy"}),
+    )
+    .expect("slots");
+    assert_eq!(
+        every,
+        Command::Slots(padmap_core::slots::Change {
+            mode: Some("fixed".into()),
+            count: Some(6),
+            on_leave: Some("destroy".into()),
+        })
+    );
+    assert_eq!(
+        Command::parse(&json!({"cmd": "slots", "count": "four"})),
+        Err(Refused::NotANumber { field: "count" })
+    );
 }

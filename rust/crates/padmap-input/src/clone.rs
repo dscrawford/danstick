@@ -94,10 +94,22 @@ impl IdentityMode {
     /// Read once at startup, so two clones in one session cannot get different answers.
     pub fn from_env() -> Self {
         let named = IdentityMode::parse(&std::env::var(ENV_IDENTITY).unwrap_or_default());
-        match named {
+        let mode = match named {
             Some(mode) => mode,
             None if std::env::var(ENV_ONLY_VIRTUAL).as_deref() == Ok("1") => IdentityMode::Padmap,
             None => IdentityMode::Mirror,
+        };
+        let (slots, _) = padmap_core::slots::Policy::from_env(|name| std::env::var(name).ok());
+        mode.for_slots(slots.mode)
+    }
+
+    /// The identity `self` becomes under `slots`: a fixed slot exists before its
+    /// pad, so only a 360 layout can be published for it.
+    pub fn for_slots(self, slots: padmap_core::slots::Mode) -> Self {
+        if slots == padmap_core::slots::Mode::Fixed && !self.is_xbox_layout() {
+            IdentityMode::Xbox360Numbered
+        } else {
+            self
         }
     }
 }
@@ -637,6 +649,20 @@ pub fn reserve(player: u32, identity: Identity) -> Result<VirtualDevice, CloneEr
         .map_err(|error| CloneError::Build(player, error))
 }
 
+/// Release every button and rest every axis of a 360-layout clone, so an
+/// empty slot is a connected pad that sends nothing.
+pub fn quiet(device: &mut VirtualDevice) -> std::io::Result<()> {
+    let mut frame: Vec<InputEvent> = xbox::KEYS
+        .iter()
+        .map(|&code| InputEvent::new(EventType::KEY.0, code, 0))
+        .collect();
+    for (code, info) in xbox_axes() {
+        frame.push(InputEvent::new(EventType::ABSOLUTE.0, code, info.value()));
+    }
+    frame.push(InputEvent::new(EventType::SYNCHRONIZATION.0, 0, 0));
+    device.emit(&frame)
+}
+
 /// A clone from a bare capability list, for a source the kernel never published a device for.
 fn build_clone_from(
     keys: &[u16],
@@ -723,6 +749,11 @@ fn assemble(
 impl VirtualPad {
     pub fn node(&mut self) -> Option<String> {
         node_of(&mut self.clone)
+    }
+
+    /// Give up the pad and keep the clone, for a slot that outlives its player.
+    pub fn into_clone(self) -> VirtualDevice {
+        self.clone
     }
 
     pub fn name(&self) -> String {
@@ -975,6 +1006,27 @@ mod tests {
         assert_eq!(IdentityMode::Padmap.xbox_identity(1), None);
         assert!(IdentityMode::Xbox360Numbered.is_xbox_layout());
         assert!(!IdentityMode::Mirror.is_xbox_layout());
+    }
+
+    #[test]
+    fn a_fixed_slot_is_a_360_whatever_else_was_asked_for() {
+        use padmap_core::slots::Mode;
+        assert_eq!(
+            IdentityMode::Mirror.for_slots(Mode::Fixed),
+            IdentityMode::Xbox360Numbered
+        );
+        assert_eq!(
+            IdentityMode::Padmap.for_slots(Mode::Fixed),
+            IdentityMode::Xbox360Numbered
+        );
+        assert_eq!(
+            IdentityMode::Xbox360.for_slots(Mode::Fixed),
+            IdentityMode::Xbox360
+        );
+        assert_eq!(
+            IdentityMode::Mirror.for_slots(Mode::OnDemand),
+            IdentityMode::Mirror
+        );
     }
 
     #[test]

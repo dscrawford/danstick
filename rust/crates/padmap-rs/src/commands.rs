@@ -711,7 +711,11 @@ pub fn cmd_ensure_daemon(check: bool, timeout: f64, lifetime: Lifetime) -> Resul
     let their_follow = state["following"]
         .as_u64()
         .and_then(|pid| u32::try_from(pid).ok());
-    let current = theirs == ours && their_identity.is_none_or(|mode| mode == our_identity.as_str());
+    let (our_slots, _) = padmap_core::slots::Policy::from_env(|name| std::env::var(name).ok());
+    let same_slots = slots_match(&state, our_slots);
+    let current = theirs == ours
+        && their_identity.is_none_or(|mode| mode == our_identity.as_str())
+        && same_slots;
     if current && (lifetime.is_default() || lifetime.owns(their_follow)) {
         println!(
             "daemon is current (build {ours}, identity {}{})",
@@ -736,6 +740,20 @@ pub fn cmd_ensure_daemon(check: bool, timeout: f64, lifetime: Lifetime) -> Resul
                 .follow
                 .map(|pid| format!("follows pid {pid}"))
                 .unwrap_or_else(|| "starts unseated".to_owned())
+        );
+    } else if theirs == ours && !same_slots {
+        println!("daemon is publishing other slots:");
+        println!(
+            "  daemon: {} x{} ({} on leave)",
+            state["slot_mode"].as_str().unwrap_or("on-demand"),
+            state["slot_count"],
+            state["on_leave"].as_str().unwrap_or("?")
+        );
+        println!(
+            "  ours:   {} x{} ({} on leave)",
+            our_slots.mode.as_str(),
+            our_slots.count,
+            our_slots.on_leave.as_str()
         );
     } else if theirs == ours {
         println!("daemon is running with a different pad identity:");
@@ -1221,9 +1239,47 @@ mod lifetime_tests {
     }
 }
 
+/// Whether a daemon's `state` publishes the slots `ours` asks for. A daemon
+/// too old to say is on demand, which is all it could do.
+fn slots_match(state: &serde_json::Value, ours: padmap_core::slots::Policy) -> bool {
+    let mode = state["slot_mode"].as_str().unwrap_or("on-demand");
+    if mode != ours.mode.as_str() {
+        return false;
+    }
+    ours.mode == padmap_core::slots::Mode::OnDemand
+        || (state["slot_count"].as_u64() == Some(u64::from(ours.count))
+            && state["on_leave"].as_str() == Some(ours.on_leave.as_str()))
+}
+
 #[cfg(test)]
 mod exec_tests {
-    use super::{covers_seats, exec_args};
+    use super::{covers_seats, exec_args, slots_match};
+    use padmap_core::slots::{Mode, OnLeave, Policy};
+
+    #[test]
+    fn a_daemon_on_other_slots_is_not_current() {
+        let fixed = Policy {
+            mode: Mode::Fixed,
+            ..Policy::default()
+        };
+        let old = serde_json::json!({"identity": "mirror"});
+        assert!(
+            slots_match(&old, Policy::default()),
+            "a daemon too old to say is on demand"
+        );
+        assert!(!slots_match(&old, fixed));
+        let theirs = serde_json::json!({"slot_mode": "fixed", "slot_count": 4, "on_leave": "stay"});
+        assert!(slots_match(&theirs, fixed));
+        assert!(!slots_match(&theirs, Policy { count: 6, ..fixed }));
+        assert!(!slots_match(
+            &theirs,
+            Policy {
+                on_leave: OnLeave::Destroy,
+                ..fixed
+            }
+        ));
+        assert!(!slots_match(&theirs, Policy::default()));
+    }
 
     fn words(text: &str) -> Vec<String> {
         text.split_whitespace().map(str::to_owned).collect()

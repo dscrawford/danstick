@@ -60,10 +60,10 @@ fn bind_names_a_control_and_says_whether_it_replaces_or_adds() {
 }
 
 #[test]
-fn identity_names_the_mode_and_is_the_last_command_added() {
+fn identity_names_the_mode_and_slots_was_appended_after_it() {
     assert_eq!(
-        COMMANDS.last(),
-        Some(&"identity"),
+        COMMANDS[COMMANDS.len() - 2..],
+        ["identity", "slots"],
         "commands are only appended"
     );
     assert_eq!(

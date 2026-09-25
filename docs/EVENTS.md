@@ -676,9 +676,9 @@ seat is. It starts sending when somebody takes it.
 was reserved destroys that clone like any other, and a clone published after
 the launch started is outside its `/dev/input` -- so a player leaving mid-game
 takes the seat with them and nobody can take it for the rest of that game.
-Joining works; leaving and being replaced does not. Reserve the seats again
-before the next launch. If a game needs a seat to survive its player leaving,
-say so and the device can be kept back instead of destroyed.
+Joining works; leaving and being replaced does not. Fixed slots (below) are
+the answer when a seat has to survive its player: there a leave keeps the
+clone where it was.
 
 ### From the launch itself: `padmap-rs exec --reserve N`
 
@@ -726,3 +726,49 @@ any reserved seats, since only a 360 identity can have them.
 while a launch has borrowed the 360 identity -- from an environment without
 `PADMAP_PAD_IDENTITY=xbox360` -- replaces the daemon and ends every seat. Run
 it before the launch, or with the same identity the launch uses.
+
+## Slots that stand before anybody sits in them: `slots`
+
+```json
+{"cmd": "slots", "mode": "fixed", "count": 4, "on_leave": "stay"}
+```
+
+Every field is optional; one left out keeps what is in force. The same
+settings are read at startup from `PADMAP_SLOTS`, `PADMAP_SLOT_COUNT` and
+`PADMAP_ON_LEAVE`, and `serve` takes them as `--slots`, `--slot-count` and
+`--on-leave`.
+
+| Setting | Default | Alternatives |
+|---|---|---|
+| `mode` | `on-demand`: a clone per claim, made when the seat is taken (everything above) | `fixed`: `count` clones made when the daemon starts, kept for its whole life |
+| `count` | 4 | 1 to 16 |
+| `on_leave` | `stay`: the slot's clone stays at its node and goes quiet; the next hold may take it | `destroy`: the clone goes, and the slot is made again at a new node |
+
+**In `fixed` mode an empty slot is a connected pad that sends nothing.** They
+are listed in `state`'s `reserved[]` exactly as reserved seats are, with the
+node, name and GUID a game will see, and seated players in `players[]`. A
+claim fills the lowest free slot and drives that slot's clone -- the device
+that was already there, at the same node -- and a leave under `stay` puts it
+back, every button up and every stick at rest. A rebuild keeps every slot's
+node too: unseating player 2 no longer makes player 1's clone again. So an
+emulator is bound once, to `padmap Player 1..N`, and a controller picked up
+mid-game reaches it. `exec` needs no `--reserve` then; asked for no more seats
+than the slots, it leaves the daemon alone, and a `reserve` never takes the
+slots away.
+
+**A fixed slot is a 360 pad.** Its layout has to be known before its pad is,
+so `fixed` needs `xbox360` or `xbox360-numbered`. A daemon on `mirror` or
+`padmap` is switched to `xbox360-numbered` -- every slot its own GUID, which
+Ryujinx needs -- when `fixed` is chosen, at startup or by `slots`, and
+`identity` refuses `mirror` and `padmap` while slots are fixed. Choose
+`xbox360` explicitly for the one shared GUID.
+
+**`state` says which is in force**: `slot_mode`, `slot_count` and `on_leave`.
+A daemon that predates them is on demand. `ensure-daemon` compares them as it
+compares `identity`, so run it with the same `PADMAP_SLOTS` the daemon was
+started with.
+
+Change it before a launch, not during one: switching to `on-demand` or to
+fewer slots destroys the slots nobody sits in, and a game bound to them keeps
+a device that no longer sends anything. A count outside 1 to 16 or a name
+padmap does not know is an `error`, with nothing changed.

@@ -126,7 +126,7 @@ fn parse_number<T: std::str::FromStr>(value: &str, flag: &str) -> T {
 fn usage() {
     eprintln!(
         "usage: padmap list [--json] | setup | map | calibrate | tune | forget | run | \
-         serve [--fresh] [--follow PID] | \
+         serve [--fresh] [--follow PID] [--slots fixed|on-demand] [--slot-count N] [--on-leave stay|destroy] | \
          launch | play | hide | ensure-daemon [--check] [--fresh] [--follow PID] | clean-config | \
          emit [--keyboard N] [--cemu-dir D] [--dolphin-dir D] [--ares-settings F] \
          [--ryujinx-config F] \
@@ -150,6 +150,15 @@ fn lifetime_flags(args: &[String]) -> commands::Lifetime {
 fn cmd_serve(args: &[String]) -> Result<()> {
     let lifetime = lifetime_flags(args);
     let mut server = padmap_daemon::server::Server::new().context("preparing the daemon")?;
+    let slots = padmap_core::slots::Change {
+        mode: flag_value(args, &["--slots"]),
+        count: flag_value(args, &["--slot-count"])
+            .map(|value| parse_number::<i64>(&value, "--slot-count")),
+        on_leave: flag_value(args, &["--on-leave"]),
+    };
+    if let Err(why) = server.configure_slots(&slots) {
+        anyhow::bail!("{why}");
+    }
     server.start().context("starting the daemon")?;
     if let Some(pid) = lifetime.follow {
         server.follow(pid);
@@ -239,6 +248,11 @@ fn borrow_seats(seats: u32) -> Borrowed {
         warn!("--reserve {seats}: no daemon is running, so no seats are reserved");
         return borrowed;
     };
+    // Fixed slots already stand for every launch; there is nothing to borrow.
+    if state["slot_mode"] == "fixed" && state["slot_count"].as_u64() >= Some(u64::from(seats)) {
+        info!("--reserve {seats}: the daemon's fixed slots already cover it");
+        return borrowed;
+    }
     let identity = state["identity"].as_str().unwrap_or_default().to_owned();
     let reserved_before = state["reserved"]
         .as_array()

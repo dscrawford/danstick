@@ -3,7 +3,7 @@
 use serde_json::Value;
 
 /// Every command the socket accepts.
-pub const COMMANDS: [&str; 21] = [
+pub const COMMANDS: [&str; 22] = [
     "begin",
     "reset",
     "accept",
@@ -25,6 +25,7 @@ pub const COMMANDS: [&str; 21] = [
     "bind",
     "reserve",
     "identity",
+    "slots",
 ];
 
 /// A parsed command, with its arguments already coerced.
@@ -102,6 +103,8 @@ pub enum Command {
     Identity {
         mode: String,
     },
+    /// Change how slots are published; a field left out keeps what is in force.
+    Slots(crate::slots::Change),
 }
 
 /// Why a message could not be acted on.
@@ -212,6 +215,24 @@ impl Command {
                 players: number("players", 0)?,
             },
             "identity" => Command::Identity { mode: text("mode") },
+            "slots" => Command::Slots(crate::slots::Change {
+                mode: message
+                    .get("mode")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+                count: match message.get("count") {
+                    None | Some(Value::Null) => None,
+                    Some(value) => Some(
+                        value
+                            .as_i64()
+                            .ok_or(Refused::NotANumber { field: "count" })?,
+                    ),
+                },
+                on_leave: message
+                    .get("on_leave")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+            }),
             "bind" => Command::Bind {
                 player: number("player", 0)?,
                 control: text("control"),

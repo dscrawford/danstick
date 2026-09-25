@@ -326,6 +326,17 @@ impl Republisher {
             vpad.release();
         }
     }
+
+    /// Close, and hand back each player's clone with nothing held on it, so a
+    /// slot can stay at its node and go quiet.
+    pub fn into_clones(mut self) -> Vec<(u32, evdev::uinput::VirtualDevice)> {
+        self.release_all();
+        self.close();
+        self.pads
+            .into_iter()
+            .map(|vpad| (vpad.player, vpad.into_clone()))
+            .collect()
+    }
 }
 
 #[cfg(test)]
