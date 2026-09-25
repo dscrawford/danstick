@@ -353,7 +353,6 @@ fn derive(
     game: &str,
     context: &str,
 ) -> Derived {
-    info!("player {}: working out its files", slot.player);
     let profile = if xbox {
         emit::retroarch_profile(
             slot.player,
@@ -396,6 +395,14 @@ fn derive(
     } else {
         (stored, None, false)
     };
+    if provisional {
+        info!(
+            "player {}: worked out its files for now; again once SDL answers",
+            slot.player
+        );
+    } else {
+        info!("player {}: worked out its files", slot.player);
+    }
     let published = emulators::Published {
         player: slot.player,
         guid: emit::virtual_guid(slot.player, identity),

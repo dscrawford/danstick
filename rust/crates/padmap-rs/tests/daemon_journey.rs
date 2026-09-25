@@ -1681,10 +1681,14 @@ fn profile_filename(id: PadId) -> String {
 }
 
 /// How many times the daemon worked this player's files out from scratch.
+/// How many times a player's files were worked out to the end. A guess made
+/// while SDL was still being asked is worked out once more when it answers,
+/// by design, and is not what a join must not repeat.
 fn worked_out(root: &Path, player: u32) -> usize {
     let log = std::fs::read_to_string(root.join("daemon.log")).unwrap_or_default();
+    let done = format!("player {player}: worked out its files");
     log.lines()
-        .filter(|line| line.contains(&format!("player {player}: working out its files")))
+        .filter(|line| line.trim_end().ends_with(&done))
         .count()
 }
 
