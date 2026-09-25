@@ -25,6 +25,11 @@ pub fn hold_from(text: Option<&str>) -> f64 {
 /// Ignore the keyboard range on combo devices (first valid button code).
 pub const BTN_FIRST: u16 = 0x100;
 
+/// A button going down, of the kind a hold is made of.
+pub fn is_press(kind: u16, code: u16, value: i32) -> bool {
+    kind == crate::capture::EV_KEY && code >= BTN_FIRST && value == 1
+}
+
 /// One pad's claim on a player slot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Assignment {
@@ -45,6 +50,16 @@ pub struct Tick {
     pub claimed: Vec<Assignment>,
     /// Pads that were filling and are not any more, having claimed nothing.
     pub released: Vec<usize>,
+}
+
+/// What a hold is allowed this tick.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Gate {
+    Go,
+    /// Neither fills nor claims yet, and is kept.
+    Wait,
+    /// Is not somebody's hold; it goes, and a fresh press starts another.
+    Drop,
 }
 
 /// Watches a set of pads and yields player order from held presses.
@@ -111,6 +126,15 @@ impl Assigner {
         self.claimed.contains(&pad)
     }
 
+    /// Each hold in flight that has not claimed: its pad, and when it began.
+    pub fn holds(&self) -> Vec<(usize, f64)> {
+        self.holding
+            .iter()
+            .filter(|(pad, _)| !self.is_claimed(**pad))
+            .map(|(pad, (_, started))| (*pad, *started))
+            .collect()
+    }
+
     /// Offer one event. Only EV_KEY codes above BTN_FIRST count.
     pub fn feed(&mut self, pad: usize, kind: u16, code: u16, value: i32, now: f64) {
         if kind != crate::capture::EV_KEY || code < BTN_FIRST {
@@ -129,6 +153,12 @@ impl Assigner {
 
     /// Advance the hold timers. Must be called on a timer (events alone cannot detect completion).
     pub fn tick(&mut self, now: f64) -> Tick {
+        self.tick_gated(now, |_, _| Gate::Go)
+    }
+
+    /// [`tick`](Self::tick), asking `gate` of each hold -- by pad and when it
+    /// started -- whether it is one that may fill and claim.
+    pub fn tick_gated(&mut self, now: f64, gate: impl Fn(usize, f64) -> Gate) -> Tick {
         let mut out = Tick::default();
         // Earliest press first: `holding` is keyed by pad index, which is the
         // order the pads were plugged in and not the order anybody pressed.
@@ -150,6 +180,21 @@ impl Assigner {
                 continue;
             }
             let elapsed = now - started;
+            match gate(pad, started) {
+                Gate::Go => {}
+                Gate::Wait => {
+                    // Still reported if it already was, so it is not "released".
+                    if self.filling.contains(&pad) {
+                        out.progress
+                            .push((pad, (elapsed / self.hold_seconds).clamp(0.0, 0.99)));
+                    }
+                    continue;
+                }
+                Gate::Drop => {
+                    self.holding.remove(&pad);
+                    continue;
+                }
+            }
             if elapsed < self.hold_seconds {
                 out.progress
                     .push((pad, (elapsed / self.hold_seconds).clamp(0.0, 1.0)));
@@ -252,6 +297,94 @@ mod tests {
                 button: A
             }
         );
+    }
+
+    #[test]
+    fn a_hold_the_gate_drops_never_claims_and_one_it_holds_claims_later() {
+        let mut assigner = Assigner::default();
+        assigner.feed(0, EV_KEY, A, 1, 0.0);
+        assigner.feed(1, EV_KEY, A, 1, 0.0);
+        let tick = assigner.tick_gated(HOLD_SECONDS + 0.01, |pad, started| {
+            assert_eq!(started, 0.0, "the gate is told when the hold began");
+            if pad == 0 {
+                Gate::Drop
+            } else {
+                Gate::Wait
+            }
+        });
+        assert!(
+            tick.claimed.is_empty() && tick.progress.is_empty(),
+            "{tick:?}"
+        );
+        let tick = assigner.tick(HOLD_SECONDS + 0.02);
+        assert_eq!(
+            tick.claimed
+                .iter()
+                .map(|claim| claim.pad)
+                .collect::<Vec<_>>(),
+            [1],
+            "the dropped hold came back, or the waiting one was lost"
+        );
+    }
+
+    #[test]
+    fn the_holds_in_flight_are_each_pad_and_when_it_pressed() {
+        let mut assigner = Assigner::default();
+        assert!(assigner.holds().is_empty());
+        assigner.feed(2, EV_KEY, A, 1, 0.5);
+        assigner.feed(0, EV_KEY, B, 1, 0.7);
+        assert_eq!(assigner.holds(), [(0, 0.7), (2, 0.5)]);
+        assigner.tick(0.5 + HOLD_SECONDS + 0.01);
+        assert_eq!(assigner.holds(), [(0, 0.7)], "a claim is no hold in flight");
+    }
+
+    #[test]
+    fn a_fill_that_has_to_wait_is_not_reported_released() {
+        let mut assigner = Assigner::default();
+        assigner.feed(0, EV_KEY, A, 1, 0.0);
+        assert_eq!(assigner.tick(0.1).progress.len(), 1);
+        let tick = assigner.tick_gated(0.15, |_, _| Gate::Wait);
+        assert!(tick.released.is_empty(), "{tick:?}");
+        assert!(tick.claimed.is_empty());
+        let tick = assigner.tick_gated(0.2, |_, _| Gate::Drop);
+        assert_eq!(tick.released, [0], "a dropped fill is let go of");
+    }
+
+    #[test]
+    fn a_hold_kept_waiting_never_fills_to_the_end_nor_claims() {
+        let mut assigner = Assigner::default();
+        assigner.feed(0, EV_KEY, A, 1, 0.0);
+        assigner.tick(0.1);
+        let tick = assigner.tick_gated(HOLD_SECONDS * 10.0, |_, _| Gate::Wait);
+        assert_eq!(tick.progress.len(), 1);
+        assert!(tick.progress[0].1 < 1.0, "{:?}", tick.progress);
+        assert!(tick.claimed.is_empty());
+    }
+
+    #[test]
+    fn a_hold_that_waits_from_its_first_tick_still_claims_on_time() {
+        let mut assigner = Assigner::default();
+        assigner.feed(0, EV_KEY, A, 1, 0.0);
+        let tick = assigner.tick_gated(0.1, |_, _| Gate::Wait);
+        assert!(
+            tick.progress.is_empty() && tick.released.is_empty(),
+            "{tick:?}"
+        );
+        assert_eq!(assigner.tick(HOLD_SECONDS + 0.01).claimed.len(), 1);
+    }
+
+    #[test]
+    fn a_dropped_hold_needs_a_fresh_press_even_if_the_button_never_lifted() {
+        let mut assigner = Assigner::default();
+        assigner.feed(0, EV_KEY, A, 1, 0.0);
+        assigner.tick_gated(0.1, |_, _| Gate::Drop);
+        for step in 1..5 {
+            assigner.feed(0, EV_KEY, A, 2, f64::from(step) * 0.05);
+        }
+        assert!(assigner.tick(1.0).claimed.is_empty(), "a repeat revived it");
+        assigner.feed(0, EV_KEY, A, 0, 1.0);
+        assigner.feed(0, EV_KEY, A, 1, 1.01);
+        assert_eq!(assigner.tick(1.01 + HOLD_SECONDS + 0.01).claimed.len(), 1);
     }
 
     #[test]

@@ -174,8 +174,8 @@ pub const XBOX_360: Fixture = Fixture {
 /// launches while it is handling a controller on that application's behalf.
 ///
 /// One physical press arrives here and on the pad it mirrors, which is why
-/// discovery drops it (`pad::without_steam_mirrors`). It borrows xpad's name
-/// and table with a trailing index, and is only ever told apart by id.
+/// seating pairs them (`danstick_core::echo`). It borrows xpad's name and
+/// table with a trailing index, and is only ever told apart by id.
 pub const STEAM_VIRTUAL: Fixture = Fixture {
     name: "Microsoft X-Box 360 pad 0",
     vid: 0x28DE,

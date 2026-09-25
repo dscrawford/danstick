@@ -142,11 +142,14 @@ Runtime state lives in `$XDG_RUNTIME_DIR/danstick/` (socket, `assignments.json`,
   hold made under that grab reaches nobody, danstick included.
 - A daemon restoring real pads republishes them before greeting its first
   client; wait for the `state` event rather than reading it immediately.
-- A Steam Virtual Gamepad (`28de:11ff`) mirrors a real pad. Discovery keeps
-  as many mirrors as there are controllers danstick cannot read itself (more
-  mirrors than readable pads, or a Deck whose `28de:1205` hidraw has no event
-  node), lowest Steam slot first, and drops the rest. A triton pad (2026 Steam
-  Controller) cannot be grabbed at all.
+- A Steam Virtual Gamepad (`28de:11ff`) mirrors a real pad -- or one of
+  danstick's own 360 clones, which Steam wraps like any other. Discovery (what
+  `list` shows) keeps as many mirrors as there are controllers danstick cannot
+  read itself, lowest Steam slot first. Seating watches every Steam pad and
+  tells whose each is by what it presses and when (`danstick_core::echo`): a
+  clone's or a seated pad's is nobody, and a controller Steam drives is seated
+  on its Steam pad. A triton pad (2026 Steam Controller) cannot be grabbed at
+  all.
 - A Steam Deck's own controls (`28de:1205`) are a pad only while nothing holds
   the hidraw node, and Steam holds it: with Steam up there is no `Steam Deck`
   node, just the lizard keyboard and mouse and Steam's mirror. Its d-pad is

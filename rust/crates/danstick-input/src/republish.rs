@@ -11,13 +11,21 @@ use crate::clone::{forwarded, VirtualPad};
 
 const FRAME_HINT: usize = 64;
 
+fn is_press(event: &InputEvent) -> bool {
+    danstick_core::assign::is_press(event.event_type().0, event.code(), event.value())
+}
+
 /// What a pump found.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Pumped {
     pub frames: usize,
     pub events: usize,
     /// The source returned ENODEV: the pad is gone and this clone is finished.
     pub gone: bool,
+    /// How long ago the source's first button went down, if one did.
+    pub pressed: Option<f64>,
+    /// A button went down on the clone.
+    pub clone_pressed: bool,
 }
 
 /// Pumps events between physical and virtual pads until stopped.
@@ -148,6 +156,10 @@ impl Republisher {
             }
         }
         out.events = self.pending.len() - before;
+        out.pressed = self.pending[before..]
+            .iter()
+            .find(|event| is_press(event))
+            .map(crate::clone::event_age);
 
         if self.paused || held_back {
             self.pending.clear();
@@ -176,6 +188,7 @@ impl Republisher {
                     Ok(()) => {
                         out.frames += 1;
                         emitted_any = true;
+                        out.clone_pressed |= self.frame.iter().any(is_press);
                     }
                     Err(error) => vpad.note_dropped(&error),
                 }
@@ -363,5 +376,17 @@ mod tests {
         assert_eq!(empty.frames, 0);
         assert_eq!(empty.events, 0);
         assert!(!empty.gone);
+        assert_eq!(empty.pressed, None);
+        assert!(!empty.clone_pressed);
+    }
+
+    #[test]
+    fn a_press_is_a_button_going_down_and_nothing_else() {
+        let key = |code: u16, value: i32| InputEvent::new(EventType::KEY.0, code, value);
+        assert!(is_press(&key(0x130, 1)));
+        assert!(!is_press(&key(0x130, 0)), "a release");
+        assert!(!is_press(&key(0x130, 2)), "a repeat");
+        assert!(!is_press(&key(30, 1)), "a keyboard's key");
+        assert!(!is_press(&InputEvent::new(EventType::ABSOLUTE.0, 0x130, 1)));
     }
 }

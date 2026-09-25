@@ -3652,3 +3652,35 @@ GUID. On-demand is left exactly as it was.
 **Worth generalising.** A device a program has open is a promise. Tie its
 life to the thing the program bound to -- the slot -- not to whoever is
 holding the pad behind it.
+
+## One hold on the Deck took three seats
+
+GOTG, on a Deck in Game Mode with fixed slots and an Xbox pad: holding A
+seated player 2 on the Xbox pad, player 3 150ms later on Steam's pad for it,
+and later a seated player readying up seated player 4 on Steam's pad for the
+seat's own clone. Fixed slots make every clone a 360 pad from the start, and
+Steam wraps every 360 pad it sees. Discovery's count of Steam pads over
+readable ones took four of the clones' and the Xbox pad's mirrors for four
+controllers danstick could not read.
+
+A Steam pad names no source, and no count can say which is whose. What does
+is time: Steam's pad presses a few milliseconds after what it repeats, every
+time, and danstick sees both -- the pads seating watches, the seated pads it
+forwards, and the clones it writes. `danstick_core::echo` pairs each Steam
+press with the press it follows inside 50ms, one to one, closest first. A
+Steam pad repeating a clone or a seated pad takes nothing; a raw pad whose
+Steam pad repeats it gives way, and the Steam pad sits, because in Game Mode
+Steam's pad is the one Steam's layouts apply to and the one games under Steam
+see. Two people pressing within the window can pair across each other, which
+still makes two seats on two Steam pads; a raw pad Steam does not drive,
+pressed just before somebody's Deck, gives way once and is seated on its next
+hold. What this cannot catch is Steam repeating a press more than 50ms late:
+that echo is its own controller again. The window is a constant in
+`echo.rs`, and the Deck's real lag under a game is not measured yet.
+
+A hold can run ten seconds and its first press has to outlive it, so a
+verdict stands once the hold has run a second, and the press log keeps a
+second and a half, 512 presses at most.
+
+**Worth generalising.** When nothing on a device says what it copies, watch
+what it does: a copy is always late, and it is always late by about the same.

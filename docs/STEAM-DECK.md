@@ -35,6 +35,12 @@ are never both present. So danstick keeps one Steam mirror standing in for the
 Deck whenever a `28de:1205` hidraw node is present with no `Steam Deck` event
 node, even beside another pad; see `pad::without_steam_mirrors`.
 
+In Game Mode Steam also wraps every other pad it can -- an Xbox pad, and each
+of danstick's 360 clones, which is every fixed slot. Seating watches all of
+Steam's pads and tells them apart by timing (`danstick_core::echo`): the one
+repeating a clone is nobody, the one repeating an Xbox pad is that pad and the
+seat goes to it, and the Deck's, repeating nothing danstick reads, is the Deck.
+
 ## Why it is not an Xbox pad
 
 Four things, all measured, all in `fakepad::STEAM_DECK`:

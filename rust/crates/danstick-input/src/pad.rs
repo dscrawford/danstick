@@ -73,14 +73,15 @@ pub struct Discovery {
 ///
 /// `unreadable` counts controllers Steam drives that danstick cannot read itself
 /// -- the Deck's own controls in Game Mode, which Steam holds -- each reachable
-/// only through its mirror. Steam mirrors at most one per pad danstick reads, so
-/// a surplus of mirrors is kept too. Kept lowest slot first: Steam numbers them
-/// in the order it opened the controllers, and it opens the Deck's first. One
-/// mirror too many shows a pad twice; one too few hides somebody's controller.
-pub fn without_steam_mirrors(pads: Vec<Pad>, unreadable: usize) -> Discovery {
+/// only through its mirror. Steam mirrors at most one per pad danstick reads and
+/// one per clone it can wrap (`clones`), so a surplus over both is kept too.
+/// Kept lowest slot first: Steam numbers them in the order it opened the
+/// controllers, and it opens the Deck's first. One mirror too many shows a pad
+/// twice; one too few hides somebody's controller.
+pub fn without_steam_mirrors(pads: Vec<Pad>, unreadable: usize, clones: usize) -> Discovery {
     let mirrors: Vec<&Pad> = pads.iter().filter(|pad| is_steam_virtual(pad)).collect();
     let readable = pads.len() - mirrors.len();
-    if readable == 0 {
+    if readable + clones == 0 {
         return Discovery {
             pads,
             dropped: Vec::new(),
@@ -88,7 +89,7 @@ pub fn without_steam_mirrors(pads: Vec<Pad>, unreadable: usize) -> Discovery {
     }
     let keep = mirrors
         .len()
-        .saturating_sub(readable)
+        .saturating_sub(readable + clones)
         .max(unreadable)
         .min(mirrors.len());
     let mut by_slot = mirrors.clone();
@@ -211,6 +212,7 @@ pub fn discover_all(filter: Filter) -> std::io::Result<Discovery> {
 
     let mut accelerometers: Vec<(PathBuf, PathBuf)> = Vec::new();
     let mut pads: Vec<Pad> = Vec::new();
+    let mut wrappable_clones = 0;
     for device in enumerator.scan_devices()? {
         let Some(devnode) = device.devnode().map(Path::to_path_buf) else {
             continue;
@@ -242,6 +244,14 @@ pub fn discover_all(filter: Filter) -> std::io::Result<Discovery> {
         let phys = attribute(owner, "phys").unwrap_or_default();
         let name = attribute(owner, "name").unwrap_or_default();
         if !filter.include_virtual && is_danstick_clone(&name, &phys) {
+            // Steam wraps a clone as it wraps any pad, unless it is Steam's own kind.
+            let id = (
+                hex_attribute(owner, "id/vendor"),
+                hex_attribute(owner, "id/product"),
+            );
+            if id != danstick_core::icons::STEAM_VIRTUAL_ID {
+                wrappable_clones += 1;
+            }
             continue;
         }
 
@@ -276,14 +286,14 @@ pub fn discover_all(filter: Filter) -> std::io::Result<Discovery> {
             debug!("{ENV_ONLY} is set: {} pad(s) after filtering", pads.len());
         }
     }
-    // A scoped discovery sees only its own pads, and a Deck elsewhere on the
-    // machine is none of its business.
-    let unreadable = if scoped {
-        0
+    // A scoped discovery sees only its own pads, and a Deck or a clone
+    // elsewhere on the machine is none of its business.
+    let (unreadable, clones) = if scoped {
+        (0, 0)
     } else {
-        steam_driven_unreadable(&pads)
+        (steam_driven_unreadable(&pads), wrappable_clones)
     };
-    let found = without_steam_mirrors(pads, unreadable);
+    let found = without_steam_mirrors(pads, unreadable, clones);
     for dropped in &found.dropped {
         debug!(
             "{} ({}) left out: {}",
@@ -559,6 +569,7 @@ mod tests {
         let found = without_steam_mirrors(
             vec![STEAM_VIRTUAL.pad("event25"), XBOX_360.pad("event24")],
             0,
+            0,
         );
         assert_eq!(found.pads, vec![XBOX_360.pad("event24")]);
         assert_eq!(found.dropped.len(), 1);
@@ -577,7 +588,7 @@ mod tests {
             0x1304,
             "event0",
         );
-        let found = without_steam_mirrors(vec![puck.clone(), STEAM_VIRTUAL.pad("event25")], 0);
+        let found = without_steam_mirrors(vec![puck.clone(), STEAM_VIRTUAL.pad("event25")], 0, 0);
         assert_eq!(found.pads, vec![puck]);
         assert_eq!(found.dropped.len(), 1);
     }
@@ -586,12 +597,12 @@ mod tests {
     fn steams_mirror_stays_when_it_stands_alone() {
         use crate::fakepad::STEAM_VIRTUAL;
         let alone = vec![STEAM_VIRTUAL.pad("event25")];
-        let found = without_steam_mirrors(alone.clone(), 0);
+        let found = without_steam_mirrors(alone.clone(), 0, 0);
         assert_eq!(found.pads, alone);
         assert!(found.dropped.is_empty());
 
         let two = vec![STEAM_VIRTUAL.pad("event25"), STEAM_VIRTUAL.pad("event26")];
-        let found = without_steam_mirrors(two.clone(), 0);
+        let found = without_steam_mirrors(two.clone(), 0, 0);
         assert_eq!(
             found.pads, two,
             "two mirrors and nothing else are still pads"
@@ -615,7 +626,7 @@ mod tests {
             XBOX_360.pad("event11"),
             mirror(0, "event10"),
         ];
-        let found = without_steam_mirrors(pads, 1);
+        let found = without_steam_mirrors(pads, 1, 0);
         assert_eq!(
             found.pads,
             vec![XBOX_360.pad("event11"), mirror(0, "event10")],
@@ -635,7 +646,7 @@ mod tests {
             mirror(1, "event18"),
             XBOX_360.pad("event11"),
         ];
-        let found = without_steam_mirrors(pads, 0);
+        let found = without_steam_mirrors(pads, 0, 0);
         assert_eq!(
             found.pads,
             vec![mirror(0, "event10"), XBOX_360.pad("event11")]
@@ -648,11 +659,72 @@ mod tests {
         // Steam Input off for the Xbox pad: one mirror, one pad, and the count
         // alone would hide the Deck again. Knowing the Deck is there keeps it.
         let pads = vec![mirror(0, "event10"), XBOX_360.pad("event11")];
-        let found = without_steam_mirrors(pads.clone(), 1);
+        let found = without_steam_mirrors(pads.clone(), 1, 0);
         assert_eq!(found.pads, pads);
         assert!(found.dropped.is_empty());
         // Without that knowledge it is the mirror of the pad danstick reads.
-        assert_eq!(without_steam_mirrors(pads, 0).pads.len(), 1);
+        assert_eq!(without_steam_mirrors(pads, 0, 0).pads.len(), 1);
+    }
+
+    #[test]
+    fn a_mirror_of_dansticks_own_clone_is_not_a_controller() {
+        use crate::fakepad::XBOX_360;
+        // The Deck in Game Mode with four fixed slots and an Xbox pad: Steam
+        // wraps the Deck (slot 0), the Xbox pad and all four 360 clones.
+        let pads: Vec<Pad> = (0..6)
+            .map(|slot| mirror(slot, &format!("event{}", 20 + slot)))
+            .chain([XBOX_360.pad("event11")])
+            .collect();
+        let found = without_steam_mirrors(pads.clone(), 1, 4);
+        assert_eq!(
+            found.pads,
+            vec![mirror(0, "event20"), XBOX_360.pad("event11")],
+            "one entry per controller, none for a clone's mirror"
+        );
+        assert_eq!(found.dropped.len(), 5);
+        assert_eq!(
+            without_steam_mirrors(pads, 1, 0).pads.len(),
+            6,
+            "counting only the pads it reads, the clones' mirrors pass as controllers"
+        );
+    }
+
+    #[test]
+    fn mirrors_of_clones_alone_are_nobody() {
+        // Fixed slots stand before anybody plugs in: Steam's pads are all the clones'.
+        let pads: Vec<Pad> = (1..=4)
+            .map(|slot| mirror(slot, &format!("event{}", 20 + slot)))
+            .collect();
+        assert!(without_steam_mirrors(pads, 0, 4).pads.is_empty());
+    }
+
+    #[test]
+    fn clones_with_no_mirror_about_change_nothing() {
+        use crate::fakepad::XBOX_360;
+        let pads = vec![XBOX_360.pad("event11")];
+        let found = without_steam_mirrors(pads.clone(), 0, 4);
+        assert_eq!(found.pads, pads);
+        assert!(found.dropped.is_empty());
+    }
+
+    #[test]
+    fn more_clones_counted_than_mirrors_seen_drops_them_all() {
+        let pads: Vec<Pad> = (1..=4)
+            .map(|slot| mirror(slot, &format!("event{}", 20 + slot)))
+            .collect();
+        assert!(without_steam_mirrors(pads, 0, 99).pads.is_empty());
+    }
+
+    #[test]
+    fn a_deck_known_to_be_there_keeps_a_mirror_even_if_steam_has_not_made_its_yet() {
+        // The count cannot tell whose it keeps; seating's timing can (`echo`).
+        let pads: Vec<Pad> = (1..=4)
+            .map(|slot| mirror(slot, &format!("event{}", 20 + slot)))
+            .collect();
+        assert_eq!(
+            without_steam_mirrors(pads, 1, 4).pads,
+            vec![mirror(1, "event21")]
+        );
     }
 
     #[test]
@@ -668,10 +740,10 @@ mod tests {
     fn a_room_with_no_mirror_is_left_exactly_as_it_was() {
         use crate::fakepad::{MAYFLASH_GAMECUBE, XBOX_360};
         let pads = vec![XBOX_360.pad("event3"), MAYFLASH_GAMECUBE.pad("event4")];
-        let found = without_steam_mirrors(pads.clone(), 0);
+        let found = without_steam_mirrors(pads.clone(), 0, 0);
         assert_eq!(found.pads, pads);
         assert!(found.dropped.is_empty());
-        assert!(without_steam_mirrors(Vec::new(), 0).pads.is_empty());
+        assert!(without_steam_mirrors(Vec::new(), 0, 0).pads.is_empty());
     }
 
     #[test]

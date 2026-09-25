@@ -3795,3 +3795,229 @@ fn a_pad_kept_by_label_presses_what_its_labels_say() {
     );
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// A controller Steam Input drives, fixed slots Steam wraps, and the Deck.
+const STEAMLOOP: PadId = PadId {
+    name: "DANSTICK RSTESTSTEAMLOOP Xbox Wireless Controller",
+    pid: 0x0fa0,
+    only: "RSTESTSTEAMLOOP",
+};
+
+/// Steam's virtual gamepad for slot `slot`, named inside `id`'s filter.
+fn steam_pad(id: PadId, slot: u32) -> TestPad {
+    TestPad::with_id(
+        &format!("DANSTICK {} X-Box 360 pad {slot}", id.only),
+        MIRROR_VID,
+        MIRROR_PID,
+    )
+}
+
+impl TestPad {
+    /// The pad's `eventN`, as `claim` names it.
+    fn event(&mut self) -> String {
+        self.device
+            .enumerate_dev_nodes_blocking()
+            .expect("nodes")
+            .flatten()
+            .find_map(|path| {
+                let name = path.file_name()?.to_str()?.to_owned();
+                name.starts_with("event").then_some(name)
+            })
+            .expect("the pad's event node")
+    }
+}
+
+/// One physical controller as Steam Input leaves it: its raw node, and
+/// Steam's pad repeating each press a moment later -- from the hidraw, so a
+/// grab on the raw node does not stop it.
+struct SteamDriven {
+    raw: TestPad,
+    steam: TestPad,
+}
+
+impl SteamDriven {
+    fn press(&mut self, value: i32) {
+        self.raw.emit(EventType::KEY.0, FIRST_KEY, value);
+        std::thread::sleep(Duration::from_millis(3));
+        self.steam.emit(EventType::KEY.0, FIRST_KEY, value);
+    }
+
+    fn hold(&mut self, seconds: f64) {
+        self.press(1);
+        std::thread::sleep(Duration::from_secs_f64(seconds));
+        self.press(0);
+    }
+}
+
+/// Steam wrapping danstick's own clones: a Steam pad per clone, made after
+/// it, repeating every button the clone presses.
+struct SteamWrap {
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    echoed: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl SteamWrap {
+    fn around(clones: &[String], id: PadId, first_slot: u32) -> SteamWrap {
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+        let mut pairs: Vec<(evdev::Device, TestPad)> = clones
+            .iter()
+            .zip(first_slot..)
+            .map(|(node, slot)| {
+                let clone = evdev::Device::open(node).unwrap_or_else(|e| panic!("{node}: {e}"));
+                clone.set_nonblocking(true).expect("nonblocking");
+                (clone, steam_pad(id, slot))
+            })
+            .collect();
+        let stop = std::sync::Arc::new(AtomicBool::new(false));
+        let echoed = std::sync::Arc::new(AtomicUsize::new(0));
+        let thread = {
+            let (stop, echoed) = (stop.clone(), echoed.clone());
+            std::thread::spawn(move || {
+                while !stop.load(Ordering::Relaxed) {
+                    for (clone, steam) in &mut pairs {
+                        let Ok(events) = clone.fetch_events() else {
+                            continue;
+                        };
+                        let keys: Vec<(u16, i32)> = events
+                            .filter(|e| e.event_type() == EventType::KEY)
+                            .map(|e| (e.code(), e.value()))
+                            .collect();
+                        for (code, value) in keys {
+                            steam.emit(EventType::KEY.0, code, value);
+                            if value == 1 {
+                                echoed.fetch_add(1, Ordering::Relaxed);
+                            }
+                        }
+                    }
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+            })
+        };
+        SteamWrap {
+            stop,
+            echoed,
+            thread: Some(thread),
+        }
+    }
+
+    fn echoed(&self) -> usize {
+        self.echoed.load(std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
+impl Drop for SteamWrap {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+/// The Deck in Game Mode with fixed slots: Steam wraps each 360 clone and the
+/// Xbox pad, and the Deck's own controls are reachable only through a Steam pad.
+#[test]
+fn under_steam_input_a_controller_is_its_steam_pad_and_a_clones_is_nobody() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let root = std::env::temp_dir().join(format!("danstick-steamloop-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+
+    let mut daemon = Daemon::start_with_env(&root, STEAMLOOP, &[], &[("DANSTICK_SLOTS", "fixed")]);
+    let before = daemon
+        .wait_for("state", |e| standing(e).len() == 4, 8.0)
+        .expect("four slots never stood");
+    let clones: Vec<String> = standing(&before).into_values().collect();
+
+    // Steam opened the Deck's controls first, then the Xbox pad, then the clones.
+    let mut deck = steam_pad(STEAMLOOP, 0);
+    let mut xbox = SteamDriven {
+        raw: TestPad::new(STEAMLOOP),
+        steam: steam_pad(STEAMLOOP, 1),
+    };
+    let wrap = SteamWrap::around(&clones, STEAMLOOP, 2);
+    let (deck_node, xbox_steam_node) = (deck.event(), xbox.steam.event());
+
+    daemon.pump(1.5);
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "seating", "open": true, "players": 4}));
+    let mut claim = None;
+    for attempt in 0..4 {
+        xbox.hold(0.6);
+        claim = daemon.wait_for("claim", |_| true, 3.0);
+        if claim.is_some() {
+            break;
+        }
+        eprintln!("hold {attempt} claimed nothing; holding again");
+        daemon.pump(0.7);
+    }
+    let claim = claim.expect("holding A on the Xbox pad never took a seat");
+    daemon.pump(1.5);
+    let claims: Vec<&Value> = daemon
+        .events
+        .iter()
+        .filter(|e| e["event"] == "claim")
+        .collect();
+    assert_eq!(claims.len(), 1, "one hold, one seat: {claims:?}");
+    assert_eq!(claim["player"], 1);
+    assert_eq!(
+        claim["node"], xbox_steam_node,
+        "seated somewhere other than the Steam pad Steam drives it through: {claim}"
+    );
+
+    // Readying up at the door: slot 1's clone presses, and so its Steam pad does.
+    daemon.events.clear();
+    let echoed = wrap.echoed();
+    xbox.hold(0.8);
+    daemon.pump(1.5);
+    assert!(
+        wrap.echoed() > echoed,
+        "the seat's clone never pressed, so its Steam pad was never tested"
+    );
+    assert!(
+        daemon.last("claim").is_none(),
+        "a seated player's hold seated somebody: {:?}",
+        daemon.last("claim")
+    );
+
+    // The Deck's controls, reachable only through Steam, still take a seat.
+    let mut deck_claim = None;
+    for attempt in 0..4 {
+        deck.hold(FIRST_KEY, 0.6);
+        deck_claim = daemon.wait_for("claim", |_| true, 3.0);
+        if deck_claim.is_some() {
+            break;
+        }
+        eprintln!("deck hold {attempt} claimed nothing; holding again");
+        daemon.pump(0.7);
+    }
+    let deck_claim = deck_claim.expect("the Deck never took a seat");
+    assert_eq!(deck_claim["player"], 2, "{deck_claim}");
+    assert_eq!(deck_claim["node"], deck_node, "{deck_claim}");
+
+    daemon.events.clear();
+    let echoed = wrap.echoed();
+    deck.hold(FIRST_KEY, 0.8);
+    xbox.hold(0.8);
+    daemon.pump(1.5);
+    assert!(wrap.echoed() > echoed, "the seats' clones never pressed");
+    assert!(
+        daemon.last("claim").is_none(),
+        "two seated players' holds seated somebody: {:?}",
+        daemon.last("claim")
+    );
+    let state = daemon.last("state").cloned().unwrap_or_default();
+    daemon.send(serde_json::json!({"cmd": "status"}));
+    let state = daemon.last("state").cloned().unwrap_or(state);
+    assert_eq!(
+        state["players"].as_array().map(Vec::len),
+        Some(2),
+        "{state}"
+    );
+    drop(wrap);
+    let _ = std::fs::remove_dir_all(&root);
+}

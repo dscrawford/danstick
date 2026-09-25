@@ -217,6 +217,17 @@ than replacing it (`clone::reserve`/`create_on`,
 the 360 identity, because a reserved clone's layout has to be known before its
 pad is. `docs/EVENTS.md`, "Seats that exist before the people do".
 
+**One controller is one seat, even through Steam.** Steam Input publishes a
+Steam pad for every controller it drives, danstick's own 360 clones included,
+and none of them says whose it is. On a Deck with fixed slots one hold on an
+Xbox pad took three seats: the pad, Steam's pad for it, and -- as soon as the
+seat's clone pressed -- Steam's pad for the clone. Seating now watches every
+Steam pad and pairs each Steam press with the press it follows
+(`danstick_core::echo`): a Steam pad repeating a clone or a seated pad takes
+nothing, and a controller Steam drives sits on its Steam pad, so Steam's remap
+is the one the game gets
+(`under_steam_input_a_controller_is_its_steam_pad_and_a_clones_is_nobody`).
+
 ## S4 — Holding again confirms, and accepts
 
 **Actor and want.** The order is right; the user wants to be finished and go

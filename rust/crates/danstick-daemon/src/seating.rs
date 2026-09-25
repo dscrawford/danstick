@@ -2,10 +2,11 @@
 
 use std::path::PathBuf;
 
-use danstick_core::assign::{Assigner, Tick};
+use danstick_core::assign::{is_press, Assigner, Gate, Tick};
+use danstick_core::echo::{Echoes, Origin, Verdict};
 use danstick_input::clone::{self, Source};
-use danstick_input::pad::Pad;
-use log::warn;
+use danstick_input::pad::{self, Pad};
+use log::{debug, warn};
 
 #[derive(Debug, Default)]
 pub struct Seating {
@@ -18,6 +19,10 @@ pub struct Seating {
     wanted: Vec<PathBuf>,
     assigner: Assigner,
     buffer: Vec<evdev::InputEvent>,
+    /// Every press that could be a Steam pad's, or one a Steam pad repeats.
+    echoes: Echoes,
+    /// A seated player is on a Steam pad, which may repeat a watched pad.
+    steam_seated: bool,
 }
 
 /// What makes a watched pad the same pad across a rebuild.
@@ -82,6 +87,7 @@ impl Seating {
         self.sources.clear();
         self.wanted.clear();
         self.assigner.reset();
+        self.echoes.clear();
     }
 
     pub fn pads(&self) -> &[Pad] {
@@ -155,7 +161,20 @@ impl Seating {
         let after: Vec<Identity> = self.pads.iter().map(identity).collect();
         let moved = danstick_core::assign::moved_indices(&before, &after);
         self.assigner.remap(|pad| moved.get(pad).copied().flatten());
+        self.echoes.remap(|pad| moved.get(pad).copied().flatten());
         true
+    }
+
+    /// Whether a seated player sits on a Steam pad.
+    pub fn set_steam_seated(&mut self, seated: bool) {
+        self.steam_seated = seated;
+    }
+
+    /// A button a seated player's pad pressed at `at`, or danstick wrote to its clone.
+    pub fn note(&mut self, origin: Origin, at: f64) {
+        if self.open {
+            self.echoes.press(origin, at);
+        }
     }
 
     pub fn read(&mut self, index: usize, now: f64) {
@@ -169,25 +188,43 @@ impl Seating {
             }
             return;
         }
+        let steam = self.pads.get(index).is_some_and(pad::is_steam_virtual);
         for event in &self.buffer {
             // When it happened, not when this got round to reading it: a
             // claim just before can hold the loop for a good part of a second.
-            self.assigner.feed(
-                index,
-                event.event_type().0,
-                event.code(),
-                event.value(),
-                now - clone::event_age(event),
-            );
+            let at = now - clone::event_age(event);
+            let (kind, code, value) = (event.event_type().0, event.code(), event.value());
+            if is_press(kind, code, value) {
+                self.echoes.press(Origin::Watched { pad: index, steam }, at);
+            }
+            self.assigner.feed(index, kind, code, value, at);
         }
     }
 
     pub fn tick(&mut self, now: f64) -> Claimed {
+        let steam_near = self.steam_seated || self.pads.iter().any(pad::is_steam_virtual);
+        let holds = self.assigner.holds();
+        let verdicts = self.echoes.judge(&holds, now, steam_near);
+        let pads = &self.pads;
         let Tick {
             progress,
             claimed,
             released,
-        } = self.assigner.tick(now);
+        } = self.assigner.tick_gated(now, |index, since| {
+            let Some(at) = holds.iter().position(|hold| *hold == (index, since)) else {
+                return Gate::Go;
+            };
+            match verdicts[at] {
+                Verdict::Unsettled => Gate::Wait,
+                verdict if verdict.may_claim() => Gate::Go,
+                verdict => {
+                    if let Some(pad) = pads.get(index) {
+                        debug!("seating: {} ({}) is {verdict:?}", pad.name, pad.event());
+                    }
+                    Gate::Drop
+                }
+            }
+        });
         Claimed {
             pads: claimed.into_iter().map(|claim| claim.pad).collect(),
             progress,

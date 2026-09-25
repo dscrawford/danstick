@@ -13,6 +13,7 @@ use std::sync::Arc;
 use danstick_core::announce;
 use danstick_core::capture::{self, Chooser, MappingRun, Outcome};
 use danstick_core::command::{Command, Refused};
+use danstick_core::echo::Origin;
 use danstick_core::slots;
 use danstick_core::state::{PlayerState, STATE_ASSIGNING, STATE_IDLE, STATE_READY};
 use danstick_core::tuning::Request;
@@ -198,24 +199,53 @@ enum ToWrite {
 
 #[derive(Default)]
 struct Scan {
-    pads: Option<Vec<Pad>>,
+    found: Option<pad::Discovery>,
     /// Whether the enumeration failed, as against finding nothing.
     failed: bool,
 }
 
 impl Scan {
+    fn found(&mut self) -> &pad::Discovery {
+        self.found.get_or_insert_with(|| {
+            pad::discover_all(pad::Filter::default()).unwrap_or_else(|error| {
+                warn!("enumerating input devices: {error}");
+                self.failed = true;
+                pad::Discovery::default()
+            })
+        })
+    }
+
     fn pads(&mut self) -> &[Pad] {
-        if self.pads.is_none() {
-            match pad::discover(pad::Filter::default()) {
-                Ok(pads) => self.pads = Some(pads),
-                Err(error) => {
-                    warn!("enumerating input devices: {error}");
-                    self.failed = true;
-                    self.pads = Some(Vec::new());
-                }
-            }
-        }
-        self.pads.as_deref().unwrap_or_default()
+        &self.found().pads
+    }
+
+    /// Every pad, Steam's included: which Steam pad is whose shows in what
+    /// each one presses, so seating watches all of them (`echo`).
+    fn seatable(&mut self) -> Vec<Pad> {
+        let found = self.found();
+        let mut pads = found.pads.clone();
+        pads.extend(
+            found
+                .dropped
+                .iter()
+                .filter(|dropped| pad::is_steam_virtual(&dropped.pad))
+                .map(|dropped| dropped.pad.clone()),
+        );
+        pads
+    }
+
+    /// The pads offered, and any Steam pad discovery left out that somebody is seated on.
+    fn present(&mut self, seated: &[PathBuf]) -> Vec<Pad> {
+        let found = self.found();
+        let mut pads = found.pads.clone();
+        pads.extend(
+            found
+                .dropped
+                .iter()
+                .filter(|dropped| seated.contains(&dropped.pad.path))
+                .map(|dropped| dropped.pad.clone()),
+        );
+        pads
     }
 
     fn failed(&self) -> bool {
@@ -224,7 +254,7 @@ impl Scan {
 
     /// Whether this tick has already enumerated, so another look costs nothing.
     fn scanned(&self) -> bool {
-        self.pads.is_some()
+        self.found.is_some()
     }
 }
 
@@ -1940,6 +1970,20 @@ impl Server {
                     return;
                 }
             }
+            // Read for the flow, not forwarded, but Steam may still repeat it.
+            if let Some(press) = self.scratch.iter().find(|event| {
+                danstick_core::assign::is_press(event.event_type().0, event.code(), event.value())
+            }) {
+                let steam = pad::is_steam_virtual(&vpad.pad);
+                let at = clock - clone::event_age(press);
+                self.seating.note(
+                    Origin::Seated {
+                        player: vpad.player,
+                        steam,
+                    },
+                    at,
+                );
+            }
             (vpad.pad.path.clone(), raw_events(&self.scratch))
         };
         for event in raw {
@@ -1998,7 +2042,7 @@ impl Server {
         let mut nodes = hotplug::event_nodes();
         nodes.retain(|node| !own.contains(node));
         let present: Vec<Pad> = if self.seating_gate.due(nodes, now()) || scan.scanned() {
-            let found = scan.pads().to_vec();
+            let found = scan.seatable();
             // An enumeration that failed is not everybody unplugging: acting on
             // it would drop the holds this rebuild exists to carry.
             if scan.failed() {
@@ -2012,6 +2056,11 @@ impl Server {
             return;
         };
         self.seating_seated = seated.clone();
+        self.seating.set_steam_seated(
+            self.slots_assigned
+                .iter()
+                .any(|slot| pad::is_steam_virtual(&slot.pad)),
+        );
         let wanted = self.seating.wanted(&present, &seated);
         // Only touch epoll when the set actually changes; the unwatch/rewatch
         // churn otherwise ran every tick for no reason.
@@ -2143,7 +2192,20 @@ impl Server {
         let Some(republisher) = self.republisher.as_mut() else {
             return;
         };
+        // Before the write, so Steam's repeat of the clone never looks earlier than it.
+        let clock = now();
         let pumped = republisher.forward(index);
+        if let Some(vpad) = republisher.pads.get(index) {
+            let player = vpad.player;
+            if let Some(age) = pumped.pressed {
+                let steam = pad::is_steam_virtual(&vpad.pad);
+                self.seating
+                    .note(Origin::Seated { player, steam }, clock - age);
+            }
+            if pumped.clone_pressed {
+                self.seating.note(Origin::Clone { player }, clock);
+            }
+        }
         let gone = pumped.gone;
         if gone {
             if let Some(vpad) = republisher.pads.get(index) {
@@ -2908,10 +2970,15 @@ impl Server {
             self.admit_late_pads(scan);
             return;
         }
-        let present: BTreeMap<String, Pad> = scan
-            .pads()
+        let seated: Vec<PathBuf> = self
+            .slots_assigned
             .iter()
-            .map(|pad| (profiles::signature_of(pad), pad.clone()))
+            .map(|slot| slot.pad.path.clone())
+            .collect();
+        let present: BTreeMap<String, Pad> = scan
+            .present(&seated)
+            .into_iter()
+            .map(|pad| (profiles::signature_of(&pad), pad))
             .collect();
         let changes = self.attached.diff(&present.keys().cloned().collect());
         for signature in changes.departed {

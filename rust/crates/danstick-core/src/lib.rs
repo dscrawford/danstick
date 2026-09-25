@@ -15,6 +15,7 @@ pub mod control;
 pub mod dolphin;
 pub mod dsu;
 pub mod dsupad;
+pub mod echo;
 pub mod emit;
 pub mod fields;
 pub mod guess;
