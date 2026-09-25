@@ -1,4 +1,4 @@
-# The environment padmap's tests run in on the cluster, not the source: it
+# The environment danstick's tests run in on the cluster, not the source: it
 # changes with `Cargo.lock`, and `tools/cluster-test` streams the tree in.
 {
   pkgs,
@@ -8,7 +8,7 @@ let
   # The crates, fetched by nix from `Cargo.lock`: a pod builds offline.
   vendored = pkgs.rustPlatform.importCargoLock { lockFile = cargoLock; };
 
-  cargoHome = pkgs.runCommand "padmap-test-cargo-home" { } ''
+  cargoHome = pkgs.runCommand "danstick-test-cargo-home" { } ''
     mkdir -p $out
     cat > $out/config.toml <<EOF
     [source.crates-io]
@@ -37,14 +37,14 @@ let
     pkgs.util-linux
   ];
 
-  # Linked by padmap-input, and loaded again by every binary a test runs.
+  # Linked by danstick-input, and loaded again by every binary a test runs.
   libraries = [
     pkgs.udev
     pkgs.sdl3
   ];
 in
 pkgs.dockerTools.buildLayeredImage {
-  name = "padmap-tests";
+  name = "danstick-tests";
   contents = tools ++ [
     pkgs.dockerTools.binSh
     pkgs.dockerTools.usrBinEnv

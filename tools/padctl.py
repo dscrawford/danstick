@@ -1,10 +1,10 @@
-"""Minimal client for the padmap daemon.
+"""Minimal client for the danstick daemon.
 
 Exists so the protocol can be exercised without Pegasus, and so the C++ patch
 has a reference to check against. It is also the fastest way to see what a
 front-end will actually receive.
 
-    padmap serve &                     # in one terminal
+    danstick serve &                     # in one terminal
     python3 tools/padctl.py begin      # then hold buttons on the pads
     python3 tools/padctl.py watch      # just observe
 """
@@ -17,7 +17,7 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import _padmap as protocol  # noqa: E402
+import _danstick as protocol  # noqa: E402
 
 
 def connect() -> socket.socket:
@@ -27,7 +27,7 @@ def connect() -> socket.socket:
         sock.connect(str(path))
     except OSError as exc:
         print(f"cannot reach the daemon at {path}: {exc}")
-        print("start it with:  padmap serve")
+        print("start it with:  danstick serve")
         raise SystemExit(1)
     return sock
 

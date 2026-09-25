@@ -1,0 +1,3797 @@
+//! Real daemon journey: DANSTICK_ONLY_DEVICE isolates the test, and signatures go to prompted first.
+
+use std::collections::BTreeSet;
+use std::io::{Read, Write};
+use std::os::unix::net::UnixStream;
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
+use std::time::{Duration, Instant};
+
+use evdev::uinput::VirtualDevice;
+use evdev::{
+    AbsInfo, AbsoluteAxisCode, AttributeSet, BusType, EventType, InputEvent, InputId, KeyCode,
+    UinputAbsSetup,
+};
+use serde_json::Value;
+
+const PAD_VID: u16 = 0x1209;
+const FIRST_KEY: u16 = 0x130;
+const KEY_COUNT: u16 = 16;
+
+#[derive(Clone, Copy)]
+struct PadId {
+    name: &'static str,
+    pid: u16,
+    only: &'static str,
+}
+
+const JOURNEY: PadId = PadId {
+    name: "DANSTICK RSTESTJOURNEY",
+    pid: 0x0003,
+    only: "RSTESTJOURNEY",
+};
+const HOSTILE: PadId = PadId {
+    name: "DANSTICK RSTESTHOSTILE",
+    pid: 0x0004,
+    only: "RSTESTHOSTILE",
+};
+const SLEEPER: PadId = PadId {
+    name: "DANSTICK RSTESTSLEEPER",
+    pid: 0x0005,
+    only: "RSTESTSLEEPER",
+};
+const JOINER: PadId = PadId {
+    name: "DANSTICK RSTESTSOLOSEAT",
+    pid: 0x0006,
+    only: "RSTESTSOLOSEAT",
+};
+const TUNER: PadId = PadId {
+    name: "DANSTICK RSTESTTUNER",
+    pid: 0x0007,
+    only: "RSTESTTUNER",
+};
+const REBIND: PadId = PadId {
+    name: "DANSTICK RSTESTREBIND one",
+    pid: 0x0008,
+    only: "RSTESTREBIND",
+};
+const MIRRORED: PadId = PadId {
+    name: "DANSTICK RSTESTMIRROR pad",
+    pid: 0x000a,
+    only: "RSTESTMIRROR",
+};
+const UNSEATED: PadId = PadId {
+    name: "DANSTICK RSTESTUNSEAT",
+    pid: 0x000b,
+    only: "RSTESTUNSEAT",
+};
+const FRESH: PadId = PadId {
+    name: "DANSTICK RSTESTFRESH",
+    pid: 0x000c,
+    only: "RSTESTFRESH",
+};
+const KEYSEAT: PadId = PadId {
+    name: "DANSTICK RSTESTKEYSEAT",
+    pid: 0x000e,
+    only: "RSTESTKEYSEAT",
+};
+/// Two pads behind one filter, so the second can appear after the session opens.
+const LATE_FIRST: PadId = PadId {
+    name: "DANSTICK RSTESTLATE one",
+    pid: 0x000f,
+    only: "RSTESTLATE",
+};
+const LATE_SECOND: PadId = PadId {
+    name: "DANSTICK RSTESTLATE two",
+    pid: 0x0010,
+    only: "RSTESTLATE",
+};
+/// A seat claimed under a hold longer than the default.
+const HOLDER: PadId = PadId {
+    name: "DANSTICK RSTESTHOLD",
+    pid: 0x0012,
+    only: "RSTESTHOLD",
+};
+/// Two pads behind one filter, for two people holding at the same time.
+const PAIR_FIRST: PadId = PadId {
+    name: "DANSTICK RSTESTPAIR one",
+    pid: 0x0013,
+    only: "RSTESTPAIR",
+};
+const PAIR_SECOND: PadId = PadId {
+    name: "DANSTICK RSTESTPAIR two",
+    pid: 0x0014,
+    only: "RSTESTPAIR",
+};
+/// Two more, for two holds that both run all the way to a claim.
+const BOTH_FIRST: PadId = PadId {
+    name: "DANSTICK RSTESTBOTH one",
+    pid: 0x0015,
+    only: "RSTESTBOTH",
+};
+const BOTH_SECOND: PadId = PadId {
+    name: "DANSTICK RSTESTBOTH two",
+    pid: 0x0016,
+    only: "RSTESTBOTH",
+};
+/// And two for somebody joining while somebody else is already playing.
+const JOIN_FIRST: PadId = PadId {
+    name: "DANSTICK RSTESTJOIN one",
+    pid: 0x001d,
+    only: "RSTESTJOIN",
+};
+const JOIN_SECOND: PadId = PadId {
+    name: "DANSTICK RSTESTJOIN two",
+    pid: 0x001e,
+    only: "RSTESTJOIN",
+};
+/// And two for the last seat going to one of two holds that finished together.
+const LAST_FIRST: PadId = PadId {
+    name: "DANSTICK RSTESTLAST one",
+    pid: 0x001b,
+    only: "RSTESTLAST",
+};
+const LAST_SECOND: PadId = PadId {
+    name: "DANSTICK RSTESTLAST two",
+    pid: 0x001c,
+    only: "RSTESTLAST",
+};
+/// And two for a pad arriving while another is already holding.
+const ARRIVE_FIRST: PadId = PadId {
+    name: "DANSTICK RSTESTCOME one",
+    pid: 0x0019,
+    only: "RSTESTCOME",
+};
+const ARRIVE_SECOND: PadId = PadId {
+    name: "DANSTICK RSTESTCOME two",
+    pid: 0x001a,
+    only: "RSTESTCOME",
+};
+/// And two for two holds that finish inside one tick.
+const TICK_FIRST: PadId = PadId {
+    name: "DANSTICK RSTESTTICK one",
+    pid: 0x0017,
+    only: "RSTESTTICK",
+};
+const TICK_SECOND: PadId = PadId {
+    name: "DANSTICK RSTESTTICK two",
+    pid: 0x0018,
+    only: "RSTESTTICK",
+};
+const BINDER: PadId = PadId {
+    name: "DANSTICK RSTESTBIND",
+    pid: 0x0011,
+    only: "RSTESTBIND",
+};
+/// A Valve-vendor pad beside a Valve-vendor keyboard, the Puck's lizard shape.
+const SIBLING: PadId = PadId {
+    name: "DANSTICK RSTESTSIB pad",
+    pid: 0x0f00,
+    only: "RSTESTSIB",
+};
+const SIBLING_KEYBOARD_NAME: &str = "DANSTICK RSTESTSIB keyboard";
+/// A keyboard with no pad anywhere near it: the desk's own.
+const DESK: PadId = PadId {
+    name: "DANSTICK RSTESTDESK pad",
+    pid: 0x0f02,
+    only: "RSTESTDESK",
+};
+const DESK_KEYBOARD_NAME: &str = "DANSTICK RSTESTDESK keyboard";
+/// Four pads for the seated-player latency measurement.
+const LATENCY: PadId = PadId {
+    name: "DANSTICK RSTESTPRESSTIME a",
+    pid: 0x0f10,
+    only: "RSTESTPRESSTIME",
+};
+/// Four pads for a press made during somebody else's claim.
+const MIDCLAIM: PadId = PadId {
+    name: "DANSTICK RSTESTMIDCLAIM a",
+    pid: 0x0f20,
+    only: "RSTESTMIDCLAIM",
+};
+/// Four pads for the order a seat is announced in.
+const STATEFIRST: PadId = PadId {
+    name: "DANSTICK RSTESTSTATEFIRST a",
+    pid: 0x0f30,
+    only: "RSTESTSTATEFIRST",
+};
+
+/// A pad whose daemon changes identity under it.
+const SWITCH: PadId = PadId {
+    name: "DANSTICK RSTESTSWITCH",
+    pid: 0x0f40,
+    only: "RSTESTSWITCH",
+};
+
+/// Four pads held one after another, for how late each claim lands.
+const PROMPT: PadId = PadId {
+    name: "DANSTICK RSTESTPROMPT a",
+    pid: 0x0f60,
+    only: "RSTESTPROMPT",
+};
+
+/// A seated pad in the picker, then a launch that reserves the rest.
+const EXEC_RESERVE: PadId = PadId {
+    name: "DANSTICK RSTESTEXECRES",
+    pid: 0x0f50,
+    only: "RSTESTEXECRES",
+};
+
+/// Fixed slots, standing before anybody holds a button.
+const FIXED: PadId = PadId {
+    name: "DANSTICK RSTESTFIXED",
+    pid: 0x0f70,
+    only: "RSTESTFIXED",
+};
+
+/// Slots chosen on a running daemon, and a slot destroyed as its player leaves.
+const SLOTSWITCH: PadId = PadId {
+    name: "DANSTICK RSTESTSLOTSWITCH",
+    pid: 0x0f80,
+    only: "RSTESTSLOTSWITCH",
+};
+
+/// A Nintendo-labelled pad (its name says Pro Controller), kept by label.
+const LABELLED: PadId = PadId {
+    name: "DANSTICK RSTESTLABELLED Pro Controller",
+    pid: 0x0f90,
+    only: "RSTESTLABELLED",
+};
+
+/// Four distinct pads under one test's own filter, so tests running beside it
+/// cannot see them.
+fn four_pads(id: PadId) -> Vec<TestPad> {
+    ["a", "b", "c", "d"]
+        .iter()
+        .enumerate()
+        .map(|(at, letter)| {
+            TestPad::with_id(
+                &format!("DANSTICK {} {letter}", id.only),
+                0x1209,
+                id.pid + at as u16,
+            )
+        })
+        .collect()
+}
+
+/// What the keyboard's seat calls itself, in `claim` and in `state`.
+const KEYBOARD_SEAT_NAME: &str = "Keyboard and Mouse";
+/// No pad is made for this one; the daemon under test only needs a filter.
+const FOLLOWER: PadId = PadId {
+    name: "DANSTICK RSTESTFOLLOW",
+    pid: 0x000d,
+    only: "RSTESTFOLLOW",
+};
+/// Steam's virtual gamepad, by id; the name only has to pass the test filter.
+const MIRROR_NAME: &str = "DANSTICK RSTESTMIRROR X-Box 360 pad 0";
+const MIRROR_VID: u16 = 0x28de;
+const MIRROR_PID: u16 = 0x11ff;
+
+fn signature(id: PadId) -> String {
+    format!("{PAD_VID:04x}:{:04x}:{}", id.pid, id.name)
+}
+
+fn uinput_writable() -> bool {
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open("/dev/uinput")
+        .is_ok()
+}
+
+struct LiveGuard {
+    path: PathBuf,
+    added: bool,
+    signature: String,
+}
+
+impl LiveGuard {
+    fn new(id: PadId) -> LiveGuard {
+        LiveGuard::for_signature(signature(id))
+    }
+
+    fn for_signature(signature: String) -> LiveGuard {
+        let base = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_owned());
+        let path = Path::new(&base).join("danstick").join("prompted");
+        let existing = std::fs::read_to_string(&path).unwrap_or_default();
+        let mut added = false;
+        if !existing.lines().any(|line| line.trim() == signature) {
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            if std::fs::write(&path, format!("{existing}{signature}\n")).is_ok() {
+                added = true;
+            }
+        }
+        LiveGuard {
+            path,
+            added,
+            signature,
+        }
+    }
+}
+
+impl Drop for LiveGuard {
+    fn drop(&mut self) {
+        if !self.added {
+            return;
+        }
+        let Ok(existing) = std::fs::read_to_string(&self.path) else {
+            return;
+        };
+        let kept: String = existing
+            .lines()
+            .filter(|line| !line.trim().is_empty() && line.trim() != self.signature)
+            .map(|line| format!("{line}\n"))
+            .collect();
+        let _ = std::fs::write(&self.path, kept);
+    }
+}
+
+struct TestPad {
+    device: VirtualDevice,
+}
+
+impl TestPad {
+    fn new(id: PadId) -> TestPad {
+        TestPad::with_id(id.name, PAD_VID, id.pid)
+    }
+
+    fn with_id(name: &str, vid: u16, pid: u16) -> TestPad {
+        let mut keys = AttributeSet::<KeyCode>::new();
+        for code in FIRST_KEY..FIRST_KEY + KEY_COUNT {
+            keys.insert(KeyCode::new(code));
+        }
+        let stick = AbsInfo::new(128, 0, 255, 0, 0, 0);
+        let hat = AbsInfo::new(0, -1, 1, 0, 0, 0);
+        let device = VirtualDevice::builder()
+            .expect("uinput")
+            .name(name)
+            .input_id(InputId::new(BusType::BUS_USB, vid, pid, 1))
+            .with_keys(&keys)
+            .expect("keys")
+            .with_absolute_axis(&UinputAbsSetup::new(AbsoluteAxisCode::ABS_X, stick))
+            .expect("x")
+            .with_absolute_axis(&UinputAbsSetup::new(AbsoluteAxisCode::ABS_Y, stick))
+            .expect("y")
+            .with_absolute_axis(&UinputAbsSetup::new(AbsoluteAxisCode::ABS_HAT0X, hat))
+            .expect("hat x")
+            .with_absolute_axis(&UinputAbsSetup::new(AbsoluteAxisCode::ABS_HAT0Y, hat))
+            .expect("hat y")
+            .build()
+            .expect("a virtual pad");
+        std::thread::sleep(Duration::from_millis(500));
+        TestPad { device }
+    }
+
+    fn emit(&mut self, kind: u16, code: u16, value: i32) {
+        let events = [
+            InputEvent::new(kind, code, value),
+            InputEvent::new(EventType::SYNCHRONIZATION.0, 0, 0),
+        ];
+        self.device.emit(&events).expect("emit");
+    }
+
+    fn hold(&mut self, code: u16, seconds: f64) {
+        self.emit(EventType::KEY.0, code, 1);
+        std::thread::sleep(Duration::from_secs_f64(seconds));
+        self.emit(EventType::KEY.0, code, 0);
+    }
+
+    fn tap(&mut self, code: u16) {
+        self.hold(code, 0.1);
+    }
+
+    fn push_hat_right(&mut self) {
+        self.emit(EventType::ABSOLUTE.0, 0x10, 1);
+        std::thread::sleep(Duration::from_millis(150));
+        self.emit(EventType::ABSOLUTE.0, 0x10, 0);
+        std::thread::sleep(Duration::from_millis(150));
+    }
+}
+
+struct Daemon {
+    child: Child,
+    sock: UnixStream,
+    events: Vec<Value>,
+    buffer: Vec<u8>,
+    runtime: PathBuf,
+    profiles: PathBuf,
+}
+
+impl Daemon {
+    fn start(root: &Path, id: PadId) -> Daemon {
+        Daemon::start_with(root, id, &[])
+    }
+
+    fn start_with(root: &Path, id: PadId, extra: &[&str]) -> Daemon {
+        Daemon::start_with_env(root, id, extra, &[])
+    }
+
+    /// The daemon's own log, in this test's root. Making a clone is only said
+    /// out loud, so a test asking whether one was made again reads it there.
+    fn start_logging(root: &Path, id: PadId) -> Daemon {
+        Daemon::spawn(root, id, &[], &[], Some(&root.join("daemon.log")))
+    }
+
+    fn start_with_env(root: &Path, id: PadId, extra: &[&str], env: &[(&str, &str)]) -> Daemon {
+        Daemon::spawn(root, id, extra, env, None)
+    }
+
+    fn spawn(
+        root: &Path,
+        id: PadId,
+        extra: &[&str],
+        env: &[(&str, &str)],
+        log: Option<&Path>,
+    ) -> Daemon {
+        let runtime = root.join("run");
+        let config = root.join("config");
+        let profiles = root.join("devices");
+        for dir in [&runtime, &config, &profiles] {
+            std::fs::create_dir_all(dir).expect("mkdir");
+        }
+        let child = Command::new(env!("CARGO_BIN_EXE_danstick-rs"))
+            .arg("serve")
+            .args(extra)
+            .env("XDG_RUNTIME_DIR", &runtime)
+            .env("XDG_CONFIG_HOME", &config)
+            .env("XDG_DATA_HOME", root.join("data"))
+            .env("DANSTICK_PROFILE_DIR", &profiles)
+            .env("DANSTICK_SDL_DB", root.join("sdl_controllers.txt"))
+            .env("DANSTICK_ONLY_DEVICE", id.only)
+            .env("DANSTICK_NO_AUTOSETUP", "1")
+            .env("DANSTICK_DSU_PORT", "0")
+            .env("DANSTICK_CEMU_DIR", root.join("cemu"))
+            .env("DANSTICK_ARES_SETTINGS", root.join("nowhere/ares.bml"))
+            .env("DANSTICK_RYUJINX_CONFIG", root.join("nowhere/Config.json"))
+            .env("RUST_LOG", "info,danstick_daemon=debug")
+            .envs(env.iter().copied())
+            .stdout(Stdio::null())
+            .stderr(match log {
+                Some(path) => Stdio::from(std::fs::File::create(path).expect("a log")),
+                None => Stdio::inherit(),
+            })
+            .spawn()
+            .expect("spawn the daemon");
+        let socket = runtime.join("danstick").join("danstick.sock");
+        let mut sock = None;
+        for _ in 0..50 {
+            if let Ok(stream) = UnixStream::connect(&socket) {
+                sock = Some(stream);
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(200));
+        }
+        let sock = sock.expect("the daemon never came up");
+        sock.set_read_timeout(Some(Duration::from_millis(100)))
+            .expect("timeout");
+        let mut daemon = Daemon {
+            child,
+            sock,
+            events: Vec::new(),
+            buffer: Vec::new(),
+            runtime,
+            profiles,
+        };
+        daemon.pump(0.5);
+        daemon
+    }
+
+    fn pump(&mut self, seconds: f64) {
+        let deadline = Instant::now() + Duration::from_secs_f64(seconds);
+        let mut chunk = [0u8; 65536];
+        while Instant::now() < deadline {
+            match self.sock.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(count) => self.buffer.extend_from_slice(&chunk[..count]),
+                Err(_) => continue,
+            }
+            while let Some(end) = self.buffer.iter().position(|b| *b == b'\n') {
+                let line: Vec<u8> = self.buffer.drain(..=end).collect();
+                if let Ok(value) = serde_json::from_slice::<Value>(&line[..line.len() - 1]) {
+                    self.events.push(value);
+                }
+            }
+        }
+    }
+
+    fn send(&mut self, message: Value) {
+        let mut bytes = serde_json::to_vec(&message).expect("json");
+        bytes.push(b'\n');
+        self.sock.write_all(&bytes).expect("send");
+        self.pump(0.4);
+    }
+
+    fn last(&self, name: &str) -> Option<&Value> {
+        self.events
+            .iter()
+            .rev()
+            .find(|event| event["event"] == name)
+    }
+
+    fn wait_for(
+        &mut self,
+        name: &str,
+        predicate: impl Fn(&Value) -> bool,
+        seconds: f64,
+    ) -> Option<Value> {
+        let deadline = Instant::now() + Duration::from_secs_f64(seconds);
+        while Instant::now() < deadline {
+            self.pump(0.2);
+            if let Some(found) = self
+                .events
+                .iter()
+                .rev()
+                .find(|e| e["event"] == name && predicate(e))
+            {
+                return Some(found.clone());
+            }
+        }
+        None
+    }
+}
+
+impl Daemon {
+    /// Tap a button until the wizard says it bound something, tapping again if
+    /// it does not: a tap that lands inside the capture gap after the previous
+    /// binding is ignored on purpose, and under load that window is not ours to
+    /// time.
+    fn tap_until_bound(&mut self, pad: &mut TestPad, code: u16, index: u64) -> Value {
+        for attempt in 0..4 {
+            pad.tap(code);
+            if let Some(event) = self.wait_for("mapping", |e| e["index"] == index, 3.0) {
+                return event;
+            }
+            eprintln!("tap {attempt} bound nothing; tapping again");
+            std::thread::sleep(Duration::from_millis(600));
+        }
+        panic!("tapping never bound control {index}");
+    }
+
+    /// Hold a button until a `claim` matching `wanted` arrives, holding again
+    /// if it does not: a freshly made pad is grabbed by Steam for a moment, and
+    /// under a full parallel run how long that moment lasts is not ours to say.
+    fn hold_until_claimed(&mut self, pad: &mut TestPad, wanted: impl Fn(&Value) -> bool) -> Value {
+        for attempt in 0..4 {
+            pad.hold(FIRST_KEY, 0.6);
+            if let Some(claim) = self.wait_for("claim", &wanted, 3.0) {
+                return claim;
+            }
+            eprintln!("hold {attempt} claimed nothing; holding again");
+            std::thread::sleep(Duration::from_millis(700));
+        }
+        panic!("holding a button never took a seat");
+    }
+
+    /// Open seating and hold a button until the pad is `player` and published.
+    fn seat_by_hold_as(&mut self, pad: &mut TestPad, player: u64) {
+        self.pump(1.5);
+        self.events.clear();
+        self.send(serde_json::json!({"cmd": "seating", "open": true, "players": 4}));
+        let claim = self.hold_until_claimed(pad, |e| e["name"] != KEYBOARD_SEAT_NAME);
+        assert_eq!(claim["player"], player);
+        self.wait_for("state", |e| e["state"] == "ready", 5.0)
+            .expect("ready after the seat was taken");
+    }
+
+    /// Open seating and hold a button until the pad is player 1 and published.
+    ///
+    /// A pad that appeared a moment ago is not readable by anybody yet when
+    /// Steam is running: it grabs every new joystick briefly to look at it,
+    /// and a hold made under that grab reaches nobody. Measured here at a
+    /// little over a second; the seating test above survives it only because
+    /// it holds once while seating is still closed.
+    fn seat_by_hold(&mut self, pad: &mut TestPad) {
+        self.pump(1.5);
+        self.events.clear();
+        self.send(serde_json::json!({"cmd": "seating", "open": true, "players": 4}));
+        let claim = self.hold_until_claimed(pad, |_| true);
+        assert_eq!(claim["player"], 1);
+        let ready = self
+            .wait_for("state", |e| e["state"] == "ready", 5.0)
+            .expect("ready after the seat was taken");
+        assert_eq!(ready["players"][0]["published"], true);
+    }
+
+    /// Whether the daemon process has exited within `seconds`.
+    fn exited_within(&mut self, seconds: f64) -> bool {
+        let deadline = Instant::now() + Duration::from_secs_f64(seconds);
+        while Instant::now() < deadline {
+            if let Ok(Some(_)) = self.child.try_wait() {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        false
+    }
+}
+
+impl Drop for Daemon {
+    fn drop(&mut self) {
+        let _ = Command::new("kill")
+            .args(["-TERM", &self.child.id().to_string()])
+            .status();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while Instant::now() < deadline {
+            if let Ok(Some(_)) = self.child.try_wait() {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        let _ = self.child.kill();
+    }
+}
+
+#[test]
+fn a_session_claims_confirms_and_writes_what_a_launch_reads() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let _guard = LiveGuard::new(JOURNEY);
+    let root = std::env::temp_dir().join(format!("danstick-daemon-journey-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let mut pad = TestPad::new(JOURNEY);
+    let mut daemon = Daemon::start(&root, JOURNEY);
+
+    let state = daemon
+        .last("state")
+        .expect("a state event on connect")
+        .clone();
+    assert_eq!(state["state"], "idle");
+    assert_eq!(state["identity"], "mirror");
+    assert!(state["pid"].as_u64().is_some());
+
+    daemon.send(serde_json::json!({"cmd": "begin", "players": 2}));
+    let pads = daemon.wait_for("pads", |_| true, 5.0).expect("pads");
+    assert_eq!(pads["count"], 1);
+    daemon
+        .wait_for("state", |e| e["state"] == "assigning", 5.0)
+        .expect("assigning");
+
+    pad.tap(FIRST_KEY);
+    daemon.pump(0.6);
+    assert!(daemon.last("claim").is_none(), "a tap claimed a slot");
+    pad.hold(FIRST_KEY, 0.6);
+    let claim = daemon
+        .wait_for("claim", |_| true, 5.0)
+        .expect("a hold claims the first slot");
+    assert_eq!(claim["player"], 1);
+    assert_eq!(claim["configured"], false);
+    assert_eq!(claim["name"], JOURNEY.name);
+
+    pad.hold(FIRST_KEY + 1, 1.1);
+    let accepted = daemon
+        .wait_for("accepted", |_| true, 5.0)
+        .expect("a second hold confirms");
+    assert_eq!(accepted["players"][0]["player"], 1);
+    let ready = daemon
+        .wait_for("state", |e| e["state"] == "ready", 5.0)
+        .expect("ready after accept");
+    assert_eq!(ready["players"][0]["name"], JOURNEY.name);
+
+    let state_dir = daemon.runtime.join("danstick");
+    let assignments: Value = serde_json::from_str(
+        &std::fs::read_to_string(state_dir.join("assignments.json")).expect("assignments"),
+    )
+    .expect("json");
+    assert_eq!(assignments[0]["player"], 1);
+    assert_eq!(assignments[0]["name"], JOURNEY.name);
+    let launch = std::fs::read_to_string(state_dir.join("launch.cfg")).expect("launch.cfg");
+    assert!(launch.contains("input_player16_joypad_index"), "{launch}");
+    assert!(launch.contains("config_save_on_exit = \"false\""));
+    assert!(state_dir.join("launch.args").is_file(), "no launch.args");
+    let autoconfig = state_dir
+        .join("autoconfig")
+        .join("udev")
+        .join("danstick Player 1.cfg");
+    let profile = std::fs::read_to_string(&autoconfig).expect("an autoconfig profile");
+    assert!(
+        profile.contains("input_device = \"danstick Player 1\""),
+        "{profile}"
+    );
+    let sdl = std::fs::read_to_string(root.join("sdl_controllers.txt")).expect("the SDL database");
+    assert!(sdl.contains("danstick Player 1"), "{sdl}");
+    let mapping = daemon.last("sdl_mapping").expect("sdl_mapping");
+    assert_eq!(mapping["lines"].as_array().map(Vec::len), Some(1));
+
+    let listed = Command::new(env!("CARGO_BIN_EXE_danstick-rs"))
+        .args(["list", "--json"])
+        .env("XDG_RUNTIME_DIR", &daemon.runtime)
+        .env("XDG_CONFIG_HOME", root.join("config"))
+        .env("XDG_DATA_HOME", root.join("data"))
+        .env("DANSTICK_PROFILE_DIR", &daemon.profiles)
+        .env("DANSTICK_ONLY_DEVICE", JOURNEY.only)
+        .output()
+        .expect("list --json");
+    assert!(listed.status.success(), "{listed:?}");
+    let entries: Value = serde_json::from_slice(&listed.stdout).expect("valid JSON");
+    let entries = entries.as_array().expect("an array");
+    assert_eq!(entries.len(), 1, "{entries:?}");
+    let seated = &entries[0];
+    assert_eq!(seated["player"], 1);
+    assert_eq!(seated["controller"]["name"], JOURNEY.name);
+    assert_eq!(seated["controller"]["configured"], false, "not mapped yet");
+    let node = seated["virtual"]["node"]
+        .as_str()
+        .expect("the clone's node")
+        .to_owned();
+    assert!(node.starts_with("/dev/input/event"), "{node}");
+    let guid = seated["virtual"]["guid"].as_str().expect("guid");
+    assert!(
+        mapping["lines"][0]
+            .as_str()
+            .expect("line")
+            .starts_with(guid),
+        "list says {guid}, the SDL line says {}",
+        mapping["lines"][0]
+    );
+    assert_eq!(seated["controller"]["motion"], false);
+    assert!(seated["controller"]["motion_node"].is_null());
+    let clones: BTreeSet<String> = std::fs::read_dir("/sys/class/input")
+        .expect("sysfs")
+        .flatten()
+        .filter_map(|entry| std::fs::read_to_string(entry.path().join("name")).ok())
+        .map(|name| name.trim().to_owned())
+        .collect();
+    assert!(
+        clones.contains("danstick Player 1"),
+        "no clone among {clones:?}"
+    );
+
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "begin", "players": 2}));
+    daemon
+        .wait_for("state", |e| e["state"] == "assigning", 5.0)
+        .expect("assigning");
+    pad.hold(FIRST_KEY, 0.6);
+    let claim = daemon
+        .wait_for("claim", |e| e["configured"] == false, 5.0)
+        .expect("claimed again");
+    assert_eq!(claim["player"], 1);
+    daemon.send(serde_json::json!({"cmd": "choose_layout", "player": 1}));
+    let choice = daemon.last("layout_choice").expect("the picker").clone();
+    assert_eq!(choice["active"], true);
+    assert_eq!(choice["kind"], "layout");
+    let choices: Vec<String> = choice["choices"]
+        .as_array()
+        .expect("choices")
+        .iter()
+        .map(|c| c["id"].as_str().expect("id").to_owned())
+        .collect();
+    assert!(choices.contains(&"snes".to_owned()), "{choices:?}");
+    let target = choices.iter().position(|id| id == "snes").expect("snes");
+    let start = choice["index"].as_u64().expect("index") as usize;
+    let steps = (target + choices.len() - start) % choices.len();
+    for _ in 0..steps {
+        pad.push_hat_right();
+        daemon.pump(0.2);
+    }
+    assert_eq!(
+        daemon.last("layout_choice").expect("moved")["chosen"],
+        "snes"
+    );
+    pad.hold(FIRST_KEY + 2, 1.1);
+    let walking = daemon
+        .wait_for("mapping", |e| e["done"] == false, 5.0)
+        .expect("the wizard opened");
+    assert_eq!(walking["layout"]["id"], "snes");
+    let total = walking["total"].as_u64().expect("total") as u16;
+    for step in 0..total {
+        std::thread::sleep(Duration::from_millis(450));
+        pad.tap(FIRST_KEY + step % KEY_COUNT);
+        daemon.pump(0.2);
+    }
+    let finished = daemon
+        .wait_for("mapping", |e| e["done"] == true, 5.0)
+        .expect("the wizard finished");
+    assert_eq!(finished["stored"], true, "{finished}");
+    let stored: Value = serde_json::from_str(
+        &std::fs::read_to_string(
+            std::fs::read_dir(&daemon.profiles)
+                .expect("profiles")
+                .flatten()
+                .next()
+                .expect("a profile")
+                .path(),
+        )
+        .expect("read"),
+    )
+    .expect("json");
+    let buttons = &stored["mappings"][""]["buttons"];
+    assert!(buttons.get("a").is_some(), "{stored}");
+    assert_eq!(stored["mappings"][""]["layout"], "snes");
+
+    daemon.send(serde_json::json!({"cmd": "status"}));
+    let state = daemon.last("state").expect("state").clone();
+    assert_eq!(state["players"][0]["configured"], true, "{state}");
+    assert_eq!(state["players"][0]["mappings"], serde_json::json!([""]));
+
+    daemon.send(serde_json::json!({"cmd": "cancel"}));
+    let state = daemon
+        .wait_for("state", |e| e["state"] == "ready", 5.0)
+        .expect("ready after cancel");
+    assert_eq!(state["state"], "ready");
+
+    drop(daemon);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_malformed_command_is_answered_not_fatal() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let _guard = LiveGuard::new(HOSTILE);
+    let root = std::env::temp_dir().join(format!("danstick-daemon-hostile-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let _pad = TestPad::new(HOSTILE);
+    let mut daemon = Daemon::start(&root, HOSTILE);
+
+    daemon.send(serde_json::json!({"cmd": "begin", "players": "lots"}));
+    let error = daemon
+        .wait_for(
+            "error",
+            |e| e["message"].as_str().is_some_and(|m| m.contains("begin")),
+            3.0,
+        )
+        .expect("an error reply naming the command");
+    assert!(
+        error["message"]
+            .as_str()
+            .expect("message")
+            .contains("not a number"),
+        "{error}"
+    );
+    daemon.send(serde_json::json!({"cmd": "nonsense"}));
+    daemon
+        .wait_for(
+            "error",
+            |e| {
+                e["message"]
+                    .as_str()
+                    .is_some_and(|m| m.contains("unknown command"))
+            },
+            3.0,
+        )
+        .expect("unknown command refused");
+    daemon.sock.write_all(b"this is not json\n").expect("send");
+    let poison = format!("{}{}\n", "[".repeat(100_000), "]".repeat(100_000));
+    daemon.sock.write_all(poison.as_bytes()).expect("send");
+    let before = daemon
+        .events
+        .iter()
+        .filter(|e| e["event"] == "state")
+        .count();
+    daemon.send(serde_json::json!({"cmd": "status"}));
+    daemon
+        .wait_for("state", |_| true, 5.0)
+        .expect("still answering");
+    let states = daemon
+        .events
+        .iter()
+        .filter(|e| e["event"] == "state")
+        .count();
+    assert!(
+        states > before,
+        "the daemon stopped answering: {} state events",
+        states
+    );
+    assert!(
+        matches!(daemon.child.try_wait(), Ok(None)),
+        "the daemon exited"
+    );
+
+    drop(daemon);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// One controller that is switched off must not cost the others theirs.
+#[test]
+fn a_sleeping_pad_does_not_unpublish_the_others() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let _guard = LiveGuard::new(SLEEPER);
+    let root = std::env::temp_dir().join(format!("danstick-sleeper-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("run/danstick")).expect("mkdir");
+    let pad = TestPad::new(SLEEPER);
+    let present = std::fs::read_dir("/sys/class/input")
+        .expect("sysfs")
+        .flatten()
+        .find(|entry| {
+            std::fs::read_to_string(entry.path().join("device/name"))
+                .map(|name| name.trim() == SLEEPER.name)
+                .unwrap_or(false)
+        })
+        .map(|entry| format!("/dev/input/{}", entry.file_name().to_string_lossy()))
+        .expect("the test pad has a node");
+
+    let assignments = serde_json::json!([
+        {"player": 1, "path": present, "name": SLEEPER.name,
+         "phys": "", "vid": PAD_VID, "pid": SLEEPER.pid},
+        {"player": 2, "path": "/dev/input/event9999", "name": "Xbox Wireless Controller",
+         "phys": "50:2e:91:08:d7:d1", "vid": 1118, "pid": 654}
+    ]);
+    std::fs::write(
+        root.join("run/danstick/assignments.json"),
+        serde_json::to_string_pretty(&assignments).expect("json"),
+    )
+    .expect("seed the assignments");
+
+    let mut daemon = Daemon::start(&root, SLEEPER);
+    let state = daemon
+        .wait_for("state", |e| e["state"] == "ready", 10.0)
+        .unwrap_or_else(|| {
+            panic!(
+                "the daemon never went ready; one sleeping pad took the roster down: {:?}",
+                daemon.last("state")
+            )
+        });
+
+    // The sleeping pad's seat survives a save.
+    daemon.send(serde_json::json!({"cmd": "status"}));
+    daemon.pump(0.5);
+    let saved: Value = serde_json::from_str(
+        &std::fs::read_to_string(root.join("run/danstick/assignments.json")).expect("assignments"),
+    )
+    .expect("json");
+    let seats: Vec<u64> = saved
+        .as_array()
+        .expect("array")
+        .iter()
+        .map(|entry| entry["player"].as_u64().expect("player"))
+        .collect();
+    assert_eq!(seats, vec![1, 2], "the sleeping pad lost its seat: {saved}");
+
+    let players = state["players"].as_array().expect("players");
+    let seats: Vec<u64> = players
+        .iter()
+        .map(|p| p["player"].as_u64().expect("player"))
+        .collect();
+    assert_eq!(seats, vec![1], "only live seats are drawn from claims");
+
+    assert_eq!(players[0]["published"], true, "{state}");
+    let clones: BTreeSet<String> = std::fs::read_dir("/sys/class/input")
+        .expect("sysfs")
+        .flatten()
+        .filter_map(|entry| std::fs::read_to_string(entry.path().join("name")).ok())
+        .map(|name| name.trim().to_owned())
+        .collect();
+    assert!(
+        clones.contains("danstick Player 1"),
+        "player 1 was not republished because player 2 was asleep: {clones:?}"
+    );
+
+    drop(daemon);
+    drop(pad);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_pad_can_take_a_free_seat_without_a_session() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let _guard = LiveGuard::new(JOINER);
+    let root = std::env::temp_dir().join(format!("danstick-seating-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let mut pad = TestPad::new(JOINER);
+    let mut daemon = Daemon::start(&root, JOINER);
+
+    let state = daemon.wait_for("state", |_| true, 5.0).expect("a greeting");
+    assert_eq!(state["state"], "idle");
+    assert_eq!(state["players"].as_array().map(Vec::len), Some(0));
+
+    pad.hold(FIRST_KEY, 0.6);
+    daemon.pump(0.8);
+    assert!(
+        daemon.last("claim").is_none(),
+        "a seat was taken while seating was closed"
+    );
+
+    // A freshly made pad is grabbed by Steam for a moment (see seat_by_hold);
+    // under a full parallel run the hold above no longer covers that window.
+    daemon.pump(1.5);
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "seating", "open": true, "players": 4}));
+    let claim = daemon.hold_until_claimed(&mut pad, |_| true);
+    assert_eq!(claim["player"], 1);
+    assert_eq!(claim["name"], JOINER.name);
+
+    assert!(
+        !daemon
+            .events
+            .iter()
+            .any(|event| event["event"] == "state" && event["state"] == "assigning"),
+        "a session was opened behind the scenes"
+    );
+
+    let ready = daemon
+        .wait_for("state", |e| e["state"] == "ready", 5.0)
+        .expect("ready after the seat was taken");
+    assert_eq!(ready["players"][0]["player"], 1);
+    assert_eq!(ready["players"][0]["published"], true);
+    let clones: BTreeSet<String> = std::fs::read_dir("/sys/class/input")
+        .expect("sysfs")
+        .flatten()
+        .filter_map(|entry| std::fs::read_to_string(entry.path().join("name")).ok())
+        .map(|name| name.trim().to_owned())
+        .collect();
+    assert!(clones.contains("danstick Player 1"), "{clones:?}");
+    let state_dir = daemon.runtime.join("danstick");
+    assert!(state_dir.join("assignments.json").is_file());
+    assert!(state_dir
+        .join("autoconfig/udev/danstick Player 1.cfg")
+        .is_file());
+
+    // A seated pad is being *played with*.
+    daemon.events.clear();
+    pad.hold(FIRST_KEY + 1, 0.8);
+    daemon.pump(1.0);
+    assert!(
+        daemon.last("claim").is_none(),
+        "a pad that already held a seat claimed another"
+    );
+
+    daemon.send(serde_json::json!({"cmd": "seating", "open": false}));
+    daemon.events.clear();
+    pad.hold(FIRST_KEY, 0.6);
+    daemon.pump(0.8);
+    assert!(daemon.last("claim").is_none());
+
+    drop(daemon);
+    drop(pad);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn how_long_a_hold_takes_to_claim_a_seat_can_be_set() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let _guard = LiveGuard::new(HOLDER);
+    let root = std::env::temp_dir().join(format!("danstick-hold-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let mut pad = TestPad::new(HOLDER);
+    let mut daemon =
+        Daemon::start_with_env(&root, HOLDER, &[], &[("DANSTICK_HOLD_SECONDS", "1.5")]);
+    daemon.wait_for("state", |_| true, 5.0).expect("a greeting");
+
+    // A freshly made pad is grabbed by Steam for a moment (see seat_by_hold).
+    daemon.pump(1.5);
+    daemon.events.clear();
+    // No `hold` field: the length is the environment's, and asking for seating
+    // without one must not reset it.
+    daemon.send(serde_json::json!({"cmd": "seating", "open": true, "players": 4}));
+
+    // A second is a claim at the default and is not one at 1.5s. The progress
+    // events are what say the daemon saw the hold: without them this would
+    // pass just as well for a pad nobody was reading.
+    pad.hold(FIRST_KEY, 1.0);
+    daemon.pump(0.5);
+    let seen: Vec<f64> = daemon
+        .events
+        .iter()
+        .filter(|event| event["event"] == "progress")
+        .filter_map(|event| event["frac"].as_f64())
+        .collect();
+    assert!(!seen.is_empty(), "the daemon never saw the hold at all");
+    assert!(
+        daemon.last("claim").is_none(),
+        "a second took a seat under a hold of one and a half"
+    );
+    let highest = seen.iter().copied().fold(0.0_f64, f64::max);
+    let lowest = seen.iter().copied().fold(1.0_f64, f64::min);
+    assert!(
+        highest < 1.0,
+        "progress reached {highest} in a second of a 1.5s hold"
+    );
+    // Climbing rather than a single reading: how far it gets in a second is a
+    // question about this machine's load, and not what is being promised.
+    assert!(highest > lowest, "the fill never moved: {seen:?}");
+
+    // Opening again with a length of its own replaces it, no restart needed.
+    daemon.events.clear();
+    daemon.send(serde_json::json!({
+        "cmd": "seating", "open": true, "players": 4, "hold": 0.25
+    }));
+    let claim = daemon.hold_until_claimed(&mut pad, |_| true);
+    assert_eq!(claim["player"], 1);
+    assert_eq!(claim["name"], HOLDER.name);
+    daemon
+        .wait_for("state", |e| e["state"] == "ready", 5.0)
+        .expect("ready after the seat was taken");
+
+    drop(daemon);
+    drop(pad);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn two_people_pairing_at_once_are_two_fills_in_the_order_they_pressed() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let _first = LiveGuard::new(PAIR_FIRST);
+    let _second = LiveGuard::new(PAIR_SECOND);
+    let root = std::env::temp_dir().join(format!("danstick-pair-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let mut one = TestPad::new(PAIR_FIRST);
+    let mut two = TestPad::new(PAIR_SECOND);
+    let mut daemon = Daemon::start(&root, PAIR_FIRST);
+    daemon.wait_for("state", |_| true, 5.0).expect("a greeting");
+
+    // A button already down when seating opens is not a hold: the press the
+    // daemon never saw cannot start one.
+    daemon.pump(2.5);
+    daemon.events.clear();
+    one.emit(EventType::KEY.0, FIRST_KEY, 1);
+    daemon.pump(0.3);
+    daemon.send(serde_json::json!({
+        "cmd": "seating", "open": true, "players": 4, "hold": 3.0
+    }));
+    daemon.pump(0.6);
+    assert!(
+        !daemon
+            .events
+            .iter()
+            .any(|event| event["event"] == "progress"),
+        "a button held across the open started filling: {:?}",
+        daemon.events
+    );
+    one.emit(EventType::KEY.0, FIRST_KEY, 0);
+    daemon.pump(0.3);
+    daemon.events.clear();
+
+    // Pad two presses first, so press order and device order disagree. Both
+    // have to be readable at once, and a pad Steam grabbed on arrival is not
+    // (see seat_by_hold), so this is held until it takes rather than once.
+    let mut fills: Vec<Value> = Vec::new();
+    for attempt in 0..4 {
+        daemon.events.clear();
+        two.emit(EventType::KEY.0, FIRST_KEY, 1);
+        std::thread::sleep(Duration::from_millis(250));
+        one.emit(EventType::KEY.0, FIRST_KEY, 1);
+        daemon.pump(0.8);
+        fills = daemon
+            .events
+            .iter()
+            .filter(|event| event["event"] == "progress")
+            .cloned()
+            .collect();
+        let nodes: BTreeSet<&str> = fills.iter().filter_map(|e| e["node"].as_str()).collect();
+        if nodes.len() == 2 {
+            // A fresh window: a release from a previous attempt lands inside
+            // this one, and a promotion it caused is not the steady state.
+            daemon.events.clear();
+            daemon.pump(0.4);
+            fills = daemon
+                .events
+                .iter()
+                .filter(|event| event["event"] == "progress")
+                .cloned()
+                .collect();
+            break;
+        }
+        eprintln!("attempt {attempt}: {} pad(s) filling; again", nodes.len());
+        two.emit(EventType::KEY.0, FIRST_KEY, 0);
+        one.emit(EventType::KEY.0, FIRST_KEY, 0);
+        daemon.pump(0.8);
+    }
+
+    let nodes: BTreeSet<&str> = fills.iter().filter_map(|e| e["node"].as_str()).collect();
+    assert_eq!(nodes.len(), 2, "two holds came out as one fill: {fills:?}");
+    for event in &fills {
+        assert!(event["name"].is_string(), "a fill with no pad: {event}");
+    }
+
+    // Whichever press the daemon saw first is seat one and is further along.
+    // Which one that is cannot be asserted: a pad Steam grabbed on arrival is
+    // read late, so the order of the emits is not the order of the presses.
+    let latest = |name: &str| {
+        fills
+            .iter()
+            .rev()
+            .find(|event| event["name"] == name)
+            .unwrap_or_else(|| panic!("no fill for {name}"))
+    };
+    let one_fill = latest(PAIR_FIRST.name);
+    let two_fill = latest(PAIR_SECOND.name);
+    let (ahead, behind) = if one_fill["player"] == 1 {
+        (one_fill, two_fill)
+    } else {
+        (two_fill, one_fill)
+    };
+    assert_eq!(ahead["player"], 1, "nobody was filling towards seat one");
+    assert_eq!(behind["player"], 2, "{behind}");
+    // Not strictly ahead: two presses read in the same tick start together, and
+    // the ordering under a tie is pinned in assign.rs where the clock is ours.
+    assert!(
+        ahead["frac"].as_f64() >= behind["frac"].as_f64(),
+        "the one filling towards seat one is behind: {ahead} {behind}"
+    );
+    let leader = ahead["name"].as_str().expect("a name").to_owned();
+    let next = behind["name"].as_str().expect("a name").to_owned();
+
+    // The one in front lets go: said out loud, and its place is lost.
+    daemon.events.clear();
+    if leader == PAIR_FIRST.name {
+        one.emit(EventType::KEY.0, FIRST_KEY, 0);
+    } else {
+        two.emit(EventType::KEY.0, FIRST_KEY, 0);
+    }
+    let released = daemon
+        .wait_for(
+            "progress",
+            |event| event["name"] == leader && event["frac"] == 0.0,
+            3.0,
+        )
+        .expect("the release was never said out loud");
+    assert!(
+        released.get("player").is_none(),
+        "a released fill still names a seat: {released}"
+    );
+
+    // The one still holding is promoted into the seat that was given up.
+    let promoted = daemon
+        .wait_for(
+            "progress",
+            |event| event["name"] == next && event["player"] == 1,
+            3.0,
+        )
+        .expect("the next in line was not moved up");
+    assert!(promoted["frac"].as_f64().unwrap_or(0.0) > 0.0, "{promoted}");
+
+    // The one still holding takes seat one, not seat two.
+    let claim = daemon
+        .wait_for("claim", |event| event["name"] == next, 6.0)
+        .expect("the pad that kept holding took a seat");
+    assert_eq!(claim["player"], 1, "letting go did not lose the place");
+
+    one.emit(EventType::KEY.0, FIRST_KEY, 0);
+    two.emit(EventType::KEY.0, FIRST_KEY, 0);
+    drop(daemon);
+    drop(one);
+    drop(two);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// The claim that landed first used to reset the whole assigner, so the second
+/// person's fill died on the spot and no down edge ever came back to restart it.
+#[test]
+fn one_person_taking_a_seat_leaves_the_next_person_still_holding() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let _first = LiveGuard::new(BOTH_FIRST);
+    let _second = LiveGuard::new(BOTH_SECOND);
+    let root = std::env::temp_dir().join(format!("danstick-both-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let mut one = TestPad::new(BOTH_FIRST);
+    let mut two = TestPad::new(BOTH_SECOND);
+    let mut daemon = Daemon::start(&root, BOTH_FIRST);
+    daemon.wait_for("state", |_| true, 5.0).expect("a greeting");
+    daemon.pump(2.5);
+
+    // Long enough both presses overlap under load; pressed after the open, since a
+    // button already down when seating opens is not a hold.
+    daemon.send(serde_json::json!({
+        "cmd": "seating", "open": true, "players": 4, "hold": 2.0
+    }));
+
+    // Both have to be readable at once, and a pad Steam grabbed on arrival is
+    // not (see seat_by_hold), so this is held until it takes rather than once.
+    let mut filling = 0;
+    for attempt in 0..4 {
+        daemon.events.clear();
+        one.emit(EventType::KEY.0, FIRST_KEY, 1);
+        std::thread::sleep(Duration::from_millis(300));
+        two.emit(EventType::KEY.0, FIRST_KEY, 1);
+        daemon.pump(0.8);
+        let nodes: BTreeSet<&str> = daemon
+            .events
+            .iter()
+            .filter(|event| event["event"] == "progress")
+            .filter_map(|event| event["node"].as_str())
+            .collect();
+        filling = nodes.len();
+        if filling == 2 {
+            break;
+        }
+        eprintln!("attempt {attempt}: {filling} pad(s) filling; again");
+        one.emit(EventType::KEY.0, FIRST_KEY, 0);
+        two.emit(EventType::KEY.0, FIRST_KEY, 0);
+        daemon.pump(0.8);
+    }
+    assert_eq!(filling, 2, "two holds never ran at once");
+
+    // Neither thumb lifts from here on: both claims have to arrive anyway.
+    let first_claim = daemon
+        .wait_for("claim", |_| true, 6.0)
+        .expect("nobody took a seat");
+    let first_name = first_claim["name"].as_str().expect("a name").to_owned();
+    let second_claim = daemon
+        .wait_for("claim", |event| event["name"] != first_name.as_str(), 6.0)
+        .expect("the second hold was thrown away by the first claim");
+
+    let mut players = [
+        first_claim["player"].as_u64().expect("a player"),
+        second_claim["player"].as_u64().expect("a player"),
+    ];
+    players.sort_unstable();
+    assert_eq!(players, [1, 2], "two claims, one seat each: {players:?}");
+    let second_name = second_claim["name"].as_str().expect("a name");
+    assert_ne!(first_name.as_str(), second_name, "one pad claimed twice");
+
+    one.emit(EventType::KEY.0, FIRST_KEY, 0);
+    two.emit(EventType::KEY.0, FIRST_KEY, 0);
+    drop(daemon);
+    drop(one);
+    drop(two);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// One, for seats published before anybody takes them.
+const SEATS_FIRST: PadId = PadId {
+    name: "DANSTICK RSTESTSEATS one",
+    pid: 0x0036,
+    only: "RSTESTSEATS",
+};
+const SEATS_SECOND: PadId = PadId {
+    name: "DANSTICK RSTESTSEATS two",
+    pid: 0x0037,
+    only: "RSTESTSEATS",
+};
+
+/// A launch binds the `/dev/input` it starts with and nothing can be added to
+/// it afterwards, so a seat has to exist before the person does -- and taking
+/// one has to keep its node, or the game is bound to a device nobody feeds.
+#[test]
+fn a_seat_reserved_for_a_launch_keeps_its_node_when_somebody_takes_it() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let _guard = LiveGuard::new(SEATS_FIRST);
+    let _second = LiveGuard::new(SEATS_SECOND);
+    let root = std::env::temp_dir().join(format!("danstick-seats-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let mut pad = TestPad::new(SEATS_FIRST);
+    let mut joiner = TestPad::new(SEATS_SECOND);
+    // The 360 identity: a reserved seat's layout has to be known before its pad.
+    let mut daemon = Daemon::start_with_env(
+        &root,
+        SEATS_FIRST,
+        &[],
+        &[("DANSTICK_PAD_IDENTITY", "xbox360")],
+    );
+    daemon.wait_for("state", |_| true, 5.0).expect("a greeting");
+    daemon.pump(2.0);
+
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "reserve", "players": 4}));
+    let state = daemon
+        .wait_for(
+            "state",
+            |event| {
+                event["reserved"]
+                    .as_array()
+                    .is_some_and(|seats| !seats.is_empty())
+            },
+            6.0,
+        )
+        .expect("the seats were never reserved");
+    let seats = state["reserved"].as_array().expect("reserved").clone();
+    assert_eq!(seats.len(), 4, "four seats were asked for: {state}");
+    for (index, seat) in seats.iter().enumerate() {
+        let player = index as u64 + 1;
+        assert_eq!(seat["player"], player);
+        assert_eq!(seat["name"], format!("danstick Player {player}"));
+        assert!(
+            seat["guid"].as_str().is_some_and(|guid| guid.len() == 32),
+            "a seat with no GUID for a launch to bind: {seat}"
+        );
+        let node = seat["node"].as_str().expect("a node");
+        assert!(
+            std::path::Path::new(node).exists(),
+            "the seat was announced but its node is not there: {seat}"
+        );
+    }
+    // Every seat's mapping is written, not only the ones with somebody in them:
+    // a game bound to port 3 needs SDL to know what port 3 is.
+    let sdl = std::fs::read_to_string(root.join("sdl_controllers.txt")).expect("the SDL database");
+    for player in 1..=4 {
+        assert!(
+            sdl.contains(&format!("danstick Player {player}")),
+            "seat {player} has no mapping for a launch to bind:\n{sdl}"
+        );
+    }
+    for seat in &seats {
+        let guid = seat["guid"].as_str().expect("a guid");
+        assert!(
+            sdl.contains(guid),
+            "the GUID announced for {seat} is not the one written:\n{sdl}"
+        );
+    }
+
+    let reserved_one = seats[0]["node"].as_str().expect("a node").to_owned();
+    // Held open the way a running game holds it: the kernel reuses event numbers,
+    // so only this fd -- not the node reappearing -- proves it is the same device.
+    let mut bound = evdev::Device::open(&reserved_one).expect("a launch opens the seat");
+    bound.set_nonblocking(true).expect("nonblocking");
+
+    // The device has to be the one already there.
+    daemon.send(serde_json::json!({"cmd": "seating", "open": true, "players": 4}));
+    daemon.events.clear();
+    daemon.hold_until_claimed(&mut pad, |event| event["name"] == SEATS_FIRST.name);
+    let seated = daemon
+        .wait_for("state", |event| event["state"] == "ready", 10.0)
+        .expect("ready after the seat was taken");
+    let left: Vec<u64> = seated["reserved"]
+        .as_array()
+        .expect("reserved")
+        .iter()
+        .filter_map(|seat| seat["player"].as_u64())
+        .collect();
+    assert_eq!(
+        left,
+        vec![2, 3, 4],
+        "seat one is taken, not reserved: {seated}"
+    );
+
+    assert!(
+        presses_reach(&mut bound, &mut pad),
+        "the seat was taken and the device the launch held went silent"
+    );
+
+    // Now the case that matters: a join while the game runs, not the seat-one
+    // rebuild. Every seat still waiting is opened first, because which one the
+    // joiner takes is the daemon's to decide, not this test's to assume.
+    let mut waiting: Vec<(u64, evdev::Device)> = seated["reserved"]
+        .as_array()
+        .expect("reserved")
+        .iter()
+        .filter_map(|seat| {
+            let player = seat["player"].as_u64()?;
+            let device = evdev::Device::open(seat["node"].as_str()?).ok()?;
+            device.set_nonblocking(true).ok()?;
+            Some((player, device))
+        })
+        .collect();
+    assert!(
+        !waiting.is_empty(),
+        "no seat was left to join into: {seated}"
+    );
+
+    daemon.events.clear();
+    let joined = daemon.hold_until_claimed(&mut joiner, |event| event["name"] == SEATS_SECOND.name);
+    daemon
+        .wait_for("state", |event| event["state"] == "ready", 10.0)
+        .expect("ready after the join");
+    let took = joined["player"].as_u64().expect("a player");
+    let (_, bound_joined) = waiting
+        .iter_mut()
+        .find(|(player, _)| *player == took)
+        .unwrap_or_else(|| panic!("the joiner took seat {took}, which was never reserved"));
+    assert!(
+        presses_reach(bound_joined, &mut joiner),
+        "somebody joined and the seat the game was bound to went silent"
+    );
+
+    // Nought gives the seats back, which is how a launch ends.
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "reserve", "players": 0}));
+    let after = daemon
+        .wait_for(
+            "state",
+            |event| {
+                event["reserved"]
+                    .as_array()
+                    .is_some_and(|seats| seats.is_empty())
+            },
+            6.0,
+        )
+        .expect("the seats were never given back");
+    assert!(after["reserved"].as_array().expect("reserved").is_empty());
+
+    drop(daemon);
+    drop(pad);
+    drop(joiner);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Whether a press on `pad` comes out of a device already open.
+fn presses_reach(device: &mut evdev::Device, pad: &mut TestPad) -> bool {
+    for _ in 0..40 {
+        pad.emit(EventType::KEY.0, FIRST_KEY, 1);
+        pad.emit(EventType::KEY.0, FIRST_KEY, 0);
+        std::thread::sleep(Duration::from_millis(100));
+        if let Ok(events) = device.fetch_events() {
+            if events
+                .filter(|event| event.event_type() == EventType::KEY)
+                .any(|event| event.value() == 1)
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Two for a capture that must survive somebody else joining.
+const KEEP_FIRST: PadId = PadId {
+    name: "DANSTICK RSTESTKEEP one",
+    pid: 0x0034,
+    only: "RSTESTKEEP",
+};
+const KEEP_SECOND: PadId = PadId {
+    name: "DANSTICK RSTESTKEEP two",
+    pid: 0x0035,
+    only: "RSTESTKEEP",
+};
+
+/// A room of four, for a join that must not cost more the fuller the room.
+const ROOM: [PadId; 4] = [
+    PadId {
+        name: "DANSTICK RSTESTROOM one",
+        pid: 0x0030,
+        only: "RSTESTROOM",
+    },
+    PadId {
+        name: "DANSTICK RSTESTROOM two",
+        pid: 0x0031,
+        only: "RSTESTROOM",
+    },
+    PadId {
+        name: "DANSTICK RSTESTROOM three",
+        pid: 0x0032,
+        only: "RSTESTROOM",
+    },
+    PadId {
+        name: "DANSTICK RSTESTROOM four",
+        pid: 0x0033,
+        only: "RSTESTROOM",
+    },
+];
+
+/// Every join used to work out every seated player's files again, so a seat cost
+/// more the fuller the room, and the fourth person waited longest to see their own.
+#[test]
+fn a_join_does_not_work_the_rest_of_the_room_out_again() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let _guards: Vec<LiveGuard> = ROOM.iter().map(|id| LiveGuard::new(*id)).collect();
+    let root = std::env::temp_dir().join(format!("danstick-room-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let mut pads: Vec<TestPad> = ROOM.iter().map(|id| TestPad::new(*id)).collect();
+    let mut daemon = Daemon::start_logging(&root, ROOM[0]);
+    daemon.wait_for("state", |_| true, 5.0).expect("a greeting");
+    daemon.pump(2.5);
+    daemon.send(serde_json::json!({"cmd": "seating", "open": true, "players": 4}));
+
+    for (index, pad) in pads.iter_mut().enumerate() {
+        seat_by_holding(&mut daemon, pad, ROOM[index].name);
+        daemon
+            .wait_for("state", |event| event["state"] == "ready", 10.0)
+            .expect("ready after a seat was taken");
+        daemon.pump(0.4);
+    }
+
+    // Counted rather than timed: how long a loaded machine takes is not the
+    // promise, that it does each player's once is.
+    for player in 1..=4 {
+        let times = worked_out(&root, player);
+        assert_eq!(
+            times, 1,
+            "player {player}'s files were worked out {times} times, once per join after it"
+        );
+    }
+
+    drop(daemon);
+    drop(pads);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Caching what a player's files were worked out from has to notice a capture:
+/// nothing rewrites the consumers when the wizard stores one, so the next join
+/// would otherwise write the guess it made before.
+#[test]
+fn a_capture_is_not_lost_when_the_next_person_joins() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let _first = LiveGuard::new(KEEP_FIRST);
+    let _second = LiveGuard::new(KEEP_SECOND);
+    let root = std::env::temp_dir().join(format!("danstick-keep-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let mut one = TestPad::new(KEEP_FIRST);
+    let mut two = TestPad::new(KEEP_SECOND);
+    let mut daemon = Daemon::start_logging(&root, KEEP_FIRST);
+    daemon.wait_for("state", |_| true, 5.0).expect("a greeting");
+    daemon.pump(2.5);
+    daemon.send(serde_json::json!({"cmd": "seating", "open": true, "players": 4}));
+    daemon.events.clear();
+    daemon.hold_until_claimed(&mut one, |event| event["name"] == KEEP_FIRST.name);
+    daemon
+        .wait_for("state", |event| event["state"] == "ready", 10.0)
+        .expect("ready after the first seat");
+    daemon.pump(0.6);
+
+    // A mapping stored for player one. Written straight to the profile store
+    // because `danstick map` from a terminal is another process: nothing tells
+    // the daemon, and nothing rewrites the consumers either way.
+    let before = worked_out(&root, 1);
+    let stored = serde_json::json!({
+        "signature": format!("1209:{:04x}:{}", KEEP_FIRST.pid, KEEP_FIRST.name),
+        "name": KEEP_FIRST.name,
+        "mappings": {"": {"layout": "snes", "buttons": {"a": {"kind": "button", "index": 4}}}}
+    });
+    std::fs::write(
+        root.join("devices").join(profile_filename(KEEP_FIRST)),
+        serde_json::to_string_pretty(&stored).expect("json"),
+    )
+    .expect("store a mapping");
+
+    // Somebody else joins. Player one's files have to be written from the
+    // capture, which means working them out again rather than reusing.
+    daemon.events.clear();
+    daemon.hold_until_claimed(&mut two, |event| event["name"] == KEEP_SECOND.name);
+    daemon
+        .wait_for("state", |event| event["state"] == "ready", 10.0)
+        .expect("ready after the second seat");
+    daemon.pump(0.8);
+    assert!(
+        worked_out(&root, 1) > before,
+        "the join reused what player one's files said before its capture"
+    );
+
+    drop(daemon);
+    drop(one);
+    drop(two);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Hold a button down until this pad takes a seat, rather than in pulses: four
+/// pads at once is the heaviest journey here and a fixed pulse is this machine's
+/// load rather than a promise. The buffer is cleared first, since an earlier
+/// seat's claim would otherwise answer for this one.
+fn seat_by_holding(daemon: &mut Daemon, pad: &mut TestPad, name: &'static str) {
+    for attempt in 0..5 {
+        daemon.events.clear();
+        pad.emit(EventType::KEY.0, FIRST_KEY, 1);
+        let claimed = daemon
+            .wait_for("claim", |event| event["name"] == name, 5.0)
+            .is_some();
+        pad.emit(EventType::KEY.0, FIRST_KEY, 0);
+        if claimed {
+            return;
+        }
+        eprintln!("attempt {attempt}: {name} claimed nothing; holding again");
+        daemon.pump(0.8);
+    }
+    panic!("{name} never took a seat");
+}
+
+/// The profile store's filename for a pad, as `danstick-core::profile` makes it.
+fn profile_filename(id: PadId) -> String {
+    let signature = format!("{PAD_VID:04x}:{:04x}:{}", id.pid, id.name);
+    let mut out = String::new();
+    let mut in_run = false;
+    for character in signature.chars() {
+        if character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | '-') {
+            out.push(character);
+            in_run = false;
+        } else if !in_run {
+            out.push('_');
+            in_run = true;
+        }
+    }
+    format!("{}.json", out.chars().take(120).collect::<String>())
+}
+
+/// How many times the daemon worked this player's files out from scratch.
+/// How many times a player's files were worked out to the end. A guess made
+/// while SDL was still being asked is worked out once more when it answers,
+/// by design, and is not what a join must not repeat.
+fn worked_out(root: &Path, player: u32) -> usize {
+    let log = std::fs::read_to_string(root.join("daemon.log")).unwrap_or_default();
+    let done = format!("player {player}: worked out its files");
+    log.lines()
+        .filter(|line| line.trim_end().ends_with(&done))
+        .count()
+}
+
+/// Joining mid-game used to tear down every clone and make them again, so the
+/// people already playing had their controllers unplugged under them.
+#[test]
+fn a_join_leaves_the_players_already_in_the_game_plugged_in() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let _first = LiveGuard::new(JOIN_FIRST);
+    let _second = LiveGuard::new(JOIN_SECOND);
+    let root = std::env::temp_dir().join(format!("danstick-join-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let mut one = TestPad::new(JOIN_FIRST);
+    let mut two = TestPad::new(JOIN_SECOND);
+    let mut daemon = Daemon::start_logging(&root, JOIN_FIRST);
+    daemon.wait_for("state", |_| true, 5.0).expect("a greeting");
+    daemon.pump(2.5);
+    // The default hold, which is what `hold_until_claimed` holds for.
+    daemon.send(serde_json::json!({"cmd": "seating", "open": true, "players": 4}));
+
+    // Player one sits down and is republished: one clone, made once. Held until
+    // it takes rather than once, since a pad grabbed on arrival is read late.
+    daemon.events.clear();
+    daemon.hold_until_claimed(&mut one, |event| event["name"] == JOIN_FIRST.name);
+    daemon
+        .wait_for("state", |event| event["state"] == "ready", 5.0)
+        .expect("ready after the first seat");
+    daemon.pump(1.0);
+    let clones_before = clone_lines(&root, 1);
+    assert_eq!(clones_before.len(), 1, "{clones_before:?}");
+
+    // Player two joins while player one is playing.
+    daemon.events.clear();
+    daemon.hold_until_claimed(&mut two, |event| event["name"] == JOIN_SECOND.name);
+    daemon.pump(1.0);
+
+    let clones_after = clone_lines(&root, 1);
+    assert_eq!(
+        clones_after, clones_before,
+        "player one's clone was made again by somebody else joining"
+    );
+    let joined = clone_lines(&root, 2);
+    assert_eq!(
+        joined.len(),
+        1,
+        "player two got no clone, or several: {joined:?}"
+    );
+
+    // And still the same device once the join has fully settled.
+    daemon.pump(1.0);
+    assert_eq!(
+        clone_lines(&root, 1),
+        clones_before,
+        "player one's clone was replaced after the join"
+    );
+
+    drop(daemon);
+    drop(one);
+    drop(two);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Every line the daemon wrote when it made this player a clone.
+fn clone_lines(root: &Path, player: u32) -> Vec<String> {
+    let log = std::fs::read_to_string(root.join("daemon.log")).unwrap_or_default();
+    log.lines()
+        .filter(|line| line.contains(&format!("player {player}: event")))
+        .filter(|line| line.contains("-> danstick Player"))
+        .map(str::to_owned)
+        .collect()
+}
+
+/// A pad arriving rebuilds the watched set, which used to reset every hold with
+/// it -- so somebody switching a pad on cancelled whoever was already holding.
+#[test]
+fn a_pad_switched_on_does_not_cancel_the_hold_already_running() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let _first = LiveGuard::new(ARRIVE_FIRST);
+    let _second = LiveGuard::new(ARRIVE_SECOND);
+    let root = std::env::temp_dir().join(format!("danstick-arrive-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let mut holder = TestPad::new(ARRIVE_FIRST);
+    let mut daemon = Daemon::start(&root, ARRIVE_FIRST);
+    daemon.wait_for("state", |_| true, 5.0).expect("a greeting");
+    daemon.pump(2.5);
+    daemon.send(serde_json::json!({
+        "cmd": "seating", "open": true, "players": 4, "hold": 3.0
+    }));
+
+    daemon.events.clear();
+    holder.emit(EventType::KEY.0, FIRST_KEY, 1);
+    let started = daemon
+        .wait_for("progress", |event| event["frac"].as_f64() > Some(0.0), 3.0)
+        .expect("the hold never started");
+    let before = started["frac"].as_f64().expect("a fraction");
+
+    // A second pad appears mid-hold, which is what rebuilds the watched set.
+    let arriving = TestPad::new(ARRIVE_SECOND);
+    daemon.pump(1.0);
+
+    // The thumb never lifted, so a release here is the bug, and the fill has to
+    // keep climbing from where it was rather than start again.
+    // A release is a fill at zero naming no seat. The hold's own first tick
+    // can read 0.0 too -- it is still in `events` -- but it names a seat.
+    assert!(
+        !daemon
+            .events
+            .iter()
+            .any(|event| event["event"] == "progress"
+                && event["frac"] == 0.0
+                && event.get("player").is_none()),
+        "the arriving pad cancelled the hold: {:?}",
+        daemon.events
+    );
+    let climbed = daemon
+        .events
+        .iter()
+        .filter(|event| event["event"] == "progress")
+        .filter_map(|event| event["frac"].as_f64())
+        .fold(0.0f64, f64::max);
+    assert!(climbed > before, "the fill stalled: {climbed} <= {before}");
+
+    let claim = daemon
+        .wait_for("claim", |_| true, 6.0)
+        .expect("the hold that carried on never claimed");
+    assert_eq!(claim["name"], ARRIVE_FIRST.name, "{claim}");
+
+    holder.emit(EventType::KEY.0, FIRST_KEY, 0);
+    drop(daemon);
+    drop(arriving);
+    drop(holder);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Two holds that finish inside one tick are two indices into a pad list the
+/// first claim rebuilds, so seating by position seated one pad and lost the other.
+#[test]
+fn two_people_pressing_on_go_are_two_seats_not_one() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let _first = LiveGuard::new(TICK_FIRST);
+    let _second = LiveGuard::new(TICK_SECOND);
+    let root = std::env::temp_dir().join(format!("danstick-tick-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let mut one = TestPad::new(TICK_FIRST);
+    let mut two = TestPad::new(TICK_SECOND);
+    let mut daemon = Daemon::start(&root, TICK_FIRST);
+    daemon.wait_for("state", |_| true, 5.0).expect("a greeting");
+    daemon.pump(2.5);
+    daemon.send(serde_json::json!({
+        "cmd": "seating", "open": true, "players": 4, "hold": 1.0
+    }));
+
+    let mut claims: Vec<Value> = Vec::new();
+    for attempt in 0..4 {
+        daemon.events.clear();
+        // As close to one tick as two writes get: no sleep between them.
+        one.emit(EventType::KEY.0, FIRST_KEY, 1);
+        two.emit(EventType::KEY.0, FIRST_KEY, 1);
+        daemon.pump(2.5);
+        claims = daemon
+            .events
+            .iter()
+            .filter(|event| event["event"] == "claim")
+            .cloned()
+            .collect();
+        if claims.len() >= 2 {
+            break;
+        }
+        eprintln!("attempt {attempt}: {} claim(s); again", claims.len());
+        one.emit(EventType::KEY.0, FIRST_KEY, 0);
+        two.emit(EventType::KEY.0, FIRST_KEY, 0);
+        daemon.pump(0.8);
+        daemon.send(serde_json::json!({"cmd": "unseat"}));
+        daemon.send(serde_json::json!({
+            "cmd": "seating", "open": true, "players": 4, "hold": 1.0
+        }));
+    }
+
+    let names: BTreeSet<&str> = claims.iter().filter_map(|c| c["name"].as_str()).collect();
+    assert_eq!(names.len(), 2, "two pads pressed, these claims: {claims:?}");
+    let seats: BTreeSet<u64> = claims.iter().filter_map(|c| c["player"].as_u64()).collect();
+    assert_eq!(seats.len(), 2, "both pads took the same seat: {claims:?}");
+
+    one.emit(EventType::KEY.0, FIRST_KEY, 0);
+    two.emit(EventType::KEY.0, FIRST_KEY, 0);
+    drop(daemon);
+    drop(one);
+    drop(two);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// One of two holds that finished together takes the last seat; the other is
+/// told the room is full, once, its hold dropped by path rather than stale index.
+#[test]
+fn the_last_seat_goes_to_one_of_two_and_the_other_is_told_the_room_is_full() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let _first = LiveGuard::new(LAST_FIRST);
+    let _second = LiveGuard::new(LAST_SECOND);
+    let root = std::env::temp_dir().join(format!("danstick-last-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let mut one = TestPad::new(LAST_FIRST);
+    let mut two = TestPad::new(LAST_SECOND);
+    let mut daemon = Daemon::start(&root, LAST_FIRST);
+    daemon.wait_for("state", |_| true, 5.0).expect("a greeting");
+    daemon.pump(2.5);
+    daemon.send(serde_json::json!({
+        "cmd": "seating", "open": true, "players": 1, "hold": 1.0
+    }));
+
+    // Pressed together so both holds finish in one tick, and held until they are
+    // read: a pad grabbed on arrival is read late, and one press landing alone
+    // is this machine's load rather than anything promised.
+    let mut full = None;
+    for attempt in 0..4 {
+        daemon.events.clear();
+        one.emit(EventType::KEY.0, FIRST_KEY, 1);
+        two.emit(EventType::KEY.0, FIRST_KEY, 1);
+        if daemon.wait_for("claim", |_| true, 6.0).is_some() {
+            full = daemon.wait_for("full", |_| true, 6.0);
+            if full.is_some() {
+                break;
+            }
+        }
+        eprintln!("attempt {attempt}: the last seat went to nobody; again");
+        one.emit(EventType::KEY.0, FIRST_KEY, 0);
+        two.emit(EventType::KEY.0, FIRST_KEY, 0);
+        daemon.pump(1.2);
+        daemon.send(serde_json::json!({"cmd": "unseat"}));
+        daemon.send(serde_json::json!({
+            "cmd": "seating", "open": true, "players": 1, "hold": 1.0
+        }));
+    }
+    let full = full.expect("one seat, two holds, and nobody was told anything");
+
+    let claims: Vec<&Value> = daemon
+        .events
+        .iter()
+        .filter(|event| event["event"] == "claim")
+        .collect();
+    assert_eq!(claims.len(), 1, "one seat, these claims: {claims:?}");
+    let fulls = [&full];
+    assert_ne!(
+        fulls[0]["name"], claims[0]["name"],
+        "the pad that took the seat was told the room was full"
+    );
+
+    // `tick` marked the refused pad claimed on its way to a seat it did not get,
+    // so being forgotten is what lets it take one when the room has room -- and
+    // by index that undid the wrong pad, the refresh having already renumbered.
+    let refused = fulls[0]["name"].as_str().expect("a name").to_owned();
+    one.emit(EventType::KEY.0, FIRST_KEY, 0);
+    two.emit(EventType::KEY.0, FIRST_KEY, 0);
+    daemon.pump(0.5);
+    daemon.send(serde_json::json!({
+        "cmd": "seating", "open": true, "players": 2, "hold": 1.0
+    }));
+    daemon.events.clear();
+    if refused == LAST_FIRST.name {
+        one.emit(EventType::KEY.0, FIRST_KEY, 1);
+    } else {
+        two.emit(EventType::KEY.0, FIRST_KEY, 1);
+    }
+    let second = daemon
+        .wait_for("claim", |event| event["name"] == refused.as_str(), 6.0)
+        .expect("the pad refused a seat could never take one");
+    assert_eq!(second["player"], 2, "{second}");
+
+    one.emit(EventType::KEY.0, FIRST_KEY, 0);
+    two.emit(EventType::KEY.0, FIRST_KEY, 0);
+    drop(daemon);
+    drop(one);
+    drop(two);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_pad_cannot_take_a_seat_that_does_not_exist() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let _guard = LiveGuard::new(JOINER);
+    let root = std::env::temp_dir().join(format!("danstick-seating-full-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("run/danstick")).expect("mkdir");
+    let mut pad = TestPad::new(JOINER);
+
+    let assignments = serde_json::json!([
+        {"player": 1, "path": "/dev/input/event9998", "name": "Someone Else",
+         "phys": "elsewhere", "vid": 1, "pid": 2}
+    ]);
+    std::fs::write(
+        root.join("run/danstick/assignments.json"),
+        serde_json::to_string_pretty(&assignments).expect("json"),
+    )
+    .expect("seed");
+
+    let mut daemon = Daemon::start(&root, JOINER);
+    daemon.send(serde_json::json!({"cmd": "seating", "open": true, "players": 1}));
+    daemon.events.clear();
+    pad.hold(FIRST_KEY, 0.8);
+    daemon.pump(1.2);
+    assert!(
+        daemon.last("claim").is_none(),
+        "a pad took a seat that was already held by an absent controller"
+    );
+
+    // This daemon publishes mirror identities, whose layout comes from the pad
+    // behind the clone -- so there is nothing to reserve a seat with, and the
+    // answer has to say so rather than publish a pad that mirrors nobody.
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "reserve", "players": 4}));
+    daemon.pump(0.8);
+    let refused = daemon.last("error").expect("reserving said nothing at all");
+    assert!(
+        refused["message"]
+            .as_str()
+            .is_some_and(|why| why.contains("xbox360")),
+        "the refusal does not say what would make it work: {refused}"
+    );
+    assert!(
+        !daemon.events.iter().any(|event| {
+            event["reserved"]
+                .as_array()
+                .is_some_and(|seats| !seats.is_empty())
+        }),
+        "a seat was published under an identity that cannot describe it: {:?}",
+        daemon.events
+    );
+
+    drop(daemon);
+    drop(pad);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_tune_command_is_saved_and_applied_live() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let _guard = LiveGuard::new(TUNER);
+    let root = std::env::temp_dir().join(format!("danstick-tune-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let mut pad = TestPad::new(TUNER);
+    let mut daemon = Daemon::start(&root, TUNER);
+
+    daemon.events.clear();
+    daemon.send(serde_json::json!({
+        "cmd": "tune", "signature": signature(TUNER), "deadzone": 0.25, "debounce_ms": 30
+    }));
+    let tuned = daemon
+        .wait_for("tuned", |_| true, 5.0)
+        .expect("a tuned event");
+    assert_eq!(tuned["player"], 0, "not seated yet");
+    assert_eq!(tuned["signature"], signature(TUNER));
+    assert_eq!(tuned["tuning"]["deadzone"]["0"], 0.25);
+    assert_eq!(tuned["tuning"]["deadzone"]["1"], 0.25);
+    assert!(tuned["tuning"]["deadzone"].get("16").is_none(), "{tuned}");
+    assert_eq!(tuned["tuning"]["debounce_ms"], 30);
+
+    let profiles = root.join("devices");
+    let stored: Vec<Value> = std::fs::read_dir(&profiles)
+        .expect("profiles dir")
+        .flatten()
+        .filter_map(|entry| std::fs::read_to_string(entry.path()).ok())
+        .filter_map(|text| serde_json::from_str(&text).ok())
+        .collect();
+    let mine = stored
+        .iter()
+        .find(|profile| profile["signature"] == signature(TUNER))
+        .expect("a profile for the tuned pad");
+    assert_eq!(mine["tuning"]["debounce_ms"], 30, "{mine}");
+
+    daemon.send(serde_json::json!({"cmd": "seating", "open": true, "players": 4}));
+    pad.hold(FIRST_KEY, 0.6);
+    daemon
+        .wait_for("state", |e| e["state"] == "ready", 5.0)
+        .expect("seated and published");
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "tune", "player": 1, "reset": true, "debounce_ms": 10}));
+    let tuned = daemon
+        .wait_for("tuned", |_| true, 5.0)
+        .expect("a second tuned event");
+    assert_eq!(tuned["player"], 1);
+    assert!(
+        tuned["tuning"].get("deadzone").is_none(),
+        "reset dropped it: {tuned}"
+    );
+    assert_eq!(tuned["tuning"]["debounce_ms"], 10);
+    assert!(
+        !daemon
+            .events
+            .iter()
+            .any(|e| e["event"] == "controller" && e["action"] == "removed"),
+        "tuning a seated pad took it off the air"
+    );
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "status"}));
+    let state = daemon.wait_for("state", |_| true, 3.0).expect("a state");
+    assert_eq!(state["state"], "ready");
+    assert_eq!(state["players"][0]["published"], true);
+
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "tune", "player": 1, "deadzone": "lots"}));
+    let error = daemon.wait_for("error", |_| true, 3.0).expect("a refusal");
+    assert!(
+        error["message"].as_str().unwrap_or("").contains("deadzone"),
+        "{error}"
+    );
+    daemon.send(serde_json::json!({"cmd": "tune", "player": 3, "debounce_ms": 5}));
+    let error = daemon
+        .wait_for(
+            "error",
+            |e| e["message"].as_str().unwrap_or("").contains("player 3"),
+            3.0,
+        )
+        .expect("no such player");
+    assert!(error["message"]
+        .as_str()
+        .unwrap_or("")
+        .contains("no controller"));
+
+    drop(daemon);
+    drop(pad);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+// Request: finishing a rebind from the pad, and doing it with no session open.
+#[test]
+fn a_seated_pad_is_rebound_and_finished_from_the_pad_with_no_session() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let _guard = LiveGuard::new(REBIND);
+    let root = std::env::temp_dir().join(format!("danstick-rebind-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let mut pad = TestPad::new(REBIND);
+    let mut daemon = Daemon::start(&root, REBIND);
+
+    // Seat the pad through a session, then accept: the daemon grabs and keeps
+    // it, so it is genuinely seated when the session closes.
+    daemon.send(serde_json::json!({"cmd": "begin", "players": 1}));
+    daemon
+        .wait_for("state", |e| e["state"] == "assigning", 6.0)
+        .expect("assigning");
+    pad.hold(FIRST_KEY, 0.6);
+    daemon
+        .wait_for("claim", |e| e["player"] == 1, 6.0)
+        .expect("a hold claims the seat");
+    pad.hold(FIRST_KEY + 1, 1.1);
+    daemon
+        .wait_for("accepted", |_| true, 6.0)
+        .expect("a second hold confirms and closes the session");
+    daemon
+        .wait_for("state", |e| e["state"] == "ready", 6.0)
+        .expect("ready, and no session open");
+    std::thread::sleep(Duration::from_millis(300));
+
+    // Rebinding needs no session: map is legal with the daemon idle-but-ready.
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "map", "player": 1, "layout": "snes"}));
+    let walking = daemon
+        .wait_for("mapping", |e| e["done"] == false, 6.0)
+        .expect("the wizard opened without a session");
+    assert_eq!(walking["player"], 1);
+    assert_eq!(walking["layout"]["id"], "snes");
+    assert_eq!(
+        walking["captured"],
+        serde_json::json!({}),
+        "nothing stored yet"
+    );
+    assert!(
+        !daemon
+            .events
+            .iter()
+            .any(|e| e["event"] == "state" && e["state"] == "assigning"),
+        "a session was opened behind the scenes"
+    );
+    assert!(
+        daemon.last("pads").is_none(),
+        "a session announced its pads"
+    );
+
+    // Bind two controls by tapping. Each press is reported as it happens,
+    // press and release, in the terms the profile will use for it.
+    daemon.events.clear();
+    daemon.tap_until_bound(&mut pad, FIRST_KEY + 4, 1);
+    let inputs: Vec<&Value> = daemon
+        .events
+        .iter()
+        .filter(|e| e["event"] == "input")
+        .collect();
+    assert!(
+        inputs
+            .iter()
+            .any(|e| e["kind"] == "button" && e["index"] == 4 && e["value"] == 1),
+        "the press was not reported: {inputs:?}"
+    );
+    assert!(
+        inputs
+            .iter()
+            .any(|e| e["kind"] == "button" && e["index"] == 4 && e["value"] == 0),
+        "the release was not reported: {inputs:?}"
+    );
+    assert_eq!(inputs[0]["player"], 1);
+    let two = daemon.tap_until_bound(&mut pad, FIRST_KEY + 5, 2);
+    assert_eq!(two["captured"].as_object().map(|c| c.len()), Some(2));
+    std::thread::sleep(Duration::from_millis(400));
+
+    // Long-hold A: the finish ring fills, and holding on ends the run with no release.
+    daemon.events.clear();
+    pad.emit(EventType::KEY.0, FIRST_KEY + 2, 1);
+    daemon.pump(1.2);
+    let filling = daemon
+        .last("finish")
+        .expect("a finish ring is drawn")
+        .clone();
+    let fraction = filling["frac"].as_f64().expect("frac");
+    assert!(
+        fraction > 0.2 && fraction < 0.95,
+        "half-filled ring, got {filling}"
+    );
+    assert_eq!(filling["player"], 1);
+    let finished = daemon
+        .wait_for("mapping", |e| e["done"] == true, 6.0)
+        .expect("the hold finished the wizard without a release");
+    assert_eq!(finished["stored"], true, "{finished}");
+    assert!(
+        daemon
+            .events
+            .iter()
+            .any(|e| e["event"] == "finish" && e["frac"] == 1.0),
+        "the ring is shown full before the wizard closes"
+    );
+    pad.emit(EventType::KEY.0, FIRST_KEY + 2, 0);
+    daemon.pump(0.3);
+
+    // Exactly what was bound is on disk; the daemon never left ready.
+    let stored: Value = serde_json::from_str(
+        &std::fs::read_to_string(
+            std::fs::read_dir(&daemon.profiles)
+                .expect("profiles")
+                .flatten()
+                .find(|entry| entry.file_name().to_string_lossy().contains("one"))
+                .expect("player 1's profile")
+                .path(),
+        )
+        .expect("read"),
+    )
+    .expect("json");
+    let buttons = stored["mappings"][""]["buttons"]
+        .as_object()
+        .expect("buttons");
+    assert_eq!(
+        buttons.len(),
+        2,
+        "an early finish keeps what was bound: {stored}"
+    );
+    let state = daemon.last("state").expect("state").clone();
+    assert_eq!(state["state"], "ready", "no session was ever opened");
+    assert_eq!(state["players"][0]["configured"], true);
+
+    // A second run is seeded from the stored capture and guards it.
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "map", "player": 1, "layout": "snes"}));
+    let seeded = daemon
+        .wait_for("mapping", |e| e["done"] == false, 6.0)
+        .expect("the wizard opened again");
+    assert_eq!(
+        seeded["captured"].as_object().map(|c| c.len()),
+        Some(2),
+        "the run is seeded from the stored capture: {seeded}"
+    );
+    pad.tap(FIRST_KEY + 5);
+    let conflict = daemon
+        .wait_for("mapping", |e| e["conflict"] != "", 6.0)
+        .expect("the second control's stored input is defended across runs");
+    assert_eq!(conflict["index"], 0, "a refused press does not advance");
+    daemon.send(serde_json::json!({"cmd": "cancel"}));
+    daemon
+        .wait_for("mapping", |e| e["done"] == true, 6.0)
+        .expect("cancel closes the wizard");
+    daemon
+        .wait_for("state", |e| e["state"] == "ready", 6.0)
+        .expect("still ready, still no session");
+
+    drop(daemon);
+    drop(pad);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+// Request: one physical controller is one pad -- Steam's mirror is dropped, and said so.
+#[test]
+fn steams_mirror_is_listed_as_dropped_beside_the_pad_it_mirrors() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let _guards = (
+        LiveGuard::new(MIRRORED),
+        LiveGuard::for_signature(format!("{MIRROR_VID:04x}:{MIRROR_PID:04x}:{MIRROR_NAME}")),
+    );
+    let root = std::env::temp_dir().join(format!("danstick-mirror-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let list = |json: bool| -> String {
+        let mut args = vec!["list"];
+        if json {
+            args.push("--json");
+        }
+        let output = Command::new(env!("CARGO_BIN_EXE_danstick-rs"))
+            .args(&args)
+            .env("XDG_RUNTIME_DIR", root.join("run"))
+            .env("XDG_CONFIG_HOME", root.join("config"))
+            .env("XDG_DATA_HOME", root.join("data"))
+            .env("DANSTICK_PROFILE_DIR", root.join("devices"))
+            .env("DANSTICK_ONLY_DEVICE", MIRRORED.only)
+            .output()
+            .expect("list");
+        assert!(output.status.success(), "{output:?}");
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    };
+
+    let mirror = TestPad::with_id(MIRROR_NAME, MIRROR_VID, MIRROR_PID);
+    let real = TestPad::new(MIRRORED);
+    std::thread::sleep(Duration::from_millis(300));
+
+    let entries: Value = serde_json::from_str(&list(true)).expect("valid JSON");
+    let entries = entries.as_array().expect("an array");
+    assert_eq!(entries.len(), 2, "{entries:?}");
+    let kept: Vec<&Value> = entries.iter().filter(|e| e["dropped"].is_null()).collect();
+    assert_eq!(kept.len(), 1, "only the real pad is offered: {entries:?}");
+    assert_eq!(kept[0]["controller"]["name"], MIRRORED.name);
+    let dropped = entries
+        .iter()
+        .find(|e| !e["dropped"].is_null())
+        .expect("the mirror is listed, not vanished");
+    assert_eq!(dropped["controller"]["name"], MIRROR_NAME);
+    assert_eq!(dropped["controller"]["vid"], "28de");
+    assert_eq!(dropped["controller"]["pid"], "11ff");
+    assert!(dropped["player"].is_null() && dropped["virtual"].is_null());
+    assert!(
+        dropped["dropped"]
+            .as_str()
+            .expect("a reason")
+            .contains("mirrors"),
+        "{dropped}"
+    );
+    let prose = list(false);
+    assert!(prose.contains("Left out, on purpose:"), "{prose}");
+    assert!(prose.contains(MIRROR_NAME), "{prose}");
+
+    drop(real);
+    std::thread::sleep(Duration::from_millis(500));
+    let entries: Value = serde_json::from_str(&list(true)).expect("valid JSON");
+    let entries = entries.as_array().expect("an array");
+    assert_eq!(
+        entries.len(),
+        1,
+        "alone, the mirror is a controller: {entries:?}"
+    );
+    assert!(entries[0]["dropped"].is_null());
+    assert_eq!(entries[0]["controller"]["name"], MIRROR_NAME);
+    assert!(
+        !list(false).contains("Left out"),
+        "nothing dropped when nothing is mirrored"
+    );
+
+    drop(mirror);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// `unseat` frees the seat, stops the clone and forgets the seat on disk --
+/// and leaves seating open, so the same hold takes the seat straight back.
+#[test]
+fn unseat_drops_the_seat_and_the_next_hold_takes_it_again() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let _guard = LiveGuard::new(UNSEATED);
+    let root = std::env::temp_dir().join(format!("danstick-unseat-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let mut pad = TestPad::new(UNSEATED);
+    let mut daemon = Daemon::start(&root, UNSEATED);
+    daemon.seat_by_hold(&mut pad);
+    let state_dir = daemon.runtime.join("danstick");
+    let sdl_db = root.join("sdl_controllers.txt");
+    assert_eq!(sdl_mappings_in(&sdl_db), Some(1), "one clone published");
+
+    // Unseating a player nobody holds is an error, not a silent no-op.
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "unseat", "player": 3}));
+    assert!(
+        daemon.last("error").is_some(),
+        "unseating an empty seat was accepted"
+    );
+
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "unseat", "player": 1}));
+    let state = daemon
+        .wait_for(
+            "state",
+            |e| e["players"].as_array().map(Vec::len) == Some(0),
+            5.0,
+        )
+        .expect("a state with nobody seated");
+    assert_eq!(state["state"], "idle");
+    // The freed pad is re-announced as unconfigured right after; the removal
+    // is the event before that one.
+    assert!(
+        daemon
+            .events
+            .iter()
+            .any(|e| e["event"] == "controller" && e["action"] == "removed" && e["player"] == 1),
+        "no removal was announced for player 1"
+    );
+    assert!(
+        !daemon
+            .events
+            .iter()
+            .any(|event| event["event"] == "state" && event["state"] == "assigning"),
+        "unseat opened a session"
+    );
+    let saved = std::fs::read_to_string(state_dir.join("assignments.json")).expect("saved");
+    let saved: Value = serde_json::from_str(&saved).expect("json");
+    assert_eq!(
+        saved.as_array().map(Vec::len),
+        Some(0),
+        "the seat survived on disk"
+    );
+    // Other journeys publish a "danstick Player 1" of their own, so the clone's
+    // absence is read from this daemon's consumer files, not from sysfs.
+    assert_eq!(
+        sdl_mappings_in(&sdl_db),
+        Some(0),
+        "the clone outlived the seat"
+    );
+
+    // Seating was not closed by any of that: the next hold is player 1 again.
+    daemon.events.clear();
+    let claim = daemon.hold_until_claimed(&mut pad, |_| true);
+    assert_eq!(claim["player"], 1);
+    daemon
+        .wait_for("state", |e| e["state"] == "ready", 5.0)
+        .expect("ready again");
+
+    // And with no player named, everybody goes.
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "unseat"}));
+    let state = daemon
+        .wait_for(
+            "state",
+            |e| e["players"].as_array().map(Vec::len) == Some(0),
+            5.0,
+        )
+        .expect("nobody seated after unseat with no player");
+    assert_eq!(state["state"], "idle");
+
+    drop(daemon);
+    drop(pad);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// The same daemon, restarted: plain brings yesterday's seat back, `--fresh` does not.
+#[test]
+fn a_fresh_daemon_starts_with_nobody_seated() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let _guard = LiveGuard::new(FRESH);
+    let root = std::env::temp_dir().join(format!("danstick-fresh-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let mut pad = TestPad::new(FRESH);
+
+    let mut daemon = Daemon::start(&root, FRESH);
+    daemon.seat_by_hold(&mut pad);
+    drop(daemon);
+
+    // Restoring a real pad republishes it before the first client is greeted.
+    let mut daemon = Daemon::start(&root, FRESH);
+    let state = daemon.wait_for("state", |_| true, 5.0).expect("a greeting");
+    assert_eq!(
+        state["players"].as_array().map(Vec::len),
+        Some(1),
+        "a plain restart forgot the seat: {state}"
+    );
+    assert_eq!(state["following"], Value::Null);
+    drop(daemon);
+
+    let mut daemon = Daemon::start_with(&root, FRESH, &["--fresh"]);
+    let state = daemon.wait_for("state", |_| true, 5.0).expect("a greeting");
+    assert_eq!(
+        state["players"].as_array().map(Vec::len),
+        Some(0),
+        "--fresh restored the seat: {state}"
+    );
+    assert_eq!(state["state"], "idle");
+    drop(daemon);
+    drop(pad);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// `--follow PID` ends the daemon when that pid is gone, and says so in `state`.
+#[test]
+fn a_daemon_that_follows_a_pid_ends_when_it_does() {
+    let root = std::env::temp_dir().join(format!("danstick-follow-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let mut leader = Command::new("sleep")
+        .arg("60")
+        .stdout(Stdio::null())
+        .spawn()
+        .expect("a process to follow");
+    let pid = leader.id().to_string();
+
+    let mut daemon = Daemon::start_with(&root, FOLLOWER, &["--follow", &pid]);
+    let state = daemon.last("state").expect("a greeting").clone();
+    assert_eq!(state["following"], leader.id());
+    // Seating open and no client connected: the shape of a game in progress.
+    daemon.send(serde_json::json!({"cmd": "seating", "open": true, "players": 4}));
+    assert!(
+        !daemon.exited_within(1.0),
+        "the daemon ended while its pid was alive"
+    );
+
+    leader.kill().expect("kill");
+    let _ = leader.wait();
+    assert!(
+        daemon.exited_within(3.0),
+        "the daemon outlived the pid it follows"
+    );
+    assert!(
+        !daemon
+            .runtime
+            .join("danstick")
+            .join("danstick.sock")
+            .exists(),
+        "the socket was left behind"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// A pid that is already gone at startup is not waited for.
+#[test]
+fn following_a_pid_that_is_already_gone_ends_at_once() {
+    let root = std::env::temp_dir().join(format!("danstick-follow-gone-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let mut gone = Command::new("true").spawn().expect("a short process");
+    let pid = gone.id().to_string();
+    let _ = gone.wait();
+
+    let mut daemon = Daemon::start_with(&root, FOLLOWER, &["--follow", &pid]);
+    assert!(
+        daemon.exited_within(3.0),
+        "the daemon waited for a pid that never existed"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Mapping lines in an SDL controller db, header comments aside.
+fn sdl_mappings_in(path: &Path) -> Option<usize> {
+    let text = std::fs::read_to_string(path).ok()?;
+    Some(
+        text.lines()
+            .filter(|line| !line.trim().is_empty() && !line.starts_with('#'))
+            .count(),
+    )
+}
+
+/// `seat_keyboard` seats the keyboard as the next player with no device behind
+/// it; a pad seated after it takes the seat after, and every consumer says so.
+#[test]
+fn the_keyboard_takes_a_seat_by_command_and_a_pad_sits_after_it() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let _guard = LiveGuard::new(KEYSEAT);
+    let root = std::env::temp_dir().join(format!("danstick-keyseat-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let mut pad = TestPad::new(KEYSEAT);
+    let mut daemon = Daemon::start(&root, KEYSEAT);
+    let state_dir = daemon.runtime.join("danstick");
+    let gcpad = root.join("config/dolphin-emu/GCPadNew.ini");
+
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "seat_keyboard"}));
+    let claim = daemon
+        .wait_for("claim", |e| e["name"] == KEYBOARD_SEAT_NAME, 5.0)
+        .expect("the keyboard took a seat");
+    assert_eq!(claim["player"], 1);
+    assert_eq!(claim["icon"], "keyboard-mouse");
+    let state = daemon
+        .wait_for(
+            "state",
+            |e| e["players"].as_array().map(Vec::len) == Some(1),
+            5.0,
+        )
+        .expect("a state with the keyboard seated");
+    assert_eq!(state["players"][0]["player"], 1);
+    assert_eq!(state["players"][0]["keyboard"], true);
+    assert_eq!(
+        state["players"][0]["mouse"], true,
+        "the desk's mouse belongs to this seat too"
+    );
+    assert_eq!(state["players"][0]["name"], KEYBOARD_SEAT_NAME);
+    assert_eq!(state["players"][0]["icon"], "keyboard-mouse");
+    let saved = std::fs::read_to_string(state_dir.join("assignments.json")).expect("saved");
+    assert!(
+        saved.contains("\"keyboard\""),
+        "the seat was not saved: {saved}"
+    );
+    let ini = std::fs::read_to_string(&gcpad).expect("Dolphin config");
+    assert!(
+        ini.contains("[GCPad1]\nDevice = XInput2/0/Virtual core pointer\n"),
+        "{ini}"
+    );
+
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "seat_keyboard"}));
+    assert!(
+        daemon.last("error").is_some(),
+        "the keyboard was seated twice"
+    );
+
+    // A pad seated after the keyboard is player 2.
+    daemon.seat_by_hold_as(&mut pad, 2);
+    let state = daemon.last("state").expect("state").clone();
+    let players = state["players"].as_array().expect("players");
+    assert_eq!(players.len(), 2, "{state}");
+    assert_eq!(players[0]["keyboard"], true);
+    assert_eq!(players[1]["player"], 2);
+    assert_eq!(players[1]["published"], true);
+    let ini = std::fs::read_to_string(&gcpad).expect("Dolphin config");
+    assert!(
+        ini.contains("[GCPad1]\nDevice = XInput2/0/Virtual core pointer\n"),
+        "{ini}"
+    );
+    assert!(
+        ini.contains("[GCPad2]\nDevice = SDL/0/danstick Player 2\n"),
+        "{ini}"
+    );
+    let launch = std::fs::read_to_string(state_dir.join("launch.cfg")).expect("launch.cfg");
+    assert!(
+        !launch.contains("input_player1_b = \"nul\""),
+        "the keyboard is player 1, so RetroArch's own key defaults stand: {launch}"
+    );
+    // The mouse is the keyboard's seat's, and the pad on player 2 has none.
+    assert!(
+        launch.contains("input_player1_mouse_index = \"0\"\n"),
+        "the keyboard's seat has no mouse: {launch}"
+    );
+    assert!(
+        launch.contains("input_player2_mouse_index = \"16\"\n"),
+        "the pad's port kept the desk's mouse: {launch}"
+    );
+
+    // Unseating the keyboard frees seat 1; the pad keeps seat 2.
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "unseat", "player": 1}));
+    let state = daemon
+        .wait_for(
+            "state",
+            |e| e["players"].as_array().map(Vec::len) == Some(1),
+            5.0,
+        )
+        .expect("one player left");
+    assert_eq!(state["players"][0]["player"], 2);
+    let saved = std::fs::read_to_string(state_dir.join("assignments.json")).expect("saved");
+    assert!(
+        !saved.contains("\"keyboard\""),
+        "the keyboard seat survived on disk"
+    );
+
+    drop(daemon);
+    drop(pad);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// A pad switched on during a session joins it: `pads` says so, a hold on it
+/// claims a seat, and when it goes away `pads` says that too.
+#[test]
+fn a_pad_switched_on_during_a_session_can_take_a_seat() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let _first = LiveGuard::new(LATE_FIRST);
+    let _second = LiveGuard::new(LATE_SECOND);
+    let root = std::env::temp_dir().join(format!("danstick-late-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let _one = TestPad::new(LATE_FIRST);
+    let mut daemon = Daemon::start(&root, LATE_FIRST);
+    daemon.pump(1.5);
+
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "begin", "players": 2}));
+    daemon
+        .wait_for("state", |e| e["state"] == "assigning", 6.0)
+        .expect("a session");
+    assert_eq!(
+        daemon.last("pads").map(|e| e["count"].clone()),
+        Some(1.into())
+    );
+
+    // The second pad is switched on now, with the session open.
+    let mut two = TestPad::new(LATE_SECOND);
+    daemon
+        .wait_for("pads", |e| e["count"] == 2, 6.0)
+        .expect("the late pad was admitted to the session");
+    daemon.pump(1.5);
+    let claim = daemon.hold_until_claimed(&mut two, |e| e["name"] == LATE_SECOND.name);
+    assert_eq!(claim["player"], 1);
+
+    // Switched off again: the session says so, and does not fall over.
+    daemon.events.clear();
+    drop(two);
+    daemon
+        .wait_for("pads", |e| e["count"] == 1, 6.0)
+        .expect("the departed pad was counted out");
+    daemon.send(serde_json::json!({"cmd": "cancel"}));
+    daemon
+        .wait_for("state", |e| e["state"] != "assigning", 6.0)
+        .expect("the session ended cleanly");
+
+    drop(daemon);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// A uinput keyboard: letters and Enter, so it classifies as one.
+fn test_keyboard(name: &str, vid: u16) -> VirtualDevice {
+    let mut keys = AttributeSet::<KeyCode>::new();
+    for code in KeyCode::KEY_Q.0..=KeyCode::KEY_M.0 {
+        keys.insert(KeyCode::new(code));
+    }
+    keys.insert(KeyCode::KEY_A);
+    keys.insert(KeyCode::KEY_ENTER);
+    keys.insert(KeyCode::KEY_SPACE);
+    let device = VirtualDevice::builder()
+        .expect("uinput")
+        .name(name)
+        .input_id(InputId::new(BusType::BUS_USB, vid, 0x0f01, 1))
+        .with_keys(&keys)
+        .expect("keys")
+        .build()
+        .expect("a virtual keyboard");
+    std::thread::sleep(Duration::from_millis(500));
+    device
+}
+
+/// Whether the node can be grabbed by us, i.e. nobody else holds it.
+fn grabbable(path: &Path) -> bool {
+    let Ok(mut device) = evdev::Device::open(path) else {
+        return false;
+    };
+    let ok = device.grab().is_ok();
+    let _ = device.ungrab();
+    ok
+}
+
+/// A seated pad's keyboard sibling is held by danstick, and released with the seat.
+#[test]
+fn a_seated_pads_keyboard_sibling_is_held_and_released_with_the_seat() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let _guard = LiveGuard::for_signature(format!(
+        "{:04x}:{:04x}:{}",
+        danstick_input::siblings::VALVE_VID,
+        SIBLING.pid,
+        SIBLING.name
+    ));
+    let root = std::env::temp_dir().join(format!("danstick-sibling-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let mut keyboard = test_keyboard(SIBLING_KEYBOARD_NAME, danstick_input::siblings::VALVE_VID);
+    let keyboard_node = keyboard
+        .enumerate_dev_nodes_blocking()
+        .expect("nodes")
+        .flatten()
+        .find(|path| path.to_string_lossy().contains("/dev/input/event"))
+        .expect("the keyboard's node");
+    let mut pad = TestPad::with_id(
+        SIBLING.name,
+        danstick_input::siblings::VALVE_VID,
+        SIBLING.pid,
+    );
+    let mut daemon = Daemon::start(&root, SIBLING);
+    daemon.pump(1.5);
+    assert!(
+        grabbable(&keyboard_node),
+        "nobody should hold the keyboard yet"
+    );
+
+    // Seating open: the pad is a candidate, so its keyboard is already held.
+    daemon.send(serde_json::json!({"cmd": "seating", "open": true, "players": 4}));
+    daemon.pump(1.5);
+    assert!(
+        !grabbable(&keyboard_node),
+        "the candidate pad's keyboard is not held"
+    );
+
+    daemon.hold_until_claimed(&mut pad, |_| true);
+    daemon.send(serde_json::json!({"cmd": "seating", "open": false}));
+    daemon.pump(1.0);
+    assert!(
+        !grabbable(&keyboard_node),
+        "the seated pad's keyboard is not held"
+    );
+
+    daemon.send(serde_json::json!({"cmd": "unseat"}));
+    daemon
+        .wait_for(
+            "state",
+            |e| e["players"].as_array().map(Vec::len) == Some(0),
+            5.0,
+        )
+        .expect("unseated");
+    // Waited for rather than pumped for: the promise is that the keyboard comes
+    // back, not that a loaded machine manages it inside a fixed second.
+    let released = (0..40).any(|_| {
+        daemon.pump(0.2);
+        grabbable(&keyboard_node)
+    });
+    assert!(released, "the keyboard was not released with the seat");
+
+    drop(daemon);
+    drop(pad);
+    drop(keyboard);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// The only profile the daemon wrote, as JSON.
+fn only_profile(dir: &Path) -> Value {
+    let path = std::fs::read_dir(dir)
+        .expect("the profile directory")
+        .flatten()
+        .map(|entry| entry.path())
+        .find(|path| path.extension().is_some_and(|ext| ext == "json"))
+        .expect("a profile was written");
+    serde_json::from_str(&std::fs::read_to_string(&path).expect("read")).expect("json")
+}
+
+/// `bind` captures one press onto one control; with `add`, beside the binding
+/// it already has, which is stored as a list whose first entry is unchanged.
+#[test]
+fn one_control_is_bound_on_its_own_and_can_take_a_second_input() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let _guard = LiveGuard::new(BINDER);
+    let root = std::env::temp_dir().join(format!("danstick-bind-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let mut pad = TestPad::new(BINDER);
+    let mut daemon = Daemon::start(&root, BINDER);
+    daemon.seat_by_hold(&mut pad);
+
+    // A control nobody has heard of is refused, not guessed at.
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "bind", "player": 1, "control": "nonsense"}));
+    assert!(
+        daemon.last("error").is_some(),
+        "an unknown control was accepted"
+    );
+
+    // Bind B on its own: one press, one control, stored.
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "bind", "player": 1, "control": "b"}));
+    daemon
+        .wait_for(
+            "mapping",
+            |e| e["done"] == false && e["control"] == "b",
+            5.0,
+        )
+        .expect("the wizard asked for b alone");
+    pad.tap(FIRST_KEY + 1);
+    daemon
+        .wait_for("mapping", |e| e["done"] == true, 5.0)
+        .expect("one press ended the run");
+    let profile = only_profile(&daemon.profiles);
+    let first = profile["buttons"]["b"].clone();
+    assert_eq!(
+        first["kind"], "button",
+        "one input is one object: {profile}"
+    );
+    assert!(!first.is_array());
+
+    // And now a second input for the same control.
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "bind", "player": 1, "control": "b", "add": true}));
+    daemon
+        .wait_for(
+            "mapping",
+            |e| e["done"] == false && e["control"] == "b",
+            5.0,
+        )
+        .expect("the wizard asked for b again");
+    pad.tap(FIRST_KEY + 3);
+    daemon
+        .wait_for("mapping", |e| e["done"] == true, 5.0)
+        .expect("the second press ended the run");
+    let profile = only_profile(&daemon.profiles);
+    let listed = profile["buttons"]["b"]
+        .as_array()
+        .cloned()
+        .unwrap_or_else(|| panic!("b should now be a list: {profile}"));
+    assert_eq!(listed.len(), 2);
+    assert_eq!(listed[0], first, "the first input is exactly what it was");
+    assert_ne!(listed[1], first, "and the second is a different input");
+
+    drop(daemon);
+    drop(pad);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Emit a key press or release on a uinput keyboard.
+fn key(device: &mut VirtualDevice, code: u16, value: i32) {
+    device
+        .emit(&[evdev::InputEvent::new(evdev::EventType::KEY.0, code, value)])
+        .expect("emit");
+}
+
+/// A held space bar seats the keyboard mid-game, reported like a pad's hold,
+/// and the key still reaches whoever has focus.
+#[test]
+fn a_held_space_bar_seats_the_keyboard_and_is_never_grabbed() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let root = std::env::temp_dir().join(format!("danstick-desk-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+
+    let mut keyboard = test_keyboard(DESK_KEYBOARD_NAME, 0x1209);
+    let node = keyboard
+        .enumerate_dev_nodes_blocking()
+        .expect("nodes")
+        .flatten()
+        .find(|path| path.to_string_lossy().contains("/dev/input/event"))
+        .expect("the keyboard's node");
+
+    let mut daemon = Daemon::start(&root, DESK);
+    daemon.pump(1.0);
+    // Seating open with a hold GOTG's length, so the fill is worth watching.
+    daemon.send(serde_json::json!({"cmd": "seating", "open": true, "players": 4, "hold": 1.5}));
+    daemon.pump(1.5);
+
+    // Read, not grabbed: the space bar still reaches the game and the desktop.
+    assert!(
+        grabbable(&node),
+        "danstick grabbed the desk's keyboard: {}",
+        node.display()
+    );
+
+    // Let go half way: a fill that stops is reported as stopping, and claims
+    // nothing.
+    daemon.events.clear();
+    key(&mut keyboard, KeyCode::KEY_SPACE.0, 1);
+    daemon.pump(0.6);
+    let climbing = daemon
+        .last("progress")
+        .cloned()
+        .expect("a held space bar filled nothing");
+    assert_eq!(climbing["name"], KEYBOARD_SEAT_NAME, "{climbing}");
+    assert_eq!(climbing["node"], "", "the keyboard has no node of its own");
+    assert_eq!(climbing["player"], 1, "{climbing}");
+    assert!(
+        climbing["frac"]
+            .as_f64()
+            .is_some_and(|f| f > 0.0 && f < 1.0),
+        "a fill that was already finished or empty: {climbing}"
+    );
+    key(&mut keyboard, KeyCode::KEY_SPACE.0, 0);
+    daemon.pump(0.6);
+    assert_eq!(
+        daemon.last("progress").map(|e| e["frac"].clone()),
+        Some(serde_json::json!(0.0)),
+        "letting go did not stop the fill"
+    );
+    assert!(daemon.last("claim").is_none(), "a half hold took a seat");
+
+    // Hold it the whole way: a claim and a state, as `seat_keyboard` sends.
+    daemon.events.clear();
+    key(&mut keyboard, KeyCode::KEY_SPACE.0, 1);
+    let claim = daemon
+        .wait_for("claim", |e| e["name"] == KEYBOARD_SEAT_NAME, 6.0)
+        .expect("a full hold took no seat");
+    assert_eq!(claim["player"], 1, "{claim}");
+    assert_eq!(claim["icon"], "keyboard-mouse", "{claim}");
+    let state = daemon
+        .wait_for("state", |e| e["players"][0]["keyboard"] == true, 5.0)
+        .expect("no state with the keyboard seated");
+    assert_eq!(state["players"][0]["player"], 1, "{state}");
+    assert_eq!(state["players"][0]["mouse"], true, "{state}");
+
+    // Not twice: holding again with the keyboard seated fills nothing.
+    daemon.events.clear();
+    key(&mut keyboard, KeyCode::KEY_SPACE.0, 0);
+    daemon.pump(0.3);
+    daemon.events.clear();
+    key(&mut keyboard, KeyCode::KEY_SPACE.0, 1);
+    daemon.pump(2.5);
+    key(&mut keyboard, KeyCode::KEY_SPACE.0, 0);
+    assert!(
+        daemon.last("progress").is_none(),
+        "a seated keyboard filled again: {:?}",
+        daemon.last("progress")
+    );
+    assert!(
+        daemon.last("claim").is_none(),
+        "the keyboard took a second seat"
+    );
+    assert!(
+        grabbable(&node),
+        "danstick grabbed the keyboard once it was seated"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Percentile of an already-sorted sample.
+fn percentile(sorted: &[f64], fraction: f64) -> f64 {
+    if sorted.is_empty() {
+        return f64::NAN;
+    }
+    let at = ((sorted.len() - 1) as f64 * fraction).round() as usize;
+    sorted[at]
+}
+
+/// A seated player's presses, timed from the source pad's write to the clone's
+/// read, while three more people hold to join and claim. GOTG measures the same
+/// thing on its cluster; a frame is 16.7ms. A measurement, not a promise, so it
+/// is ignored by default and prints rather than asserts -- this machine's load
+/// is not danstick's contract.
+///
+///     cargo test -p danstick-rs --test daemon_journey -- --ignored --nocapture seated_player
+#[test]
+#[ignore]
+fn a_seated_players_presses_while_others_hold_to_join() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let root = std::env::temp_dir().join(format!("danstick-latency-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+
+    let mut seated = TestPad::with_id(LATENCY.name, 0x1209, LATENCY.pid);
+    let mut joiners: Vec<TestPad> = ["b", "c", "d"]
+        .iter()
+        .enumerate()
+        .map(|(at, letter)| {
+            TestPad::with_id(
+                &format!("DANSTICK RSTESTPRESSTIME {letter}"),
+                0x1209,
+                LATENCY.pid + 1 + at as u16,
+            )
+        })
+        .collect();
+    let mut daemon = Daemon::start_logging(&root, LATENCY);
+    daemon.pump(1.5);
+    daemon.seat_by_hold_as(&mut seated, 1);
+    let state = daemon.last("state").expect("state").clone();
+    let node = format!(
+        "/dev/input/{}",
+        state["players"][0]["node"]
+            .as_str()
+            .expect("player 1's node")
+    );
+    // The clone, not the source: `node` is the physical pad.
+    let clone_path = danstick_input::pad::clone_nodes()
+        .get("danstick Player 1")
+        .cloned()
+        .unwrap_or_else(|| PathBuf::from(&node));
+    let mut clone = evdev::Device::open(&clone_path).expect("player 1's clone");
+    clone.set_nonblocking(true).expect("nonblocking");
+    while clone.fetch_events().is_ok_and(|mut e| e.next().is_some()) {}
+
+    daemon.send(serde_json::json!({"cmd": "seating", "open": true, "players": 4, "hold": 1.0}));
+    daemon.pump(0.5);
+
+    let mut quiet: Vec<f64> = Vec::new();
+    let mut busy: Vec<f64> = Vec::new();
+    let start = Instant::now();
+    let mut next_join = 0usize;
+    let mut value = 0;
+    let mut lost = 0usize;
+    while start.elapsed() < Duration::from_secs_f64(4.0) {
+        let t = start.elapsed().as_secs_f64();
+        // Three people pick up pads 0.3s apart, a second into the run.
+        if next_join < joiners.len() && t >= 1.0 + 0.3 * next_join as f64 {
+            joiners[next_join].emit(EventType::KEY.0, FIRST_KEY, 1);
+            next_join += 1;
+        }
+        value = 1 - value;
+        let wrote = Instant::now();
+        seated.emit(EventType::KEY.0, FIRST_KEY, value);
+        let mut seen = None;
+        while wrote.elapsed() < Duration::from_millis(200) {
+            if let Ok(events) = clone.fetch_events() {
+                if events
+                    .filter(|e| e.event_type() == EventType::KEY)
+                    .any(|e| e.value() == value)
+                {
+                    seen = Some(wrote.elapsed().as_secs_f64() * 1000.0);
+                    break;
+                }
+            }
+            std::hint::spin_loop();
+        }
+        // A press that never arrived is the worst case, not a missing one:
+        // counted at the deadline so the tail cannot hide it.
+        let ms = seen.unwrap_or(200.0);
+        if seen.is_none() {
+            lost += 1;
+        }
+        if t < 1.0 {
+            quiet.push(ms)
+        } else {
+            busy.push(ms)
+        }
+        daemon.pump(0.0);
+        std::thread::sleep(Duration::from_millis(15));
+    }
+    for pad in &mut joiners {
+        pad.emit(EventType::KEY.0, FIRST_KEY, 0);
+    }
+    daemon.pump(0.5);
+
+    quiet.sort_by(f64::total_cmp);
+    busy.sort_by(f64::total_cmp);
+    let claims = daemon
+        .events
+        .iter()
+        .filter(|e| e["event"] == "claim")
+        .count();
+    eprintln!(
+        "LATENCY quiet n={} p50={:.2} p95={:.2} | three holding n={} p50={:.2} p95={:.2} max={:.2} | late>200ms={lost} | claims={claims}",
+        quiet.len(),
+        percentile(&quiet, 0.5),
+        percentile(&quiet, 0.95),
+        busy.len(),
+        percentile(&busy, 0.5),
+        percentile(&busy, 0.95),
+        busy.last().copied().unwrap_or(f64::NAN),
+    );
+    let log = std::fs::read_to_string(root.join("daemon.log")).unwrap_or_default();
+    for line in log.lines().filter(|l| l.contains("PHASE")) {
+        eprintln!("{line}");
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// A press made while another pad's claim is being handled is kept: the pad
+/// is already being watched, and closing its descriptor to rebuild the list
+/// threw away a button that then stayed down and sent no new edge.
+#[test]
+fn a_press_made_while_a_claim_is_handled_still_takes_a_seat() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let root = std::env::temp_dir().join(format!("danstick-midclaim-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+
+    let mut pads = four_pads(MIDCLAIM);
+    let mut daemon = Daemon::start(&root, MIDCLAIM);
+    daemon.pump(1.5);
+    daemon.seat_by_hold_as(&mut pads[0], 1);
+    daemon.seat_by_hold_as(&mut pads[1], 2);
+    daemon.send(serde_json::json!({"cmd": "seating", "open": true, "players": 4, "hold": 0.5}));
+    daemon.pump(0.5);
+
+    // The third pad claims; the fourth goes down the moment that is announced,
+    // while the claim's own work is still running, and never lets go.
+    daemon.events.clear();
+    pads[2].emit(EventType::KEY.0, FIRST_KEY, 1);
+    daemon
+        .wait_for("claim", |e| e["player"] == 3, 5.0)
+        .expect("the third pad never claimed");
+    pads[3].emit(EventType::KEY.0, FIRST_KEY, 1);
+    pads[2].emit(EventType::KEY.0, FIRST_KEY, 0);
+
+    let claim = daemon.wait_for("claim", |e| e["player"] == 4, 6.0);
+    pads[3].emit(EventType::KEY.0, FIRST_KEY, 0);
+    assert!(
+        claim.is_some(),
+        "a press made during another claim was lost: that one hold never took a seat"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// A seat's `state` goes out before its files are written, so how full the room
+/// is does not decide how soon a front-end sees somebody sit down. The
+/// `controller` `added` announcement, which carries the written files, follows.
+#[test]
+fn a_seats_state_comes_before_its_files_however_full_the_room() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let root = std::env::temp_dir().join(format!("danstick-statefirst-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+
+    let mut pads = four_pads(STATEFIRST);
+    let mut daemon = Daemon::start(&root, STATEFIRST);
+    daemon.pump(1.5);
+
+    for (at, pad) in pads.iter_mut().enumerate() {
+        let player = at as u64 + 1;
+        daemon.seat_by_hold_as(pad, player);
+        daemon
+            .wait_for(
+                "controller",
+                |e| e["action"] == "added" && e["player"] == player,
+                5.0,
+            )
+            .expect("the seat's files were never announced");
+        let seated = daemon
+            .events
+            .iter()
+            .position(|e| {
+                e["event"] == "state"
+                    && e["players"]
+                        .as_array()
+                        .is_some_and(|players| players.iter().any(|p| p["player"] == player))
+            })
+            .expect("no state with the new seat");
+        let announced = daemon
+            .events
+            .iter()
+            .position(|e| e["event"] == "controller" && e["player"] == player)
+            .expect("no announcement");
+        assert!(
+            seated < announced,
+            "player {player}'s state waited for its files (state at {seated}, files at {announced})"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// The 360's GUID fragment -- vendor 045e, product 028e -- in an SDL line.
+const XBOX360_GUID: &str = "5e0400008e02";
+
+/// A daemon asked for another identity republishes every clone under it and
+/// keeps every seat: nobody seated has to sit down again.
+#[test]
+fn switching_identity_keeps_every_seat() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let root = std::env::temp_dir().join(format!("danstick-switch-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let sdl = root.join("sdl_controllers.txt");
+
+    let mut pad = TestPad::new(SWITCH);
+    let mut daemon =
+        Daemon::start_with_env(&root, SWITCH, &[], &[("DANSTICK_PAD_IDENTITY", "mirror")]);
+    daemon.pump(1.5);
+    daemon.seat_by_hold_as(&mut pad, 1);
+    assert_eq!(daemon.last("state").expect("state")["identity"], "mirror");
+    let before = std::fs::read_to_string(&sdl).unwrap_or_default();
+    assert!(
+        !before.contains(XBOX360_GUID),
+        "a mirror clone is not a 360: {before}"
+    );
+
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "identity", "mode": "xbox360"}));
+    let state = daemon
+        .wait_for("state", |e| e["identity"] == "xbox360", 8.0)
+        .expect("the identity never changed");
+    assert_eq!(state["players"][0]["player"], 1, "{state}");
+    assert_eq!(
+        state["players"][0]["published"], true,
+        "the seat's clone did not come back: {state}"
+    );
+    let after = std::fs::read_to_string(&sdl).expect("the SDL database");
+    assert!(
+        after.contains(XBOX360_GUID),
+        "player 1's clone is not the 360 now: {after}"
+    );
+
+    // The numbered 360 is the same pad with player 1's number in its version.
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "identity", "mode": "xbox360-numbered"}));
+    let state = daemon
+        .wait_for("state", |e| e["identity"] == "xbox360-numbered", 8.0)
+        .expect("the numbered identity was never taken");
+    assert_eq!(state["players"][0]["published"], true, "{state}");
+    let numbered = std::fs::read_to_string(&sdl).expect("the SDL database");
+    assert!(
+        numbered.contains(&format!("{XBOX360_GUID}00000100")),
+        "player 1's clone does not carry its number: {numbered}"
+    );
+    assert!(
+        !numbered.contains(&format!("{XBOX360_GUID}00001001")),
+        "player 1's clone still wears the shared 360 version: {numbered}"
+    );
+
+    // A name that is no identity is refused, with nothing changed.
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "identity", "mode": "xbox"}));
+    assert!(
+        daemon.last("error").is_some(),
+        "an unknown identity was taken"
+    );
+
+    // And back again, still seated.
+    daemon.send(serde_json::json!({"cmd": "identity", "mode": "mirror"}));
+    let state = daemon
+        .wait_for("state", |e| e["identity"] == "mirror", 8.0)
+        .expect("the identity never came back");
+    assert_eq!(state["players"][0]["player"], 1, "{state}");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// `danstick-rs exec`, pointed at the daemon under `root` the way a launch is.
+fn exec_under(root: &Path, id: PadId, args: &[&str]) -> std::process::Child {
+    Command::new(env!("CARGO_BIN_EXE_danstick-rs"))
+        .arg("exec")
+        .args(args)
+        .env("XDG_RUNTIME_DIR", root.join("run"))
+        .env("XDG_CONFIG_HOME", root.join("config"))
+        .env("XDG_DATA_HOME", root.join("data"))
+        .env("DANSTICK_PROFILE_DIR", root.join("profiles"))
+        .env("DANSTICK_ONLY_DEVICE", id.only)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("danstick-rs exec")
+}
+
+/// A launch that wants N seats makes them exist before it builds its bind
+/// plan -- the seated player kept, the rest reserved, the daemon on the 360
+/// identity for it -- and gives all of it back when the game ends.
+#[test]
+fn exec_reserves_the_seats_a_launch_wants_and_gives_them_back() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let root = std::env::temp_dir().join(format!("danstick-execres-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let seen = root.join("seen");
+
+    let mut pad = TestPad::new(EXEC_RESERVE);
+    let mut daemon = Daemon::start_with_env(
+        &root,
+        EXEC_RESERVE,
+        &[],
+        &[("DANSTICK_PAD_IDENTITY", "mirror")],
+    );
+    daemon.pump(1.5);
+    daemon.seat_by_hold_as(&mut pad, 1);
+    assert_eq!(daemon.last("state").expect("state")["identity"], "mirror");
+
+    // The probe records what it sees in /dev/input and stays up a moment.
+    daemon.events.clear();
+    let probe = format!("ls /dev/input > {}; sleep 3", seen.display());
+    let mut exec = exec_under(
+        &root,
+        EXEC_RESERVE,
+        &["--reserve", "2", "--", "sh", "-c", &probe],
+    );
+
+    let during = daemon
+        .wait_for(
+            "state",
+            |e| {
+                e["identity"] == "xbox360"
+                    && e["reserved"]
+                        .as_array()
+                        .is_some_and(|seats| seats.iter().any(|seat| seat["player"] == 2))
+            },
+            20.0,
+        )
+        .expect("the launch never had a second seat");
+    assert_eq!(
+        during["players"][0]["player"], 1,
+        "the seated player lost their seat: {during}"
+    );
+    let reserved_node = during["reserved"][0]["node"]
+        .as_str()
+        .expect("the reserved seat's node")
+        .rsplit('/')
+        .next()
+        .unwrap_or_default()
+        .to_owned();
+
+    let status = exec.wait().expect("exec ran");
+    assert!(status.success(), "the game's own exit is exec's: {status}");
+    let listed = std::fs::read_to_string(&seen).expect("the probe ran");
+    assert!(
+        listed.lines().any(|line| line.trim() == reserved_node),
+        "the reserved seat {reserved_node} was not there when the game started: {listed}"
+    );
+
+    // Handed back: nothing reserved, the identity it found.
+    let after = daemon
+        .wait_for(
+            "state",
+            |e| {
+                e["identity"] == "mirror"
+                    && e["reserved"]
+                        .as_array()
+                        .is_none_or(|seats| seats.is_empty())
+            },
+            20.0,
+        )
+        .expect("the launch kept what it borrowed");
+    assert_eq!(after["players"][0]["player"], 1, "{after}");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Four pads held one after another, each the moment the one before it is
+/// seated, timed from the end of each hold to its `claim`. GOTG measures the
+/// same on its cluster and wants the median under 150ms. A measurement, not a
+/// promise, so it is ignored and prints.
+///
+///     tools/cluster-test -p danstick-rs --test daemon_journey -- --ignored --nocapture claims_land
+#[test]
+#[ignore]
+fn claims_land_at_their_holds_length() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let root = std::env::temp_dir().join(format!("danstick-prompt-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let hold = 0.5;
+    let mut pads = four_pads(PROMPT);
+    let mut daemon = Daemon::start(&root, PROMPT);
+    daemon.pump(1.5);
+    daemon.send(serde_json::json!({"cmd": "seating", "open": true, "players": 4, "hold": hold}));
+    daemon.pump(0.5);
+
+    let mut late: Vec<f64> = Vec::new();
+    for (at, pad) in pads.iter_mut().enumerate() {
+        let player = at as u64 + 1;
+        daemon.events.clear();
+        let pressed = Instant::now();
+        pad.emit(EventType::KEY.0, FIRST_KEY, 1);
+        let mut claimed = None;
+        while pressed.elapsed() < Duration::from_secs(5) {
+            daemon.pump(0.003);
+            if daemon
+                .events
+                .iter()
+                .any(|e| e["event"] == "claim" && e["player"] == player)
+            {
+                claimed = Some(pressed.elapsed().as_secs_f64());
+                break;
+            }
+        }
+        pad.emit(EventType::KEY.0, FIRST_KEY, 0);
+        let took = claimed.expect("the hold never claimed");
+        late.push((took - hold) * 1000.0);
+    }
+    let mut sorted = late.clone();
+    sorted.sort_by(f64::total_cmp);
+    eprintln!(
+        "PROMPT hold end -> claim, seats 1-4: {:.0} {:.0} {:.0} {:.0} ms; median {:.0} ms",
+        late[0],
+        late[1],
+        late[2],
+        late[3],
+        (sorted[1] + sorted[2]) / 2.0
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// A reader on one clone's node, opened the way a game opens it: it is the
+/// evidence that a seat drives the device that was already there.
+struct Watcher {
+    device: evdev::Device,
+}
+
+impl Watcher {
+    fn open(node: &str) -> Watcher {
+        let device = evdev::Device::open(node).unwrap_or_else(|error| panic!("{node}: {error}"));
+        device.set_nonblocking(true).expect("nonblocking");
+        Watcher { device }
+    }
+
+    /// Whether `code` goes down on this node within `seconds`.
+    fn sees_press(&mut self, daemon: &mut Daemon, code: u16, seconds: f64) -> bool {
+        let deadline = Instant::now() + Duration::from_secs_f64(seconds);
+        while Instant::now() < deadline {
+            if let Ok(events) = self.device.fetch_events() {
+                if events
+                    .into_iter()
+                    .any(|e| e.event_type() == EventType::KEY && e.code() == code && e.value() == 1)
+                {
+                    return true;
+                }
+            }
+            daemon.pump(0.02);
+        }
+        false
+    }
+
+    /// Whether the node is still the device it was: a destroyed one reads ENODEV.
+    fn still_there(&mut self) -> bool {
+        match self.device.fetch_events() {
+            Ok(_) => true,
+            Err(error) => error.kind() == std::io::ErrorKind::WouldBlock,
+        }
+    }
+}
+
+/// Each standing slot's node, by player.
+fn standing(state: &Value) -> std::collections::BTreeMap<u64, String> {
+    state["reserved"]
+        .as_array()
+        .map(|seats| {
+            seats
+                .iter()
+                .filter_map(|seat| {
+                    Some((seat["player"].as_u64()?, seat["node"].as_str()?.to_owned()))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Under `DANSTICK_SLOTS=fixed` four 360 clones, each its own GUID, stand
+/// before anybody holds a button. A hold drives slot 1's clone where it
+/// already was; leaving keeps it there, quiet, and the next hold takes it.
+#[test]
+fn fixed_slots_stand_before_anybody_and_outlive_their_players() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let root = std::env::temp_dir().join(format!("danstick-fixed-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+
+    let mut pads = four_pads(FIXED);
+    let mut daemon = Daemon::start_with_env(&root, FIXED, &[], &[("DANSTICK_SLOTS", "fixed")]);
+    let before = daemon
+        .wait_for("state", |e| standing(e).len() == 4, 8.0)
+        .expect("four slots never stood");
+    assert_eq!(before["identity"], "xbox360-numbered", "{before}");
+    assert_eq!(before["slot_mode"], "fixed", "{before}");
+    assert!(
+        before["players"].as_array().is_some_and(Vec::is_empty),
+        "{before}"
+    );
+    let guids: BTreeSet<&str> = before["reserved"]
+        .as_array()
+        .expect("reserved")
+        .iter()
+        .filter_map(|seat| seat["guid"].as_str())
+        .collect();
+    assert_eq!(guids.len(), 4, "every slot is its own pad: {before}");
+    let nodes = standing(&before);
+    let mut slot_one = Watcher::open(&nodes[&1]);
+
+    daemon.seat_by_hold_as(&mut pads[0], 1);
+    let seated = daemon.last("state").expect("state");
+    let rest = standing(seated);
+    assert!(!rest.contains_key(&1), "slot 1 is taken: {seated}");
+    for player in 2..=4 {
+        assert_eq!(
+            rest.get(&player),
+            nodes.get(&player),
+            "slot {player} moved: {seated}"
+        );
+    }
+    pads[0].emit(EventType::KEY.0, FIRST_KEY, 0);
+    daemon.pump(0.3);
+    pads[0].emit(EventType::KEY.0, FIRST_KEY, 1);
+    assert!(
+        slot_one.sees_press(&mut daemon, FIRST_KEY, 3.0),
+        "the seated pad does not drive slot 1's clone"
+    );
+    pads[0].emit(EventType::KEY.0, FIRST_KEY, 0);
+
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "unseat", "player": 1}));
+    let left = daemon
+        .wait_for("state", |e| standing(e).len() == 4, 8.0)
+        .expect("slot 1 did not stand again");
+    assert_eq!(standing(&left), nodes, "a leave moved a slot: {left}");
+    assert!(slot_one.still_there(), "slot 1's clone was destroyed");
+
+    daemon.seat_by_hold_as(&mut pads[1], 1);
+    pads[1].emit(EventType::KEY.0, FIRST_KEY, 0);
+    daemon.pump(0.3);
+    pads[1].emit(EventType::KEY.0, FIRST_KEY, 1);
+    assert!(
+        slot_one.sees_press(&mut daemon, FIRST_KEY, 3.0),
+        "the next pad does not drive the slot its player left"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// `slots` changes a running daemon: fixed makes the slots at once, on a
+/// 360 identity; `destroy` makes a left slot again at a new node; on-demand
+/// gives back every slot nobody sits in.
+#[test]
+fn slots_are_chosen_on_a_running_daemon() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let root = std::env::temp_dir().join(format!("danstick-slotswitch-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+
+    let mut pad = TestPad::new(SLOTSWITCH);
+    let mut daemon = Daemon::start_with_env(
+        &root,
+        SLOTSWITCH,
+        &[],
+        &[("DANSTICK_PAD_IDENTITY", "mirror")],
+    );
+    let idle = daemon.wait_for("state", |_| true, 5.0).expect("state");
+    assert_eq!(idle["slot_mode"], "on-demand", "{idle}");
+    assert!(
+        standing(&idle).is_empty(),
+        "nothing stands on demand: {idle}"
+    );
+
+    // Past sixteen is refused whole: nothing stands after it.
+    daemon.send(serde_json::json!({"cmd": "slots", "mode": "fixed", "count": 17}));
+    assert!(
+        daemon.wait_for("error", |_| true, 3.0).is_some(),
+        "seventeen slots were taken"
+    );
+    daemon.events.clear();
+
+    daemon.send(
+        serde_json::json!({"cmd": "slots", "mode": "fixed", "count": 2, "on_leave": "destroy"}),
+    );
+    let fixed = daemon
+        .wait_for(
+            "state",
+            |e| e["slot_mode"] == "fixed" && standing(e).len() == 2,
+            8.0,
+        )
+        .expect("fixed slots never stood");
+    assert_eq!(fixed["identity"], "xbox360-numbered", "{fixed}");
+    assert_eq!(fixed["on_leave"], "destroy", "{fixed}");
+    let nodes = standing(&fixed);
+    let mut slot_one = Watcher::open(&nodes[&1]);
+
+    daemon.send(serde_json::json!({"cmd": "identity", "mode": "mirror"}));
+    assert!(
+        daemon.wait_for("error", |_| true, 3.0).is_some(),
+        "a fixed slot cannot mirror a pad nobody holds yet"
+    );
+
+    daemon.seat_by_hold_as(&mut pad, 1);
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "unseat", "player": 1}));
+    let left = daemon
+        .wait_for("state", |e| standing(e).len() == 2, 8.0)
+        .expect("slot 1 was not made again");
+    // The kernel may hand the new clone the old node's number; the old device is gone.
+    daemon.pump(0.3);
+    assert!(
+        !slot_one.still_there(),
+        "destroy kept slot 1's clone: {left}"
+    );
+    assert_eq!(
+        standing(&left).get(&2),
+        nodes.get(&2),
+        "a slot nobody left moved: {left}"
+    );
+
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "slots", "mode": "on-demand"}));
+    let back = daemon
+        .wait_for("state", |e| e["slot_mode"] == "on-demand", 8.0)
+        .expect("on-demand never came back");
+    assert!(
+        standing(&back).is_empty(),
+        "on demand keeps no empty slot: {back}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Under `DANSTICK_LAYOUT=label` a Nintendo pad's A -- the right face button --
+/// presses the 360's A, and its B the 360's B; `slots` puts it back by
+/// position on a running daemon.
+#[test]
+fn a_pad_kept_by_label_presses_what_its_labels_say() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let root = std::env::temp_dir().join(format!("danstick-labelled-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let (south, east) = (FIRST_KEY, FIRST_KEY + 1);
+
+    let mut pad = TestPad::new(LABELLED);
+    let mut daemon = Daemon::start_with_env(
+        &root,
+        LABELLED,
+        &[],
+        &[("DANSTICK_SLOTS", "fixed"), ("DANSTICK_LAYOUT", "label")],
+    );
+    let before = daemon
+        .wait_for("state", |e| standing(e).len() == 4, 8.0)
+        .expect("the slots never stood");
+    assert_eq!(before["layout"], "label", "{before}");
+    let mut slot_one = Watcher::open(&standing(&before)[&1]);
+    daemon.seat_by_hold_as(&mut pad, 1);
+    pad.emit(EventType::KEY.0, south, 0);
+    daemon.pump(0.3);
+
+    pad.emit(EventType::KEY.0, east, 1);
+    assert!(
+        slot_one.sees_press(&mut daemon, south, 3.0),
+        "the button labelled A did not press the 360's A"
+    );
+    pad.emit(EventType::KEY.0, east, 0);
+    pad.emit(EventType::KEY.0, south, 1);
+    assert!(
+        slot_one.sees_press(&mut daemon, east, 3.0),
+        "the button labelled B did not press the 360's B"
+    );
+    pad.emit(EventType::KEY.0, south, 0);
+
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "slots", "layout": "position"}));
+    daemon
+        .wait_for("state", |e| e["layout"] == "position", 8.0)
+        .expect("the layout never changed");
+    daemon.pump(0.3);
+    pad.emit(EventType::KEY.0, east, 1);
+    assert!(
+        slot_one.sees_press(&mut daemon, east, 3.0),
+        "by position the right button is the 360's right button"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}

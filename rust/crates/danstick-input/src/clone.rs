@@ -1,0 +1,1074 @@
+//! Clone a physical pad as `danstick Player N` with unique identity per port.
+
+use std::collections::BTreeMap;
+use std::ffi::CString;
+
+use danstick_core::calibration::{AxisCalibration, Declared};
+use danstick_core::dsupad;
+use danstick_core::emit::version_for;
+use danstick_core::profile::Mapping;
+use danstick_core::sdl::AxisSpan;
+use danstick_core::tuning::{Debouncer, Tuning};
+use danstick_core::twins::Twins;
+use danstick_core::xbox;
+use evdev::uinput::{VirtualDevice, VirtualDeviceBuilder};
+use evdev::{
+    AbsInfo, AbsoluteAxisCode, AttributeSet, BusType, Device, EventType, FFEffect, InputEvent,
+    InputId, KeyCode, UInputEvent, UinputAbsSetup,
+};
+use log::{info, warn};
+
+use crate::motion;
+use crate::pad::{Pad, VIRTUAL_PHYS_PREFIX};
+use crate::triton;
+
+/// pid.codes, the open-source vendor id: a real vendor's would impersonate their hardware.
+pub const DANSTICK_VID: u16 = 0x1209;
+pub const DANSTICK_PID: u16 = 0x0001;
+pub use danstick_core::emit::DANSTICK_VERSION;
+const BUS_VIRTUAL: u16 = 0x06;
+
+pub const ENV_IDENTITY: &str = "DANSTICK_PAD_IDENTITY";
+pub const ENV_ONLY_VIRTUAL: &str = "DANSTICK_ONLY_VIRTUAL";
+
+pub const VIRTUAL_PREFIX: &str = "danstick Player ";
+
+pub fn virtual_name(player: u32) -> String {
+    format!("{VIRTUAL_PREFIX}{player}")
+}
+
+pub fn virtual_phys(player: u32) -> String {
+    format!("{VIRTUAL_PHYS_PREFIX}p{player}")
+}
+
+/// Mirror: keep source's bus/ids; Danstick: use 1209:0001 on BUS_VIRTUAL.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IdentityMode {
+    Mirror,
+    Danstick,
+    /// A wired Xbox 360 pad, layout and all: what every SDL maps out of the box.
+    Xbox360,
+    /// The 360 pad with the player in its version, so every clone has its own GUID.
+    Xbox360Numbered,
+}
+
+impl IdentityMode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            IdentityMode::Mirror => "mirror",
+            IdentityMode::Danstick => "danstick",
+            IdentityMode::Xbox360 => "xbox360",
+            IdentityMode::Xbox360Numbered => "xbox360-numbered",
+        }
+    }
+
+    /// Whether every clone wears the 360 layout, known before any pad is behind it.
+    pub const fn is_xbox_layout(self) -> bool {
+        matches!(self, IdentityMode::Xbox360 | IdentityMode::Xbox360Numbered)
+    }
+
+    /// The identity a player's clone wears under a 360 layout; `None` when it
+    /// depends on the pad behind it.
+    pub fn xbox_identity(self, player: u32) -> Option<Identity> {
+        match self {
+            IdentityMode::Xbox360 => Some(Identity::XBOX360),
+            IdentityMode::Xbox360Numbered => Some(Identity {
+                version: version_for(player),
+                ..Identity::XBOX360
+            }),
+            IdentityMode::Mirror | IdentityMode::Danstick => None,
+        }
+    }
+
+    /// The mode a name asks for, or `None` for a name that is none of them.
+    pub fn parse(name: &str) -> Option<Self> {
+        match name.trim().to_lowercase().as_str() {
+            "mirror" => Some(IdentityMode::Mirror),
+            "danstick" => Some(IdentityMode::Danstick),
+            "xbox360" => Some(IdentityMode::Xbox360),
+            "xbox360-numbered" => Some(IdentityMode::Xbox360Numbered),
+            _ => None,
+        }
+    }
+
+    /// Read once at startup, so two clones in one session cannot get different answers.
+    pub fn from_env() -> Self {
+        let named = IdentityMode::parse(&std::env::var(ENV_IDENTITY).unwrap_or_default());
+        let mode = match named {
+            Some(mode) => mode,
+            None if std::env::var(ENV_ONLY_VIRTUAL).as_deref() == Ok("1") => IdentityMode::Danstick,
+            None => IdentityMode::Mirror,
+        };
+        let (slots, _) = danstick_core::slots::Policy::from_env(|name| std::env::var(name).ok());
+        mode.for_slots(slots.mode)
+    }
+
+    /// The identity `self` becomes under `slots`: a fixed slot exists before its
+    /// pad, so only a 360 layout can be published for it.
+    pub fn for_slots(self, slots: danstick_core::slots::Mode) -> Self {
+        if slots == danstick_core::slots::Mode::Fixed && !self.is_xbox_layout() {
+            IdentityMode::Xbox360Numbered
+        } else {
+            self
+        }
+    }
+}
+
+/// Four fields for SDL GUID; bus field decides match in SDL database.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Identity {
+    pub vendor: u16,
+    pub product: u16,
+    pub bustype: u16,
+    pub version: u16,
+}
+
+impl Identity {
+    pub const DANSTICK: Identity = Identity {
+        vendor: DANSTICK_VID,
+        product: DANSTICK_PID,
+        bustype: BUS_VIRTUAL,
+        version: DANSTICK_VERSION,
+    };
+
+    /// The wired 360 pad's, version and all: SDL's GUID carries the version,
+    /// and the database entry is for 0x0110. The player lives in phys instead.
+    pub const XBOX360: Identity = Identity {
+        vendor: xbox::VENDOR,
+        product: xbox::PRODUCT,
+        bustype: xbox::BUS_USB,
+        version: xbox::VERSION,
+    };
+
+    pub fn for_source(mode: IdentityMode, source: &Device, player: u32) -> Identity {
+        if let Some(identity) = mode.xbox_identity(player) {
+            return identity;
+        }
+        let version = version_for(player);
+        match mode {
+            IdentityMode::Xbox360 | IdentityMode::Xbox360Numbered => Identity::XBOX360,
+            IdentityMode::Danstick => Identity {
+                version,
+                ..Identity::DANSTICK
+            },
+            IdentityMode::Mirror => {
+                let id = source.input_id();
+                Identity {
+                    vendor: id.vendor(),
+                    product: id.product(),
+                    bustype: id.bus_type().0,
+                    version,
+                }
+            }
+        }
+    }
+}
+
+/// Past this an event's stamp is not believed: the wall clock stepped.
+const MAX_EVENT_AGE: f64 = 2.0;
+
+/// How long ago the kernel saw `event`, so a hold counts from the press and
+/// not from whenever a busy event loop got round to reading it.
+pub fn event_age(event: &evdev::InputEvent) -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(event.timestamp())
+        .map(|age| age.as_secs_f64().min(MAX_EVENT_AGE))
+        .unwrap_or(0.0)
+}
+
+/// Event types that flow controller -> host; EV_FF travels the other way.
+#[inline]
+pub fn forwarded(kind: EventType) -> bool {
+    matches!(
+        kind,
+        EventType::KEY
+            | EventType::ABSOLUTE
+            | EventType::RELATIVE
+            | EventType::MISC
+            | EventType::SYNCHRONIZATION
+    )
+}
+
+/// Event source: evdev node or Triton (Steam Controller).
+#[derive(Debug)]
+pub enum Source {
+    Evdev(Box<Device>),
+    Triton(Box<triton::Source>),
+}
+
+fn declared(info: &AbsInfo) -> Declared {
+    Declared {
+        minimum: info.minimum(),
+        maximum: info.maximum(),
+        value: info.value(),
+        flat: info.flat(),
+    }
+}
+
+fn span(info: &AbsInfo) -> AxisSpan {
+    AxisSpan::new(info.minimum(), info.maximum(), info.value())
+}
+
+fn key_ups(codes: impl IntoIterator<Item = u16>) -> Vec<InputEvent> {
+    codes
+        .into_iter()
+        .map(|code| InputEvent::new(EventType::KEY.0, code, 0))
+        .collect()
+}
+
+impl Source {
+    pub fn fetch_events(&mut self, out: &mut Vec<InputEvent>) -> std::io::Result<()> {
+        match self {
+            Source::Evdev(device) => {
+                out.extend(device.fetch_events()?);
+                Ok(())
+            }
+            Source::Triton(source) => source.fetch_events(out),
+        }
+    }
+
+    pub fn motion(&self) -> Option<danstick_core::motion::Motion> {
+        match self {
+            Source::Evdev(_) => None,
+            Source::Triton(source) => source.motion(),
+        }
+    }
+
+    pub fn ungrab(&mut self) {
+        if let Source::Evdev(device) = self {
+            let _ = device.ungrab();
+        }
+    }
+
+    pub fn grab(&mut self) -> std::io::Result<()> {
+        match self {
+            Source::Evdev(device) => device.grab(),
+            Source::Triton(_) => Ok(()),
+        }
+    }
+
+    pub fn held_keys(&self) -> Vec<u16> {
+        match self {
+            Source::Evdev(device) => device
+                .get_key_state()
+                .map(|keys| keys.iter().map(|key| key.code()).collect())
+                .unwrap_or_default(),
+            Source::Triton(source) => source.held_keys(),
+        }
+    }
+
+    pub fn upload_ff_effect(&mut self, effect: evdev::FFEffectData) -> std::io::Result<FFEffect> {
+        match self {
+            Source::Evdev(device) => device.upload_ff_effect(effect),
+            Source::Triton(_) => Err(std::io::Error::from(std::io::ErrorKind::Unsupported)),
+        }
+    }
+
+    pub fn capabilities(&self) -> (Vec<u16>, Vec<u16>) {
+        match self {
+            Source::Evdev(device) => capabilities(device),
+            Source::Triton(source) => {
+                let (keys, axes) = source.capabilities();
+                (keys, axes.into_iter().map(|(code, _)| code).collect())
+            }
+        }
+    }
+
+    pub fn axis_spans(&self) -> BTreeMap<u16, AxisSpan> {
+        match self {
+            Source::Evdev(device) => axis_spans(device),
+            Source::Triton(source) => source
+                .capabilities()
+                .1
+                .into_iter()
+                .map(|(code, info)| (code, span(&info)))
+                .collect(),
+        }
+    }
+
+    pub fn declared_axes(&self) -> BTreeMap<u16, Declared> {
+        match self {
+            Source::Evdev(device) => device
+                .get_absinfo()
+                .map(|axes| axes.map(|(code, info)| (code.0, declared(&info))).collect())
+                .unwrap_or_default(),
+            Source::Triton(source) => source
+                .capabilities()
+                .1
+                .into_iter()
+                .map(|(code, info)| (code, declared(&info)))
+                .collect(),
+        }
+    }
+
+    pub fn set_nonblocking(&mut self, nonblocking: bool) -> std::io::Result<()> {
+        match self {
+            Source::Evdev(device) => device.set_nonblocking(nonblocking),
+            Source::Triton(_) => Ok(()),
+        }
+    }
+
+    pub fn path(&self) -> String {
+        match self {
+            Source::Evdev(device) => device.physical_path().unwrap_or_default().to_owned(),
+            Source::Triton(source) => source.path().display().to_string(),
+        }
+    }
+
+    pub fn physical_guid(&self) -> Option<String> {
+        match self {
+            Source::Evdev(device) => {
+                let id = device.input_id();
+                Some(danstick_core::sdl::guid(
+                    id.bus_type().0,
+                    id.vendor(),
+                    id.product(),
+                    id.version(),
+                    device.name().unwrap_or(""),
+                ))
+            }
+            Source::Triton(_) => None,
+        }
+    }
+
+    pub fn drain(&mut self) {
+        let mut sink = Vec::new();
+        let _ = self.set_nonblocking(true);
+        while self.fetch_events(&mut sink).is_ok() && !sink.is_empty() {
+            sink.clear();
+        }
+    }
+}
+
+impl std::os::fd::AsFd for Source {
+    fn as_fd(&self) -> std::os::fd::BorrowedFd<'_> {
+        match self {
+            Source::Evdev(device) => device.as_fd(),
+            Source::Triton(source) => source.as_fd(),
+        }
+    }
+}
+
+impl std::os::fd::AsRawFd for Source {
+    fn as_raw_fd(&self) -> std::os::fd::RawFd {
+        match self {
+            Source::Evdev(device) => device.as_raw_fd(),
+            Source::Triton(source) => source.as_raw_fd(),
+        }
+    }
+}
+
+/// Open a pad for reading, as the republisher would, without cloning it.
+pub fn open_source(pad: &Pad, grab: bool) -> Result<Source, CloneError> {
+    let open_error = |error| CloneError::Open(pad.path.display().to_string(), error);
+    if triton::owns(pad) {
+        let source = triton::Source::open(&pad.path).map_err(open_error)?;
+        return Ok(Source::Triton(Box::new(source)));
+    }
+    let mut source = Device::open(&pad.path).map_err(open_error)?;
+    let _ = source.set_nonblocking(true);
+    if grab {
+        if let Err(error) = source.grab() {
+            warn!(
+                "could not grab {} ({error}): presses will leak through to other applications",
+                pad.event()
+            );
+        }
+    }
+    Ok(Source::Evdev(Box::new(source)))
+}
+
+/// Physical pad, clone, and event pipeline.
+#[derive(Debug)]
+pub struct VirtualPad {
+    pub player: u32,
+    pub pad: Pad,
+    pub identity: Identity,
+    pub source: Source,
+    pub clone: VirtualDevice,
+    pub axes: BTreeMap<u16, AxisCalibration>,
+    pub tuning: Tuning,
+    pub declared: BTreeMap<u16, Declared>,
+    pub debouncer: Debouncer,
+    pub tracker: dsupad::Tracker,
+    pub sensor: Option<motion::Sensor>,
+    pub dropped: u64,
+    pub gone: bool,
+    effects: BTreeMap<i16, FFEffect>,
+    forwarded_any: bool,
+    /// Under `IdentityMode::Xbox360`: the source's events onto the 360 layout.
+    pub translator: Option<xbox::Translator>,
+    /// Under the other identities: controls with a second input, unioned onto the first.
+    pub twins: Option<Twins>,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum CloneError {
+    #[error("opening {0}: {1}")]
+    Open(String, #[source] std::io::Error),
+    #[error("building a clone for player {0}: {1}")]
+    Build(u32, #[source] std::io::Error),
+}
+
+/// Grab a pad and publish its clone.
+/// `mapping` is the pad's stored capture: what translates it onto the 360
+/// layout under `IdentityMode::Xbox360`, and what says which controls have a
+/// second input under the others. Default for an unmapped pad.
+pub fn create(
+    pad: &Pad,
+    player: u32,
+    mode: IdentityMode,
+    profile_axes: &BTreeMap<u16, AxisCalibration>,
+    tuning: Tuning,
+    grab: bool,
+    mapping: &Mapping,
+) -> Result<VirtualPad, CloneError> {
+    create_on(
+        pad,
+        player,
+        mode,
+        profile_axes,
+        tuning,
+        grab,
+        mapping,
+        &BTreeMap::new(),
+        &mut None,
+    )
+}
+
+/// Like [`create`], but reuses a device [`reserve`] published, to keep its node,
+/// and under a 360 identity presses, for each control in `faces`, the one it
+/// names instead (a pad kept by label rather than position).
+#[allow(clippy::too_many_arguments)]
+pub fn create_on(
+    pad: &Pad,
+    player: u32,
+    mode: IdentityMode,
+    profile_axes: &BTreeMap<u16, AxisCalibration>,
+    tuning: Tuning,
+    grab: bool,
+    mapping: &Mapping,
+    faces: &BTreeMap<danstick_core::Control, danstick_core::Control>,
+    reserved: &mut Option<VirtualDevice>,
+) -> Result<VirtualPad, CloneError> {
+    // Taken only once there is a pad to feed it: everything above this can fail,
+    // and a reserved device dropped on the way out is a port a running game has
+    // bound and nothing can replace inside its sandbox.
+    let source = open_source(pad, grab)?;
+    let bindings = mapping.resolved();
+    let extras = mapping.resolved_extra();
+    let mut translator = None;
+    let mut twins = None;
+    let (identity, clone) = if let Some(identity) = mode.xbox_identity(player) {
+        let (keys, _) = source.capabilities();
+        let mut translating =
+            xbox::Translator::new(&keys, &source.axis_spans(), &bindings, &extras);
+        translating.relabel(faces);
+        translator = Some(translating);
+        (
+            identity,
+            match reserved.take() {
+                // Reuse it: rebuilding would leave the launch's bound device silent.
+                Some(device) => Ok(device),
+                None => build_clone_from(&xbox::KEYS, &xbox_axes(), player, identity),
+            },
+        )
+    } else {
+        if !extras.is_empty() {
+            let (keys, _) = source.capabilities();
+            twins = Twins::new(&keys, &source.axis_spans(), &bindings, &extras);
+        }
+        match &source {
+            Source::Triton(triton) => {
+                let version = version_for(player);
+                let identity = match mode {
+                    IdentityMode::Danstick => Identity {
+                        version,
+                        ..Identity::DANSTICK
+                    },
+                    IdentityMode::Mirror
+                    | IdentityMode::Xbox360
+                    | IdentityMode::Xbox360Numbered => Identity {
+                        vendor: pad.vid,
+                        product: pad.pid,
+                        bustype: BusType::BUS_USB.0,
+                        version,
+                    },
+                };
+                let (keys, axes) = triton.capabilities();
+                (identity, build_clone_from(&keys, &axes, player, identity))
+            }
+            Source::Evdev(device) => {
+                let identity = Identity::for_source(mode, device, player);
+                (identity, build_clone(device, player, identity))
+            }
+        }
+    };
+    let clone = clone.map_err(|error| CloneError::Build(player, error))?;
+
+    let mut axes = BTreeMap::new();
+    for (code, calibration) in profile_axes {
+        if calibration.fits() {
+            axes.insert(*code, *calibration);
+        } else {
+            warn!(
+                "player {player}: axis {code}'s calibration cannot be written to an evdev value \
+                 (centre {}, range {}..{}); forwarding that axis uncorrected instead",
+                calibration.center, calibration.minimum, calibration.maximum
+            );
+        }
+    }
+
+    let declared = source.declared_axes();
+    let tracker = dsupad::Tracker::new(
+        declared
+            .iter()
+            .map(|(code, declared)| {
+                (
+                    *code,
+                    dsupad::Range::declared(declared.minimum, declared.maximum, declared.value),
+                )
+            })
+            .collect(),
+    );
+    let sensor = pad.motion.as_deref().and_then(|path| {
+        motion::Sensor::open(path)
+            .inspect_err(|error| {
+                warn!(
+                    "player {player}: motion sensor {} would not open ({error}); \
+                 the pad works, its gyro does not",
+                    path.display()
+                );
+            })
+            .ok()
+    });
+
+    let mut vpad = VirtualPad {
+        player,
+        pad: pad.clone(),
+        identity,
+        source,
+        clone,
+        axes,
+        debouncer: Debouncer::new(tuning.debounce_ms),
+        tuning,
+        declared,
+        tracker,
+        sensor,
+        dropped: 0,
+        gone: false,
+        effects: BTreeMap::new(),
+        forwarded_any: false,
+        translator,
+        twins,
+    };
+    vpad.seed_calibrated_axes();
+
+    info!(
+        "player {player}: {} -> {} ({}, {:04x}:{:04x} bus {}, {} identity)",
+        pad.event(),
+        virtual_name(player),
+        virtual_name(player),
+        identity.vendor,
+        identity.product,
+        identity.bustype,
+        mode.as_str()
+    );
+    Ok(vpad)
+}
+
+fn build_clone(source: &Device, player: u32, identity: Identity) -> std::io::Result<VirtualDevice> {
+    with_phys_retry(player, |set_phys| {
+        assemble(source, player, identity, set_phys)
+    })
+}
+
+/// A published device's own `/dev/input/eventN`, waited for: udev has to make it.
+pub fn node_of(device: &mut VirtualDevice) -> Option<String> {
+    for attempt in 0..50 {
+        if attempt > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        if let Some(node) = first_event_node(device) {
+            return Some(node);
+        }
+    }
+    None
+}
+
+/// This device's `eventN`, if udev has made it yet.
+fn first_event_node(device: &mut VirtualDevice) -> Option<String> {
+    device
+        .enumerate_dev_nodes_blocking()
+        .ok()?
+        .find_map(|path| {
+            path.ok().filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with("event"))
+            })
+        })
+        .map(|path| path.display().to_string())
+}
+
+/// Every device's node, waited for together: udev makes them at about the same
+/// time, so one wait finds them all in the time the slowest one takes.
+pub fn nodes_of(devices: &mut BTreeMap<u32, VirtualDevice>) -> BTreeMap<u32, String> {
+    let mut found: BTreeMap<u32, String> = BTreeMap::new();
+    for attempt in 0..50 {
+        if attempt > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        for (player, device) in devices.iter_mut() {
+            if found.contains_key(player) {
+                continue;
+            }
+            if let Some(node) = first_event_node(device) {
+                found.insert(*player, node);
+            }
+        }
+        if found.len() == devices.len() {
+            break;
+        }
+    }
+    found
+}
+
+/// The 360 layout's axes, which do not depend on the pad behind the clone.
+fn xbox_axes() -> Vec<(u16, AbsInfo)> {
+    xbox::AXES
+        .iter()
+        .map(|&(code, minimum, maximum, fuzz, flat)| {
+            let rest = if minimum < 0 { 0 } else { minimum };
+            (code, AbsInfo::new(rest, minimum, maximum, fuzz, flat, 0))
+        })
+        .collect()
+}
+
+/// A clone for a seat nobody has taken yet, in the 360 layout known before the pad.
+pub fn reserve(player: u32, identity: Identity) -> Result<VirtualDevice, CloneError> {
+    build_clone_from(&xbox::KEYS, &xbox_axes(), player, identity)
+        .map_err(|error| CloneError::Build(player, error))
+}
+
+/// Release every button and rest every axis of a 360-layout clone, so an
+/// empty slot is a connected pad that sends nothing.
+pub fn quiet(device: &mut VirtualDevice) -> std::io::Result<()> {
+    let mut frame: Vec<InputEvent> = xbox::KEYS
+        .iter()
+        .map(|&code| InputEvent::new(EventType::KEY.0, code, 0))
+        .collect();
+    for (code, info) in xbox_axes() {
+        frame.push(InputEvent::new(EventType::ABSOLUTE.0, code, info.value()));
+    }
+    frame.push(InputEvent::new(EventType::SYNCHRONIZATION.0, 0, 0));
+    device.emit(&frame)
+}
+
+/// A clone from a bare capability list, for a source the kernel never published a device for.
+fn build_clone_from(
+    keys: &[u16],
+    axes: &[(u16, AbsInfo)],
+    player: u32,
+    identity: Identity,
+) -> std::io::Result<VirtualDevice> {
+    with_phys_retry(player, |set_phys| {
+        let name = virtual_name(player);
+        let key_set: AttributeSet<KeyCode> = keys.iter().map(|&code| KeyCode(code)).collect();
+        let mut builder = head(&name, player, identity, set_phys)?.with_keys(&key_set)?;
+        for &(code, info) in axes {
+            builder =
+                builder.with_absolute_axis(&UinputAbsSetup::new(AbsoluteAxisCode(code), info))?;
+        }
+        builder.build()
+    })
+}
+
+/// evdev 0.13 may fail UI_SET_PHYS; retry without phys (matched by name instead).
+fn with_phys_retry(
+    player: u32,
+    build: impl Fn(bool) -> std::io::Result<VirtualDevice>,
+) -> std::io::Result<VirtualDevice> {
+    build(true).or_else(|first| {
+        warn!(
+            "player {player}: could not publish a clone with a phys tag ({first}); \
+             retrying without one, so it is recognised by name instead"
+        );
+        build(false)
+    })
+}
+
+fn head<'a>(
+    name: &'a str,
+    player: u32,
+    identity: Identity,
+    set_phys: bool,
+) -> std::io::Result<VirtualDeviceBuilder<'a>> {
+    let mut builder = VirtualDevice::builder()?.name(name).input_id(InputId::new(
+        BusType(identity.bustype),
+        identity.vendor,
+        identity.product,
+        identity.version,
+    ));
+    if set_phys {
+        let phys = CString::new(virtual_phys(player)).unwrap_or_default();
+        builder = builder.with_phys(&phys)?;
+    }
+    Ok(builder)
+}
+
+fn assemble(
+    source: &Device,
+    player: u32,
+    identity: Identity,
+    set_phys: bool,
+) -> std::io::Result<VirtualDevice> {
+    let name = virtual_name(player);
+    let mut builder = head(&name, player, identity, set_phys)?;
+    if let Some(keys) = source.supported_keys() {
+        builder = builder.with_keys(keys)?;
+    }
+    if let Some(relative) = source.supported_relative_axes() {
+        builder = builder.with_relative_axes(relative)?;
+    }
+    if let Some(misc) = source.misc_properties() {
+        builder = builder.with_msc(misc)?;
+    }
+    builder = builder.with_properties(source.properties())?;
+    if let Ok(absinfo) = source.get_absinfo() {
+        for (code, info) in absinfo {
+            builder = builder.with_absolute_axis(&UinputAbsSetup::new(code, info))?;
+        }
+    }
+    // Mirror source's effect count: default 96 would falsely advertise rumble.
+    if let Some(ff) = source.supported_ff() {
+        builder = builder.with_ff(ff)?;
+        builder = builder.with_ff_effects_max(source.max_ff_effects() as u32);
+    }
+    builder.build()
+}
+
+impl VirtualPad {
+    pub fn node(&mut self) -> Option<String> {
+        node_of(&mut self.clone)
+    }
+
+    /// Give up the pad and keep the clone, for a slot that outlives its player.
+    pub fn into_clone(self) -> VirtualDevice {
+        self.clone
+    }
+
+    pub fn name(&self) -> String {
+        virtual_name(self.player)
+    }
+
+    /// Seed calibrated axes at centre, not source default (may be stale).
+    fn seed_calibrated_axes(&mut self) {
+        if self.axes.is_empty() || self.translator.is_some() {
+            return;
+        }
+        let mut frame: Vec<InputEvent> = self
+            .axes
+            .iter()
+            .map(|(code, calibration)| {
+                InputEvent::new(EventType::ABSOLUTE.0, *code, calibration.midpoint() as i32)
+            })
+            .collect();
+        frame.push(InputEvent::new(EventType::SYNCHRONIZATION.0, 0, 0));
+        info!(
+            "player {}: applying calibration for {} axis/axes",
+            self.player,
+            self.axes.len()
+        );
+        if let Err(error) = self.clone.emit(&frame) {
+            warn!(
+                "player {}: could not seed calibrated axes: {error}",
+                self.player
+            );
+        }
+    }
+
+    #[inline]
+    pub fn correct(&self, event: InputEvent) -> InputEvent {
+        if event.event_type() != EventType::ABSOLUTE {
+            return event;
+        }
+        match self.axes.get(&event.code()) {
+            Some(calibration) => InputEvent::new(
+                event.event_type().0,
+                event.code(),
+                calibration.apply(event.value()),
+            ),
+            None => event,
+        }
+    }
+
+    /// Calibration then tuning; None may be debounced release.
+    pub fn shape(&mut self, event: InputEvent, now_ms: u64) -> Option<InputEvent> {
+        let event = self.correct(event);
+        let code = event.code();
+        let value = match event.event_type() {
+            EventType::ABSOLUTE => {
+                self.tuning
+                    .shape_axis(code, event.value(), self.declared.get(&code))?
+            }
+            EventType::KEY => {
+                if self.tuning.ignores_button(code) {
+                    return None;
+                }
+                self.debouncer.key(code, event.value(), now_ms)?
+            }
+            _ => return Some(event),
+        };
+        Some(InputEvent::new(event.event_type().0, code, value))
+    }
+
+    /// What the clone is given for one shaped source event: itself, or its
+    /// translation onto the 360 layout.
+    pub fn outgoing(&mut self, event: InputEvent) -> Vec<InputEvent> {
+        let outs = if let Some(translator) = self.translator.as_mut() {
+            translator.translate(event.event_type().0, event.code(), event.value())
+        } else if let Some(twins) = self.twins.as_mut() {
+            twins.translate(event.event_type().0, event.code(), event.value())
+        } else {
+            return vec![event];
+        };
+        outs.into_iter()
+            .map(|out| InputEvent::new(out.kind, out.code, out.value))
+            .collect()
+    }
+
+    /// Every event the clone needs to read "nothing held", in its own codes.
+    pub fn outgoing_release_all(&mut self) -> Vec<InputEvent> {
+        let outs = if let Some(translator) = self.translator.as_mut() {
+            translator.release_all()
+        } else if let Some(twins) = self.twins.as_mut() {
+            twins.release_all()
+        } else {
+            return Vec::new();
+        };
+        outs.into_iter()
+            .map(|out| InputEvent::new(out.kind, out.code, out.value))
+            .collect()
+    }
+
+    pub fn due_releases(&mut self, now_ms: u64) -> Vec<InputEvent> {
+        key_ups(self.debouncer.due(now_ms))
+    }
+
+    pub fn held_releases(&mut self) -> Vec<InputEvent> {
+        key_ups(self.debouncer.drain())
+    }
+
+    pub fn note_forwarding(&mut self) {
+        if !self.forwarded_any {
+            self.forwarded_any = true;
+            info!("player {}: forwarding input to the clone", self.player);
+        }
+    }
+
+    pub fn note_dropped(&mut self, error: &std::io::Error) {
+        self.dropped += 1;
+        if self.dropped == 1 {
+            warn!(
+                "player {}: the clone refused a frame ({error}); dropping it and continuing -- \
+                 a controller missing an input recovers, a daemon exiting does not",
+                self.player
+            );
+        }
+    }
+
+    pub fn release(&mut self) {
+        self.source.ungrab();
+    }
+
+    pub fn proxy_upload(&mut self, event: UInputEvent) {
+        let player = self.player;
+        let Ok(mut upload) = self
+            .clone
+            .process_ff_upload(event)
+            .inspect_err(|error| warn!("player {player}: effect upload could not begin: {error}"))
+        else {
+            return;
+        };
+        let virtual_id = upload.effect_id();
+        match self.source.upload_ff_effect(upload.effect()) {
+            Ok(effect) => {
+                self.effects.insert(virtual_id, effect);
+                upload.set_retval(0);
+            }
+            Err(error) => {
+                warn!("player {player}: effect upload failed: {error}");
+                upload.set_retval(-1);
+            }
+        }
+    }
+
+    pub fn proxy_erase(&mut self, event: UInputEvent) {
+        let player = self.player;
+        let Ok(mut erase) = self
+            .clone
+            .process_ff_erase(event)
+            .inspect_err(|error| warn!("player {player}: effect erase could not begin: {error}"))
+        else {
+            return;
+        };
+        self.effects.remove(&(erase.effect_id() as i16));
+        erase.set_retval(0);
+    }
+
+    pub fn play(&mut self, virtual_id: u16, count: i32) {
+        let Some(effect) = self.effects.get_mut(&(virtual_id as i16)) else {
+            return;
+        };
+        if let Err(error) = effect.play(count) {
+            log::debug!("player {}: rumble write failed: {error}", self.player);
+        }
+    }
+}
+
+pub fn capabilities(source: &Device) -> (Vec<u16>, Vec<u16>) {
+    let keys: Vec<u16> = source
+        .supported_keys()
+        .map(|set| set.iter().map(|key| key.0).collect())
+        .unwrap_or_default();
+    let axes: Vec<u16> = source
+        .supported_absolute_axes()
+        .map(|set| set.iter().map(|axis| axis.0).collect())
+        .unwrap_or_default();
+    (keys, axes)
+}
+
+pub fn axis_spans(source: &Device) -> BTreeMap<u16, AxisSpan> {
+    let Ok(absinfo) = source.get_absinfo() else {
+        return BTreeMap::new();
+    };
+    absinfo.map(|(code, info)| (code.0, span(&info))).collect()
+}
+
+pub fn held_keys(source: &Device) -> AttributeSet<evdev::KeyCode> {
+    source.get_key_state().unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_event_is_as_old_as_its_stamp_and_a_wild_stamp_is_not_believed() {
+        let fresh = evdev::InputEvent::new_now(EventType::KEY.0, 0x130, 1);
+        assert!(event_age(&fresh) < 0.05, "{}", event_age(&fresh));
+        // Stamped at the epoch: a clock that stepped, not a 56-year hold.
+        let ancient = evdev::InputEvent::new(EventType::KEY.0, 0x130, 1);
+        assert_eq!(event_age(&ancient), MAX_EVENT_AGE);
+    }
+
+    #[test]
+    fn an_identity_is_named_as_it_is_printed_and_nothing_else_parses() {
+        for mode in [
+            IdentityMode::Mirror,
+            IdentityMode::Danstick,
+            IdentityMode::Xbox360,
+            IdentityMode::Xbox360Numbered,
+        ] {
+            assert_eq!(IdentityMode::parse(mode.as_str()), Some(mode));
+        }
+        assert_eq!(
+            IdentityMode::parse(" XBOX360 "),
+            Some(IdentityMode::Xbox360)
+        );
+        assert_eq!(IdentityMode::parse(""), None, "no name is not mirror");
+        assert_eq!(IdentityMode::parse("xbox"), None);
+    }
+
+    #[test]
+    fn the_numbered_360_tells_its_players_apart_by_version_alone() {
+        let one = IdentityMode::Xbox360Numbered.xbox_identity(1);
+        let two = IdentityMode::Xbox360Numbered.xbox_identity(2);
+        assert_ne!(one, two);
+        for identity in [one, two].into_iter().flatten() {
+            assert_eq!(
+                (identity.vendor, identity.product, identity.bustype),
+                (
+                    Identity::XBOX360.vendor,
+                    Identity::XBOX360.product,
+                    Identity::XBOX360.bustype
+                ),
+            );
+        }
+        assert_eq!(
+            IdentityMode::Xbox360.xbox_identity(1),
+            Some(Identity::XBOX360)
+        );
+        assert_eq!(
+            IdentityMode::Xbox360.xbox_identity(2),
+            Some(Identity::XBOX360)
+        );
+        assert_eq!(IdentityMode::Mirror.xbox_identity(1), None);
+        assert_eq!(IdentityMode::Danstick.xbox_identity(1), None);
+        assert!(IdentityMode::Xbox360Numbered.is_xbox_layout());
+        assert!(!IdentityMode::Mirror.is_xbox_layout());
+    }
+
+    #[test]
+    fn a_fixed_slot_is_a_360_whatever_else_was_asked_for() {
+        use danstick_core::slots::Mode;
+        assert_eq!(
+            IdentityMode::Mirror.for_slots(Mode::Fixed),
+            IdentityMode::Xbox360Numbered
+        );
+        assert_eq!(
+            IdentityMode::Danstick.for_slots(Mode::Fixed),
+            IdentityMode::Xbox360Numbered
+        );
+        assert_eq!(
+            IdentityMode::Xbox360.for_slots(Mode::Fixed),
+            IdentityMode::Xbox360
+        );
+        assert_eq!(
+            IdentityMode::Mirror.for_slots(Mode::OnDemand),
+            IdentityMode::Mirror
+        );
+    }
+
+    #[test]
+    fn a_clone_is_named_and_physed_predictably() {
+        assert_eq!(virtual_name(1), "danstick Player 1");
+        assert_eq!(virtual_name(4), "danstick Player 4");
+        assert_eq!(virtual_phys(1), "danstick/p1");
+        assert!(virtual_name(2).starts_with(VIRTUAL_PREFIX));
+    }
+
+    #[test]
+    fn identity_mode_defaults_to_mirroring() {
+        assert_eq!(IdentityMode::Mirror.as_str(), "mirror");
+        assert_eq!(IdentityMode::Danstick.as_str(), "danstick");
+    }
+
+    #[test]
+    fn dansticks_own_identity_is_on_the_virtual_bus() {
+        assert_eq!(Identity::DANSTICK.vendor, 0x1209);
+        assert_eq!(Identity::DANSTICK.product, 0x0001);
+        assert_eq!(Identity::DANSTICK.bustype, 0x06);
+    }
+
+    #[test]
+    fn only_the_inbound_event_types_are_forwarded() {
+        for kind in [
+            EventType::KEY,
+            EventType::ABSOLUTE,
+            EventType::RELATIVE,
+            EventType::MISC,
+            EventType::SYNCHRONIZATION,
+        ] {
+            assert!(forwarded(kind), "{kind:?} must reach the clone");
+        }
+        for kind in [
+            EventType::FORCEFEEDBACK,
+            EventType::FORCEFEEDBACKSTATUS,
+            EventType::LED,
+        ] {
+            assert!(!forwarded(kind), "{kind:?} must not be forwarded");
+        }
+    }
+}

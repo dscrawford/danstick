@@ -1,8 +1,8 @@
 # Requests from GOTG
 
-GOTG (`~/Documents/GOTG`, branch `padmap-integration`) is replacing its own
-controller handling with padmap, and depends on this repository as a flake
-input pinned to a revision. Everything it needs and padmap does not yet do is
+GOTG (`~/Documents/GOTG`, branch `danstick-integration`) is replacing its own
+controller handling with danstick, and depends on this repository as a flake
+input pinned to a revision. Everything it needs and danstick does not yet do is
 written down here, one file per request.
 
 Written by the agent doing that integration, so every one of them is something
@@ -10,7 +10,7 @@ that blocked a real launch rather than a wish. Where a file names a path like
 `src/client/lib/pads-dolphin.sh`, that is GOTG's tree, and it is named so the
 existing implementation can be read rather than guessed at.
 
-Each file says what GOTG is trying to do, what it does today, why padmap's
+Each file says what GOTG is trying to do, what it does today, why danstick's
 current shape does not reach it, and what would be enough. None of them ask
 for a redesign; they are the seams an *abstraction layer over emulators*
 needs when the thing calling it keeps each emulator in a directory of its own.

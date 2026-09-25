@@ -1,8 +1,8 @@
-# padmap has to speak HID, not just evdev
+# danstick has to speak HID, not just evdev
 
 ## The limit we hit
 
-padmap's model is: grab the physical pad's evdev node, republish it as a
+danstick's model is: grab the physical pad's evdev node, republish it as a
 uinput clone, point everything downstream at the clone. That works for the
 adapters this project grew up on -- the MAYFLASH GameCube adapter, generic USB
 pads -- because for those, evdev is the only interface anybody uses.
@@ -20,7 +20,7 @@ over Bluetooth:
 
 The evdev node still exists. It can be opened. It can be grabbed with
 EVIOCGRAB. It can be registered with a selector. It simply never becomes
-readable, ever. padmap sat on it, correctly, for hours and forwarded nothing,
+readable, ever. danstick sat on it, correctly, for hours and forwarded nothing,
 because there was nothing to forward.
 
 Measured, on this machine, with nothing else holding the device:
@@ -28,7 +28,7 @@ Measured, on this machine, with nothing else holding the device:
 | what was watched                             | Switch Pro events |
 | -------------------------------------------- | ----------------- |
 | all 7 input devices, nothing grabbed (twice)  | 0                 |
-| `/dev/input/event26` raw, padmap stopped      | 0                 |
+| `/dev/input/event26` raw, danstick stopped      | 0                 |
 | the clone, `/dev/input/event31`               | 0                 |
 | Pegasus via SDL HIDAPI on `/dev/hidraw8`      | works             |
 
@@ -42,15 +42,15 @@ carries nothing. The controller went from "works in the front-end, not in
 games" to "does not work anywhere". The setting is left at its default for that
 reason.
 
-It also would not have fixed the other half. `padmap hide` clears
+It also would not have fixed the other half. `danstick hide` clears
 ID_INPUT_JOYSTICK, which gates *evdev* enumeration only. SDL enumerated a pad
 with that property cleared anyway. So the hide rules cannot exclude a physical
 pad from an SDL front-end on either transport, which is why a mapping wizard
 prompt of "press B" was also delivered to the UI as a cancel.
 
-## What padmap has to do instead
+## What danstick has to do instead
 
-For pads in this class, padmap must be the process that owns the HID device:
+For pads in this class, danstick must be the process that owns the HID device:
 
 1. **Open `/dev/hidraw*` for the pad**, not (only) its evdev node. The mapping
    from an input device to its hidraw sibling is in sysfs: a Bluetooth pad
@@ -64,12 +64,12 @@ For pads in this class, padmap must be the process that owns the HID device:
    evdev. Everything already built on top keeps working.
 4. **Hold it exclusively.** Only one process can usefully drive a controller
    over hidraw; two fight, which is what Steam and the kernel were doing here.
-   If padmap takes the device, SDL must not: `SDL_JOYSTICK_HIDAPI=0` becomes
+   If danstick takes the device, SDL must not: `SDL_JOYSTICK_HIDAPI=0` becomes
    correct *at that point*, or the clone simply does not match any SDL HIDAPI
    driver and SDL reads it over evdev like anything else.
 
 That last point is what makes this coherent rather than a second special case:
-padmap becomes the single owner of the physical device on whichever interface
+danstick becomes the single owner of the physical device on whichever interface
 that device actually speaks, and keeps publishing one plain evdev gamepad for
 everyone else.
 
@@ -88,13 +88,13 @@ SDL's drivers are the reference, and `hid-nintendo` shows the protocol in
 kernel form.
 
 Until then the boundary should be stated plainly rather than rediscovered:
-**padmap supports controllers whose evdev node carries their input. Pads that
+**danstick supports controllers whose evdev node carries their input. Pads that
 SDL drives over hidraw are outside what it can currently republish.**
 
 ## Report mode is not a one-off
 
 The Pro Controller powers up sending report `0x3f`: buttons and a hat, no
-usable analogue data, and a byte layout unrelated to `0x30`'s. padmap asks for
+usable analogue data, and a byte layout unrelated to `0x30`'s. danstick asks for
 `0x30` once, as the node opens, and `Source.read` filters out everything that
 is not `0x30`.
 
@@ -156,7 +156,7 @@ protocol-specific, which is why SDL ships a HIDAPI driver per family too. What
 it no longer is, is a statement about one product.
 
 For anything the family rule gets wrong in either direction,
-`~/.config/padmap/hidraw.json` settles it without a code change:
+`~/.config/danstick/hidraw.json` settles it without a code change:
 
     {"057e:2017": true, "057e:2009": false}
 

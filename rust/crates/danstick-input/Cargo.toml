@@ -1,0 +1,21 @@
+[package]
+name = "danstick-input"
+description = "The only crate that touches a device node: evdev, uinput and udev."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+danstick-core = { path = "../danstick-core" }
+evdev = "0.13"
+# udev avoids spawning udevadm (257-294ms latency per event on this machine).
+udev = "0.9"
+rustix = { version = "1", features = ["event", "time", "process", "std", "fs", "pty", "termios"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = "2"
+log = "0.4"
+
+[lints]
+workspace = true

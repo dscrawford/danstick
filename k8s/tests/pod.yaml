@@ -1,4 +1,4 @@
-# A pod to run padmap's tests in; `tools/cluster-test` fills in @NAME@ and
+# A pod to run danstick's tests in; `tools/cluster-test` fills in @NAME@ and
 # @TAG@, streams the working tree in, and runs cargo inside it.
 apiVersion: v1
 kind: Pod
@@ -6,7 +6,7 @@ metadata:
   name: @NAME@
   namespace: default
   labels:
-    app: padmap-tests
+    app: danstick-tests
 spec:
   restartPolicy: Never
   # A node's /dev/input is every pod's on it. GOTG's controller suite made its
@@ -20,13 +20,13 @@ spec:
             matchExpressions:
               - key: app
                 operator: In
-                values: [padmap-tests, gotg-controllers]
+                values: [danstick-tests, gotg-controllers]
           topologyKey: kubernetes.io/hostname
   # A run that is abandoned is not left holding a node's uinput forever.
   activeDeadlineSeconds: 3600
   containers:
     - name: tests
-      image: localhost:30500/padmap-tests:@TAG@
+      image: localhost:30500/danstick-tests:@TAG@
       imagePullPolicy: Always
       securityContext:
         # containerd's device cgroup denies /dev/uinput to anything less.
@@ -36,7 +36,7 @@ spec:
           mountPath: /dev/uinput
         - name: input
           mountPath: /dev/input
-        # padmap reads udev's properties for the pads it makes; the node's
+        # danstick reads udev's properties for the pads it makes; the node's
         # udevd writes them, so its database is mounted rather than faked.
         - name: udev
           mountPath: /run/udev

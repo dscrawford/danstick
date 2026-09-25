@@ -1,14 +1,14 @@
 # Replacing the Python
 
-**Done.** padmap was 13,747 lines of Python across 23 modules; it is now a
-Rust workspace and a `padmap` binary with no interpreter behind it.
+**Done.** danstick was 13,747 lines of Python across 23 modules; it is now a
+Rust workspace and a `danstick` binary with no interpreter behind it.
 
 This file is kept for the method, which is the part worth reusing.
 
 ## The method
 
 `tools/gen_corpus.py` called the real Python functions and recorded every
-answer under `rust/crates/padmap-core/tests/corpus/`. `differential.rs` and
+answer under `rust/crates/danstick-core/tests/corpus/`. `differential.rs` and
 its siblings replay them. From the header of the first one:
 
 > A hand-written expectation encodes what the porter *believed* the Python

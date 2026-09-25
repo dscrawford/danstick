@@ -65,7 +65,7 @@ carries `export SDL_JOYSTICK_HIDAPI=0`, for an unrelated reason (Steam injects
 env vars that suppress SDL controller detection for non-Steam apps, and the
 line undoes them). Launched from Steam, that line alone would hide the puck
 again; the environment also exports `SDL_JOYSTICK_HIDAPI_STEAM=1`, which is
-what keeps it visible. If padmap is ever launched from a Steam shortcut, it
+what keeps it visible. If danstick is ever launched from a Steam shortcut, it
 inherits the same problem.
 
 ---
@@ -129,7 +129,7 @@ The buffer is `HID_FEATURE_REPORT_BYTES` = **64** bytes, report id included —
     01 87 03 09 00 00  then 58 zero bytes    (64 total)
 
 sent with **`HIDIOCSFEATURE`**, not `write()`. That last detail matters for
-padmap specifically: `hidraw.py:_request_full_mode` uses `os.write`, which is
+danstick specifically: `hidraw.py:_request_full_mode` uses `os.write`, which is
 right for the Switch Pro's *output* report and wrong here. In Python:
 
     import fcntl
@@ -156,11 +156,11 @@ These are the two that need neither.
 GOTG has two small C programs against SDL3 and no protocol code of its own:
 
 * `gotg-pads` — enumerates, prints JSON (name, vid/pid, hidraw path, gamepad
-  map, whether it has motion). That JSON is exactly the shape padmap's
+  map, whether it has motion). That JSON is exactly the shape danstick's
   `devices.py` wants.
 * `gotg-killswitch` — opens gamepads and reads events continuously.
 
-For padmap the fit is: an `hidraw.Source`-shaped class whose `read()` pulls
+For danstick the fit is: an `hidraw.Source`-shaped class whose `read()` pulls
 `SDL_GetGamepadButton`/`SDL_GetGamepadAxis` instead of decoding bytes, and
 emits the same `_Event` objects you already synthesise. Everything downstream —
 uinput clone, remapping, selectors — is unchanged.
@@ -183,7 +183,7 @@ output report, it must be re-sent every 3 s, and the device is a receiver.
 
 * **Cost:** ~700 lines of C to read, a few hundred lines of Python to write.
   The part you called impossible is 6 bytes.
-* **Gain:** no native dependency; padmap stays pure-Python.
+* **Gain:** no native dependency; danstick stays pure-Python.
 * **Licence:** zlib. Attribution required, relicensing not.
 
 ---
@@ -199,7 +199,7 @@ products `1102/1142/1201/1202/11fc`. Not `1304`. Measured:
     sdl2-compat 2.32.70 -> SDL3   -> the puck, as a gamepad
 
 The fix was pointing the bundled file at `sdl2-compat`, which is the SDL2 *API*
-over SDL3. If anything in padmap's closure links SDL2, check which SDL2 it is.
+over SDL3. If anything in danstick's closure links SDL2, check which SDL2 it is.
 
 **The device needs an ACL on the hidraw node.** Here `/dev/hidraw7` is
 `crw-rw----+` — the `+` is a `uaccess` ACL for the logged-in user, installed by

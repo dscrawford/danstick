@@ -7,7 +7,7 @@
 A uinput device stands in for the controller, so the measurement needs no
 hardware and no hands:
 
-    synthetic pad --(padmap grabs and republishes)--> clone --> this process
+    synthetic pad --(danstick grabs and republishes)--> clone --> this process
 
 Each frame carries a sequence number in MSC_SCAN -- the one event type the
 input core neither deduplicates nor rewrites through the fuzz filter -- and is
@@ -18,13 +18,13 @@ one out produced a confident wrong answer here:
 
   * **the kernel's own queueing time** on the clone, via EVIOCSCLOCKID, beside
     the time this process managed to read it. If those disagree, the harness is
-    the slow one and none of it may be charged to padmap.
+    the slow one and none of it may be charged to danstick.
   * **which frames were late, by injection order.** A stall at startup and a
     stall in steady state are different defects and are indistinguishable in a
-    percentile. This is what caught a 250ms "tail" that was entirely `padmap
+    percentile. This is what caught a 250ms "tail" that was entirely `danstick
     run` writing launch configs before entering its loop.
   * **--no-bridge**, the control. Whatever it reports is the floor the harness,
-    the kernel and the scheduler impose with no padmap in the picture at all.
+    the kernel and the scheduler impose with no danstick in the picture at all.
 
 Report the tail, never the median: a median is the one number that cannot show
 the defect. Needs /dev/uinput to be writable.
@@ -52,11 +52,11 @@ sys.path.insert(0, str(REPO / "src"))
 import evdev                        # noqa: E402
 from evdev import AbsInfo, ecodes   # noqa: E402
 
-# A name nothing else on the machine will have, and the one padmap is pointed
-# at with PADMAP_ONLY_DEVICE so an isolated run never fights the live daemon
+# A name nothing else on the machine will have, and the one danstick is pointed
+# at with DANSTICK_ONLY_DEVICE so an isolated run never fights the live daemon
 # for a grab on the real controllers.
-SOURCE_NAME = "padmap latency source"
-CLONE_NAME = "padmap Player 1"
+SOURCE_NAME = "danstick latency source"
+CLONE_NAME = "danstick Player 1"
 
 # The axis events travel on. ABS_X, because it is an axis every consumer
 # treats as a stick and because a full sweep of it is what a player actually
@@ -94,7 +94,7 @@ def make_source() -> evdev.UInput:
     capabilities = {
         ecodes.EV_KEY: [ecodes.BTN_SOUTH, ecodes.BTN_EAST, ecodes.BTN_START],
         # The sequence tag rides on MSC_SCAN, and a uinput clone can only emit
-        # what its source declared: padmap copies the source's capabilities
+        # what its source declared: danstick copies the source's capabilities
         # verbatim, so an undeclared EV_MSC here means every tagged frame is
         # refused by the clone and nothing is ever matched.
         ecodes.EV_MSC: [ecodes.MSC_SCAN],
@@ -125,9 +125,9 @@ def find_device(name: str, deadline: float) -> evdev.InputDevice | None:
 
 
 def write_assignment(pad_path: str, state_dir: Path) -> None:
-    """The one file `padmap run` reads to know what to republish.
+    """The one file `danstick run` reads to know what to republish.
 
-    Written directly rather than by driving `padmap setup`, which would need a
+    Written directly rather than by driving `danstick setup`, which would need a
     button held for a quarter of a second on the synthetic pad and a second
     process to hold it. The format is cli._save_assignments'.
     """
@@ -208,7 +208,7 @@ def report(deltas_ms: list[float], kernel_ms: list[float],
         # The same frames, to the moment the kernel queued them on the clone.
         # Anything the republisher is responsible for is in here; anything in
         # the difference between this and the figures above is this harness
-        # failing to read promptly, and must not be charged to padmap.
+        # failing to read promptly, and must not be charged to danstick.
         ordered_kernel = sorted(kernel_ms)
         print("\nsame frames, to the kernel's own queueing time on the clone:")
         for label, fraction in (("p50", 0.50), ("p99", 0.99), ("p99.9", 0.999)):
@@ -239,18 +239,18 @@ def run(args: argparse.Namespace) -> int:
     write_assignment(source_path, state_dir)
 
     environment = dict(os.environ)
-    environment["PADMAP_ONLY_DEVICE"] = SOURCE_NAME
+    environment["DANSTICK_ONLY_DEVICE"] = SOURCE_NAME
     environment["XDG_RUNTIME_DIR"] = str(state_dir.parent)
     environment["PYTHONPATH"] = str(REPO / "src") + os.pathsep + environment.get(
         "PYTHONPATH", "")
     # Mirroring would read the source's ids off its node, which is fine, but
     # pinning it keeps two runs comparable when the harness changes.
-    environment.setdefault("PADMAP_PAD_IDENTITY", "padmap")
+    environment.setdefault("DANSTICK_PAD_IDENTITY", "danstick")
 
     if args.no_bridge:
         # No republisher at all. Every hop the measurement cannot avoid is
         # still here -- one uinput write, one kernel delivery, one read -- and
-        # nothing padmap does is. A tail that shows up here is not padmap's.
+        # nothing danstick does is. A tail that shows up here is not danstick's.
         print("no bridge: reading the synthetic pad's own node")
         clone = find_device(SOURCE_NAME, time.monotonic() + 10.0)
         if clone is None:
@@ -315,7 +315,7 @@ def measure(source, clone, args: argparse.Namespace) -> int:
     # to whichever write happens to be the same ordinal. EV_MSC is the one
     # type the input core forwards without deduplicating or rewriting it
     # -- EV_KEY is dropped unless the bit changes and EV_ABS is rewritten
-    # through the fuzz filter -- and padmap forwards it (FORWARD_TYPES).
+    # through the fuzz filter -- and danstick forwards it (FORWARD_TYPES).
     sent_at: dict[int, float] = {}
     deltas: list[float] = []
     # The same frames, timed to when the *kernel* queued them on the clone
@@ -403,7 +403,7 @@ def main(argv: list[str] | None = None) -> int:
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument(
-        "--command", default="python3 -m padmap.cli run",
+        "--command", default="python3 -m danstick.cli run",
         help="what to start as the republisher. Point it at the Rust daemon "
              "to compare.")
     parser.add_argument("--hz", type=float, default=125.0,
@@ -413,7 +413,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--warmup", type=float, default=5.0,
         help="seconds to wait after the clone appears before timing anything. "
-             "Five, not one, because `padmap run` creates the clone and then "
+             "Five, not one, because `danstick run` creates the clone and then "
              "spends over a second writing launch configs before its loop "
              "starts -- a one-second warm-up times that startup gap and "
              "reports it as though it were steady-state latency. It did.")
@@ -422,8 +422,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--state-dir",
         default=str(Path(os.environ.get("XDG_RUNTIME_DIR", "/tmp"))
-                    / "padmap-latency" / "padmap"),
-        help="an isolated XDG_RUNTIME_DIR/padmap, so this never disturbs a "
+                    / "danstick-latency" / "danstick"),
+        help="an isolated XDG_RUNTIME_DIR/danstick, so this never disturbs a "
              "running daemon's assignments")
     parser.add_argument("--quiet", action="store_true",
                         help="hide the republisher's own output")
@@ -431,7 +431,7 @@ def main(argv: list[str] | None = None) -> int:
         "--no-bridge", action="store_true",
         help="start no republisher and read the synthetic pad's own node. The "
              "control: whatever this reports is the floor the harness, the "
-             "kernel and the scheduler impose, and none of it is padmap's.")
+             "kernel and the scheduler impose, and none of it is danstick's.")
     args = parser.parse_args(argv)
 
     if not os.access("/dev/uinput", os.W_OK):

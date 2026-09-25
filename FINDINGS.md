@@ -158,19 +158,19 @@ Earlier attempts failed to confirm this and the notes here recorded it as
 unverified. That was an observability problem, not a feature problem. The
 reservation-decision lines are `RARCH_DBG`, which is compiled in but gated at
 runtime -- setting **both** `log_verbosity = "true"` and
-`frontend_log_level = "0"` makes them appear. `padmap launch --log` sets both.
+`frontend_log_level = "0"` makes them appear. `danstick launch --log` sets both.
 
-With `input_player{1,2}_reserved_device = "padmap Player {1,2}"` and
+With `input_player{1,2}_reserved_device = "danstick Player {1,2}"` and
 reservation type 2:
 
 ```
-[Autoconf] Examining reserved device for player 1 type 2: padmap Player 1 against 1209:0001.
+[Autoconf] Examining reserved device for player 1 type 2: danstick Player 1 against 1209:0001.
 [Autoconf] Reserved device matched.
-[Autoconf] Device "padmap Player 1" (1209:1) is reserved for player 1, ...
-[Autoconf] Device "padmap Player 2" (1209:1) is reserved for player 2, ...
+[Autoconf] Device "danstick Player 1" (1209:1) is reserved for player 1, ...
+[Autoconf] Device "danstick Player 2" (1209:1) is reserved for player 2, ...
 ```
 
-Non-padmap devices are correctly rejected against the same reservations
+Non-danstick devices are correctly rejected against the same reservations
 (`Device "USB GamePad USB GamePad" (79:1879) is not reserved for any player
 slot`). So the unique names our virtual pads carry are sufficient to pin
 players **with no RetroArch patch**, exactly as hoped.
@@ -184,10 +184,10 @@ One real hazard, found by reading the source: `reallocate_port_if_needed()`
 computes `first_free_player_slot` while *skipping* RESERVED slots, then
 early-returns if that index is `>= input_max_users` -- before reaching the
 reservation matching loop. Setting `input_max_users` to the number of reserved
-players therefore guarantees reservations never match. padmap deliberately
+players therefore guarantees reservations never match. danstick deliberately
 does not set `input_max_users`.
 
-**Design response, unchanged:** padmap still writes explicit
+**Design response, unchanged:** danstick still writes explicit
 `input_playerN_joypad_index` values computed from the live enumeration, and
 still emits reservation lines. Both mechanisms are now verified, and they
 agree; keeping both means a change in enumeration order between config
@@ -199,14 +199,14 @@ Observed with 3 physical nodes plus 2 virtual: RetroArch enumerates all five
 and configures ports 1-5. The virtual pads land at the correct indices and
 players, but the grabbed physical pads still occupy slots and clutter the
 input menus. `EVIOCGRAB` stops event *delivery*; it does not remove the node
-from udev enumeration. Only the `ID_INPUT_JOYSTICK` udev rule (`padmap hide`)
+from udev enumeration. Only the `ID_INPUT_JOYSTICK` udev rule (`danstick hide`)
 removes them.
 
-### Hiding pads must not use the same filter padmap discovers with
+### Hiding pads must not use the same filter danstick discovers with
 
-`padmap hide` clears `ID_INPUT_JOYSTICK`, and `devices.discover` originally
+`danstick hide` clears `ID_INPUT_JOYSTICK`, and `devices.discover` originally
 filtered on exactly that property. Installing the rules would therefore have
-made every controller invisible to padmap as well, so `padmap setup` would
+made every controller invisible to danstick as well, so `danstick setup` would
 find nothing and the assignment step could never run again -- unrecoverable
 without hand-removing the udev rules, which on NixOS means a rebuild.
 
@@ -226,9 +226,9 @@ false positives.
 `/etc/udev/rules.d` is a symlink into the Nix store, so `sudo tee` fails
 there. Two working routes:
 
-- `/run/udev/rules.d/99-padmap.rules` -- udev reads it, it is tmpfs, and a
+- `/run/udev/rules.d/99-danstick.rules` -- udev reads it, it is tmpfs, and a
   reboot undoes it. The right place to *try* the rules.
-- The flake's `nixosModules.default`, exposing `programs.padmap.hideDevices`
+- The flake's `nixosModules.default`, exposing `programs.danstick.hideDevices`
   as a list of `"vvvv:pppp"` strings, for a permanent install.
 
 ### uinput advertises force feedback it does not have
@@ -255,22 +255,22 @@ Two mechanisms, compounding.
 
 `--appendconfig` merges into the *live* config. `config_save_on_exit` -- on in
 this config, and RetroArch's own default -- then writes the whole merged result
-back over `retroarch.cfg` at quit. So padmap's per-launch values were being
+back over `retroarch.cfg` at quit. So danstick's per-launch values were being
 made permanent, one launch at a time.
 
 Direct evidence: `retroarch.cfg` held
 
-    input_player1_reserved_device = "padmap Player 1"
-    input_player2_reserved_device = "padmap Player 2"   # 2-player session, long over
+    input_player1_reserved_device = "danstick Player 1"
+    input_player2_reserved_device = "danstick Player 2"   # 2-player session, long over
     input_player1_device_reservation_type = "2"
     input_player2_device_reservation_type = "2"
 
-for keys padmap has never written to that file. The module docstring's claim
+for keys danstick has never written to that file. The module docstring's claim
 that it "leaves the user's config untouched" was simply false.
 
 Fix: the launch override now sets `config_save_on_exit = "false"`, which is
 what actually makes a per-launch override per-launch. Cost: settings changed
-in the RetroArch menu during a padmap launch are not saved. Remaps (`.rmp`)
+in the RetroArch menu during a danstick launch are not saved. Remaps (`.rmp`)
 and core options (`.opt`) are written through separate paths and are
 unaffected.
 
@@ -281,7 +281,7 @@ players. Every other slot kept whatever `retroarch.cfg` held -- and those
 values are neither empty nor inert. RetroArch's own default is
 `input_playerN_joypad_index = N-1`, and this config had accumulated:
 
-    input_player1_joypad_index = "0"   # padmap, correct
+    input_player1_joypad_index = "0"   # danstick, correct
     input_player3_joypad_index = "0"   # stale, same pad, still honoured
 
 Two player slots on one pad index is not rejected by RetroArch; both ports
@@ -298,7 +298,7 @@ Fix: **write all sixteen slots, every launch.** Unmanaged slots get
   that no longer exists.
 An assignment whose virtual pad is missing from the enumeration is now emptied
 too. Previously it was skipped with a comment, which is the worst case: the
-slot keeps its stale value for a player padmap believes it is in charge of.
+slot keeps its stale value for a player danstick believes it is in charge of.
 
 That fixed the *duplication*, and only the duplication. The core still
 presented four controllers -- see below.
@@ -359,31 +359,31 @@ driver"), it settles the question directly. Measured, one assigned player:
 Both work. `input_max_users` collides with the reservations: RetroArch skips
 RESERVED slots when computing `first_free_player_slot` and early-returns if
 that index reaches `input_max_users`, so constraining it to the player count
-disables the order-independent binding padmap relies on as its safety net.
+disables the order-independent binding danstick relies on as its safety net.
 A command-line flag has no such interaction -- verified end-to-end through the
-real `padmap-play` wrapper, where the reservation still matched
-(`Device "padmap Player 1" ... is reserved for player 1`) while ports 1-3 went
+real `danstick-play` wrapper, where the reservation still matched
+(`Device "danstick Player 1" ... is reserved for player 1`) while ports 1-3 went
 to `NONE`.
 
 Flags are emitted for every unassigned slot up to 16. Ports above the core's
-own `num_core_ports` are never visited by that loop, so padmap does not need
+own `num_core_ports` are never visited by that loop, so danstick does not need
 to know which core is about to run.
 
-The cost is a second artefact: a front-end runs `padmap-play <rom>` and knows
+The cost is a second artefact: a front-end runs `danstick-play <rom>` and knows
 nothing about players, so the flags are written to `launch.args` beside
 `launch.cfg` and the wrapper splices them in. Anything that cannot be said as
 a config setting has to travel that way.
 
 ### Cleaning up what already leaked
 
-`padmap clean-config` rewrites only the keys padmap could have written --
-padmap-named reservations, their types, and `joypad_index` back to RetroArch's
+`danstick clean-config` rewrites only the keys danstick could have written --
+danstick-named reservations, their types, and `joypad_index` back to RetroArch's
 `N-1` -- and only where they are already present. Deliberately no rule for
 `input_libretro_device_pN`: RetroArch never writes it to `retroarch.cfg`, so it
 cannot have leaked there, and a rule for it could only damage a `.rmp` file
-someone pointed `--config` at. It backs up to `retroarch.cfg.padmap-backup`
+someone pointed `--config` at. It backs up to `retroarch.cfg.danstick-backup`
 first.
-Explicitly invoked, never part of `launch`: it is the only code in padmap that
+Explicitly invoked, never part of `launch`: it is the only code in danstick that
 writes to the user's RetroArch config.
 
 Measured on the real config: 7 lines changed out of 3382, idempotent on a
@@ -401,7 +401,7 @@ visible from reading:
 2. The replacement (`--nodevice`) was correct **and still did not take
    effect**, because the code was not what was running. The daemon had been
    started before the change and kept regenerating `launch.cfg` from the old
-   module, and Pegasus pointed at the previously built `padmap-play`, which
+   module, and Pegasus pointed at the previously built `danstick-play`, which
    knows nothing about `launch.args`. Both artefacts on disk looked fine.
 
 The second one is the more dangerous: source correct, behaviour unchanged, and
@@ -412,7 +412,7 @@ config rather than running it would have passed.
 
 Drives the whole chain with nothing stubbed:
 
-    Pegasus  ->  padmap-play  ->  retroarch  ->  core
+    Pegasus  ->  danstick-play  ->  retroarch  ->  core
 
 Pegasus launches the game itself. The generated theme polls `api.allGames`
 and calls `.launch()` on the first game once the scan completes, so the
@@ -438,7 +438,7 @@ that cannot go red proves nothing.
 Defaults worth keeping: `retroarch.cfg` is a **copy of the real one**, stale
 player bindings included, because overriding those is the entire point of
 writing all sixteen slots -- a pristine config would not exercise it. And
-`--live` uses `$PADMAP_PLAY`, the wrapper a front-end would really spawn,
+`--live` uses `$DANSTICK_PLAY`, the wrapper a front-end would really spawn,
 rather than building a fresh one, so it cannot pass while the deployed chain
 is still broken.
 
@@ -465,7 +465,7 @@ port, not an idle one.
 
 ### Operational trap: the daemon outlives the code
 
-`padmap serve` holds the modules it started with. It rewrites `launch.cfg` on
+`danstick serve` holds the modules it started with. It rewrites `launch.cfg` on
 every reassignment, so a long-running daemon will happily overwrite a
 freshly generated config with old-format output, and will not write
 `launch.args` at all. After changing anything in `retroarch.py`, restart it.
@@ -473,21 +473,21 @@ freshly generated config with old-format output, and will not write
 
 ## Keeping the daemon from going stale
 
-`padmap serve` holds the modules it was started with. After a rebuild it keeps
+`danstick serve` holds the modules it was started with. After a rebuild it keeps
 answering and keeps writing a plausible `launch.cfg`, generated by the old
 code -- with nothing on disk to show it. That is how a correctly fixed port
 bug went on reproducing.
 
 Three pieces:
 
-**A build id.** `protocol.build_id()` returns `$PADMAP_BUILD_ID`, which the
+**A build id.** `protocol.build_id()` returns `$DANSTICK_BUILD_ID`, which the
 flake wrapper sets to the store path of `./src`. That path changes with every
 source edit, which is exactly the property wanted. Outside Nix it falls back
 to the newest `*.py` mtime in the package directory, so a dev shell gets a
 usable id too. The daemon reports it in every `state` event, alongside its
 pid.
 
-**`padmap ensure-daemon`.** Starts a daemon if none is listening, replaces one
+**`danstick ensure-daemon`.** Starts a daemon if none is listening, replaces one
 whose build id differs, and does nothing if it is current. `--check` reports
 without changing anything.
 
@@ -501,13 +501,13 @@ virtual pad in the enumeration would shift every index after it).
 The Pegasus wrapper runs `ensure-daemon` before starting the front-end.
 Deliberately non-fatal: a front-end that refuses to open because a daemon
 would not start is worse than one with no controllers, since the latter can
-still be driven by keyboard to fix things. `PADMAP_SKIP_DAEMON_CHECK=1`
+still be driven by keyboard to fix things. `DANSTICK_SKIP_DAEMON_CHECK=1`
 disables it.
 
 ### Restarting must be scoped to one socket
 
 First cut of `_stop_daemon` found its target with
-`pgrep -f "padmap.cli serve"`. That matches **every** padmap daemon the user
+`pgrep -f "danstick.cli serve"`. That matches **every** danstick daemon the user
 is running, whatever `XDG_RUNTIME_DIR` it is on. Running the new e2e test --
 which deliberately starts its own daemon on a temporary runtime dir -- killed
 the real one as a side effect, and it was only noticed because a health check
@@ -520,8 +520,8 @@ and a killed daemon leaves the machine with no working controllers at all.
 The fallback for a daemon too old to report a pid is `protocol.daemon_pids()`,
 which is worth using everywhere rather than `pgrep -f`. It filters by
 `XDG_RUNTIME_DIR` from `/proc/<pid>/environ`, and matches argv
-**structurally** -- `argv[-2:] == ["padmap.cli", "serve"]` with `-m` present --
-rather than as a substring. `pgrep -f "padmap.cli serve"` also matches any
+**structurally** -- `argv[-2:] == ["danstick.cli", "serve"]` with `-m` present --
+rather than as a substring. `pgrep -f "danstick.cli serve"` also matches any
 shell whose command line mentions the string, which during this work meant a
 diagnostic command matching *itself*: it looked convincingly like a second
 daemon had appeared on the real runtime dir, and had the fallback fired it
@@ -543,7 +543,7 @@ grabs no pads.
 | `e2e_daemon.py` | PASS -- stale daemon replaced, bystander survived |
 | `e2e_daemon.py --skip-check` | FAIL, as required |
 
-`--skip-check` sets `PADMAP_SKIP_DAEMON_CHECK=1`, so the wrapper's check does
+`--skip-check` sets `DANSTICK_SKIP_DAEMON_CHECK=1`, so the wrapper's check does
 not run and the stale daemon survives. Same purpose as `--drop-args` on the
 other test: proof that a green run means something.
 
@@ -556,7 +556,7 @@ collide for a reason unrelated to what they test.
 
 ## One command to start the machine
 
-`nix run .#padmap-start` makes the daemon current, then hands off to Pegasus.
+`nix run .#danstick-start` makes the daemon current, then hands off to Pegasus.
 
 Worth being clear that this adds a *name*, not a mechanism: `nix run
 .#pegasus` already did the same thing, because the Pegasus wrapper runs the
@@ -564,16 +564,16 @@ check itself. That has to stay -- Pegasus also gets started by a session
 manager or a `.desktop` file, and the check has to happen wherever it is
 started from, not only via a command someone remembered to use.
 
-Verified cold, with no daemon running at all: `padmap-start` logged "no daemon
+Verified cold, with no daemon running at all: `danstick-start` logged "no daemon
 running; starting one", the daemon came up, restored the saved assignment,
 regenerated `launch.cfg` and `launch.args`, and Pegasus loaded its theme.
 
-`PADMAP_SKIP_DAEMON_CHECK=1` is honoured by both, and `padmap-start` sets it
+`DANSTICK_SKIP_DAEMON_CHECK=1` is honoured by both, and `danstick-start` sets it
 for the Pegasus it execs so the check is not paid for twice. Confirmed by the
 log: one "no daemon running" line, not two.
 
 `e2e_daemon.py --entry pegasus|start` covers both, since they reach the check
-by different routes -- the wrapper calls it directly, `padmap-start` calls it
+by different routes -- the wrapper calls it directly, `danstick-start` calls it
 and then suppresses the wrapper's.
 
 | invocation | result |
@@ -589,18 +589,18 @@ Reported after all of the above was verified working: N64 games still gave
 four human controllers in Smash.
 
 `export-pegasus` writes an **absolute path** into every `launch:` line, and
-that path was `$PADMAP_PLAY` -- a Nix store path. It changes on every rebuild.
+that path was `$DANSTICK_PLAY` -- a Nix store path. It changes on every rebuild.
 The collections had been exported months earlier, so every game was still
 being launched by:
 
-    /nix/store/93yjgj...-padmap-play/bin/padmap-play
+    /nix/store/93yjgj...-danstick-play/bin/danstick-play
 
 whose entire body is
 
     exec retroarch --appendconfig "$config" "$@"
 
 with no `--nodevice` anywhere, because it predates them. The daemon was
-current, `launch.cfg` and `launch.args` were correct, `nix build .#padmap-play`
+current, `launch.cfg` and `launch.args` were correct, `nix build .#danstick-play`
 produced a wrapper that read `launch.args` -- and none of it mattered, because
 that is not the binary Pegasus ran.
 
@@ -611,7 +611,7 @@ previously built wrapper, now a path frozen into generated metadata.
 ### Why the tests missed it
 
 `e2e_ports.py` wrote its own `metadata.pegasus.txt` pointing at a freshly
-built padmap-play. It faithfully tested the chain as it *would* be if
+built danstick-play. It faithfully tested the chain as it *would* be if
 exported today, and was blind to the one on disk.
 
 `--installed` fixes that: it reads the `launch:` line out of the real
@@ -619,9 +619,9 @@ collections and uses that launcher. Run against the unfixed system it
 reproduced the report exactly -- `ports0-3 = 1,1,1,1` -- the first time any
 test had.
 
-### The fix: a stable path padmap maintains
+### The fix: a stable path danstick maintains
 
-Launch lines now name `~/.local/share/padmap/bin/padmap-play`, a symlink
+Launch lines now name `~/.local/share/danstick/bin/danstick-play`, a symlink
 repointed at the current wrapper by `pegasus.install_player_link()`, called
 from both `export-pegasus` and `ensure-daemon`. A rebuild therefore fixes the
 collections without re-exporting them. The symlink is swapped with
@@ -635,7 +635,7 @@ stale, a link-based one is not.
 
 Note the same hazard remains for the **core** path (`-L /nix/store/...`),
 which is copied from the RetroArch playlist's `default_core_path`. Not
-addressed here: it comes from the user's playlists rather than from padmap,
+addressed here: it comes from the user's playlists rather than from danstick,
 and a missing core fails loudly at launch instead of silently doing the wrong
 thing.
 
@@ -680,22 +680,22 @@ the controllers away from whatever was using them. It is therefore suppressed
 when:
 
 - **a game is running.** Nothing in the daemon knew this: from its side a game
-  is just RetroArch reading virtual pads it already published. `padmap-play`
-  now writes `$XDG_RUNTIME_DIR/padmap/playing` containing its pid, and removes
-  it on exit. **This is why padmap-play no longer `exec`s** -- something has to
+  is just RetroArch reading virtual pads it already published. `danstick-play`
+  now writes `$XDG_RUNTIME_DIR/danstick/playing` containing its pid, and removes
+  it on exit. **This is why danstick-play no longer `exec`s** -- something has to
   outlive RetroArch to clean up. The pid means a launcher that was killed
   outright cannot disable the feature until reboot; the daemon treats a marker
   whose process is gone as stale and removes it.
 - **no front-end is connected** -- and specifically, no client that has been
   connected for more than a moment. Grabbing every pad to show a screen
   nothing is displaying would leave the machine with no working controllers
-  and no way out, which is exactly what the first version did: `padmap
+  and no way out, which is exactly what the first version did: `danstick
   ensure-daemon` and padctl connect for a few milliseconds to read status,
   that counted as a front-end, and the very next `ensure-daemon` left the
   daemon in `assigning` with every pad grabbed and no virtual pads at all.
   A front-end stays connected; a query does not, so the test is now dwell
   time rather than existence.
-- **a session is already open**, or `PADMAP_NO_AUTOSETUP=1`.
+- **a session is already open**, or `DANSTICK_NO_AUTOSETUP=1`.
 
 ### Declining has to stick
 
@@ -728,7 +728,7 @@ both created by the daemon learning to open the screen by itself.
 
 **Configuration was offered before anything had been pressed.**
 `ControllerSetup.open()` called `maybeOfferSetup()` immediately, and
-`maybeOfferSetup` read `api.padmap.players` -- which at that instant describes
+`maybeOfferSetup` read `api.danstick.players` -- which at that instant describes
 whatever session came *last*. That was harmless while the only way in was a
 user pressing Details from an idle daemon. Once the daemon started opening the
 screen itself, it did so from a state that already had players in it, so the
@@ -794,9 +794,9 @@ took the user's controllers away*.
 the state, falling back to idle only if republishing genuinely fails (a pad
 unplugged during the session). Verified against the live daemon:
 
-    before:       ready      ['padmap Player 1']
+    before:       ready      ['danstick Player 1']
     in session:   assigning  []
-    after cancel: ready      ['padmap Player 1']
+    after cancel: ready      ['danstick Player 1']
 
 ### The live ports test was leaving the daemon stranded
 
@@ -813,20 +813,20 @@ plainly: a test that runs against live state has to put that state back.
 
 Reported after the theme fixes above: still hanging on "Starting...".
 
-`~/.config/pegasus-frontend/themes/padmap` was a symlink into the store, made
+`~/.config/pegasus-frontend/themes/danstick` was a symlink into the store, made
 by hand on the day it was first installed. Every rebuild since changed the
 store path without changing where it pointed, so Pegasus was reading QML from
 a build predating the fix. `grep -c claimsSeen` against the *live* theme
 returned 0 while the fresh build had 4.
 
-Same shape as the stale daemon, the previously built padmap-play, and the
+Same shape as the stale daemon, the previously built danstick-play, and the
 launcher path frozen into the collections. Four times now, in four different
 places, always: **the code is right and the thing being executed is something
 else.** Anything installed by copying or linking a store path once is a
-candidate; the fix is always to have padmap maintain the pointer.
+candidate; the fix is always to have danstick maintain the pointer.
 
 The Pegasus wrapper now repoints the theme at its own build before starting,
-so `nix run .#pegasus` and `padmap-start` both refresh it. It replaces only a
+so `nix run .#pegasus` and `danstick-start` both refresh it. It replaces only a
 symlink or nothing -- a real directory there is someone's own theme and not
 ours to overwrite. `e2e_daemon.py` asserts the link is repointed, so this
 cannot quietly regress a fifth time.
@@ -838,7 +838,7 @@ Pegasus writes `~/.config/pegasus-frontend/lastrun.log`, and everything the
 daemon reports as an error surfaces there through the QML API. The hung
 session's final line was:
 
-    [w] padmap: no controller assigned to player 1
+    [w] danstick: no controller assigned to player 1
 
 which is exactly the refusal the overlay had no handler for -- the diagnosis
 confirmed from the running machine rather than inferred. QML `console.log`
@@ -846,15 +846,15 @@ from a theme lands in the same file.
 
 ## Two memories, and `forget` only cleared one
 
-Reported as: no setup prompt at all, even after `padmap forget`.
+Reported as: no setup prompt at all, even after `danstick forget`.
 
 There are two independent records, and conflating them is easy because both
-sound like "padmap remembers this controller":
+sound like "danstick remembers this controller":
 
 | what | where | written when | meaning |
 |---|---|---|---|
-| profile | `~/.local/share/padmap/devices/*.json` | calibration completes (`_store_profile`) | "this model has been configured" -- drives `is_known` |
-| prompted | `$XDG_RUNTIME_DIR/padmap/prompted` | the daemon offers the setup screen | "we have already asked about this model" |
+| profile | `~/.local/share/danstick/devices/*.json` | calibration completes (`_store_profile`) | "this model has been configured" -- drives `is_known` |
+| prompted | `$XDG_RUNTIME_DIR/danstick/prompted` | the daemon offers the setup screen | "we have already asked about this model" |
 
 `forget` deleted profiles and left the prompted record alone. The result is a
 controller that correctly reports itself as never configured while the daemon
@@ -909,35 +909,35 @@ Two faults, both in the version written one round earlier:
 `forget` now clears the record for every connected controller regardless of
 whether a profile existed, and no longer bails out before doing so. Measured
 on the live machine: with the Mayflash holding no profile and one stale
-record, plain `padmap forget` went from doing nothing to `Cleared 1 'already
+record, plain `danstick forget` went from doing nothing to `Cleared 1 'already
 asked' record(s)`.
 
 The lesson is the same one as the launcher path and the theme link: state that
 suppresses a prompt needs a way to be cleared that works from the state people
 will actually be in when they want to clear it.
 
-## A padmap-owned mapping wizard: what was verified first
+## A danstick-owned mapping wizard: what was verified first
 
 Requested after using Pegasus's Gamepad Editor: it does not auto-select the
-padmap pad, the mapping does not survive, and it does not configure RetroArch.
+danstick pad, the mapping does not survive, and it does not configure RetroArch.
 Checked all three before designing.
 
 **Auto-select.** Real, with a concrete cause: `virtual.create` gives each
-virtual pad the *source* controller's vid:pid (`pad.vid or PADMAP_VID`), so
-they carry `0079:1879` rather than padmap's own `1209:0001`. Which means
-`PADMAP_ONLY_VIRTUAL=1` -- the switch whose entire purpose is hiding physical
+virtual pad the *source* controller's vid:pid (`pad.vid or DANSTICK_VID`), so
+they carry `0079:1879` rather than danstick's own `1209:0001`. Which means
+`DANSTICK_ONLY_VIRTUAL=1` -- the switch whose entire purpose is hiding physical
 pads from SDL -- filters on `0x1209/0x0001` and matches **nothing**, hiding
 the virtual pads too. That escape hatch has never been able to work.
 
 **Persistence.** The mapping *was* written, and SDL's own line is on disk:
 
-    0600c9a7790000007918000001000000,padmap Player 1,a:b1,b:b2,...
+    0600c9a7790000007918000001000000,danstick Player 1,a:b1,b:b2,...
 
-but it is keyed to the name `padmap Player 1` -- the **slot**, not the
+but it is keyed to the name `danstick Player 1` -- the **slot**, not the
 controller. The same pad assigned to player 2 next time is a different device
 as far as SDL is concerned. Fragile for a subtler reason than "not saved".
 
-**RetroArch.** Largely already working, contrary to the report: padmap copies
+**RetroArch.** Largely already working, contrary to the report: danstick copies
 the physical pad's upstream libretro profile, and both connected controllers
 resolved to real ones (the Fightstick to
 `Mayflash_Arcade_Fightstick_F300_DINPUT.cfg`). The genuine gaps are pads
@@ -946,7 +946,7 @@ Editor never reaches RetroArch at all.
 
 ### Design: normalise at the republish layer
 
-padmap *creates* the virtual pad, so it decides what shape that pad has. Rather
+danstick *creates* the virtual pad, so it decides what shape that pad has. Rather
 than emitting a different mapping per controller to two different consumers,
 the wizard records "which physical button is A" once and the virtual pad is
 published in a canonical layout. Pegasus and RetroArch are then both told
@@ -961,11 +961,11 @@ claim.
 
 Both output formats fail silently -- a mapping under the wrong GUID is never
 matched and SDL says nothing; a RetroArch binding naming a button that does
-not exist still reports the pad as configured. So `src/padmap/mapping.py` is
+not exist still reports the pad as configured. So `src/danstick/mapping.py` is
 verified against artefacts the real software produced, not by inspection:
 
 - `sdl_guid()` reproduces `0600c9a7790000007918000001000000` **exactly** --
-  the GUID SDL itself wrote for `padmap Player 1`. That pins bus
+  the GUID SDL itself wrote for `danstick Player 1`. That pins bus
   (`BUS_VIRTUAL`, since these are uinput devices), field order, padding, and
   the CRC-16/ARC of the device name that SDL 2.26+ stores in bytes 2-3.
 - SDL and RetroArch disagree about `a`/`b`: SDL's `a` is the bottom face
@@ -1045,16 +1045,16 @@ be around, and silently shifts every binding on a pad carrying sub-0x120
 codes. Axes are stored by *index* too, not evdev code -- `ABS_RZ` is code 5
 and may be axis 3.
 
-### Virtual pads now carry padmap's own vid:pid
+### Virtual pads now carry danstick's own vid:pid
 
 Reversing an earlier decision, and the old comment argued the opposite, so it
 was rewritten rather than left to contradict the code. Mirroring the source
 pad's ids gave each *model* its real SDL GUID, which sounded right, but:
 
-- `PADMAP_ONLY_VIRTUAL` filters SDL to `1209:0001` to hide the physical pads.
+- `DANSTICK_ONLY_VIRTUAL` filters SDL to `1209:0001` to hide the physical pads.
   With mirrored ids it matched nothing and hid the virtual pads too, so the
   switch had never once worked.
-- The GUID depended on which controller was plugged in, so padmap could not
+- The GUID depended on which controller was plugged in, so danstick could not
   write a mapping until after the fact.
 
 The objection mirroring answered -- that pads sharing a vid:pid differ only by
@@ -1073,7 +1073,7 @@ never again. It now means the profile carries button bindings.
 ### Regenerating the Pegasus patch rather than editing the diff
 
 The theme needs `startMapping`, `skipControl`, and the mapping properties, so
-`0001-padmap-api.patch` had to grow. Hand-editing a diff is a good way to
+`0001-danstick-api.patch` had to grow. Hand-editing a diff is a good way to
 produce one that no longer applies; instead the source was unpacked, the patch
 applied, the files edited, and the diff regenerated with `diff -ruN`. Pegasus
 then compiles, which is the only real check that the C++ is valid.
@@ -1203,14 +1203,14 @@ user did not intend or leaves the run believing something is held. Covered by
 a check that presses inside the gap, releases outside it, and asserts both
 that nothing was bound and that the button still works afterwards.
 
-## padmap's autoconfig profiles were never being read
+## danstick's autoconfig profiles were never being read
 
 Reported as RetroArch complaining the pad was not configured. The log gave it
 away in one word:
 
-    [Autoconf] Config files scanned: driver udev, pad name padmap Player 1
-               (1209/0001), phys padmap/p1, affinity 0
-    [Autoconf] padmap Player 1 (4617/1) not configured.
+    [Autoconf] Config files scanned: driver udev, pad name danstick Player 1
+               (1209/0001), phys danstick/p1, affinity 0
+    [Autoconf] danstick Player 1 (4617/1) not configured.
 
 **affinity 0** -- it scanned and matched nothing.
 
@@ -1219,25 +1219,25 @@ which here pointed into the Nix store copy of libretro's database:
 
     joypad_autoconfig_dir = "/nix/store/...-retroarch-joypad-autoconfig-1.22.0/..."
 
-padmap wrote its profiles to `~/.config/retroarch/autoconfig/udev/`, which is
-**not that directory**. Every profile padmap has ever generated was ignored.
+danstick wrote its profiles to `~/.config/retroarch/autoconfig/udev/`, which is
+**not that directory**. Every profile danstick has ever generated was ignored.
 
 It appeared to work for months because the virtual pads mirrored the physical
 vid/pid: libretro's own entry for the underlying controller then matched on
 vid/pid and scored 50, so the pad was configured -- by the database, using the
 *physical* controller's bindings, which is right often enough not to be
-noticed. Giving the pads padmap's own identity removed that accidental match
+noticed. Giving the pads danstick's own identity removed that accidental match
 and exposed it.
 
 ### Overriding the directory entirely
 
 The launch override now sets `joypad_autoconfig_dir` to
-`$XDG_RUNTIME_DIR/padmap/autoconfig`, holding only padmap's own profiles.
+`$XDG_RUNTIME_DIR/danstick/autoconfig`, holding only danstick's own profiles.
 
 Not merely so they are read. The database was also *competing* with them: an
 entry there can outscore a profile generated from a mapping the user recorded,
 and can bind controls that were never captured. Since the physical pads are
-hidden, the only pads RetroArch can see are padmap's, so a directory holding
+hidden, the only pads RetroArch can see are danstick's, so a directory holding
 just their profiles is complete rather than partial.
 
 The `udev` subdirectory matters: RetroArch looks in `<dir>/<driver>` first and
@@ -1249,7 +1249,7 @@ Verified against RetroArch itself -- the same run that produced `affinity 0`
 now reports:
 
     [Autoconf] Config files scanned: ... affinity 50
-    [Autoconf] padmap Player 1 configured in port 1.
+    [Autoconf] danstick Player 1 configured in port 1.
 
 `tests/check_launch.py`, which had been living in a scratch directory all
 along, now lives in the repo and asserts the setting is present.
@@ -1258,7 +1258,7 @@ along, now lives in the repo and asserts the setting is present.
 
 RetroArch reported the pad configured, and Start did nothing.
 
-`retroarch.cfg` held `input_player1_start_btn = "9"` while padmap's autoconfig
+`retroarch.cfg` held `input_player1_start_btn = "9"` while danstick's autoconfig
 profile said `input_start_btn = "8"`. The per-player bind wins --
 `input_driver.c` is explicit:
 
@@ -1272,7 +1272,7 @@ per-player bind was still set went on using the old value.
 These are more leakage from `config_save_on_exit` -- RetroArch wrote them
 there itself. Same shape as the stale `joypad_index` and reservations, and
 missed the first time because `clean_user_config` only looked at the keys
-padmap had a name for.
+danstick had a name for.
 
 Two changes:
 
@@ -1280,7 +1280,7 @@ Two changes:
   players, handing them back to autoconfig. Only managed slots: an unmanaged
   one has no pad, so what its binds say cannot matter.
 - `clean_user_config` clears them from the user's file as well, so running
-  RetroArch outside padmap is not left with them either.
+  RetroArch outside danstick is not left with them either.
 
 `check_launch.py` asserts start/a/b/select are `nul` for an assigned player,
 since an override that quietly stops emitting them would restore the bug with
@@ -1343,9 +1343,9 @@ the first capture's layout is the one it keeps forever.
 
 ## An unmapped pad had no buttons, and the front-end is where the wizard lives
 
-Virtual pads were changed to advertise padmap's own `1209:0001`, which is what
-makes `PADMAP_ONLY_VIRTUAL` able to hide the physical pads. The cost was not
-noticed at the time: SDL has never heard of `1209:0001`, so until padmap wrote
+Virtual pads were changed to advertise danstick's own `1209:0001`, which is what
+makes `DANSTICK_ONLY_VIRTUAL` able to hide the physical pads. The cost was not
+noticed at the time: SDL has never heard of `1209:0001`, so until danstick wrote
 a mapping the pad had nothing. Pegasus falls back to a blind default with the
 d-pad on b12-b15, which a hat-based pad does not have -- leaving only a stick
 that on this N64 adapter rests at 36% against a 0.5 navigation deadzone. The
@@ -1377,8 +1377,8 @@ vendor, product and version together because all four go into the GUID:
 - **mirror** (default) -- the source controller's bus and ids, so SDL's
   database and libretro's autoconfig match the virtual pad exactly as they
   would the real thing.
-- **padmap** -- `1209:0001` on BUS_VIRTUAL, selected by `PADMAP_PAD_IDENTITY`
-  or implied by `PADMAP_ONLY_VIRTUAL=1`, since hiding the physical pads by
+- **danstick** -- `1209:0001` on BUS_VIRTUAL, selected by `DANSTICK_PAD_IDENTITY`
+  or implied by `DANSTICK_ONLY_VIRTUAL=1`, since hiding the physical pads by
   vid/pid only leaves the virtual ones behind if they are the only pads
   carrying those ids.
 
@@ -1388,14 +1388,14 @@ this class of disagreement is completely silent: a mapping under a GUID SDL
 never looks up simply does nothing, and says nothing.
 
 Measured end to end, through `virtual.create` and `controllercfg` with the
-real Fightstick as the source and real SDL reading the file padmap wrote:
+real Fightstick as the source and real SDL reading the file danstick wrote:
 
-| identity | SDL guid | padmap computed | `SDL_IsGameController` |
+| identity | SDL guid | danstick computed | `SDL_IsGameController` |
 |---|---|---|---|
 | mirror | `0300c861790000003018000011010000` | same | **true** |
-| padmap | `0600c861091200000100000001000000` | same | **true** (with padmap's line) |
+| danstick | `0600c861091200000100000001000000` | same | **true** (with danstick's line) |
 
-and with no padmap line at all, the padmap-identity pad reports **false** --
+and with no danstick line at all, the danstick-identity pad reports **false** --
 the reported breakage, reproduced.
 
 Worth not overselling: mirroring restores whatever SDL already knew. For the
@@ -1408,14 +1408,14 @@ is claimed to be.
 In mirror mode the virtual pad's GUID differs from the physical controller's
 only in the name checksum. That turns out to be exactly what is needed: SDL
 ignores the checksum when *matching* but honours it when *choosing between*
-two candidate lines, so padmap's line (checksummed on "padmap Player 1") wins
+two candidate lines, so danstick's line (checksummed on "danstick Player 1") wins
 for the virtual pad while the database entry (checksum 0) keeps serving the
 physical one. Verified by adding a line binding `a:b7` over a database entry
 saying `a:b1` and asking SDL which it would use: `a:b7`.
 
-### And padmap always writes something
+### And danstick always writes something
 
-Independent of the identity switch, because in padmap mode nothing else can
+Independent of the identity switch, because in danstick mode nothing else can
 help. `controllercfg.fallback_line_for` writes a line for every republished
 pad that has no capture yet:
 
@@ -1437,14 +1437,14 @@ database and opens no devices at all (`joysticks 0`, 0.4s). Out of process so
 the daemon never holds SDL's threads and cannot be taken down by it.
 
 One trap found immediately: the probe inherited `SDL_GAMECONTROLLERCONFIG_FILE`
-and handed a line padmap had written straight back as though the controller had
+and handed a line danstick had written straight back as though the controller had
 come with it. The probe's environment is scrubbed, and any line naming a
-`padmap Player N` is refused whatever its source.
+`danstick Player N` is refused whatever its source.
 
 ### tests/e2e_picker.py
 
 Both halves are driven through a real daemon on an isolated `XDG_RUNTIME_DIR`,
-restricted with `PADMAP_ONLY_DEVICE` to a single uinput pad the test owns, so
+restricted with `DANSTICK_ONLY_DEVICE` to a single uinput pad the test owns, so
 the live daemon's controllers were never touched: claim -> picker opens on the
 guessed layout -> d-pad and stick both move the selection -> hold confirms ->
 the wizard walks **the chosen layout** -> the stored profile records
@@ -1465,7 +1465,7 @@ stated in one line.
 
 ## One controller is not one mapping
 
-Reported from real use: an N64 game played with a GameCube controller. padmap
+Reported from real use: an N64 game played with a GameCube controller. danstick
 stored exactly one binding set per controller (`profiles.Profile.buttons` plus
 a single `layout`), so there was no way to say "these buttons when I play N64,
 those the rest of the time". Asked for, verbatim: "the ability to specify the
@@ -1512,7 +1512,7 @@ not a content hash. The path is what the front-end happens to hold today and
 changes when a library moves or a drive is remounted, and a per-game mapping
 that silently stops applying is worse than one never made. A hash means reading
 hundreds of megabytes at launch, and makes a patched dump a different game to
-padmap while being the same game to the person holding the controller. The
+danstick while being the same game to the person holding the controller. The
 console prefix is what stops `Sonic` on an arcade board sharing a mapping with
 `Sonic` on a console.
 
@@ -1523,7 +1523,7 @@ scope when no `mappings` key is present. In place rather than as a one-shot
 upgrade, so a profile is migrated the first time it is looked at -- including
 one restored from a backup later -- and there is no separate path to forget.
 `to_json` still writes the flat pair as well, mirroring the universal scope:
-nothing padmap ships reads it, but a profile store is user data that outlives
+nothing danstick ships reads it, but a profile store is user data that outlives
 any one version, and a rollback then finds the controller mapped instead of
 finding it blank and offering the wizard again.
 
@@ -1547,11 +1547,11 @@ bindings -- the one case where "most specific wins" is not what anybody means.
 ### Where resolution happens, and why it is not in the daemon
 
 The daemon writes RetroArch autoconfig profiles at republish time, which is
-long before anything knows what will be played. `padmap-play` is handed
+long before anything knows what will be played. `danstick-play` is handed
 `-L <core.so>` and the ROM, and is the only place both are available.
 
 So: the daemon writes each controller's **default** mapping into
-`$XDG_RUNTIME_DIR/padmap/autoconfig` exactly as before, and `padmap.launch`
+`$XDG_RUNTIME_DIR/danstick/autoconfig` exactly as before, and `danstick.launch`
 rewrites *that same directory* immediately before RetroArch starts, with
 whichever mapping resolved. Considered and rejected: pre-building one directory
 per console at accept time and picking between them at launch. The launch
@@ -1560,19 +1560,19 @@ one, so selecting a directory means editing the override too -- two files that
 have to agree instead of one, for a directory that is per-session runtime state
 and is cleared on every write anyway.
 
-Rewriting in place also degrades the right way. If `padmap.launch` never runs
--- padmap-play bypassed, an unrecognised core, a Python that will not start --
-what is on disk is the default mapping, which is what padmap did before any of
+Rewriting in place also degrades the right way. If `danstick.launch` never runs
+-- danstick-play bypassed, an unrecognised core, a Python that will not start --
+what is on disk is the default mapping, which is what danstick did before any of
 this existed. It never fails a launch; it prints and returns 0.
 
-`padmap-play` calls Python rather than doing it in shell. Deciding a console
+`danstick-play` calls Python rather than doing it in shell. Deciding a console
 from a core name and a key from a ROM path are table lookups that already exist
-on the padmap side, and a copy in the launcher would be a table with nothing to
+on the danstick side, and a copy in the launcher would be a table with nothing to
 notice when it fell behind -- the failure this project has already had with the
 launcher path, the theme symlink and the daemon itself.
 
 The core table (`layouts.CORE_LAYOUTS`) is only as good as its entries. The
-four consoles padmap draws were each verified against their core's source when
+four consoles danstick draws were each verified against their core's source when
 the layouts were built, and those four core names carry that provenance in a
 comment; the rest are near neighbours from libretro's own naming. A wrong entry
 resolves a mapping the user did not intend; an **absent** one falls through to
@@ -1588,7 +1588,7 @@ than assumed, in Pegasus's own source:
   configuration anywhere in the frontend -- `GamepadButtonNavigation` and
   `GamepadAxisNavigation` are single objects owned by `GamepadManager`.
 - RetroArch's udev joypad driver does not read SDL's database at all; its
-  bindings come from `joypad_autoconfig_dir`, which is the thing padmap
+  bindings come from `joypad_autoconfig_dir`, which is the thing danstick
   overrides.
 - The virtual pads themselves are console-agnostic: `virtual.Republisher`
   forwards events one-for-one and applies only axis calibration. Nothing about
@@ -1632,8 +1632,8 @@ follows.
 Options carry `mapped`, drawn as a tick. Re-mapping a scope replaces it, and
 without a mark there is no way to tell which ones that would destroy.
 
-The per-game scope exists only because `padmap.launch` records what it just
-started in `$XDG_RUNTIME_DIR/padmap/lastgame.json`. The setup screen is reached
+The per-game scope exists only because `danstick.launch` records what it just
+started in `$XDG_RUNTIME_DIR/danstick/lastgame.json`. The setup screen is reached
 from the front-end and never from inside a game, so nothing there otherwise
 knows which game is meant -- and "the controls were wrong in the game I just
 played" is exactly when someone wants a per-game mapping.
@@ -1655,7 +1655,7 @@ controller is" -- may now say what it looks like.
 Reported: "the new controller config isn't immediately loaded into Pegasus, and
 it just uses the old SDL default." True, with a precise cause:
 `GamepadManagerSDL2::start` calls `load_user_gamepaddb` once and nothing reads
-`sdl_controllers.txt` again. Everything padmap writes after that is for the
+`sdl_controllers.txt` again. Everything danstick writes after that is for the
 *next* process -- and the moment it matters most is the instant after finishing
 the wizard.
 
@@ -1690,7 +1690,7 @@ The second row was found by running the real frontend and noticing the log said
 *added*. The cause: SDL never registered anything for that pad because it
 already considered it a game controller -- it manufactures a mapping from the
 standard `BTN_SOUTH`/`BTN_EAST`/... codes the device advertises, which is
-exactly what padmap's virtual pads carry, since they clone their source's evdev
+exactly what danstick's virtual pads carry, since they clone their source's evdev
 key set. So the common case is the *add* path, and it had to be measured
 separately. It behaves identically, but nothing about the API said so.
 
@@ -1699,7 +1699,7 @@ matters is which line SDL uses afterwards.
 
 ### And it was read back, not trusted
 
-`Padmap::applyMappings` asks `SDL_GameControllerMappingForGUID` what SDL now
+`Danstick::applyMappings` asks `SDL_GameControllerMappingForGUID` what SDL now
 holds and logs it. A mapping stored under a GUID nothing will ever look up is
 indistinguishable from a working one from the caller's side -- SDL reports
 success either way and never mentions it again.
@@ -1709,12 +1709,12 @@ that exists *before* the frontend starts, so the frontend opens it -- the exact
 state the bug report describes -- then a stub daemon sends one `sdl_mapping`
 event, and the frontend's own log is read back:
 
-    [i] padmap: mapping added for 03008703091200000400000001000000:
-        03008703091200000400000001000000,PADMAP RELOADTEST,a:b7,...,crc:0387,
+    [i] danstick: mapping added for 03008703091200000400000001000000:
+        03008703091200000400000001000000,DANSTICK RELOADTEST,a:b7,...,crc:0387,
 
 `crc:0387` is SDL's own doing: it moves the name checksum out of the GUID into a
 field. Its presence is a second confirmation that the line went in under the
-GUID SDL computes for that device rather than one padmap merely believes in.
+GUID SDL computes for that device rather than one danstick merely believes in.
 
 ### New tools
 
@@ -1728,7 +1728,7 @@ GUID SDL computes for that device rather than one padmap merely believes in.
 - `tests/e2e_sdl_reload.py` -- the patched frontend applying a mapping it is
   handed mid-session.
 - `tests/e2e_picker.py` gained a second half: re-open setup, choose "Nintendo 64
-  games", walk the N64 layout, and then run `padmap.launch` with a real N64 core
+  games", walk the N64 layout, and then run `danstick.launch` with a real N64 core
   name and a real ROM path and check the emitted profile changed -- and that a
   SNES launch afterwards puts the default back. Both processes, as they run.
 - `tools/preview_mapping.py --scopes` renders the scope picker, built from the
@@ -1743,11 +1743,11 @@ GUID SDL computes for that device rather than one padmap merely believes in.
 - There is no way to *delete* a scoped mapping. Re-mapping replaces it, which
   covers "I got it wrong"; it does not cover "I want this console to fall back
   to my default again". Worth adding when someone wants it.
-- The per-game scope is only offered for a game launched through padmap-play in
+- The per-game scope is only offered for a game launched through danstick-play in
   the current login session, since `lastgame.json` lives in XDG_RUNTIME_DIR.
   Choosing a game from the library directly would need the theme's own game
   selection, which is a different screen.
-- `e2e_sdl_reload.py` proves the patched frontend puts padmap's line into SDL
+- `e2e_sdl_reload.py` proves the patched frontend puts danstick's line into SDL
   and that SDL resolves the pad's GUID to it. That Pegasus's *navigation* then
   follows is inferred from `check_sdl_live.py`, which measures the same SDL
   call delivering re-bound events -- it is not driven through Pegasus's UI.
@@ -1832,7 +1832,7 @@ load-bearing.
 The other two mutations -- measuring from the midpoint, and dropping `_rearm`
 inside the gap -- both fail their checks, so those two guards are real.
 
-## The "stuck to the left" stick was a trigger padmap called a stick
+## The "stuck to the left" stick was a trigger danstick called a stick
 
 Reported after the trigger fix above: "it may actually be the analog stick.
 seems to be stuck to the left".
@@ -1882,7 +1882,7 @@ RetroArch was never affected: `retroarch_profile` emits only `input_l_x_*` and
 Worth recording, because it was the natural next guess. `profiles.axes` is
 empty for this pad, and calibration measures rest and reach per axis -- which
 sounds exactly like the fix. It is not: calibration would have faithfully
-recorded that ABS_RX rests at 24, and padmap would have gone on publishing
+recorded that ABS_RX rests at 24, and danstick would have gone on publishing
 that axis as `rightx`. The bug was never in the measurement, it was in
 deciding what the axis *is*. Calibration remains worth having for a stick that
 genuinely drifts; nothing here is evidence for it.
@@ -1909,10 +1909,10 @@ and a key that fails silently is worse than one that does nothing visible.
 controller" meaning "reset some of this controller" leaves someone re-running
 the wizard and still meeting old behaviour from a per-console mapping they had
 forgotten was there. The `prompted` record goes too, or a freshly forgotten
-controller becomes one padmap never offers to set up again.
+controller becomes one danstick never offers to set up again.
 
 The patch is a unified diff whose new-file hunks carry explicit line counts
-(`@@ -0,0 +1,409 @@`). Adding a method to Padmap.h/.cpp without correcting
+(`@@ -0,0 +1,409 @@`). Adding a method to Danstick.h/.cpp without correcting
 those makes the patch fail to apply, and nothing says so until the Pegasus
 build breaks. Both counts were recomputed and the frontend was rebuilt to
 prove it applies.
@@ -1924,7 +1924,7 @@ was added".
 
 Verified *correct*, so these can be ruled out:
 
-* both virtual pads exist -- `padmap Player 1` on event26, `padmap Player 2`
+* both virtual pads exist -- `danstick Player 1` on event26, `danstick Player 2`
   on event31
 * the pad indices are right. `visible_order()` predicts RetroArch will
   enumerate the four physical GameCube ports at 0-3 and the two virtual pads
@@ -1937,24 +1937,24 @@ Verified *correct*, so these can be ruled out:
 What is wrong is that **the installed udev rules had fallen behind the
 hardware**:
 
-    /run/udev/rules.d/99-padmap.rules
+    /run/udev/rules.d/99-danstick.rules
       0079:1830   MAYFLASH Arcade Fightstick F300
       0079:1879   USB GamePad
       (no 0079:1843 -- the GameCube adapter)
 
-`padmap hide` generates the rules once from whatever is plugged in at the
+`danstick hide` generates the rules once from whatever is plugged in at the
 time. The GameCube adapter arrived later, so it is absent, so RetroArch sees
-its four physical ports *as well as* the virtual pads padmap builds from them
+its four physical ports *as well as* the virtual pads danstick builds from them
 -- six pads where there should be two. Nothing anywhere noticed, which is the
-recurring shape of every bug in this file: padmap generates a thing, the
+recurring shape of every bug in this file: danstick generates a thing, the
 system drifts, and the two are never compared again.
 
-`hide.unhidden` now reads the installed file and reports adapters padmap
+`hide.unhidden` now reads the installed file and reports adapters danstick
 republishes that it does not cover, and `ensure-daemon` prints it. Reading the
 file rather than remembering what was written, for the usual reason.
 
 Not proven to be the cause of the P1 regression -- it is a real defect found
-while looking, and it is the only discrepancy found between what padmap
+while looking, and it is the only discrepancy found between what danstick
 intends and what the system is actually doing.
 
 ### The daemon had no log
@@ -1965,13 +1965,13 @@ process that sees a controller claimed, a mapping captured or a launch config
 written, and all of it was being discarded -- in a project where "use the
 logs" has been the instruction twice.
 
-It now writes to `$XDG_RUNTIME_DIR/padmap/padmap.log`, truncated per daemon so
+It now writes to `$XDG_RUNTIME_DIR/danstick/danstick.log`, truncated per daemon so
 the file describes the current run.
 
 One trap avoided while doing it: the obvious `serve --verbose` cannot be used.
 `--verbose` belongs to the main parser, so it would have to precede the
 subcommand, and `protocol.daemon_pids` matches argv *structurally* on
-`argv[-2:] == ["padmap.cli", "serve"]`. A flag there makes every running
+`argv[-2:] == ["danstick.cli", "serve"]`. A flag there makes every running
 daemon invisible to `ensure-daemon`, which would then start a second one
 beside the first.
 
@@ -2006,11 +2006,11 @@ real chain on a virtual display, and reading RetroArch's own autoconfig log:
                is not reserved for any player slot.
     [Autoconf] Earlier free player slot found, reassigning to player 2.
     ... and again for players 3, 4 and 5
-    [Autoconf] Config files scanned: pad name padmap Player 1 (0079/1830),
+    [Autoconf] Config files scanned: pad name danstick Player 1 (0079/1830),
                affinity 50
-    [Autoconf] padmap Player 1 configured in port 5.
+    [Autoconf] danstick Player 1 configured in port 5.
     [Autoconf] Reserved device matched.
-    [Autoconf] Device "padmap Player 1" is reserved for player 1, updating.
+    [Autoconf] Device "danstick Player 1" is reserved for player 1, updating.
     [Autoconf] Preferred slot was taken earlier by "(null)", reassigning to 1.
 
 So the adapter's four ports really do take player slots 2-5, and the
@@ -2043,7 +2043,7 @@ along, which is why it correctly flagged 0079:1843 while the generator that
 was supposed to fix it would not have emitted a rule for it. The check and the
 thing it checks now agree.
 
-### `padmap hide` installs rather than dictates
+### `danstick hide` installs rather than dictates
 
 Asked for: "can I just have it run for me rather than echoing the bash
 script?" -- fair, since the script it printed was to be pasted back into the
@@ -2059,14 +2059,14 @@ Two things the installer must not skip, both mutation-tested:
 
 * **The reload.** udev holds its rules in memory, so a file written without
   `udevadm control --reload-rules` changes nothing until the next boot. A
-  controller still visible after padmap has said it hid it is precisely the
+  controller still visible after danstick has said it hid it is precisely the
   silent gap this project keeps finding.
 * **Honesty about doing nothing.** Installing identical rules reports "already
   up to date" rather than claiming a change.
 
 One subtlety worth recording. Under `sudo`, `XDG_RUNTIME_DIR` points at
 root's, so the assignment file usually cannot be read at all. Had `cmd_hide`
-still derived its pad list from the assignment, `sudo padmap hide` would have
+still derived its pad list from the assignment, `sudo danstick hide` would have
 generated rules covering *nothing* -- the previous bug's worst case, reached
 by the very command meant to cure it. Reading the pads from /sys makes the
 privileged and unprivileged runs agree.
@@ -2135,7 +2135,7 @@ pad the moment the session opens.
 **The claim is the controller select.** Rather than presenting a list of
 assigned pads, the setup screen opens as it always does and configures
 whichever pad presses a button. That gesture needs nothing mapped, works on a
-pad padmap has never seen, and is the same one that claims a slot -- so it is
+pad danstick has never seen, and is the same one that claims a slot -- so it is
 one idiom, not two.
 
 Two things had to be gated, both mutation-tested:
@@ -2157,7 +2157,7 @@ once it listed a player who had not claimed on this screen.
 
 `x-console` and `x-gamekey` are written into the collection file by
 `pegasus.render`, using `layouts.for_core` and `profiles.game_key` -- the same
-two functions `padmap.launch` uses to resolve a scope when a game starts. The
+two functions `danstick.launch` uses to resolve a scope when a game starts. The
 theme passes them through untouched and the daemon uses them as given.
 
 Deriving either in the theme, or again in the daemon, would be a second
@@ -2213,7 +2213,7 @@ Asked for, after an analog stick behaved as though it were only off or full:
 "can the controller configuration do the calibration?"
 
 It can, and it should have all along. Calibration was only ever offered for a
-pad padmap had never seen, so anyone reaching a controller through the mapping
+pad danstick had never seen, so anyone reaching a controller through the mapping
 wizard was never prompted -- and every profile on this machine had `axes: {}`.
 Uncalibrated, an axis is scaled against the range the adapter *declares*
 rather than the one the stick actually reaches, which is exactly the shape of
@@ -2250,7 +2250,7 @@ Worth remembering as a class: a test-only bug that makes a *correct*
 implementation look broken costs as much as one that hides a real fault, and it
 is harder to recognise because the instinct is to doubt the code under test.
 
-### Analog gain is a workaround, so padmap only removes it once it can
+### Analog gain is a workaround, so danstick only removes it once it can
 
 `input_analog_sensitivity` was 1.6 in retroarch.cfg. That is not arbitrary: a
 GameCube stick does not reach the extremes its adapter declares, RetroArch
@@ -2268,7 +2268,7 @@ Calibration addresses the cause instead: `AxisCalibration.apply` rescales the
 measured reach onto the declared range, so a calibrated pad delivers the full
 sweep and a gain on top of it double-compensates.
 
-So padmap writes `input_analog_sensitivity = "1.000000"` into the launch
+So danstick writes `input_analog_sensitivity = "1.000000"` into the launch
 override **only when every managed pad is calibrated**, and otherwise says
 nothing. The asymmetry is deliberate. Sensitivity is global, not per player, so
 one uncalibrated pad in a two-player session means the boost is still doing
@@ -2277,8 +2277,8 @@ claiming to fix it. The setting reverts to the user's own value the moment a
 pad without calibration joins.
 
 This is the same reasoning as the rest of launch.cfg: retroarch.cfg drifts,
-padmap owns the launch. The difference is that this key is only overridden
-when padmap has earned the right to -- when it is the thing setting the range.
+danstick owns the launch. The difference is that this key is only overridden
+when danstick has earned the right to -- when it is the thing setting the range.
 
 ## The session lifecycle was the one thing the log did not record
 
@@ -2390,7 +2390,7 @@ globs /sys/class/input and reads several files per device, then `has_mapping`
 parses a profile off disk for each pad. Seven pads here.
 
 Then it asked whether setup could open at all -- and during a game the answer
-is always no. So every second, mid-game, padmap did a full device enumeration
+is always no. So every second, mid-game, danstick did a full device enumeration
 and seven JSON reads on the same thread as the input path, to conclude it must
 do nothing. The cost scales with the number of pads attached, which matches
 "worse with two inputs".
@@ -2432,12 +2432,12 @@ and there wasn't one.
 
 Reported: the game-specific mapping "didn't seem to apply on the second go".
 
-Not a persistence bug -- the mapping is stored, and `padmap.launch` resolves it
+Not a persistence bug -- the mapping is stored, and `danstick.launch` resolves it
 correctly and idempotently. Run twice with the same core and ROM it produced
 the same game-scoped profile both times, so the launcher never drops it.
 
 The conflict is that two different things write that file with different
-answers. `padmap.launch` writes a profile resolved from the core and ROM of the
+answers. `danstick.launch` writes a profile resolved from the core and ROM of the
 launch in progress. `Server._start_republisher` wrote one with no context at
 all, which resolves to the controller's default mapping. Same path, same
 filename, and whichever ran last wins.
@@ -2527,7 +2527,7 @@ that slot, not the profile.
 **hide.unhidden raised on a rules file that is not UTF-8.** It read with
 `Path.read_text()`, and `UnicodeDecodeError` is not an `OSError`. `cli.py`
 calls `unhidden(devices.discover())` unconditionally from `ensure-daemon`, so a
-corrupt or binary 99-padmap.rules would traceback the entire start path. The
+corrupt or binary 99-danstick.rules would traceback the entire start path. The
 docstring already promised that a missing, unreadable or malformed file is
 safe; it was one exception class short of true.
 
@@ -2536,7 +2536,7 @@ safe; it was one exception class short of true.
 entry -- the game -- drawn with the generic layout. The daemon's own comment
 relies on an empty list to report "no console known for this game". It is
 reachable: `pegasus.render` writes `x-gamekey` for every entry but omits
-`x-console` when the collection's core is not one padmap recognises, so a
+`x-console` when the collection's core is not one danstick recognises, so a
 front-end really can send that pair, and the user would capture a mapping under
 a scope nothing looks up.
 
@@ -2571,7 +2571,7 @@ path; every single one was an error path beside working code, which is now the
 third sweep running to say the same thing.
 
 Five were fatal to the daemon, and those share a shape worth naming. When
-padmap raises, it does not degrade -- the process ends, its uinput nodes go
+danstick raises, it does not degrade -- the process ends, its uinput nodes go
 with it, and the machine has no controllers at all, mid-game, with nothing on
 screen to explain it. A daemon must not be killable by the thing it exists to
 serve.
@@ -2586,7 +2586,7 @@ can be wrong, it is that no message may end the process.
 **A `prompted` file that was not UTF-8 stopped the daemon starting.** Read in
 `Server.__init__` with `read_text()`, and `UnicodeDecodeError` is not an
 `OSError`. The file lives in XDG_RUNTIME_DIR where anything may write it, so
-`padmap serve` simply could not start and `ensure-daemon` failed forever. This
+`danstick serve` simply could not start and `ensure-daemon` failed forever. This
 is the third instance of exactly this bug -- after `hide.unhidden` and the
 profile store -- which is a strong argument for a shared "read a text file we
 do not control" helper rather than a fourth fix.
@@ -2627,7 +2627,7 @@ file (including a `launch:` line, which Pegasus honours); one malformed .lpl
 makes the whole export produce nothing; `stale_collections` raises out of
 `ensure-daemon` on an unbalanced quote or an unreadable file; `find_titles`
 raises on a damaged table and silently loads a string as a one-character title;
-`padmap forget` crashes on the same non-object JSON the discovery path was
+`danstick forget` crashes on the same non-object JSON the discovery path was
 already fixed for; and `scope_options` still offers a recent game whose console
 is unknown, drawing one pad and walking another.
 
@@ -2654,11 +2654,11 @@ disappeared from Pegasus because one file was bad. Entries are now skipped
 individually, a file with no usable entries at all returns None rather than an
 empty collection, and export survives a playlist it cannot read.
 
-**stale_collections could stop padmap starting**, twice over: shlex.split on a
+**stale_collections could stop danstick starting**, twice over: shlex.split on a
 launch line with an unbalanced quote, and read_text on a file that exists but
 is unreadable. ensure-daemon calls it unconditionally on every start.
 
-**`padmap forget` was defeated by the thing it exists to fix.** It read each
+**`danstick forget` was defeated by the thing it exists to fix.** It read each
 profile inside `except (OSError, ValueError)` and then called .get() on the
 result, so a file holding `null` or `42` raised AttributeError -- the same
 non-object JSON bug already fixed in discovery. And --all unlinked everything
@@ -2666,9 +2666,9 @@ it globbed, so a directory named *.json killed the one command meant to clear
 up a mess. It also reported the number of files it *attempted*, which meant
 telling someone five profiles were forgotten while one was still on disk.
 
-**The scope picker offered a game whose console padmap cannot name.**
+**The scope picker offered a game whose console danstick cannot name.**
 game_scope_options already refused this; scope_options never got the same
-guard, and padmap.launch deliberately records every launch including one with
+guard, and danstick.launch deliberately records every launch including one with
 an unrecognised core. The entry drew the generic pad and then walked whatever
 the controller was guessed to be -- the strip promising one pad and the wizard
 asking about another, which is precisely how a mapping once ended up with
@@ -2731,7 +2731,7 @@ before they actually get assigned".
 The UTF-8-decode hole has now been found five times in five places:
 `hide.unhidden`, the profile store, `Server._load_prompted`, `hide.install` and
 `cli._forget_prompted`. That is no longer five bugs, it is one missing helper
-for reading a file padmap does not own.
+for reading a file danstick does not own.
 
 ### Two contracts that disagreed, and one regression of mine
 
@@ -2782,7 +2782,7 @@ obvious.
 
 ### One integration trap worth recording
 
-The combined tree passed all 42 checks and failed mypy with "Module padmap has
+The combined tree passed all 42 checks and failed mypy with "Module danstick has
 no attribute safeio". The file was there. The flake was not: a Nix git tree
 copies only *tracked* files, so a new module that has never been `git add`ed is
 invisible to every derivation while being perfectly visible to the tests run
@@ -2832,20 +2832,20 @@ the fix addresses the mechanism that was verified rather than a failure that
 was observed. Worth saying plainly, because everything else in this log was
 measured before it was changed.
 
-## Two padmap commands wanting the same controllers
+## Two danstick commands wanting the same controllers
 
-Reported as a traceback from `padmap launch --log`, ending in
+Reported as a traceback from `danstick launch --log`, ending in
 
     OSError: [Errno 16] Device or resource busy
 
 out of `evdev.device.grab`. Not a bug in evdev and not a broken pad: `run` and
 `launch` are the standalone paths, so they build their own virtual pads, which
 means taking EVIOCGRAB on the physical ones -- and a running daemon is already
-doing exactly that. Two of padmap's own commands wanting the same hardware.
+doing exactly that. Two of danstick's own commands wanting the same hardware.
 
 What made it worth fixing is not the failure, it is what the failure said.
 Nothing in that traceback mentions the daemon, names the command to use
-instead, or suggests this is anything other than padmap being broken. The user
+instead, or suggests this is anything other than danstick being broken. The user
 ran it because I suggested it, and the suggestion was wrong.
 
 `_start` now asks whether a daemon holds the pads before opening anything --
@@ -2862,7 +2862,7 @@ rather than reading it:
   indent, which is a *substring* of the eight-space call already inside the
   other function's try block, so the count looked right and the replacement
   landed in the wrong place. Anchoring on the following line fixed it.
-* The message told the user to run `padmap stop-daemon`, which does not exist.
+* The message told the user to run `danstick stop-daemon`, which does not exist.
   An error that names a command you do not have is worse than one that names
   none, and this file has spent a long session arguing that a guard has to say
   what the user should do. It now prints `kill <pid>` with the pid it already
@@ -2870,15 +2870,15 @@ rather than reading it:
 
 ## Y mapped to C-up did nothing, and the C-stick looked fine
 
-The mapping was right at every layer padmap owns. The capture was stored
+The mapping was right at every layer danstick owns. The capture was stored
 (`rightstick_up: {kind: button, index: 3}`), the autoconfig carried
 `input_r_y_minus_btn = "3"`, button 3 was the correct number for that pad --
 its codes run contiguously from `BTN_JOYSTICK`, so SDL and RetroArch agree --
 and RetroArch's own shipped database uses `_btn` on an analog half-axis in 40
 profiles. The verbose log confirmed the profile matched and was applied:
 
-    [Autoconf] ... pad name padmap Player 1 (0079/1843), phys padmap/p1, affinity 50
-    [INFO] [Autoconf] padmap Player 1 configured in port 1.
+    [Autoconf] ... pad name danstick Player 1 (0079/1843), phys danstick/p1, affinity 50
+    [INFO] [Autoconf] danstick Player 1 configured in port 1.
 
 The fault was one layer below, in `input_joypad_analog_axis`:
 
@@ -2890,7 +2890,7 @@ The fault was one layer below, in `input_joypad_analog_axis`:
        ... consult bind_minus->joykey / bind_plus->joykey ...
     }
 
-The button is only read when the axis reads **exactly** zero. padmap was
+The button is only read when the axis reads **exactly** zero. danstick was
 emitting a button on one half of the axis and leaving an axis on the other:
 
     input_r_y_minus_btn  = "3"     <- Y
@@ -2900,7 +2900,7 @@ so the axis decided the answer and Y was never consulted.
 
 It never read zero. Two independent reasons, and both matter:
 
-* the pad does not centre. Measured on the live `padmap Player 1` node, axis 2
+* the pad does not centre. Measured on the live `danstick Player 1` node, axis 2
   rests at **131** on a 0..255 axis. `udev_compute_axis` is
   `(value - min) * 0xffff / range - 0x7fff`, so that is **+900**.
 * even a perfectly centred axis would not reach zero. That formula subtracts
@@ -2911,8 +2911,8 @@ It never read zero. Two independent reasons, and both matter:
 of 5, so the C-stick behaved perfectly while the button was dead. Nothing was
 logged, nothing was misconfigured, and the one visible symptom -- stick drift --
 was invisible by construction. That is why this survived several passes: every
-artefact padmap produced was correct, and the check that would have caught it
-had to model RetroArch's arithmetic rather than inspect padmap's output.
+artefact danstick produced was correct, and the check that would have caught it
+had to model RetroArch's arithmetic rather than inspect danstick's output.
 
 `input_analog_deadzone = "0.000000"` in the user's retroarch.cfg (and 0.0f is
 RetroArch's compiled-in default) is what removed the last chance of rescue: the
@@ -2922,7 +2922,7 @@ The fix, `drop_shadowed_axis_halves`, drops the opposing `_axis` bind whenever
 a button is bound to the other half of the same analog axis. The button is the
 deliberate instruction, so it wins; both halves then resolve to `AXIS_NONE`,
 `res` is always 0, and the fallback fires every time. It costs that stick's
-other direction, and that part is not padmap's to fix -- RetroArch has no way
+other direction, and that part is not danstick's to fix -- RetroArch has no way
 to say "this button, and also that axis" on one analog axis.
 
 The drop is unconditional today, so C-stick down is gone from that one game
@@ -2947,13 +2947,13 @@ never zero, and cannot be rescued on a 0..255 range at all.
 
 Two things worth remembering beyond this bug:
 
-* **no padmap pad currently rests at true zero on any axis.** The 0..255 range
+* **no danstick pad currently rests at true zero on any axis.** The 0..255 range
   these adapters report has no such value. Publishing a wider, symmetric range
   (`min=-32767, max=32767`, rest 0) would give exactly zero and make half-axis
   button binds work in both directions.
 * **ABS_Z and ABS_RZ are special.** RetroArch treats them as analog triggers
   and rescales them `(val + 0x7fff) / 2` when an axis's *initial* value
-  normalises below -1300 (~4%). padmap publishes the C-stick Y as ABS_Z, so any
+  normalises below -1300 (~4%). danstick publishes the C-stick Y as ABS_Z, so any
   future change to the published range must keep it from starting negative, or
   a resting stick reads +16383 -- half deflection, permanently.
 
@@ -2966,7 +2966,7 @@ Neither is a live bug today; both are traps for the next change here.
 Reported as "it's listed as xbox 360", then "it looks like a keyboard... if
 steam is closed it stops acting like [a controller]", then "still don't see it
 after modprobing". Every one of those was a real symptom, and the first three
-things padmap said about them were wrong in a different way.
+things danstick said about them were wrong in a different way.
 
 **The device.** `28de:1304`, seven USB interfaces:
 
@@ -2989,7 +2989,7 @@ tested `descriptor[0] == 0x06 && descriptor[2] == 0xFF` to find a vendor
 interface. On a slot interface the vendor collection is the *third* top-level
 collection -- the descriptor opens with an emulated mouse -- so the test failed
 on all four slots and passed only on the dock, whose descriptor does start with
-the vendor page. padmap therefore announced the dock as "its gamepad channel",
+the vendor page. danstick therefore announced the dock as "its gamepad channel",
 and `hidprobe.py` was pointed at it and reported "nothing arrived at all".
 
 That reads exactly like a controller that is asleep. It was a tool aimed at the
@@ -3010,7 +3010,7 @@ reads as the kernel refusing the write rather than as a bad path. Both
 spellings are now tried against the filesystem instead of computed.
 
 **Wrong answer 3: `new_id` at all.** This is the one that cost the user a
-session. Force-binding is not a workaround here, and padmap said it was.
+session. Force-binding is not a workaround here, and danstick said it was.
 v6.18's `hid-steam` has three ids -- `1102`, `1142`, `1205` -- and contains no
 reference to either 2026 codename. Its `steam_raw_event` opens:
 
@@ -3084,7 +3084,7 @@ was not sufficient either: it made the wrong answer *well-evidenced*.
 
     01 87 03 09 00 00   then 58 zeros, via HIDIOCSFEATURE, every 3 seconds
 
-and a decode of a packed struct. `src/padmap/triton.py`.
+and a decode of a packed struct. `src/danstick/triton.py`.
 
 Three details that would each have cost a session:
 
@@ -3095,7 +3095,7 @@ Three details that would each have cost a session:
   Sent once, a pad works and then stops, which reads as failing hardware.
 * **An empty slot stalls with EPIPE**, and that is the only cheap way to tell
   an empty slot from a full one. The receiver publishes four either way, so
-  without probing, padmap offers four players for one controller and three of
+  without probing, danstick offers four players for one controller and three of
   them never send an event.
 
 ### The generalisable part
@@ -3118,7 +3118,7 @@ Found by the differential corpus on its first run against the new Rust port of
 `protocol.py`, which is what that corpus is for.
 
 `_game_entry` built a recent-games entry with `str(raw.get("title", ""))`.
-`lastgame.json` is a file padmap wrote, so the fields are strings — until it
+`lastgame.json` is a file danstick wrote, so the fields are strings — until it
 is truncated, hand-edited, or written by a version that did something else.
 Then `str(None)` is the four characters `None`, and `str(True)` is `True`, and
 those go straight onto the scope picker where a game's name belongs.
@@ -3160,7 +3160,7 @@ after the first:
     protocol._game_entry   str(title)   -> "None" on the scope picker
     server.parse_command   str(icon)    -> an icon named "None", stored
 
-Both read a field out of something padmap did not write -- a file that can be
+Both read a field out of something danstick did not write -- a file that can be
 truncated or hand-edited, a socket any local process may write to -- and both
 rendered whatever they found. `str(None)` is the four characters `None`, and
 it goes straight into a picker or a profile as though somebody chose it.
@@ -3175,7 +3175,7 @@ Two implementations reading one message and disagreeing about its contents, in
 a way neither side's own tests would show. Stringifying needs per-language care
 to stay consistent; dropping anything that is not a string needs none.
 
-**Worth generalising.** Every one of these was at a boundary where padmap reads
+**Worth generalising.** Every one of these was at a boundary where danstick reads
 something it did not write, and in every case the coercion was chosen for
 convenience at the call site rather than for what the field means. A field that
 must be a *number* is refused when it is not one, loudly, because a wrong
@@ -3202,11 +3202,11 @@ The other three are recorded and not corrected:
 
 * **X and Y arrive on each other's codes.** `hid-steam` writes `BTN_X` for the
   west button, and `BTN_X` *is* `BTN_NORTH` -- a legacy spelling of a
-  positional code. Anything reading the codes positionally, padmap's
+  positional code. Anything reading the codes positionally, danstick's
   `STANDARD_BUTTONS` included, comes out the wrong way round.
 * **The triggers are `ABS_HAT2Y`/`ABS_HAT2X` of 0..32767**, not `ABS_Z`/`ABS_RZ`
   of 0..255, which the pad does not declare at all. `binding::axis_index`
-  excludes `0x10..0x18` from the axis numbering outright, so padmap cannot
+  excludes `0x10..0x18` from the axis numbering outright, so danstick cannot
   spell those indices and falls back to the digital `BTN_TL2`/`BTN_TR2`.
 * **The grips are on `0x224..0x227`**, codes the kernel headers leave unnamed.
   Mainline v6.16 `hid-steam` puts them on `BTN_TRIGGER_HAPPY1..4`
@@ -3217,8 +3217,8 @@ The other three are recorded and not corrected:
 from one reading of one driver agree with each other for free, and the X/Y swap
 would have survived both: the driver says `BTN_X | button X`, and the obvious
 test asserts exactly that. SDL's built-in database has an entry for this GUID,
-written by people with the hardware, and it says `x:b5,y:b6` where padmap's
-guess says `y:b5,x:b6`. `padmap-input/tests/steam_deck.rs` holds the two
+written by people with the hardware, and it says `x:b5,y:b6` where danstick's
+guess says `y:b5,x:b6`. `danstick-input/tests/steam_deck.rs` holds the two
 records against each other and names every control they disagree about, so the
 list of disagreements is four and cannot grow by accident.
 
@@ -3239,7 +3239,7 @@ client that opens the hidraw device, and Steam is such a client, so on a Deck
 as it normally runs there is no `Steam Deck` node at all -- only the lizard
 keyboard and mouse, and Steam's `28de:11ff` mirror standing in for the built-in
 controls. `without_steam_mirrors` drops that mirror as soon as any other pad is
-present, on the assumption that a mirror always duplicates a pad padmap can
+present, on the assumption that a mirror always duplicates a pad danstick can
 already see. On a Deck that assumption is false, and plugging in a second pad
 costs the Deck its own controls.
 
@@ -3320,7 +3320,7 @@ without its fix.
 ## A Dolphin port was renamed to please a tool that Dolphin does not consult
 
 `e7a79e1` changed `emit --dolphin-dir` to write `Device = SDL/0/Xbox 360
-Controller` instead of `SDL/0/padmap Player 1`, on the reasoning that a clone
+Controller` instead of `SDL/0/danstick Player 1`, on the reasoning that a clone
 mirrors the pad behind it, so SDL finds that pad in its own database and reports
 the model. That reasoning is right about SDL's *joystick* name and wrong about
 Dolphin, which names a device by the clone. Every player one was then bound to a
@@ -3332,9 +3332,9 @@ True` in `Logger.ini`), on Four Swords Adventures with an Xbox pad and a Steam
 Controller seated:
 
 ```
-Added device: SDL/0/Xbox 360 Controller     <- the raw pad, grabbed by padmap
-Added device: SDL/0/padmap Player 1         <- its clone
-Added device: SDL/0/padmap Player 2         <- the Steam Controller's clone
+Added device: SDL/0/Xbox 360 Controller     <- the raw pad, grabbed by danstick
+Added device: SDL/0/danstick Player 1         <- its clone
+Added device: SDL/0/danstick Player 2         <- the Steam Controller's clone
 ```
 
 Both clones are slot 0, which is the other half of the answer: the slot counts
@@ -3368,7 +3368,7 @@ join path reuses it; everything else clears it first.
 **The rule "everything else clears it" was not true, and the way it was untrue
 is the finding.** `finish_mapping` stores a capture and broadcasts events; it
 does not rewrite any consumer's config. Neither does `forget_pad`. Nor can it:
-`padmap map` from a terminal is a different process writing the same profile
+`danstick map` from a terminal is a different process writing the same profile
 store. So before the cache, the *only* thing that ever carried a fresh capture
 into the SDL database and the emulators' configs was the incidental
 re-derivation on the next rewrite -- a join, a seat leaving, anything. Cache
@@ -3394,7 +3394,7 @@ reader -- which had been survivable only because the reader recomputed so often.
 
 ## A seat has to exist before the person does
 
-`padmap-rs exec` hands a game the `/dev/input` it starts with: a tmpfs holding
+`danstick-rs exec` hands a game the `/dev/input` it starts with: a tmpfs holding
 the nodes that were there, with the raw pads covered. Nothing can be added to
 that namespace afterwards -- a bind mount into a running user namespace needs
 to be made from inside it -- and SDL's udev hotplug does not cross it either.
@@ -3434,7 +3434,7 @@ vid/pid/name/phys/uniq rather than by node alone.
 
 ## The mouse belonged to no seat
 
-padmap has moved the keyboard off a pad's port since `keyboard::port` existed.
+danstick has moved the keyboard off a pad's port since `keyboard::port` existed.
 The mouse it never moved, because it never bound it at all -- and every
 emulator that has a pointer defaults it to port 1. RetroArch seeds
 `input_mouse_index[i] = i`; Dolphin emulates Wii Remote 1 on the mouse and
@@ -3457,11 +3457,11 @@ earlier session.
 in `InputManager` rather than anything a controller profile carries.
 Ryujinx's touchscreen is the handheld screen, always player 1's; its one
 mouse setting is global and its own comment says "Independent from controllers
-binding". Neither is a gap padmap can close, so `docs/EMULATORS.md` says so
+binding". Neither is a gap danstick can close, so `docs/EMULATORS.md` says so
 per emulator rather than leaving a reader to assume it was missed.
 
 **Worth generalising.** An emulator's default is a claim about one setting,
-not about the file. padmap moved the keyboard and assumed the person moved
+not about the file. danstick moved the keyboard and assumed the person moved
 with it; half of that person stayed on port 1 for as long as the keyboard's
 seat has existed.
 
@@ -3469,7 +3469,7 @@ seat has existed.
 
 `docs/requests/keyboard-joins-mid-game.md` asked for a held space bar to seat
 the keyboard, because once the picker has `execvp`'d into the game there is
-nothing of GOTG left to time a hold. padmap had never read a keyboard. Each of
+nothing of GOTG left to time a hold. danstick had never read a keyboard. Each of
 the three things that went wrong was in the plumbing, not the idea.
 
 **`evdev::Device::open` blocks, and one blocking read is the whole daemon.**
@@ -3560,7 +3560,7 @@ stick as `|input| x gate(angle) / calibration(angle)`
 (`ReshapableInput::Reshape`, StickGate.cpp), so a round thumbstick at full
 tilt, whose diagonal reports a radius of 1.0, reached 1 / 1.414 of the
 GameCube's diagonal notch. Running diagonally was slower than running
-straight, on every pad, in every GameCube game padmap set up. The square
+straight, on every pad, in every GameCube game danstick set up. The square
 shape is right for a *keyboard*, where two keys make a true diagonal --
 Dolphin sets it for its own keyboard defaults -- and it looks to have been
 copied from there, or from EmuDeck, which ships the same string for the Steam
@@ -3585,7 +3585,7 @@ four on its cluster, ~500ms in a journey that presses each pad the moment the
 last was seated. Measured per phase in the pod, three things lined up after
 every claim, and a hold that happened during them paid for all of them.
 
-**A hold was timed from when padmap read the press.** `Seating::read` fed the
+**A hold was timed from when danstick read the press.** `Seating::read` fed the
 assigner `now()`, so a button pressed while the loop was busy writing the
 last claim's files started counting only when the loop came back. It now
 counts from the kernel's stamp on the event, converted by its age; an age
@@ -3593,13 +3593,13 @@ past two seconds is a clock that stepped and is not believed.
 
 **A claim woke the attach scan.** A clone is a node, so a claim changed
 /dev/input, and `poll_controller_changes` ran a full discovery -- 128 to 312ms
--- to find nothing but padmap's own device. A change made only of padmap's
+-- to find nothing but danstick's own device. A change made only of danstick's
 own nodes is now recognised and skipped.
 
 **A claim woke seating's discovery.** Its gate keyed on the seated pads as
 well as the nodes, so every claim rediscovered, then followed up four times
-while "udev settled" over a node padmap had made. It keys on the nodes that
-are not padmap's now, and when only who is seated changed it reuses the pads
+while "udev settled" over a node danstick had made. It keys on the nodes that
+are not danstick's now, and when only who is seated changed it reuses the pads
 it already had: a claim changes who is seated, never what is plugged in.
 
 Median hold end to claim over four seats went from 493ms to 21ms. What is
@@ -3615,12 +3615,12 @@ On a Deck in Game Mode Steam holds the built-in controls' hidraw node, so
 hid-steam publishes no `Steam Deck` event node and Steam's virtual pad 0 is
 the only way those presses reach anything. `without_steam_mirrors` dropped
 every `28de:11ff` node as soon as one other pad was readable, on the theory
-that a mirror always mirrors a pad padmap already reads. The Deck's mirror
-mirrors one padmap cannot read, so a friend's Xbox pad cost the Deck its seat.
+that a mirror always mirrors a pad danstick already reads. The Deck's mirror
+mirrors one danstick cannot read, so a friend's Xbox pad cost the Deck its seat.
 
-Which mirror stands for which controller is not written anywhere padmap can
+Which mirror stands for which controller is not written anywhere danstick can
 see; the count is. Discovery now keeps as many mirrors as there are
-controllers padmap cannot read -- the surplus of mirrors over readable pads,
+controllers danstick cannot read -- the surplus of mirrors over readable pads,
 or one when a `28de:1205` hidraw node exists with no Deck event node --
 lowest Steam slot first, since Steam opens the built-in first. Guessing one
 mirror too many shows a pad twice; guessing one too few hides a person.

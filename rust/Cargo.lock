@@ -131,6 +131,61 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570"
 
 [[package]]
+name = "danstick-core"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "regex",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "unicode-general-category",
+]
+
+[[package]]
+name = "danstick-daemon"
+version = "0.1.0"
+dependencies = [
+ "danstick-core",
+ "danstick-input",
+ "evdev",
+ "log",
+ "rustix",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
+name = "danstick-input"
+version = "0.1.0"
+dependencies = [
+ "danstick-core",
+ "evdev",
+ "log",
+ "rustix",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "udev",
+]
+
+[[package]]
+name = "danstick-rs"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "danstick-core",
+ "danstick-daemon",
+ "danstick-input",
+ "env_logger",
+ "evdev",
+ "log",
+ "rustix",
+ "serde_json",
+ "signal-hook",
+]
+
+[[package]]
 name = "defmt"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -379,61 +434,6 @@ name = "once_cell_polyfill"
 version = "1.70.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
-
-[[package]]
-name = "padmap-core"
-version = "0.1.0"
-dependencies = [
- "proptest",
- "regex",
- "serde",
- "serde_json",
- "thiserror",
- "unicode-general-category",
-]
-
-[[package]]
-name = "padmap-daemon"
-version = "0.1.0"
-dependencies = [
- "evdev",
- "log",
- "padmap-core",
- "padmap-input",
- "rustix",
- "serde_json",
- "thiserror",
-]
-
-[[package]]
-name = "padmap-input"
-version = "0.1.0"
-dependencies = [
- "evdev",
- "log",
- "padmap-core",
- "rustix",
- "serde",
- "serde_json",
- "thiserror",
- "udev",
-]
-
-[[package]]
-name = "padmap-rs"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "env_logger",
- "evdev",
- "log",
- "padmap-core",
- "padmap-daemon",
- "padmap-input",
- "rustix",
- "serde_json",
- "signal-hook",
-]
 
 [[package]]
 name = "pkg-config"

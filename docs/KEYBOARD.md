@@ -1,4 +1,4 @@
-# Keyboard and mouse: what each emulator binds by default, and what padmap does to it
+# Keyboard and mouse: what each emulator binds by default, and what danstick does to it
 
 *Research report, 2026-09-21. Sources: 54, read from upstream source where it
 exists. Confidence: high for all five emulators; a few file-format details
@@ -6,28 +6,28 @@ are marked UNVERIFIED inline.*
 
 ## Executive summary
 
-padmap binds gamepads and nothing else. The keyboard and mouse pass through
+danstick binds gamepads and nothing else. The keyboard and mouse pass through
 the `exec` sandbox untouched, and the assigner ignores keyboard key codes so
 a combo device cannot take a seat by typing. Whether a keyboard-only person
-can play therefore depends on each emulator's own defaults, and padmap's
+can play therefore depends on each emulator's own defaults, and danstick's
 config writers change those defaults in three different ways without meaning
 to: RetroArch's keyboard survives beside pad 1, Ryujinx's and Dolphin's are
-replaced the moment padmap seats player 1, and ares and Cemu have none to
+replaced the moment danstick seats player 1, and ares and Cemu have none to
 begin with.
 
 There is no cross-emulator standard layout, but RetroArch and Dolphin agree
 on the core (arrows, Z/X/A/S faces, Q/W shoulders, Enter start) and Ryujinx
 adds WASD/IJKL sticks. No launcher surveyed synthesises a keyboard gamepad;
 those that support keyboard players write each emulator's own keys. The
-cheapest thing padmap can do that is actually better than today: put the
+cheapest thing danstick can do that is actually better than today: put the
 keyboard on the **first free port** in every emulator, using that emulator's
 own default table, so seating a pad never silently unbinds the keyboard.
 
-## 1. What padmap does today
+## 1. What danstick does today
 
-| emulator | keyboard default exists? | after padmap seats player 1 |
+| emulator | keyboard default exists? | after danstick seats player 1 |
 |---|---|---|
-| RetroArch | yes, player 1 only | **kept**: padmap nulls only `_btn`/`_axis`; the suffix-less keyboard keys stay, so keyboard and pad both drive port 1 |
+| RetroArch | yes, player 1 only | **kept**: danstick nulls only `_btn`/`_axis`; the suffix-less keyboard keys stay, so keyboard and pad both drive port 1 |
 | Dolphin (GameCube) | yes, `[GCPad1]` is keyboard by design | **lost**: `[GCPad1..4]` are rewritten and unmanaged ports set to `SIDEVICE_NONE` |
 | Ryujinx | yes, Player1 keyboard | **lost**: `merge` replaces the entry sharing `player_index`; a keyboard on another player index would survive |
 | ares | none | nothing to lose; `VirtualPadN` written only for seated players |
@@ -87,7 +87,7 @@ are combined aliases Dolphin registers itself. With no ini, only **controller
 Wii Remote 1 is emulated by default (`WiimoteNew.ini`, `Source = 1`) on
 mouse and keyboard: A/B = left/right click, 1/2 = `1`/`2`, −/+ = Q/E, Home =
 Return, IR = cursor, shake = middle click, Nunchuk stick = WASD, C/Z =
-Control_L/Shift_L. Remotes 2–4 are `Source = 0`. padmap writes this file
+Control_L/Shift_L. Remotes 2–4 are `Source = 0`. danstick writes this file
 too, moving that section to whichever seat holds the keyboard and mouse and
 giving the other remotes their pads (`dolphin::wiimote_sections`).
 
@@ -187,7 +187,7 @@ physical position, so Nintendo's A lands on Z) and uses WASD.
 
 Sources: [Batocera libretroControllers.py](https://github.com/batocera-linux/batocera.linux/blob/master/package/batocera/core/batocera-configgen/configgen/configgen/generators/libretro/libretroControllers.py), [Batocera supported_controllers](https://wiki.batocera.org/supported_controllers), [RetroPie retroarch.sh](https://github.com/RetroPie/RetroPie-Setup/blob/master/scriptmodules/emulators/retroarch.sh), [RetroPie keyboard controllers](https://raw.githubusercontent.com/RetroPie/RetroPie-Docs/master/docs/Keyboard-Controllers.md), [ES-DE FAQ](https://gitlab.com/es-de/emulationstation-de/-/raw/master/FAQ.md), [Pegasus controls](https://pegasus-frontend.org/docs/user-guide/controls/), [SDL_AttachVirtualJoystick](https://wiki.libsdl.org/SDL3/SDL_AttachVirtualJoystick), [ControllerEmulator](https://github.com/WebFreak001/ControllerEmulator), [evsieve](https://github.com/KarsMulder/evsieve), [input-remapper](https://github.com/sezanzeb/input-remapper), [xboxdrv man page](https://manpages.ubuntu.com/manpages/xenial/man1/xboxdrv.1.html).
 
-## 5. Options for padmap
+## 5. Options for danstick
 
 **A. Keyboard is the first free port, in each emulator's own keys.** Extend
 each writer: after seating N pads, write that emulator's default keyboard
@@ -199,10 +199,10 @@ controller in `controller{N}.xml` with GDK keysyms). No new device, no
 grabbing, no new state. Fixes the two silent regressions (Dolphin, Ryujinx)
 and gives ares and Cemu a keyboard they never had. Cost: five small tables
 and an ordinal rule; the ares and Cemu tables are Linux-specific, which
-padmap is anyway.
+danstick is anyway.
 
-**B. A keyboard seat.** A keyboard republished through uinput as `padmap
-Player N`, one padmap-wide layout, taken by holding a key like any other seat.
+**B. A keyboard seat.** A keyboard republished through uinput as `danstick
+Player N`, one danstick-wide layout, taken by holding a key like any other seat.
 Every writer already handles it. Cost: the keyboard must be grabbed and its
 unbound keys re-emitted through a virtual keyboard (what evsieve does), or
 every bound key leaks into the emulator as a hotkey. That is real work, and
@@ -213,12 +213,12 @@ it if GOTG wants a keyboard person seated by the same hold gesture.
 
 **Recommendation: A**, as its own request from GOTG if they want it. It is
 the smallest change that makes the keyboard behave the same way in every
-emulator padmap already writes, and B can be added on top later without
+emulator danstick already writes, and B can be added on top later without
 undoing it.
 
 ## What was built
 
-Option A, on 2026-09-21: `padmap_core::keyboard::first_free` is the rule, and
+Option A, on 2026-09-21: `danstick_core::keyboard::first_free` is the rule, and
 each writer carries its table -- `retroarch::keyboard_config`,
 `dolphin::keyboard_section`, `ryujinx::keyboard_entry` (inside `merge`),
 `ares::keyboard_pad`, `cemu::keyboard_profile`. ares' key indices were
@@ -236,7 +236,7 @@ re-read from `xlib.cpp` and differ from RetroBat's: those are Windows numbers
 ## Methodology
 
 Three parallel research agents, about 30 queries, 54 unique sources read,
-plus a read of padmap's five config writers. Sub-questions: RetroArch
+plus a read of danstick's five config writers. Sub-questions: RetroArch
 defaults and cfg syntax; ares defaults and settings.bml; Dolphin and Cemu
 defaults and file formats; Ryujinx defaults and Config.json; cross-emulator
 conventions, uinput keyboard-gamepad tools, and launcher prior art. Emulator

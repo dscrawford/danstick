@@ -1,11 +1,11 @@
 # Fake pads
 
-Every controller bug padmap has had came from some controller behaving unlike
-the one in front of the person writing the code. `padmap_input::fakepad` is
+Every controller bug danstick has had came from some controller behaving unlike
+the one in front of the person writing the code. `danstick_input::fakepad` is
 those surprises, written down and executable.
 
 ```rust
-use padmap_input::fakepad::{self, MAYFLASH_GAMECUBE};
+use danstick_input::fakepad::{self, MAYFLASH_GAMECUBE};
 
 let trigger = MAYFLASH_GAMECUBE.axis("lt").expect("it has one");
 assert_eq!(trigger.rest, 24);   // untouched, and 81% deflected
@@ -47,9 +47,9 @@ rather than anecdotal.
 
 ## The two that are not here
 
-A Steam Controller and a Switch Pro have no evdev node to build: padmap reads
+A Steam Controller and a Switch Pro have no evdev node to build: danstick reads
 them over hidraw and decodes their reports itself. Their fixtures are the
-report bytes, in `padmap-input/tests/triton_protocol.rs` and
+report bytes, in `danstick-input/tests/triton_protocol.rs` and
 `nintendo_differential.rs` — the same idea, one layer down.
 
 `STEAM_VIRTUAL` is here but is not a controller: it is Steam's uinput mirror of
@@ -60,7 +60,7 @@ stop at -32767, where the xpad table it copies reaches -32768.
 
 A fixture and a test written from the same reading of the same driver agree
 with each other for free. `STEAM_DECK` is held against SDL's built-in database
-entry for its GUID instead (`padmap-input/tests/steam_deck.rs`): two
+entry for its GUID instead (`danstick-input/tests/steam_deck.rs`): two
 independent records of one device, and the test names every control they
 disagree about. That is what caught the X/Y swap.
 

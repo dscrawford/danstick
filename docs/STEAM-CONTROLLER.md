@@ -1,6 +1,6 @@
 # The 2026 Steam Controller
 
-Status: **works, without the kernel driver.** padmap speaks the protocol
+Status: **works, without the kernel driver.** danstick speaks the protocol
 directly. Written 2026-09-15 against kernel 6.18.44.
 
 An earlier version of this document concluded "blocked on the kernel, upgrade
@@ -26,14 +26,14 @@ Every slot boots in "lizard mode", pretending to be a keyboard and a mouse so
 it works in a BIOS. The real gamepad state is on the vendor collection and
 stays silent until something asks for it.
 
-## What padmap does
+## What danstick does
 
-Drives it. Both halves: `rust/crates/padmap-input/src/triton.rs`, and
-`rust/crates/padmap-input/src/triton.rs` for `padmap-rs`. It arrives in
-`padmap list` as an ordinary controller, with no note, because there is
+Drives it. Both halves: `rust/crates/danstick-input/src/triton.rs`, and
+`rust/crates/danstick-input/src/triton.rs` for `danstick-rs`. It arrives in
+`danstick list` as an ordinary controller, with no note, because there is
 nothing left to say about it.
 
-`padmap-rs` wraps the two kinds of source in one enum, so the clone, the
+`danstick-rs` wraps the two kinds of source in one enum, so the clone, the
 calibration and the forwarding loop cannot tell a Steam Controller from a pad
 the kernel drives — which is the point. A controller needing a workaround
 should still be a controller.
@@ -59,10 +59,10 @@ mid-game, which reads as failing hardware.
 
 **An empty slot stalls the transfer with `EPIPE`**, and that is the only cheap
 way to tell a slot with a controller in it from one without. Without the
-probe, padmap finds four controllers for one physical pad and offers four
+probe, danstick finds four controllers for one physical pad and offers four
 players, three of which never send an event.
 
-## Two things that do not work the way the rest of padmap does
+## Two things that do not work the way the rest of danstick does
 
 **There is no evdev node.** `devices.discover()` starts from
 `/sys/class/input`, and with no `hid-steam` there is no joypad there to find
@@ -85,7 +85,7 @@ gained `IBEX`/`IBEX_BLE`/`PROTEUS`/`NEREID` in v7.3-rc1 and has them in no
 earlier tag (v7.0, v7.1, v7.2 and v6.18 all checked). When it lands, the
 kernel will drive the receiver and publish ordinary joypads.
 
-padmap gets out of the way when that happens: `triton.slots()` skips any
+danstick gets out of the way when that happens: `triton.slots()` skips any
 device whose HID driver is something other than `hid-generic`, so the kernel's
 driver wins and the two never fight over the same reports.
 
@@ -98,7 +98,7 @@ Verified here:
   `#pragma pack(1)`;
 * slot discovery against the real receiver -- four slots found, the dock
   correctly excluded;
-* the empty-slot probe: with nothing paired, all four stall and padmap
+* the empty-slot probe: with nothing paired, all four stall and danstick
   reports no controllers rather than four phantom ones;
 * the decode, against synthetic reports -- `tests/check_triton.py`.
 
@@ -115,9 +115,9 @@ produces something sensible is unknown.
 ## If it does not work
 
     nix develop --command python3 tests/check_triton.py   # the decode
-    padmap list                                           # what padmap sees
+    danstick list                                           # what danstick sees
 
-`padmap list` showing nothing with a controller switched on means the probe
+`danstick list` showing nothing with a controller switched on means the probe
 found no live slot: the pad is asleep, or paired to a different receiver. A
 slot that appears but sends no events means the decode is wrong, and
 `tools/hidprobe.py` against that slot's node is the next step -- it prints

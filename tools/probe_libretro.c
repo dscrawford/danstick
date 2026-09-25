@@ -16,7 +16,7 @@
  *   gcc -shared -fPIC -O1 -o probe.so tools/probe_libretro.c \
  *       -I "$SRC/libretro-common/include"
  *   Xvfb :78 -screen 0 640x480x24 & sleep 2
- *   DISPLAY=:78 timeout 25 padmap-play -L ./probe.so any.z64 2>&1 | grep PROBE:
+ *   DISPLAY=:78 timeout 25 danstick-play -L ./probe.so any.z64 2>&1 | grep PROBE:
  *
  * Expected with one assigned player:
  *

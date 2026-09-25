@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Run padmap's tests in a pod on the cluster instead of on this machine.
+# Run danstick's tests in a pod on the cluster instead of on this machine.
 #
 #   tools/cluster-test                                    # every test
-#   tools/cluster-test -p padmap-core                     # any `cargo test` arguments
-#   tools/cluster-test -p padmap-rs --test daemon_journey -- exec_reserves
-#   PADMAP_CLUSTER_LINT=1 tools/cluster-test              # fmt and clippy there too
+#   tools/cluster-test -p danstick-core                   # any `cargo test` arguments
+#   tools/cluster-test -p danstick-rs --test daemon_journey -- exec_reserves
+#   DANSTICK_CLUSTER_LINT=1 tools/cluster-test            # fmt and clippy there too
 #
 # The working tree goes in as it is, uncommitted edits included. The exit
 # status is cargo's. See k8s/tests/README.md.
@@ -21,18 +21,18 @@ image=$(nix build "git+file://$root#test-image" --no-link --print-out-paths --ma
 tag=$(basename "$image" | cut -c1-12)
 if ! curl -sfk -o /dev/null \
     -H 'Accept: application/vnd.docker.distribution.manifest.v2+json' \
-    "https://$registry/v2/padmap-tests/manifests/$tag"; then
+    "https://$registry/v2/danstick-tests/manifests/$tag"; then
   echo "cluster-test: pushing the test image ($tag)" >&2
   # skopeo reads /etc/docker/certs.d/$registry, whose client key only root can
   # read, so it is pointed at a directory holding the CA certificate alone.
-  certs="${XDG_CACHE_HOME:-$HOME/.cache}/padmap/regcerts"
+  certs="${XDG_CACHE_HOME:-$HOME/.cache}/danstick/regcerts"
   mkdir -p "$certs"
   cp "/etc/docker/certs.d/$registry/registry.crt" "$certs/"
   nix run nixpkgs#skopeo -- copy --dest-cert-dir="$certs" --dest-tls-verify=false \
-    "docker-archive:$image" "docker://$registry/padmap-tests:$tag" >&2
+    "docker-archive:$image" "docker://$registry/danstick-tests:$tag" >&2
 fi
 
-name="padmap-tests-$(date +%s)-$$"
+name="danstick-tests-$(date +%s)-$$"
 cleanup() { kubectl delete pod "$name" --wait=false >/dev/null 2>&1 || true; }
 # EXIT alone misses a run that is interrupted, and that pod holds a node's uinput.
 trap cleanup EXIT
@@ -40,7 +40,7 @@ trap 'exit 130' INT TERM
 sed -e "s/@NAME@/$name/" -e "s/@TAG@/$tag/" k8s/tests/pod.yaml | kubectl apply -f - >/dev/null
 if ! kubectl wait --for=condition=Ready "pod/$name" --timeout=300s >/dev/null; then
   echo "cluster-test: no node came free -- another uinput suite may hold every one:" >&2
-  kubectl get pods -o wide -l 'app in (padmap-tests,gotg-controllers)' >&2
+  kubectl get pods -o wide -l 'app in (danstick-tests,gotg-controllers)' >&2
   exit 1
 fi
 
@@ -50,7 +50,7 @@ tar -C "$root" \
   --exclude=./.swarm --exclude=./ruvector.db \
   -czf - . | kubectl exec -i "$name" -- tar -xzf - -C /src
 
-if [ "${PADMAP_CLUSTER_LINT:-}" = 1 ]; then
+if [ "${DANSTICK_CLUSTER_LINT:-}" = 1 ]; then
   kubectl exec "$name" -- cargo fmt --all --check
   kubectl exec "$name" -- cargo clippy --offline --all-targets --all-features -- -D warnings
 fi

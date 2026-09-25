@@ -2,7 +2,7 @@
 
 ## A controller that binds itself
 
-`controller.autobound` in `list --json` says padmap can bind this pad
+`controller.autobound` in `list --json` says danstick can bind this pad
 correctly with no capture: it speaks the kernel's gamepad convention, so its
 controls are read off the codes rather than guessed at. A picker can use it to
 say *this already works, remap only if you want to* instead of sending
@@ -25,7 +25,7 @@ Calibration measures where a stick rests; this is what a person *sets* when
 measuring is not enough -- a stick that wanders, a switch that bounces, a
 trigger that fires on its own. Every setting lives with the **physical
 controller** and follows it to whatever seat it takes, and is applied to
-everything padmap publishes for it, after calibration: the virtual pad and
+everything danstick publishes for it, after calibration: the virtual pad and
 the motion server both see the tuned stream.
 
 | field | meaning |
@@ -47,7 +47,7 @@ one event:
 or an `error` saying which field was not what it claimed to be. A seated pad
 is retuned **in place**: its clone is not rebuilt, so a game in progress sees
 no disconnect. `list --json` reports the same object under
-`controller.tuning`, and `padmap tune` is the same thing from a shell.
+`controller.tuning`, and `danstick tune` is the same thing from a shell.
 
 ## Seating: taking a seat with no session
 
@@ -59,7 +59,7 @@ no disconnect. `list --json` reports the same object under
 
 While it is open, holding a button on a controller that **holds no seat**
 claims the lowest free one after the hold -- the same hold `begin` uses -- and
-padmap republishes and rewrites every consumer's config exactly as
+danstick republishes and rewrites every consumer's config exactly as
 `accept` does. The same `progress` and `claim` events are emitted, so a
 front-end draws it the way it draws a seat taken on the setup screen.
 
@@ -107,7 +107,7 @@ rather than only on the daemon, and it needs no restart. **Omitted, it leaves
 the length as it was**, so a caller that does not care never resets one that
 does.
 
-`PADMAP_HOLD_SECONDS` sets what a daemon starts with, for a front-end that
+`DANSTICK_HOLD_SECONDS` sets what a daemon starts with, for a front-end that
 starts its own (`serve --fresh --follow`) and would rather not say it twice.
 
 Nothing here is refused. A length that is missing, unparseable or outside the
@@ -120,8 +120,8 @@ not re-measured. A press that became a claim because the number moved
 underneath it is the accident a longer hold exists to prevent.
 
 **A hold is timed from the press itself**, by the kernel's stamp on the event,
-not from when padmap got round to reading it. A claim just before can keep
-padmap busy for a good part of a second, and a hold that started counting
+not from when danstick got round to reading it. A claim just before can keep
+danstick busy for a good part of a second, and a hold that started counting
 only afterwards made the next person's `claim` late by that much. So a seat
 lands its hold's length after the button went down, whoever claimed just
 before; the same holds for a held space bar.
@@ -197,15 +197,15 @@ The same events, in the same shape, come out of an assignment session
 out.
 
 
-padmap's premise is that a program attaches to it and gets stable virtual
+danstick's premise is that a program attaches to it and gets stable virtual
 gamepads instead of configuring controllers itself. That worked at launch and
 not during play: a controller plugged in mid-game produced nothing a running
 program could act on, so the only way to pick it up was to quit and start
 again.
 
 This is the event that closes that. Receiving one is enough to bind a new pad
-live -- no file to read, nothing further to ask padmap, and no need to know how
-padmap works.
+live -- no file to read, nothing further to ask danstick, and no need to know how
+danstick works.
 
     python3 tools/padctl.py watch
 
@@ -248,9 +248,9 @@ can stop saying it the moment that is no longer true.
     "retroarch_visible": false
   },
   "virtual": {
-    "name": "padmap Player 2",
+    "name": "danstick Player 2",
     "node": "/dev/input/event92",
-    "phys": "padmap/p2",
+    "phys": "danstick/p2",
     "vid": "057e", "pid": "2009", "bustype": 3,
     "guid": "030089a67e0500000920000001000000",
     "identity_mode": "mirror"
@@ -258,10 +258,10 @@ can stop saying it the moment that is no longer true.
   "retroarch": {
     "port": 2,                // 1-based, as input_playerN_* counts
     "index": 1,               // 0-based joypad index, or -1
-    "profile": "/run/user/1000/padmap/autoconfig/padmap Player 2.cfg",
+    "profile": "/run/user/1000/danstick/autoconfig/danstick Player 2.cfg",
     "binds": {"input_a_btn": "97", ...}
   },
-  "sdl_mapping": "030089a6...,padmap Player 2,a:b0,..."
+  "sdl_mapping": "030089a6...,danstick Player 2,a:b0,..."
 }
 ```
 
@@ -269,7 +269,7 @@ can stop saying it the moment that is no longer true.
 
 | action | meaning | `virtual` present |
 |---|---|---|
-| `added` | live now; padmap is republishing it | yes |
+| `added` | live now; danstick is republishing it | yes |
 | `removed` | was live, has gone. Its slot is **kept** | yes |
 | `unconfigured` | arrived, but no mapping has ever been recorded for this model, so there is nothing to bind | no |
 
@@ -292,12 +292,12 @@ fix it.
 
 Worth knowing if you write something similar. udev applies the `uaccess` ACL
 that grants the logged-in user access *after* the device node appears, and
-padmap looks the moment `/dev/input` changes -- so the first open of a freshly
+danstick looks the moment `/dev/input` changes -- so the first open of a freshly
 plugged controller can fail with `EACCES` and succeed a fraction of a second
 later. This was not theoretical; it was hit against a live daemon the first
 time this path ran for real.
 
-padmap retries for about five seconds before giving up, and a controller that
+danstick retries for about five seconds before giving up, and a controller that
 is unplugged and plugged in again always gets a fresh set of attempts. The
 consequence for a consumer is that an `added` event may arrive a few hundred
 milliseconds after the device node does.
@@ -316,8 +316,8 @@ one. A new controller takes the lowest *never-used* slot, so an arrival after a
 departure fills the hole rather than opening a slot beyond the live pads.
 
 **`virtual.vid`/`pid` are not always the hardware's.** By default the clone
-*mirrors* the controller, so they match; under `PADMAP_PAD_IDENTITY=padmap`
-they are `1209:0001` on `BUS_VIRTUAL`; under `PADMAP_PAD_IDENTITY=xbox360`
+*mirrors* the controller, so they match; under `DANSTICK_PAD_IDENTITY=danstick`
+they are `1209:0001` on `BUS_VIRTUAL`; under `DANSTICK_PAD_IDENTITY=xbox360`
 every clone is a wired Xbox 360 pad, `045e:028e` version `0x0110` with the
 layout `xpad` gives it, so every SDL program maps it from the database it was
 built with and needs no mapping handed to it. The source's inputs are
@@ -326,7 +326,7 @@ a pad that follows the kernel's convention); a control the source lacks is
 never pressed. Two clones share one GUID under it -- SDL tells them apart by
 index, ares by slot, RetroArch by name; Ryujinx, which blanks the name CRC,
 cannot, and is the one consumer this identity does not suit.
-`PADMAP_PAD_IDENTITY=xbox360-numbered` is the same pad with the player number
+`DANSTICK_PAD_IDENTITY=xbox360-numbered` is the same pad with the player number
 in its version (`0x0001` for player 1, and so on), so every clone has a GUID of
 its own and Ryujinx tells them apart too. SDL finds its mapping all the same:
 when no database entry has the exact version it matches one with the version
@@ -335,7 +335,7 @@ computed from it.
 
 **`index` is not `port`.** RetroArch's `input_playerN_joypad_index` is a
 0-based position in its own enumeration, and hidden pads are not in it. `-1`
-means padmap could not place this player, and binding by index would point at
+means danstick could not place this player, and binding by index would point at
 someone else's pad.
 
 **Binds are scoped.** `scope` says which console and game they were resolved
@@ -347,11 +347,11 @@ a name.
 
 ## Turning it off
 
-`PADMAP_NO_AUTOATTACH=1` keeps the announcements but stops padmap claiming a
+`DANSTICK_NO_AUTOATTACH=1` keeps the announcements but stops danstick claiming a
 player slot for an arriving controller -- for a caller that wants to decide the
-roster itself and treat padmap purely as a source of events.
+roster itself and treat danstick purely as a source of events.
 
-`PADMAP_NO_AUTOSETUP=1` is separate and older: it suppresses the setup screen,
+`DANSTICK_NO_AUTOSETUP=1` is separate and older: it suppresses the setup screen,
 not these events.
 
 ## Guarantees
@@ -364,7 +364,7 @@ not these events.
 * A failed republish is not fatal and produces no `added` event.
 * A seat's `state` is sent before its consumers' files are written, and its
   `added` event after them: `added` is the one to wait for before reading
-  a file padmap writes.
+  a file danstick writes.
 
 All of these are checked by `tests/check_controller_events.py`.
 
@@ -442,14 +442,14 @@ seat whose controller is merely *away* is dropped the same way.
 Refused, with an `error`, while a session is open (`cancel` it first), while a
 controller is being set up, and for a seat nobody holds.
 
-**Start unseated.** `padmap serve --fresh`, or `PADMAP_NO_RESTORE=1`, skips
+**Start unseated.** `danstick serve --fresh`, or `DANSTICK_NO_RESTORE=1`, skips
 restoring saved seats. Profiles, calibrations and mappings are the
 controller's and follow it; only the seats are forgotten. The file itself is
 left alone until the first seat taken in the new session overwrites it, so a
 plain `serve` after a `--fresh` one that seated nobody still restores what was
 there before.
 
-**Follow a pid.** `padmap serve --follow <pid>` exits, releasing everything --
+**Follow a pid.** `danstick serve --follow <pid>` exits, releasing everything --
 seating closed, clones stopped, socket removed -- once that pid is gone. It is
 polled four times a second, since `PR_SET_PDEATHSIG` does not survive the
 reparenting `ensure-daemon` does. A pid already gone at startup ends the daemon
@@ -457,7 +457,7 @@ at once. `state` carries the pid as `following` (`null` otherwise). Until the
 pid goes, nothing changes: seating stays open after the last client
 disconnects, as before, so a second player still turns up mid-game.
 
-**From a front-end.** `padmap ensure-daemon --fresh --follow $$` is the whole
+**From a front-end.** `danstick ensure-daemon --fresh --follow $$` is the whole
 integration, from the picker and from the launcher alike. A lifetime flag
 names a session: a running daemon that already follows that pid is left alone
 (the picker's daemon survives the `execvp` into the game, seats and all), and
@@ -474,7 +474,7 @@ changes nothing. Without either flag `ensure-daemon` behaves as it always has.
 Seats the keyboard as the next free player. Nothing is grabbed -- the keyboard
 stays the compositor's and the game's. What changes is every emulator's
 configuration: player N is now the emulator's own keyboard device, in the
-emulator's own default keys where it has them and padmap's where it does not
+emulator's own default keys where it has them and danstick's where it does not
 (`docs/EMULATORS.md`, "The keyboard"). A `claim` goes out first:
 
 ```json
@@ -498,7 +498,7 @@ tells a front-end this seat has no pad behind it. Nothing is grabbed: the
 mouse stays the compositor's, exactly as the keyboard does.
 
 **A held space bar does the same thing, from anywhere.** While seating is
-open and the keyboard has no seat yet, padmap reads every keyboard on the
+open and the keyboard has no seat yet, danstick reads every keyboard on the
 machine and times a held `KEY_SPACE` for the same `hold` the pads use. A
 front-end no longer has to time it, and no longer has to be the thing with
 focus: the picker has `execvp`'d into the game by the time somebody wants to
@@ -521,13 +521,13 @@ may jump while somebody joins. That is deliberate: grabbing the keyboard
 would take it from the game and from the desktop, which is worse than a
 stray jump. Only `KEY_SPACE` is looked at, so typing cannot take a seat.
 A pad's own keyboards -- a Steam Controller in lizard mode publishes four --
-are left out of this: padmap already grabs those beside the pad, and reading
+are left out of this: danstick already grabs those beside the pad, and reading
 them here would let a trackpad click bound to space seat "the keyboard".
 
-**`PADMAP_NO_KEYBOARD_HOLD=1` turns it off**, and `seat_keyboard` still
+**`DANSTICK_NO_KEYBOARD_HOLD=1` turns it off**, and `seat_keyboard` still
 works over the socket. Worth knowing before you decide:
 
-- padmap holds a read-only fd on every keyboard while it is listening, and
+- danstick holds a read-only fd on every keyboard while it is listening, and
   it is listening for as long as seating is open -- which, for GOTG, is the
   whole game. No keystroke is stored, logged or sent anywhere: the only
   thing looked at is `KEY_SPACE`, and the only thing on the socket is the
@@ -536,10 +536,10 @@ works over the socket. Worth knowing before you decide:
 - anything that can put a space bar into evdev can take a seat, a
   remote-input daemon included -- Sunshine, Input Leap, `ydotool` all
   publish keyboards indistinguishable from the desk's. This is the trust
-  padmap already places in pads, said out loud.
-- a space bar already held when padmap starts reading is invisible until it
+  danstick already places in pads, said out loud.
+- a space bar already held when danstick starts reading is invisible until it
   is let go and pressed again. Linux reports edges from the moment a reader
-  opens the node, and padmap deliberately does not ask the kernel what is
+  opens the node, and danstick deliberately does not ask the kernel what is
   already down -- the same reason a pad held before seating opened does not
   claim.
 
@@ -559,14 +559,14 @@ difference.
 
 A Steam Controller in lizard mode is four keyboards and four mice; an Xbox pad
 over Bluetooth carries a `Keyboard` and a `Mouse` node beside its joystick.
-While a pad is seated, or seating is listening to it, padmap grabs those
+While a pad is seated, or seating is listening to it, danstick grabs those
 siblings as well, and releases them with the seat, so a Share button cannot
 type into the game and a trackpad cannot move the desktop pointer behind it.
 A front-end that was holding them itself in the picker can stop.
 
 ## `input`: what is under the thumb while the wizard runs
 
-During a mapping run padmap holds the pad and holds back its clone, so the
+During a mapping run danstick holds the pad and holds back its clone, so the
 front-end's SDL sees nothing from it. This is the window: one event per raw
 input on the pad being mapped, sent whether or not it binds anything.
 
@@ -627,7 +627,7 @@ inputs, unless the new capture gave that input to some control as a first.
 {"cmd": "reserve", "players": 4}
 ```
 
-A launch is handed the `/dev/input` it starts with (`padmap-rs exec` binds
+A launch is handed the `/dev/input` it starts with (`danstick-rs exec` binds
 every node present and covers the raw pads), and nothing can be added to that
 namespace afterwards. So a clone published *after* the game starts does not
 exist for it: somebody joining mid-play reaches nothing however well the seat
@@ -640,7 +640,7 @@ The reply is a `state` carrying the seats nobody has taken yet:
 ```json
 {"event": "state", "...": "...", "reserved": [
   {"player": 2, "node": "/dev/input/event21",
-   "name": "padmap Player 2", "guid": "0300000005ac0000c405000000000000"}
+   "name": "danstick Player 2", "guid": "0300000005ac0000c405000000000000"}
 ]}
 ```
 
@@ -648,7 +648,7 @@ The reply is a `state` carrying the seats nobody has taken yet:
 emulator's config at launch rather than only the seats already taken. A seat
 leaves `reserved` when somebody claims it; the device does not change.
 
-padmap writes the reserved seats into what it writes for anybody else: the SDL
+danstick writes the reserved seats into what it writes for anybody else: the SDL
 database and `env.sh`, and Cemu, Dolphin, ares and Ryujinx. **RetroArch's
 launch config is the exception** -- it reserves ports for *seated* players only,
 since its indices are worked out per launch from what is plugged in. A
@@ -661,7 +661,7 @@ not strand a game bound to them.
 
 Two things to know:
 
-* **It needs a 360 identity** (`PADMAP_PAD_IDENTITY=xbox360` or
+* **It needs a 360 identity** (`DANSTICK_PAD_IDENTITY=xbox360` or
   `xbox360-numbered`, or `identity` below). A reserved clone's layout has to be known before its pad
   is, and only that identity's is; `mirror` takes the layout from the pad
   behind the clone, which nobody has picked up yet. Asked for under another
@@ -680,10 +680,10 @@ Joining works; leaving and being replaced does not. Fixed slots (below) are
 the answer when a seat has to survive its player: there a leave keeps the
 clone where it was.
 
-### From the launch itself: `padmap-rs exec --reserve N`
+### From the launch itself: `danstick-rs exec --reserve N`
 
 ```sh
-padmap-rs exec --reserve 4 -- dolphin-emu -e game.rvz
+danstick-rs exec --reserve 4 -- dolphin-emu -e game.rvz
 ```
 
 The one step that knows when the bind plan is built is `exec`, so it can do
@@ -708,7 +708,7 @@ daemon started with `--follow` ends with the session anyway, and otherwise
 {"cmd": "identity", "mode": "xbox360"}
 ```
 
-`mirror`, `padmap`, `xbox360` or `xbox360-numbered`, as `PADMAP_PAD_IDENTITY`
+`mirror`, `danstick`, `xbox360` or `xbox360-numbered`, as `DANSTICK_PAD_IDENTITY`
 names them. Every
 clone is made again under the new identity and **every seat is kept**: the
 same players, the same pads, still published. A front-end sees one `state`,
@@ -718,13 +718,13 @@ still answers with `state`. Refused while a session is open.
 
 The clones are new devices at new nodes, so do this before a launch rather
 than during one: a game that already has a clone open keeps the old device,
-which no longer sends anything. Switching to `mirror` or `padmap` gives back
+which no longer sends anything. Switching to `mirror` or `danstick` gives back
 any reserved seats, since only a 360 identity can have them.
 
 **`ensure-daemon` compares identities.** It replaces a running daemon whose
 `identity` differs from the one it would start, so an `ensure-daemon` run
 while a launch has borrowed the 360 identity -- from an environment without
-`PADMAP_PAD_IDENTITY=xbox360` -- replaces the daemon and ends every seat. Run
+`DANSTICK_PAD_IDENTITY=xbox360` -- replaces the daemon and ends every seat. Run
 it before the launch, or with the same identity the launch uses.
 
 ## Slots that stand before anybody sits in them: `slots`
@@ -734,8 +734,8 @@ it before the launch, or with the same identity the launch uses.
 ```
 
 Every field is optional; one left out keeps what is in force. The same
-settings are read at startup from `PADMAP_SLOTS`, `PADMAP_SLOT_COUNT`,
-`PADMAP_ON_LEAVE` and `PADMAP_LAYOUT`, and `serve` takes them as `--slots`,
+settings are read at startup from `DANSTICK_SLOTS`, `DANSTICK_SLOT_COUNT`,
+`DANSTICK_ON_LEAVE` and `DANSTICK_LAYOUT`, and `serve` takes them as `--slots`,
 `--slot-count`, `--on-leave` and `--layout`.
 
 | Setting | Default | Alternatives |
@@ -746,7 +746,7 @@ settings are read at startup from `PADMAP_SLOTS`, `PADMAP_SLOT_COUNT`,
 | `layout` | `position`: the bottom face button is the 360's A, whatever it is labelled | `label`: the button labelled A is the 360's A, wherever it sits |
 
 **`layout` applies to any 360 clone**, fixed or on demand, and to nothing
-under `mirror` or `padmap`, which copy the pad as it is. A pad's labels are
+under `mirror` or `danstick`, which copy the pad as it is. A pad's labels are
 its capture's layout, or else the console its icon names; a Switch, SNES or
 Wii U layout swaps A with B and X with Y, and a layout whose labels are not
 the 360's letters -- PlayStation's symbols, Genesis's C -- keeps position,
@@ -760,24 +760,24 @@ claim fills the lowest free slot and drives that slot's clone -- the device
 that was already there, at the same node -- and a leave under `stay` puts it
 back, every button up and every stick at rest. A rebuild keeps every slot's
 node too: unseating player 2 no longer makes player 1's clone again. So an
-emulator is bound once, to `padmap Player 1..N`, and a controller picked up
+emulator is bound once, to `danstick Player 1..N`, and a controller picked up
 mid-game reaches it. `exec` needs no `--reserve` then; asked for no more seats
 than the slots, it leaves the daemon alone, and a `reserve` never takes the
 slots away.
 
 **A fixed slot is a 360 pad.** Its layout has to be known before its pad is,
 so `fixed` needs `xbox360` or `xbox360-numbered`. A daemon on `mirror` or
-`padmap` is switched to `xbox360-numbered` -- every slot its own GUID, which
+`danstick` is switched to `xbox360-numbered` -- every slot its own GUID, which
 Ryujinx needs -- when `fixed` is chosen, at startup or by `slots`, and
-`identity` refuses `mirror` and `padmap` while slots are fixed. Choose
+`identity` refuses `mirror` and `danstick` while slots are fixed. Choose
 `xbox360` explicitly for the one shared GUID.
 
 **`state` says which is in force**: `slot_mode`, `slot_count`, `on_leave`
 and `layout`. A daemon that predates them is on demand, by position. `ensure-daemon` compares them as it
-compares `identity`, so run it with the same `PADMAP_SLOTS` the daemon was
+compares `identity`, so run it with the same `DANSTICK_SLOTS` the daemon was
 started with.
 
 Change it before a launch, not during one: switching to `on-demand` or to
 fewer slots destroys the slots nobody sits in, and a game bound to them keeps
 a device that no longer sends anything. A count outside 1 to 16 or a name
-padmap does not know is an `error`, with nothing changed.
+danstick does not know is an `error`, with nothing changed.

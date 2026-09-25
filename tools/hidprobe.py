@@ -25,7 +25,7 @@ Point it at the right node. A device can expose several vendor interfaces and
 only some of them carry input: the Steam Controller Puck has four slot
 interfaces and one pogo-pin dock, and this was first run against the dock,
 which is stripped down and sends nothing at all. It reported "nothing arrived",
-correctly, and that reads exactly like a controller that is asleep. `padmap-rs
+correctly, and that reads exactly like a controller that is asleep. `danstick-rs
 list` names the slots and leaves the dock out; prefer its list to a guess.
 """
 
@@ -66,7 +66,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("node", help="the hidraw node; `padmap-rs list` names the right ones")
+    parser.add_argument("node", help="the hidraw node; `danstick-rs list` names the right ones")
     parser.add_argument("--settle", type=float, default=1.0)
     parser.add_argument("--raw", action="store_true")
     parser.add_argument("--seconds", type=float, default=0.0,

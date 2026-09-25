@@ -1,6 +1,6 @@
 /* Does RetroArch turn a BUTTON bound to an analog half-axis into deflection?
  *
- * padmap maps the N64 C-buttons onto the right analog stick, because that is
+ * danstick maps the N64 C-buttons onto the right analog stick, because that is
  * where mupen64plus-next reads them from. So a user who wants a face button to
  * be C-up gets a profile line like
  *
@@ -66,7 +66,7 @@ unsigned retro_api_version(void) { return RETRO_API_VERSION; }
 void retro_get_system_info(struct retro_system_info *info)
 {
    memset(info, 0, sizeof(*info));
-   info->library_name     = "padmap analog probe";
+   info->library_name     = "danstick analog probe";
    info->library_version  = "1";
    info->valid_extensions = "z64|n64|v64|bin|zip";
    info->need_fullpath    = true;

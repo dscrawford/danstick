@@ -23,7 +23,7 @@ interface it publishes two nodes of its own:
 
 **`hid-steam` withdraws the pad for anyone who opens the hidraw node**, and
 Steam is such a client. So on a Deck as it normally runs, there is no
-`Steam Deck` node at all: `padmap list` sees the lizard keyboard and mouse, and
+`Steam Deck` node at all: `danstick list` sees the lizard keyboard and mouse, and
 Steam's virtual `28de:11ff` mirror standing in for the built-in controls.
 
     systemctl --user stop app-steam@autostart.service   # the node appears
@@ -31,7 +31,7 @@ Steam's virtual `28de:11ff` mirror standing in for the built-in controls.
 
 That is not a fault and there is nothing to fix in the kernel: it is how one
 device gets driven by one thing at a time. It does mean the two representations
-are never both present. So padmap keeps one Steam mirror standing in for the
+are never both present. So danstick keeps one Steam mirror standing in for the
 Deck whenever a `28de:1205` hidraw node is present with no `Steam Deck` event
 node, even beside another pad; see `pad::without_steam_mirrors`.
 
@@ -48,10 +48,10 @@ Four things, all measured, all in `fakepad::STEAM_DECK`:
 
 The last one is the one that bites. `hid-steam` writes `BTN_X` for the west
 button, and `BTN_X` *is* `BTN_NORTH` — the legacy spelling of a positional
-code. Anything that reads the codes positionally, padmap included, comes out
+code. Anything that reads the codes positionally, danstick included, comes out
 with X and Y the wrong way round. SDL does not, because it has an entry for
 this GUID in its built-in database, and that entry says `x:b5,y:b6` where
-padmap's guess says `y:b5,x:b6`.
+danstick's guess says `y:b5,x:b6`.
 
 `ABS_HAT0X/Y` was the other one that bit, and it is fixed: `guess.rs` now
 refuses a hat that is not -1..1, so the d-pad comes from the keys and not from
@@ -59,7 +59,7 @@ the trackpad the player's left thumb rests on.
 
 ## What is tested
 
-`rust/crates/padmap-input/tests/steam_deck.rs` holds the fixture against SDL's
+`rust/crates/danstick-input/tests/steam_deck.rs` holds the fixture against SDL's
 own database line for the same GUID, and asserts:
 
 * the two agree on every control but four, named in the test;
@@ -75,16 +75,16 @@ fixture used to claim it was byte-for-byte xpad's table, and it is not.
 
 ## What is not done
 
-**The x/y swap is recorded, not corrected.** padmap's guess is wrong for this
+**The x/y swap is recorded, not corrected.** danstick's guess is wrong for this
 model and the test pins that it is wrong. It is right where it matters: the
 daemon's `fallback_line_for` asks SDL's database first
 (`publish::carried`), and SDL knows this device. A shipped per-model override
 would close the gap for the paths that guess directly; there is no such table
-in padmap today.
+in danstick today.
 
 **The triggers are digital.** SDL binds them to `a9`/`a8`, counting
 `ABS_HAT2X/Y` among the axes because their range is not a hat's.
-`binding::axis_index` excludes `0x10..0x18` outright, so padmap cannot spell
+`binding::axis_index` excludes `0x10..0x18` outright, so danstick cannot spell
 those indices at all and falls back to `BTN_TL2`/`BTN_TR2`. Fixing it means
 teaching the axis numbering the same rule `guess.rs` just learned, and that
 changes frozen corpus answers.

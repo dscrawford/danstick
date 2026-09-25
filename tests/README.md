@@ -1,4 +1,4 @@
-# padmap's tests
+# danstick's tests
 
     nix develop --command python3 tests/run.py              # everything
     nix develop --command python3 tests/run.py --coverage   # with a number
@@ -8,7 +8,7 @@ Or, equivalently, `cd rust && cargo test`.
 
 ## Where they are
 
-padmap is one Rust workspace and cargo decides where tests live: unit tests
+danstick is one Rust workspace and cargo decides where tests live: unit tests
 beside the code they test, integration tests in each crate's `tests/`. There
 is no separate suite directory, and `tests/run.py` collects nothing — it
 exists so "how do I run the tests" has one answer that does not depend on
@@ -18,7 +18,7 @@ knowing where cargo wants to be invoked from.
 |---|---|---|
 | unit | `rust/crates/*/src/**.rs` | the decisions, exhaustively |
 | integration | `rust/crates/*/tests/` | whole files, real devices, a real daemon |
-| corpus | `rust/crates/padmap-core/tests/corpus/` | recorded answers, replayed |
+| corpus | `rust/crates/danstick-core/tests/corpus/` | recorded answers, replayed |
 
 ## The corpus
 
@@ -41,25 +41,25 @@ and saying why in the commit.
 ## Tests that need real hardware
 
 Several create a uinput device and drive it: `daemon_journey.rs` stands up a
-real `padmap serve` and presses a pad at it. They **skip rather than fail**
+real `danstick serve` and presses a pad at it. They **skip rather than fail**
 where `/dev/uinput` is not writable, so the suite still runs on a machine that
 cannot make one.
 
 They are safe to run on a live machine by construction: their own runtime,
-config and profile directories; `PADMAP_ONLY_DEVICE` so no real controller is
+config and profile directories; `DANSTICK_ONLY_DEVICE` so no real controller is
 ever grabbed; and the fixture's signature written into the live daemon's
 `prompted` file first, because creating a joystick node is not a neutral act
 while a daemon is watching for unfamiliar controllers.
 
 ## Fixtures
 
-`padmap_input::fakepad` is real controllers written down: an Xbox 360 pad, an
+`danstick_input::fakepad` is real controllers written down: an Xbox 360 pad, an
 Xbox Series X pad and a Mayflash GameCube adapter, each citing where its
 numbers came from. The GameCube adapter is there because everything awkward
 about it is real — triggers on `ABS_RX`/`ABS_RY` resting at 24 of 0-255, which
 broke capture, re-arming and half-axis binds at once.
 
-The two controllers padmap drives over hidraw have no evdev node to build, so
+The two controllers danstick drives over hidraw have no evdev node to build, so
 their report bytes are fixtures instead: `triton_protocol.rs` and
 `nintendo_differential.rs`.
 
@@ -67,5 +67,5 @@ their report bytes are fixtures instead: `triton_protocol.rs` and
 
     nix develop --command python3 tests/run.py --coverage
 
-`padmap-core` — every pure decision padmap makes — is the part worth holding
+`danstick-core` — every pure decision danstick makes — is the part worth holding
 high, and is 94–100% per file.

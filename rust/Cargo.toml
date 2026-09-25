@@ -1,12 +1,12 @@
-# padmap, in Rust.
-# Workspace: padmap-core (logic), padmap-input (I/O), padmap-daemon (event loop).
+# danstick, in Rust.
+# Workspace: danstick-core (logic), danstick-input (I/O), danstick-daemon (event loop).
 [workspace]
 resolver = "2"
 members = [
-    "crates/padmap-core",
-    "crates/padmap-input",
-    "crates/padmap-daemon",
-    "crates/padmap-rs",
+    "crates/danstick-core",
+    "crates/danstick-input",
+    "crates/danstick-daemon",
+    "crates/danstick-rs",
 ]
 
 [workspace.package]

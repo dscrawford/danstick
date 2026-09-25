@@ -1,11 +1,11 @@
 """Read a Switch Pro Controller over hidraw, and prove the decode.
 
-padmap clones evdev nodes. For this pad that does not work: SDL drives it over
+danstick clones evdev nodes. For this pad that does not work: SDL drives it over
 /dev/hidraw* in a vendor report mode, hid-nintendo is starved, and the evdev
 node -- openable, grabbable, watchable -- never emits an event. See
 docs/HIDRAW.md for the measurements.
 
-So padmap has to speak HID itself. This is the first half of that: talk to the
+So danstick has to speak HID itself. This is the first half of that: talk to the
 controller directly, put it in standard full mode, and decode its reports.
 
 Deliberately prints the raw bytes next to the decode. The byte layout below

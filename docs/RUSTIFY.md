@@ -1,4 +1,4 @@
-# Porting padmap to Rust
+# Porting danstick to Rust
 
 What is done, what is not, and why the order is what it is.
 
@@ -10,7 +10,7 @@ at the worst, against an 8 ms frame, with zero late frames. The Rust is about
 twice as good on both, which is 0.013 ms against 0.03 ms and is not something
 anybody can feel. See [LATENCY.md](LATENCY.md), including the correction --
 an earlier version of this document claimed a 250 ms tail that turned out to be
-the harness timing `padmap run`'s startup.
+the harness timing `danstick run`'s startup.
 
 The one real stall found was at startup, in Python, and is now fixed there:
 `devices.discover()` cost 596 ms -- 33 `udevadm` spawns, and an open/close of
@@ -28,13 +28,13 @@ port and pinned a dozen shared quirks that nobody had written down.
 
 ## Shape
 
-    padmap-core    vocabulary, layouts, mappings, scopes, calibration,
+    danstick-core    vocabulary, layouts, mappings, scopes, calibration,
                    profiles, the wizard state machines, wire framing. No I/O,
                    no clock, no unsafe, no Linux.
-    padmap-input   evdev, uinput, udev, hidraw, the profile store, the files
+    danstick-input   evdev, uinput, udev, hidraw, the profile store, the files
                    other programs read. The only crate that opens a device.
-    padmap-daemon  the socket, the session, the modal flows, hotplug.
-    padmap-rs      the binary: every subcommand, and `serve`.
+    danstick-daemon  the socket, the session, the modal flows, hotplug.
+    danstick-rs      the binary: every subcommand, and `serve`.
 
 The cut line was the unix socket, not a language boundary inside one process.
 A front-end is a socket client and knows nothing about which daemon it is
@@ -49,9 +49,9 @@ whose API has broken seven times in nineteen months.
 
 ## Done
 
-All of it. The Python is deleted; `padmap` is a Rust binary.
+All of it. The Python is deleted; `danstick` is a Rust binary.
 
-* **`padmap-core`**, entire. Control vocabulary as an enum rather than a bare
+* **`danstick-core`**, entire. Control vocabulary as an enum rather than a bare
   string, so the SDL and RetroArch tables are exhaustive by construction.
   Layouts moved out of code into `data/layouts/*.json`: a new console is a file
   and a manifest line, which is the generalisation this port was for.
@@ -121,7 +121,7 @@ than in Python, because bytes are the default rather than the escape hatch.
     cd rust && cargo clippy --all-targets -- -D warnings
     nix build .#checks.x86_64-linux.rust        # the suite, in the sandbox
     nix build .#checks.x86_64-linux.rust-lint   # fmt and clippy, in the sandbox
-    nix run .#padmap-rs -- list
+    nix run .#danstick-rs -- list
 
     python3 tools/gen_corpus.py        # after any deliberate Python change
-    python3 tools/latency.py --command '.../padmap-rs run'
+    python3 tools/latency.py --command '.../danstick-rs run'

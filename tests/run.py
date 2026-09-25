@@ -1,9 +1,9 @@
-"""Every test padmap has, in one command.
+"""Every test danstick has, in one command.
 
     nix develop --command python3 tests/run.py            # everything
     nix develop --command python3 tests/run.py --coverage # and measure it
 
-padmap is one Rust workspace, so this is a thin wrapper over `cargo test` --
+danstick is one Rust workspace, so this is a thin wrapper over `cargo test` --
 kept because "how do I run the tests" should have one answer that does not
 depend on knowing where cargo wants to be invoked from, and because the
 coverage run needs flags nobody remembers.

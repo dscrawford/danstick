@@ -4,13 +4,13 @@ Built because too much of this was guessed. When a pad "does not work in game"
 there are four separate places it can die, and no amount of reading code says
 which:
 
-    physical pad  --grab-->  padmap daemon  --write-->  virtual pad  --> RetroArch
+    physical pad  --grab-->  danstick daemon  --write-->  virtual pad  --> RetroArch
 
 This shows the two ends side by side. Press a button and you see whether the
 physical device emitted it, whether the clone emitted it, and which RetroArch
-bind that button resolves to in the profile padmap actually wrote. If the left
+bind that button resolves to in the profile danstick actually wrote. If the left
 column moves and the right does not, the daemon is not forwarding. If both move
-and the game still does nothing, the fault is downstream of padmap.
+and the game still does nothing, the fault is downstream of danstick.
 
     nix develop --command python3 tools/padmon.py
 
@@ -36,9 +36,9 @@ sys.stdout.reconfigure(line_buffering=True)
 import evdev  # noqa: E402
 from evdev import ecodes  # noqa: E402
 
-import _padmap as protocol  # noqa: E402
+import _danstick as protocol  # noqa: E402
 
-VIRTUAL_PREFIX = "padmap Player"
+VIRTUAL_PREFIX = "danstick Player"
 
 
 def code_name(kind: int, code: int) -> str:
@@ -50,7 +50,7 @@ def code_name(kind: int, code: int) -> str:
 
 
 def load_profile() -> dict[str, str]:
-    """button/axis -> RetroArch key, from the profile padmap last wrote.
+    """button/axis -> RetroArch key, from the profile danstick last wrote.
 
     Read rather than assumed: this is the file RetroArch is actually matching,
     and a mapping that looks right in the store can still be absent here.
@@ -104,7 +104,7 @@ def daemon_state() -> str:
     pids = protocol.daemon_pids()
     if not pids:
         return "NOT RUNNING -- nothing is republishing anything"
-    log = protocol.runtime_dir() / "padmap.log"
+    log = protocol.runtime_dir() / "danstick.log"
     last = ""
     try:
         lines = [ln for ln in log.read_text(errors="replace").splitlines()
@@ -120,7 +120,7 @@ def main() -> int:
 
     virtual = find(VIRTUAL_PREFIX)
     if not virtual:
-        print("No 'padmap Player N' device exists at all.")
+        print("No 'danstick Player N' device exists at all.")
         print("The daemon is not republishing; nothing downstream can work.")
         return 1
 
@@ -192,7 +192,7 @@ def main() -> int:
             print("  * the pad is not assigned to a player")
             print("  * the physical pad disconnected")
             print("Check the daemon log: "
-                  f"{protocol.runtime_dir()}/padmap.log")
+                  f"{protocol.runtime_dir()}/danstick.log")
     return 0
 
 
