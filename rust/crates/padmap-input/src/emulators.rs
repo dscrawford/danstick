@@ -94,7 +94,23 @@ pub fn write_env(value: &str, path: Option<&Path>) -> Result<PathBuf, artefacts:
 pub fn publish(pads: &[Published], dirs: &Destinations, seat: Option<u32>) -> Written {
     let mut written = Written::default();
 
-    let by_player: BTreeMap<u32, &Published> = pads.iter().map(|pad| (pad.player, pad)).collect();
+    // The one door every writer is reached through, `padmap-rs emit`'s stdin
+    // included: a GUID is refused here rather than escaped in five formats.
+    let (pads, forged): (Vec<&Published>, Vec<&Published>) = pads
+        .iter()
+        .partition(|pad| padmap_core::sdl::is_guid(&pad.guid));
+    for pad in forged {
+        log::warn!(
+            "player {}: {:?} is not a GUID; that player is written nowhere",
+            pad.player,
+            pad.guid
+        );
+        written
+            .skipped
+            .push(("guid", format!("player {}: not a GUID", pad.player)));
+    }
+
+    let by_player: BTreeMap<u32, &Published> = pads.iter().map(|pad| (pad.player, *pad)).collect();
     let players: Vec<u32> = by_player.keys().copied().collect();
 
     match artefacts::write_cemu_profiles(
@@ -310,6 +326,43 @@ mod tests {
     #[test]
     fn a_file_that_is_not_ours_yields_nothing_rather_than_half_a_mapping() {
         assert_eq!(value_from_script("export FOO=bar\n"), None);
+    }
+
+    #[test]
+    fn a_guid_that_is_not_a_guid_is_written_nowhere() {
+        // `padmap-rs emit` takes its pads from stdin. A newline in a GUID
+        // closed ares' `VirtualPad1` and opened a mouse block of its own, and
+        // an angle bracket did the same to Cemu's XML.
+        let dir = scratch("forged-guid");
+        std::fs::write(dir.join("ares.bml"), "Video\n").expect("seed");
+        std::fs::write(dir.join("Config.json"), r#"{"version": 50}"#).expect("seed");
+        let mut forged = pad(1);
+        forged.guid = "0x3/0/3/0;;\nVirtualMouse3\n  X: 0x2/0/0;;\n  Left: 0x2/1/0</uuid><rumble>1"
+            .to_owned();
+
+        let written = publish(&[forged, pad(2)], &only(&dir), None);
+
+        let ares = std::fs::read_to_string(dir.join("ares.bml")).expect("bml");
+        assert_eq!(
+            ares.matches("VirtualMouse3").count(),
+            1,
+            "a guid opened a block of its own: {ares}"
+        );
+        assert!(!ares.contains("0x3/0/3/0"), "{ares}");
+        for file in ["controller0.xml", "controller1.xml"] {
+            let xml = std::fs::read_to_string(dir.join("cemu").join(file)).unwrap_or_default();
+            assert!(!xml.contains("VirtualMouse3"), "{file}: {xml}");
+        }
+        assert!(
+            written
+                .skipped
+                .iter()
+                .any(|(what, why)| *what == "guid" && why.contains("player 1")),
+            "a pad dropped for its guid was dropped silently: {:?}",
+            written.skipped
+        );
+        // The pad beside it is written as ever.
+        assert!(ares.contains("VirtualPad2\n  Pad.Up: 0300000"), "{ares}");
     }
 
     #[test]

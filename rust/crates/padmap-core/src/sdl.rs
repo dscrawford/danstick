@@ -193,9 +193,30 @@ pub fn mapping_line(
     line(guid, name, &fields, platform)
 }
 
+/// Whether `text` is an SDL GUID: thirty-two hex digits and nothing else.
+/// Anything else is refused before it reaches a config file, where a newline
+/// or a bracket in it would be a line or an element of its own.
+pub fn is_guid(text: &str) -> bool {
+    text.len() == 32 && text.chars().all(|c| c.is_ascii_hexdigit())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_guid_is_thirty_two_hex_digits_and_nothing_else() {
+        assert!(super::is_guid("030000005e0400008e02000010010000"));
+        assert!(super::is_guid("030000005E0400008E02000010010000"), "case");
+        assert!(!super::is_guid(""));
+        assert!(!super::is_guid("030000005e0400008e0200001001000"), "31");
+        assert!(!super::is_guid("030000005e0400008e020000100100000"), "33");
+        assert!(!super::is_guid("030000005e0400008e02000010010g00"), "g");
+        assert!(
+            !super::is_guid("0x3/0/3/0;;\nVirtualMouse3\n  X: 0x2/0/0"),
+            "a config line in a guid's clothing"
+        );
+    }
     use crate::binding::Binding;
 
     const REAL_GUID: &str = "0600c9a7790000007918000001000000";

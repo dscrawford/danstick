@@ -198,7 +198,7 @@ pub fn profile(player: u32, guid: &str, display_name: &str) -> String {
          \t\t<api>SDLController</api>\n",
         emulated.tag()
     );
-    out.push_str(&format!("\t\t<uuid>0_{guid}</uuid>\n"));
+    out.push_str(&format!("\t\t<uuid>0_{}</uuid>\n", escape(guid)));
     out.push_str(&format!(
         "\t\t<display_name>{}</display_name>\n",
         escape(display_name)
@@ -381,4 +381,17 @@ fn escape(text: &str) -> String {
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('"', "&quot;")
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn a_guid_cannot_close_the_element_it_is_written_into() {
+        let xml = super::profile(1, "x</uuid><rumble>1", "Pad");
+        assert!(!xml.contains("<rumble>1"), "{xml}");
+        assert!(
+            xml.contains("<uuid>0_x&lt;/uuid&gt;&lt;rumble&gt;1</uuid>"),
+            "{xml}"
+        );
+    }
 }

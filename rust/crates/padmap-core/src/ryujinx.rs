@@ -10,7 +10,7 @@ pub const BACKEND: &str = "GamepadSDL2";
 
 /// Ryujinx device ID from GUID: .NET Guid format with name CRC zeroed.
 pub fn device_id(guid: &str, ordinal: u32) -> Option<String> {
-    if guid.len() != 32 || !guid.chars().all(|c| c.is_ascii_hexdigit()) {
+    if !crate::sdl::is_guid(guid) {
         return None;
     }
     let at = |range: std::ops::Range<usize>| &guid[range];
