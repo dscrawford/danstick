@@ -744,16 +744,18 @@ pub fn cmd_ensure_daemon(check: bool, timeout: f64, lifetime: Lifetime) -> Resul
     } else if theirs == ours && !same_slots {
         println!("daemon is publishing other slots:");
         println!(
-            "  daemon: {} x{} ({} on leave)",
+            "  daemon: {} x{} ({} on leave, by {})",
             state["slot_mode"].as_str().unwrap_or("on-demand"),
             state["slot_count"],
-            state["on_leave"].as_str().unwrap_or("?")
+            state["on_leave"].as_str().unwrap_or("?"),
+            state["layout"].as_str().unwrap_or("position")
         );
         println!(
-            "  ours:   {} x{} ({} on leave)",
+            "  ours:   {} x{} ({} on leave, by {})",
             our_slots.mode.as_str(),
             our_slots.count,
-            our_slots.on_leave.as_str()
+            our_slots.on_leave.as_str(),
+            our_slots.layout.as_str()
         );
     } else if theirs == ours {
         println!("daemon is running with a different pad identity:");
@@ -1240,10 +1242,11 @@ mod lifetime_tests {
 }
 
 /// Whether a daemon's `state` publishes the slots `ours` asks for. A daemon
-/// too old to say is on demand, which is all it could do.
+/// too old to say is on demand and by position, which is all it could do.
 fn slots_match(state: &serde_json::Value, ours: padmap_core::slots::Policy) -> bool {
     let mode = state["slot_mode"].as_str().unwrap_or("on-demand");
-    if mode != ours.mode.as_str() {
+    let layout = state["layout"].as_str().unwrap_or("position");
+    if mode != ours.mode.as_str() || layout != ours.layout.as_str() {
         return false;
     }
     ours.mode == padmap_core::slots::Mode::OnDemand
@@ -1254,7 +1257,7 @@ fn slots_match(state: &serde_json::Value, ours: padmap_core::slots::Policy) -> b
 #[cfg(test)]
 mod exec_tests {
     use super::{covers_seats, exec_args, slots_match};
-    use padmap_core::slots::{Mode, OnLeave, Policy};
+    use padmap_core::slots::{Layout, Mode, OnLeave, Policy};
 
     #[test]
     fn a_daemon_on_other_slots_is_not_current() {
@@ -1279,6 +1282,15 @@ mod exec_tests {
             }
         ));
         assert!(!slots_match(&theirs, Policy::default()));
+        let label = Policy {
+            layout: Layout::Label,
+            ..Policy::default()
+        };
+        assert!(
+            !slots_match(&old, label),
+            "a daemon too old to say keeps position"
+        );
+        assert!(slots_match(&serde_json::json!({"layout": "label"}), label));
     }
 
     fn words(text: &str) -> Vec<String> {

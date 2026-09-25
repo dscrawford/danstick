@@ -231,6 +231,13 @@ const SLOTSWITCH: PadId = PadId {
     only: "RSTESTSLOTSWITCH",
 };
 
+/// A Nintendo-labelled pad (its name says Pro Controller), kept by label.
+const LABELLED: PadId = PadId {
+    name: "PADMAP RSTESTLABELLED Pro Controller",
+    pid: 0x0f90,
+    only: "RSTESTLABELLED",
+};
+
 /// Four distinct pads under one test's own filter, so tests running beside it
 /// cannot see them.
 fn four_pads(id: PadId) -> Vec<TestPad> {
@@ -3715,6 +3722,63 @@ fn slots_are_chosen_on_a_running_daemon() {
     assert!(
         standing(&back).is_empty(),
         "on demand keeps no empty slot: {back}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Under `PADMAP_LAYOUT=label` a Nintendo pad's A -- the right face button --
+/// presses the 360's A, and its B the 360's B; `slots` puts it back by
+/// position on a running daemon.
+#[test]
+fn a_pad_kept_by_label_presses_what_its_labels_say() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let root = std::env::temp_dir().join(format!("padmap-labelled-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let (south, east) = (FIRST_KEY, FIRST_KEY + 1);
+
+    let mut pad = TestPad::new(LABELLED);
+    let mut daemon = Daemon::start_with_env(
+        &root,
+        LABELLED,
+        &[],
+        &[("PADMAP_SLOTS", "fixed"), ("PADMAP_LAYOUT", "label")],
+    );
+    let before = daemon
+        .wait_for("state", |e| standing(e).len() == 4, 8.0)
+        .expect("the slots never stood");
+    assert_eq!(before["layout"], "label", "{before}");
+    let mut slot_one = Watcher::open(&standing(&before)[&1]);
+    daemon.seat_by_hold_as(&mut pad, 1);
+    pad.emit(EventType::KEY.0, south, 0);
+    daemon.pump(0.3);
+
+    pad.emit(EventType::KEY.0, east, 1);
+    assert!(
+        slot_one.sees_press(&mut daemon, south, 3.0),
+        "the button labelled A did not press the 360's A"
+    );
+    pad.emit(EventType::KEY.0, east, 0);
+    pad.emit(EventType::KEY.0, south, 1);
+    assert!(
+        slot_one.sees_press(&mut daemon, east, 3.0),
+        "the button labelled B did not press the 360's B"
+    );
+    pad.emit(EventType::KEY.0, south, 0);
+
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "slots", "layout": "position"}));
+    daemon
+        .wait_for("state", |e| e["layout"] == "position", 8.0)
+        .expect("the layout never changed");
+    daemon.pump(0.3);
+    pad.emit(EventType::KEY.0, east, 1);
+    assert!(
+        slot_one.sees_press(&mut daemon, east, 3.0),
+        "by position the right button is the 360's right button"
     );
     let _ = std::fs::remove_dir_all(&root);
 }

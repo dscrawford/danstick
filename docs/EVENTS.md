@@ -730,19 +730,28 @@ it before the launch, or with the same identity the launch uses.
 ## Slots that stand before anybody sits in them: `slots`
 
 ```json
-{"cmd": "slots", "mode": "fixed", "count": 4, "on_leave": "stay"}
+{"cmd": "slots", "mode": "fixed", "count": 4, "on_leave": "stay", "layout": "position"}
 ```
 
 Every field is optional; one left out keeps what is in force. The same
-settings are read at startup from `PADMAP_SLOTS`, `PADMAP_SLOT_COUNT` and
-`PADMAP_ON_LEAVE`, and `serve` takes them as `--slots`, `--slot-count` and
-`--on-leave`.
+settings are read at startup from `PADMAP_SLOTS`, `PADMAP_SLOT_COUNT`,
+`PADMAP_ON_LEAVE` and `PADMAP_LAYOUT`, and `serve` takes them as `--slots`,
+`--slot-count`, `--on-leave` and `--layout`.
 
 | Setting | Default | Alternatives |
 |---|---|---|
 | `mode` | `on-demand`: a clone per claim, made when the seat is taken (everything above) | `fixed`: `count` clones made when the daemon starts, kept for its whole life |
 | `count` | 4 | 1 to 16 |
 | `on_leave` | `stay`: the slot's clone stays at its node and goes quiet; the next hold may take it | `destroy`: the clone goes, and the slot is made again at a new node |
+| `layout` | `position`: the bottom face button is the 360's A, whatever it is labelled | `label`: the button labelled A is the 360's A, wherever it sits |
+
+**`layout` applies to any 360 clone**, fixed or on demand, and to nothing
+under `mirror` or `padmap`, which copy the pad as it is. A pad's labels are
+its capture's layout, or else the console its icon names; a Switch, SNES or
+Wii U layout swaps A with B and X with Y, and a layout whose labels are not
+the 360's letters -- PlayStation's symbols, Genesis's C -- keeps position,
+since there is no label to keep. GameCube's letters already sit where the
+360's do. Changing `layout` drives every seated clone again at the same node.
 
 **In `fixed` mode an empty slot is a connected pad that sends nothing.** They
 are listed in `state`'s `reserved[]` exactly as reserved seats are, with the
@@ -763,8 +772,8 @@ Ryujinx needs -- when `fixed` is chosen, at startup or by `slots`, and
 `identity` refuses `mirror` and `padmap` while slots are fixed. Choose
 `xbox360` explicitly for the one shared GUID.
 
-**`state` says which is in force**: `slot_mode`, `slot_count` and `on_leave`.
-A daemon that predates them is on demand. `ensure-daemon` compares them as it
+**`state` says which is in force**: `slot_mode`, `slot_count`, `on_leave`
+and `layout`. A daemon that predates them is on demand, by position. `ensure-daemon` compares them as it
 compares `identity`, so run it with the same `PADMAP_SLOTS` the daemon was
 started with.
 

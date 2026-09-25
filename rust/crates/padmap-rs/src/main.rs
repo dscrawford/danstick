@@ -126,7 +126,7 @@ fn parse_number<T: std::str::FromStr>(value: &str, flag: &str) -> T {
 fn usage() {
     eprintln!(
         "usage: padmap list [--json] | setup | map | calibrate | tune | forget | run | \
-         serve [--fresh] [--follow PID] [--slots fixed|on-demand] [--slot-count N] [--on-leave stay|destroy] | \
+         serve [--fresh] [--follow PID] [--slots fixed|on-demand] [--slot-count N] [--on-leave stay|destroy] [--layout position|label] | \
          launch | play | hide | ensure-daemon [--check] [--fresh] [--follow PID] | clean-config | \
          emit [--keyboard N] [--cemu-dir D] [--dolphin-dir D] [--ares-settings F] \
          [--ryujinx-config F] \
@@ -155,6 +155,7 @@ fn cmd_serve(args: &[String]) -> Result<()> {
         count: flag_value(args, &["--slot-count"])
             .map(|value| parse_number::<i64>(&value, "--slot-count")),
         on_leave: flag_value(args, &["--on-leave"]),
+        layout: flag_value(args, &["--layout"]),
     };
     if let Err(why) = server.configure_slots(&slots) {
         anyhow::bail!("{why}");

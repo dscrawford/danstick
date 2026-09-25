@@ -1129,6 +1129,7 @@ fn a_claim_that_cannot_open_its_pad_leaves_the_reserved_seat_alone() {
         Default::default(),
         false,
         &Default::default(),
+        &BTreeMap::new(),
         &mut reserved,
     );
     assert!(made.is_err(), "a pad that is not there was cloned");

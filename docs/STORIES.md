@@ -973,8 +973,9 @@ S1-S23. Grouped by where it lives.
 keyboards for a held space bar; `seat_keyboard` still works),
 `PADMAP_ONLY_VIRTUAL` (SDL-level pad
 hiding), `PADMAP_PAD_IDENTITY` (what the virtual pads advertise, and therefore
-every SDL GUID), `PADMAP_SLOTS`, `PADMAP_SLOT_COUNT` and `PADMAP_ON_LEAVE`
-(whether clones stand before anybody sits in them; EVENTS.md, `slots`), `PADMAP_SKIP_DAEMON_CHECK` (skip S18 in both wrappers),
+every SDL GUID), `PADMAP_SLOTS`, `PADMAP_SLOT_COUNT`, `PADMAP_ON_LEAVE` and `PADMAP_LAYOUT`
+(whether clones stand before anybody sits in them, and how buttons land on
+them; EVENTS.md, `slots`), `PADMAP_SKIP_DAEMON_CHECK` (skip S18 in both wrappers),
 `PADMAP_BUILD_ID` (S18's staleness comparison), `PADMAP_AUTOCONFIG_DIRS`,
 `PADMAP_PROFILE_DIR`, `PADMAP_MAME_TITLES`, `PADMAP_THUMBNAILS`,
 `PADMAP_THUMBNAIL_SERVER`, `PADMAP_ONLY_DEVICE`, `PADMAP_PLAY`. None of these

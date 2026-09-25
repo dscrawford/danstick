@@ -2477,6 +2477,24 @@ impl Server {
         }
     }
 
+    /// Where a pad's face buttons land when kept by label: its capture's
+    /// layout names its labels, or else the console its icon says it is.
+    fn faces_for(
+        &self,
+        pad: &Pad,
+        mapping: &padmap_core::profile::Mapping,
+    ) -> BTreeMap<padmap_core::Control, padmap_core::Control> {
+        if self.slot_policy.layout != slots::Layout::Label {
+            return BTreeMap::new();
+        }
+        let layout = if padmap_core::layout::exists(&mapping.layout) {
+            mapping.layout.clone()
+        } else {
+            publish::icon_for(pad, &self.icon_overrides).to_owned()
+        };
+        padmap_core::layout::label_faces(&layout)
+    }
+
     /// Change how slots are published. Fixed slots are made at once, and a
     /// daemon on an identity that cannot stand before its pad is moved to
     /// the numbered 360 first.
@@ -2499,13 +2517,15 @@ impl Server {
         let before = self.slot_policy;
         self.slot_policy = next;
         info!(
-            "slots: {} x{} ({} on leave) -> {} x{} ({} on leave)",
+            "slots: {} x{} ({} on leave, by {}) -> {} x{} ({} on leave, by {})",
             before.mode.as_str(),
             before.count,
             before.on_leave.as_str(),
+            before.layout.as_str(),
             next.mode.as_str(),
             next.count,
-            next.on_leave.as_str()
+            next.on_leave.as_str(),
+            next.layout.as_str()
         );
         // Slots given up that nobody sits in go; a seated player keeps theirs.
         if next.standing() < before.standing() {
@@ -2514,8 +2534,18 @@ impl Server {
             self.reserved_nodes.retain(|player, _| *player <= keep);
         }
         self.fill_reserved(next.standing());
-        let virtual_paths = self.virtual_paths();
-        self.rewrite_consumers(&virtual_paths);
+        // A seat's translation is fixed when its clone is driven; drive it again.
+        if next.layout != before.layout && self.republisher.is_some() {
+            if let Err(error) = self.start_republisher() {
+                warn!(
+                    "could not republish under the {} layout: {error}",
+                    next.layout.as_str()
+                );
+            }
+        } else {
+            let virtual_paths = self.virtual_paths();
+            self.rewrite_consumers(&virtual_paths);
+        }
         let state = self.state_event();
         self.broadcast(&state);
     }
@@ -2551,6 +2581,7 @@ impl Server {
             .unwrap_or_default();
         let tuning = publish::tuning_for(&slot.pad);
         let mapping = publish::resolved(&slot.pad, "", "").1;
+        let faces = self.faces_for(&slot.pad, &mapping);
         let node = self.reserved_nodes.remove(&slot.player);
         let mut reserved = self.reserved.remove(&slot.player);
         let made = clone::create_on(
@@ -2561,6 +2592,7 @@ impl Server {
             tuning,
             true,
             &mapping,
+            &faces,
             &mut reserved,
         );
         // Whatever went wrong, a seat a launch is bound to keeps its device.
@@ -2628,6 +2660,7 @@ impl Server {
                 .unwrap_or_default();
             let tuning = publish::tuning_for(&slot.pad);
             let mapping = publish::resolved(&slot.pad, "", "").1;
+            let faces = self.faces_for(&slot.pad, &mapping);
             // A seat a launch is already bound to keeps its node through a rebuild.
             let node = self.reserved_nodes.remove(&slot.player);
             let mut reserved = self.reserved.remove(&slot.player);
@@ -2639,6 +2672,7 @@ impl Server {
                 tuning,
                 true,
                 &mapping,
+                &faces,
                 &mut reserved,
             );
             if let (Some(device), Some(node)) = (reserved, node) {

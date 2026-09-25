@@ -63,6 +63,9 @@ pub struct StateEvent {
     /// What a fixed slot does when its player leaves: `stay` or `destroy`.
     #[serde(default)]
     pub on_leave: String,
+    /// How a pad's buttons land on a 360 clone: `position` or `label`.
+    #[serde(default)]
+    pub layout: String,
 }
 
 fn on_demand() -> String {
@@ -104,6 +107,7 @@ impl StateEvent {
             slot_mode: on_demand(),
             slot_count: crate::slots::DEFAULT_COUNT,
             on_leave: crate::slots::OnLeave::Stay.as_str().to_owned(),
+            layout: crate::slots::Layout::Position.as_str().to_owned(),
         }
     }
 
@@ -112,6 +116,7 @@ impl StateEvent {
         self.slot_mode = policy.mode.as_str().to_owned();
         self.slot_count = policy.count;
         self.on_leave = policy.on_leave.as_str().to_owned();
+        self.layout = policy.layout.as_str().to_owned();
         self
     }
 }

@@ -431,11 +431,14 @@ pub fn create(
         tuning,
         grab,
         mapping,
+        &BTreeMap::new(),
         &mut None,
     )
 }
 
-/// Like [`create`], but reuses a device [`reserve`] published, to keep its node.
+/// Like [`create`], but reuses a device [`reserve`] published, to keep its node,
+/// and under a 360 identity presses, for each control in `faces`, the one it
+/// names instead (a pad kept by label rather than position).
 #[allow(clippy::too_many_arguments)]
 pub fn create_on(
     pad: &Pad,
@@ -445,6 +448,7 @@ pub fn create_on(
     tuning: Tuning,
     grab: bool,
     mapping: &Mapping,
+    faces: &BTreeMap<padmap_core::Control, padmap_core::Control>,
     reserved: &mut Option<VirtualDevice>,
 ) -> Result<VirtualPad, CloneError> {
     // Taken only once there is a pad to feed it: everything above this can fail,
@@ -457,12 +461,10 @@ pub fn create_on(
     let mut twins = None;
     let (identity, clone) = if let Some(identity) = mode.xbox_identity(player) {
         let (keys, _) = source.capabilities();
-        translator = Some(xbox::Translator::new(
-            &keys,
-            &source.axis_spans(),
-            &bindings,
-            &extras,
-        ));
+        let mut translating =
+            xbox::Translator::new(&keys, &source.axis_spans(), &bindings, &extras);
+        translating.relabel(faces);
+        translator = Some(translating);
         (
             identity,
             match reserved.take() {

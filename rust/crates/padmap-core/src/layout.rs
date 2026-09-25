@@ -165,6 +165,54 @@ pub fn for_icon(icon: &str) -> &'static Layout {
     get(icon)
 }
 
+/// The face buttons, whose labels differ between consoles at the same positions.
+const FACES: [Control; 4] = [Control::A, Control::B, Control::X, Control::Y];
+
+/// The letter a face button is labelled with, when it is a single letter.
+fn face_letter(label: &str) -> Option<&str> {
+    label
+        .split_whitespace()
+        .next()
+        .filter(|word| word.len() == 1 && word.chars().all(|c| c.is_ascii_uppercase()))
+}
+
+/// Where each of `layout_id`'s face buttons goes on a 360 pad when its label
+/// is kept rather than its position: the button labelled A to the 360's A.
+/// Only controls that move are listed, and a layout whose labels are not
+/// all the 360's letters (symbols, a C button) lists none and keeps position.
+pub fn label_faces(layout_id: &str) -> BTreeMap<Control, Control> {
+    let letters = |layout: &Layout| -> Option<BTreeMap<Control, String>> {
+        layout
+            .controls
+            .iter()
+            .filter(|control| FACES.contains(&control.canonical))
+            .map(|control| Some((control.canonical, face_letter(&control.label)?.to_owned())))
+            .collect()
+    };
+    if !exists(layout_id) {
+        return BTreeMap::new();
+    }
+    let (Some(theirs), Some(xbox)) = (letters(get(layout_id)), letters(get("generic"))) else {
+        return BTreeMap::new();
+    };
+    let by_letter: BTreeMap<&str, Control> = xbox
+        .iter()
+        .map(|(control, letter)| (letter.as_str(), *control))
+        .collect();
+    let Some(moved) = theirs
+        .iter()
+        .map(|(control, letter)| Some((*control, *by_letter.get(letter.as_str())?)))
+        .collect::<Option<BTreeMap<Control, Control>>>()
+    else {
+        return BTreeMap::new();
+    };
+    let targets: std::collections::BTreeSet<&Control> = moved.values().collect();
+    if targets.len() != moved.len() {
+        return BTreeMap::new();
+    }
+    moved.into_iter().filter(|(from, to)| from != to).collect()
+}
+
 pub fn for_core(core: &str) -> &'static str {
     if core.is_empty() {
         return "";
@@ -193,6 +241,31 @@ pub fn for_core(core: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_nintendo_pad_kept_by_label_swaps_a_with_b_and_x_with_y() {
+        let expected: BTreeMap<Control, Control> = [
+            (Control::A, Control::B),
+            (Control::B, Control::A),
+            (Control::X, Control::Y),
+            (Control::Y, Control::X),
+        ]
+        .into_iter()
+        .collect();
+        for id in ["switch", "snes", "wiiu"] {
+            assert_eq!(label_faces(id), expected, "{id}");
+        }
+    }
+
+    #[test]
+    fn a_layout_labelled_as_the_360_or_otherwise_keeps_position() {
+        // GameCube's letters sit where the 360's do; the rest are not the 360's letters.
+        for id in [
+            "generic", "gamecube", "n64", "ps2", "arcade", "genesis", "nothing",
+        ] {
+            assert!(label_faces(id).is_empty(), "{id}: {:?}", label_faces(id));
+        }
+    }
 
     #[test]
     fn every_shipped_layout_parses() {

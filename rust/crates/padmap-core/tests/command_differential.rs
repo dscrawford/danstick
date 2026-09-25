@@ -58,7 +58,8 @@ fn as_fields(command: &Command) -> Value {
         Command::Reserve { players } => json!({"cmd": "reserve", "players": players}),
         Command::Identity { mode } => json!({"cmd": "identity", "mode": mode}),
         Command::Slots(change) => json!({
-            "cmd": "slots", "mode": change.mode, "count": change.count, "on_leave": change.on_leave
+            "cmd": "slots", "mode": change.mode, "count": change.count, "on_leave": change.on_leave,
+            "layout": change.layout
         }),
         Command::Bind {
             player,
@@ -255,6 +256,7 @@ fn slots_takes_only_what_it_is_told_and_refuses_a_count_that_is_not_a_number() {
             mode: Some("fixed".into()),
             count: None,
             on_leave: None,
+            layout: None,
         })
     );
     let every = Command::parse(
@@ -267,6 +269,7 @@ fn slots_takes_only_what_it_is_told_and_refuses_a_count_that_is_not_a_number() {
             mode: Some("fixed".into()),
             count: Some(6),
             on_leave: Some("destroy".into()),
+            layout: None,
         })
     );
     assert_eq!(

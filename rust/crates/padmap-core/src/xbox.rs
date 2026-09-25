@@ -457,6 +457,22 @@ impl Translator {
         out.push(Out { kind, code, value });
     }
 
+    /// Press, for every control in `faces`, the control it names instead: a
+    /// pad kept by label rather than position.
+    pub fn relabel(&mut self, faces: &BTreeMap<Control, Control>) {
+        let moved = |control: &mut Control| {
+            if let Some(to) = faces.get(control) {
+                *control = *to;
+            }
+        };
+        for controls in self.keys.values_mut() {
+            controls.iter_mut().for_each(moved);
+        }
+        for controls in self.axes.values_mut() {
+            controls.iter_mut().for_each(|(control, _)| moved(control));
+        }
+    }
+
     /// Everything released: what the clone should read when the source lets go of it all.
     pub fn release_all(&mut self) -> Vec<Out> {
         let held: Vec<Control> = self
@@ -508,6 +524,27 @@ mod tests {
         bindings.insert(Control::RightStickDown, Binding::button(3));
         bindings.insert(Control::LeftTrigger, Binding::axis(2, 1)); // Z trigger on an axis
         Translator::new(&keys, &spans, &bindings, &BTreeMap::new())
+    }
+
+    #[test]
+    fn a_pad_kept_by_label_presses_the_button_its_label_names() {
+        // A pad on the kernel's convention: the bottom button is BTN_SOUTH.
+        let keys = [0x130, 0x131, 0x133, 0x134];
+        let mut t = Translator::new(&keys, &BTreeMap::new(), &BTreeMap::new(), &BTreeMap::new());
+        let bottom = t.translate(EV_KEY, 0x130, 1);
+        t.translate(EV_KEY, 0x130, 0);
+        t.relabel(&crate::layout::label_faces("switch"));
+        // Nintendo's A is on the right; kept by label it is the 360's A.
+        let right = t.translate(EV_KEY, 0x131, 1);
+        assert_eq!(
+            right, bottom,
+            "the button labelled A did not press the 360's A"
+        );
+        assert_eq!(
+            t.translate(EV_KEY, 0x130, 1).first().map(|out| out.code),
+            Some(0x131),
+            "the button labelled B did not press the 360's B"
+        );
     }
 
     #[test]

@@ -12,6 +12,7 @@ pub const DEFAULT_COUNT: u32 = 4;
 pub const ENV_MODE: &str = "PADMAP_SLOTS";
 pub const ENV_COUNT: &str = "PADMAP_SLOT_COUNT";
 pub const ENV_ON_LEAVE: &str = "PADMAP_ON_LEAVE";
+pub const ENV_LAYOUT: &str = "PADMAP_LAYOUT";
 
 /// When a seat's clone is made.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -29,6 +30,32 @@ pub enum OnLeave {
     Stay,
     /// The clone is destroyed and the slot made again at a new node.
     Destroy,
+}
+
+/// How a pad's buttons land on a 360 clone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Layout {
+    /// The bottom face button is the 360's bottom one, whatever it is labelled.
+    Position,
+    /// The button labelled A is the 360's A, wherever it sits.
+    Label,
+}
+
+impl Layout {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Layout::Position => "position",
+            Layout::Label => "label",
+        }
+    }
+
+    pub fn parse(name: &str) -> Option<Self> {
+        match name.trim().to_lowercase().as_str() {
+            "position" => Some(Layout::Position),
+            "label" => Some(Layout::Label),
+            _ => None,
+        }
+    }
 }
 
 impl Mode {
@@ -71,6 +98,7 @@ pub struct Policy {
     pub mode: Mode,
     pub count: u32,
     pub on_leave: OnLeave,
+    pub layout: Layout,
 }
 
 impl Default for Policy {
@@ -79,6 +107,7 @@ impl Default for Policy {
             mode: Mode::OnDemand,
             count: DEFAULT_COUNT,
             on_leave: OnLeave::Stay,
+            layout: Layout::Position,
         }
     }
 }
@@ -89,6 +118,7 @@ pub struct Change {
     pub mode: Option<String>,
     pub count: Option<i64>,
     pub on_leave: Option<String>,
+    pub layout: Option<String>,
 }
 
 impl Policy {
@@ -109,6 +139,10 @@ impl Policy {
         if let Some(on_leave) = change.on_leave.as_deref() {
             next.on_leave = OnLeave::parse(on_leave)
                 .ok_or_else(|| format!("unknown on_leave {on_leave:?}; one of stay, destroy"))?;
+        }
+        if let Some(layout) = change.layout.as_deref() {
+            next.layout = Layout::parse(layout)
+                .ok_or_else(|| format!("unknown layout {layout:?}; one of position, label"))?;
         }
         Ok(next)
     }
@@ -151,6 +185,13 @@ impl Policy {
                     ..Change::default()
                 },
             ),
+            (
+                ENV_LAYOUT,
+                Change {
+                    layout: present(ENV_LAYOUT),
+                    ..Change::default()
+                },
+            ),
         ];
         for (name, change) in fields {
             match policy.with(&change) {
@@ -186,6 +227,7 @@ impl Policy {
             "mode": self.mode.as_str(),
             "count": self.count,
             "on_leave": self.on_leave.as_str(),
+            "layout": self.layout.as_str(),
         })
     }
 }
@@ -218,6 +260,7 @@ mod tests {
             (ENV_MODE, "fixed"),
             (ENV_COUNT, "6"),
             (ENV_ON_LEAVE, "destroy"),
+            (ENV_LAYOUT, "label"),
         ]));
         assert!(complaints.is_empty(), "{complaints:?}");
         assert_eq!(
@@ -226,6 +269,7 @@ mod tests {
                 mode: Mode::Fixed,
                 count: 6,
                 on_leave: OnLeave::Destroy,
+                layout: Layout::Label,
             }
         );
         assert_eq!(policy.standing(), 6);
@@ -255,6 +299,7 @@ mod tests {
             mode: Some("fixed".into()),
             count: Some(17),
             on_leave: None,
+            layout: Some("sideways".into()),
         });
         assert!(refused.is_err());
         assert!(before
@@ -324,8 +369,12 @@ mod tests {
         for on_leave in [OnLeave::Stay, OnLeave::Destroy] {
             assert_eq!(OnLeave::parse(on_leave.as_str()), Some(on_leave));
         }
+        for layout in [Layout::Position, Layout::Label] {
+            assert_eq!(Layout::parse(layout.as_str()), Some(layout));
+        }
         assert_eq!(Mode::parse("ondemand"), None);
         let reported = Policy::default().to_json();
+        assert_eq!(reported["layout"], "position");
         assert_eq!(reported["mode"], "on-demand");
         assert_eq!(reported["count"], 4);
         assert_eq!(reported["on_leave"], "stay");

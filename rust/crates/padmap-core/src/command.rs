@@ -232,6 +232,10 @@ impl Command {
                     .get("on_leave")
                     .and_then(Value::as_str)
                     .map(str::to_owned),
+                layout: message
+                    .get("layout")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
             }),
             "bind" => Command::Bind {
                 player: number("player", 0)?,
