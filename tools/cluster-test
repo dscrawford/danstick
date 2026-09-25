@@ -38,7 +38,11 @@ cleanup() { kubectl delete pod "$name" --wait=false >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 trap 'exit 130' INT TERM
 sed -e "s/@NAME@/$name/" -e "s/@TAG@/$tag/" k8s/tests/pod.yaml | kubectl apply -f - >/dev/null
-kubectl wait --for=condition=Ready "pod/$name" --timeout=300s >/dev/null
+if ! kubectl wait --for=condition=Ready "pod/$name" --timeout=300s >/dev/null; then
+  echo "cluster-test: no node came free -- another uinput suite may hold every one:" >&2
+  kubectl get pods -o wide -l 'app in (padmap-tests,gotg-controllers)' >&2
+  exit 1
+fi
 
 tar -C "$root" \
   --exclude=./rust/target --exclude=./.cargo-home --exclude=./.git \

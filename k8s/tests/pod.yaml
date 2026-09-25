@@ -9,6 +9,19 @@ metadata:
     app: padmap-tests
 spec:
   restartPolicy: Never
+  # A node's /dev/input is every pod's on it. GOTG's controller suite made its
+  # pads on node1 while this suite ran there, and each suite's daemons seated
+  # and grabbed the other's. Required anti-affinity is symmetric, so neither
+  # is scheduled beside the other, nor beside a second run of this one.
+  affinity:
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchExpressions:
+              - key: app
+                operator: In
+                values: [padmap-tests, gotg-controllers]
+          topologyKey: kubernetes.io/hostname
   # A run that is abandoned is not left holding a node's uinput forever.
   activeDeadlineSeconds: 3600
   containers:
