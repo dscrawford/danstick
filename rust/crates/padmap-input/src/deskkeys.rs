@@ -172,9 +172,9 @@ impl Keyboards {
         }
     }
 
-    /// Offer every pending event to `feed`, told which keyboard it came from;
-    /// a keyboard that has gone is dropped.
-    pub fn drain(&mut self, mut feed: impl FnMut(u64, u16, u16, i32)) {
+    /// Offer every pending event to `feed`, told which keyboard it came from
+    /// and how long ago; a keyboard that has gone is dropped.
+    pub fn drain(&mut self, mut feed: impl FnMut(u64, u16, u16, i32, f64)) {
         let mut gone: Vec<PathBuf> = Vec::new();
         for (path, device) in self.open.iter_mut() {
             match device.fetch_events() {
@@ -187,6 +187,7 @@ impl Keyboards {
                             event.event_type().0,
                             event.code(),
                             event.value(),
+                            crate::clone::event_age(event),
                         );
                     }
                 }

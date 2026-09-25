@@ -3576,3 +3576,35 @@ notches, which is what Dolphin's own calibration records for a round stick.
 
 **Worth generalising.** A default is a claim about what the input looks
 like. Before leaving one out, find out what it assumes instead.
+
+## A claim waited for the claim before it
+
+a03dc32 moved the room's files behind `state`, and GOTG found the cost had
+moved in front of the next `claim` instead: 113-237ms late for seats two to
+four on its cluster, ~500ms in a journey that presses each pad the moment the
+last was seated. Measured per phase in the pod, three things lined up after
+every claim, and a hold that happened during them paid for all of them.
+
+**A hold was timed from when padmap read the press.** `Seating::read` fed the
+assigner `now()`, so a button pressed while the loop was busy writing the
+last claim's files started counting only when the loop came back. It now
+counts from the kernel's stamp on the event, converted by its age; an age
+past two seconds is a clock that stepped and is not believed.
+
+**A claim woke the attach scan.** A clone is a node, so a claim changed
+/dev/input, and `poll_controller_changes` ran a full discovery -- 128 to 312ms
+-- to find nothing but padmap's own device. A change made only of padmap's
+own nodes is now recognised and skipped.
+
+**A claim woke seating's discovery.** Its gate keyed on the seated pads as
+well as the nodes, so every claim rediscovered, then followed up four times
+while "udev settled" over a node padmap had made. It keys on the nodes that
+are not padmap's now, and when only who is seated changed it reuses the pads
+it already had: a claim changes who is seated, never what is plugged in.
+
+Median hold end to claim over four seats went from 493ms to 21ms. What is
+still left on the loop after a claim is the claim's own files and the sibling
+scan, under 300ms together, which is inside GOTG's worst case.
+
+**Worth generalising.** Time the thing a person did from when they did it.
+Any other clock measures the program as well.

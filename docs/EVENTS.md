@@ -119,6 +119,13 @@ One thing to rely on: **a hold in flight when the length changes is dropped**,
 not re-measured. A press that became a claim because the number moved
 underneath it is the accident a longer hold exists to prevent.
 
+**A hold is timed from the press itself**, by the kernel's stamp on the event,
+not from when padmap got round to reading it. A claim just before can keep
+padmap busy for a good part of a second, and a hold that started counting
+only afterwards made the next person's `claim` late by that much. So a seat
+lands its hold's length after the button went down, whoever claimed just
+before; the same holds for a held space bar.
+
 ### `progress`: who is filling, and where they would sit
 
 One event per pad with a hold in flight, every tick:

@@ -127,6 +127,18 @@ impl Identity {
     }
 }
 
+/// Past this an event's stamp is not believed: the wall clock stepped.
+const MAX_EVENT_AGE: f64 = 2.0;
+
+/// How long ago the kernel saw `event`, so a hold counts from the press and
+/// not from whenever a busy event loop got round to reading it.
+pub fn event_age(event: &evdev::InputEvent) -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(event.timestamp())
+        .map(|age| age.as_secs_f64().min(MAX_EVENT_AGE))
+        .unwrap_or(0.0)
+}
+
 /// Event types that flow controller -> host; EV_FF travels the other way.
 #[inline]
 pub fn forwarded(kind: EventType) -> bool {
@@ -881,6 +893,15 @@ pub fn held_keys(source: &Device) -> AttributeSet<evdev::KeyCode> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_event_is_as_old_as_its_stamp_and_a_wild_stamp_is_not_believed() {
+        let fresh = evdev::InputEvent::new_now(EventType::KEY.0, 0x130, 1);
+        assert!(event_age(&fresh) < 0.05, "{}", event_age(&fresh));
+        // Stamped at the epoch: a clock that stepped, not a 56-year hold.
+        let ancient = evdev::InputEvent::new(EventType::KEY.0, 0x130, 1);
+        assert_eq!(event_age(&ancient), MAX_EVENT_AGE);
+    }
 
     #[test]
     fn an_identity_is_named_as_it_is_printed_and_nothing_else_parses() {

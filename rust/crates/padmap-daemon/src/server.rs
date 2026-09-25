@@ -131,7 +131,11 @@ pub struct Server {
     held_for: Option<(BTreeSet<String>, Vec<PathBuf>, bool)>,
     /// When seating's watched set is worth recomputing: the input nodes and the
     /// seated pads are all a rediscovery would find different.
-    seating_gate: hotplug::ScanGate<(BTreeSet<String>, Vec<PathBuf>)>,
+    seating_gate: hotplug::ScanGate<BTreeSet<String>>,
+    /// The pads seating last found, and who was seated then: a claim changes
+    /// who is seated, never what is plugged in, so it needs no discovery.
+    seating_present: Vec<Pad>,
+    seating_seated: Vec<PathBuf>,
     /// How many answers SDL's database had given when the files were last
     /// written, so a pad guessed at while it was asked is upgraded once it has.
     sdl_answers: u64,
@@ -293,6 +297,8 @@ impl Server {
             keyboard_hold: padmap_core::keyboard::Hold::default(),
             held_for: None,
             seating_gate: hotplug::ScanGate::default(),
+            seating_present: Vec::new(),
+            seating_seated: Vec::new(),
             sdl_answers: 0,
             awaiting_sdl: false,
             scratch: Vec::with_capacity(64),
@@ -1912,6 +1918,7 @@ impl Server {
         }
         self.seating.close();
         self.seating_gate.reset();
+        self.seating_seated.clear();
     }
 
     fn refresh_seating(&mut self, scan: &mut Scan) {
@@ -1932,20 +1939,27 @@ impl Server {
             .iter()
             .map(|slot| slot.pad.path.clone())
             .collect();
-        // Discovery opens devices. Run it when the input nodes or the seated
-        // pads change, not on every tick of a whole game.
-        let due = self
-            .seating_gate
-            .due((hotplug::event_nodes(), seated.clone()), now());
-        if !due && !scan.scanned() {
+        // Discovery opens devices. Run it when a node that is not padmap's own
+        // appears or goes, not on every tick of a whole game, nor on a claim.
+        let own = self.own_nodes();
+        let mut nodes = hotplug::event_nodes();
+        nodes.retain(|node| !own.contains(node));
+        let present: Vec<Pad> = if self.seating_gate.due(nodes, now()) || scan.scanned() {
+            let found = scan.pads().to_vec();
+            // An enumeration that failed is not everybody unplugging: acting on
+            // it would drop the holds this rebuild exists to carry.
+            if scan.failed() {
+                return;
+            }
+            self.seating_present = found.clone();
+            found
+        } else if seated != self.seating_seated {
+            self.seating_present.clone()
+        } else {
             return;
-        }
-        let wanted = self.seating.wanted(scan.pads(), &seated);
-        // An enumeration that failed is not everybody unplugging: acting on it
-        // would drop the holds this rebuild exists to carry.
-        if scan.failed() {
-            return;
-        }
+        };
+        self.seating_seated = seated.clone();
+        let wanted = self.seating.wanted(&present, &seated);
         // Only touch epoll when the set actually changes; the unwatch/rewatch
         // churn otherwise ran every tick for no reason.
         if !self.seating.would_change(&wanted) {
@@ -2694,6 +2708,18 @@ impl Server {
         if Some(&nodes) == self.last_attach_nodes.as_ref() {
             return;
         }
+        // A claim puts a clone on the air, and a clone is a node. Looking at
+        // every device again for it found nothing, and held the loop long
+        // enough to make the next person's claim late.
+        let own = self.own_nodes();
+        let only_ours = self.last_attach_nodes.as_ref().is_some_and(|last| {
+            last.symmetric_difference(&nodes)
+                .all(|node| own.contains(node))
+        });
+        if only_ours {
+            self.last_attach_nodes = Some(nodes);
+            return;
+        }
         let clock = now();
         if clock - self.last_attach_scan < hotplug::ATTACH_SCAN_SECONDS {
             return;
@@ -2821,8 +2847,9 @@ impl Server {
             return;
         }
         let mut hold = std::mem::take(&mut self.keyboard_hold);
-        self.deskkeys
-            .drain(|device, kind, code, value| hold.feed(device, kind, code, value, now()));
+        self.deskkeys.drain(|device, kind, code, value, age| {
+            hold.feed(device, kind, code, value, now() - age)
+        });
         let tick = hold.tick(now(), self.seating.hold_seconds());
         self.keyboard_hold = hold;
 
@@ -3298,6 +3325,15 @@ impl Server {
     }
 
     /// The clone node of every published player, and of every seat waiting for one.
+    /// The `/dev/input` nodes padmap made itself: its clones and reserved
+    /// seats. One of these appearing is a claim going through, not a pad.
+    fn own_nodes(&mut self) -> BTreeSet<String> {
+        self.virtual_paths()
+            .into_values()
+            .filter_map(|path| path.rsplit('/').next().map(str::to_owned))
+            .collect()
+    }
+
     fn virtual_paths(&mut self) -> BTreeMap<u32, String> {
         let mut paths: BTreeMap<u32, String> = self
             .reserved_nodes

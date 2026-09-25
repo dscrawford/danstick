@@ -203,6 +203,13 @@ const SWITCH: PadId = PadId {
     only: "RSTESTSWITCH",
 };
 
+/// Four pads held one after another, for how late each claim lands.
+const PROMPT: PadId = PadId {
+    name: "PADMAP RSTESTPROMPT a",
+    pid: 0x0f60,
+    only: "RSTESTPROMPT",
+};
+
 /// A seated pad in the picker, then a launch that reserves the rest.
 const EXEC_RESERVE: PadId = PadId {
     name: "PADMAP RSTESTEXECRES",
@@ -3411,5 +3418,63 @@ fn exec_reserves_the_seats_a_launch_wants_and_gives_them_back() {
         )
         .expect("the launch kept what it borrowed");
     assert_eq!(after["players"][0]["player"], 1, "{after}");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Four pads held one after another, each the moment the one before it is
+/// seated, timed from the end of each hold to its `claim`. GOTG measures the
+/// same on its cluster and wants the median under 150ms. A measurement, not a
+/// promise, so it is ignored and prints.
+///
+///     tools/cluster-test -p padmap-rs --test daemon_journey -- --ignored --nocapture claims_land
+#[test]
+#[ignore]
+fn claims_land_at_their_holds_length() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let root = std::env::temp_dir().join(format!("padmap-prompt-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let hold = 0.5;
+    let mut pads = four_pads(PROMPT);
+    let mut daemon = Daemon::start(&root, PROMPT);
+    daemon.pump(1.5);
+    daemon.send(serde_json::json!({"cmd": "seating", "open": true, "players": 4, "hold": hold}));
+    daemon.pump(0.5);
+
+    let mut late: Vec<f64> = Vec::new();
+    for (at, pad) in pads.iter_mut().enumerate() {
+        let player = at as u64 + 1;
+        daemon.events.clear();
+        let pressed = Instant::now();
+        pad.emit(EventType::KEY.0, FIRST_KEY, 1);
+        let mut claimed = None;
+        while pressed.elapsed() < Duration::from_secs(5) {
+            daemon.pump(0.003);
+            if daemon
+                .events
+                .iter()
+                .any(|e| e["event"] == "claim" && e["player"] == player)
+            {
+                claimed = Some(pressed.elapsed().as_secs_f64());
+                break;
+            }
+        }
+        pad.emit(EventType::KEY.0, FIRST_KEY, 0);
+        let took = claimed.expect("the hold never claimed");
+        late.push((took - hold) * 1000.0);
+    }
+    let mut sorted = late.clone();
+    sorted.sort_by(f64::total_cmp);
+    eprintln!(
+        "PROMPT hold end -> claim, seats 1-4: {:.0} {:.0} {:.0} {:.0} ms; median {:.0} ms",
+        late[0],
+        late[1],
+        late[2],
+        late[3],
+        (sorted[1] + sorted[2]) / 2.0
+    );
     let _ = std::fs::remove_dir_all(&root);
 }

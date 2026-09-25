@@ -170,12 +170,14 @@ impl Seating {
             return;
         }
         for event in &self.buffer {
+            // When it happened, not when this got round to reading it: a
+            // claim just before can hold the loop for a good part of a second.
             self.assigner.feed(
                 index,
                 event.event_type().0,
                 event.code(),
                 event.value(),
-                now,
+                now - clone::event_age(event),
             );
         }
     }
