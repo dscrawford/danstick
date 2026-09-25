@@ -20,10 +20,14 @@ which pins this repo as a flake input and files what it needs under
 ## Build / Run
 
     cd rust && cargo build
-    nix build path:.#padmap-rs        # what GOTG consumes; `path:` when the tree is dirty
+    nix build .#padmap-rs             # what GOTG consumes; `git add -N` a new file first
     nix run .#padmap -- list
     nix run .#padmap-start            # daemon + udev hide rules
     padmap serve --fresh --follow $$  # a daemon that ends with this shell
+
+Never `path:.`: a path flake copies the whole directory into the store,
+gitignored `rust/target` (14GB) included, and again whenever it changed -- it
+filled a disk. The git flake already builds uncommitted edits to tracked files.
 
 Other flake outputs: `padmap-play`, `paddump`, `icons`, `nixosModules.padmap`.
 

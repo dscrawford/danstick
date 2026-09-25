@@ -15,7 +15,9 @@ cd "$root"
 registry=192.168.0.2:30500
 
 # The environment only changes with Cargo.lock, so this is a no-op most runs.
-image=$(nix build "path:$root#test-image" --no-link --print-out-paths --max-jobs 2 --cores 4)
+# A git flake, never `path:`: a path flake copies the whole directory into the
+# store, gitignored rust/target included -- 14GB, again on every run it changed.
+image=$(nix build "git+file://$root#test-image" --no-link --print-out-paths --max-jobs 2 --cores 4)
 tag=$(basename "$image" | cut -c1-12)
 if ! curl -sfk -o /dev/null \
     -H 'Accept: application/vnd.docker.distribution.manifest.v2+json' \
