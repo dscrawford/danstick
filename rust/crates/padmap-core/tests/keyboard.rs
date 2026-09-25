@@ -191,10 +191,19 @@ fn dolphins_wii_remote_follows_the_keyboards_seat_and_the_pads_keep_theirs() {
         pad_section.contains("IR/Up = `Right Y+`\n"),
         "the pad points with nothing: {pad_section}"
     );
+    // A thumbstick is round: the Nunchuk's, and the right stick the pad
+    // points with, whose square IR gate a round stick could never reach the
+    // corners of uncalibrated.
+    let round = format!("Calibration = {}\n", dolphin::ROUND_GATE);
     assert!(
-        !pad_section.contains("Calibration"),
-        "a stick's gate is round; the square one is for keys: {pad_section}"
+        pad_section.contains(&format!("Nunchuk/Stick/{round}")),
+        "{pad_section}"
     );
+    assert!(
+        pad_section.contains(&format!("IR/{round}")),
+        "{pad_section}"
+    );
+    assert!(!pad_section.contains("141.42"), "{pad_section}");
 
     // Remotes nobody holds are declared off, not left from a bigger session.
     assert!(text.contains("[Wiimote3]\nSource = 0\n"), "{text}");

@@ -3551,3 +3551,28 @@ is the worst case, not a missing sample. It counts them now.
 input path. A cache in front of a slow call is not the same as the slow call
 being off the loop: it only decides how often the stall happens, and "once
 per new controller" is exactly when a room of people are picking them up.
+
+## Every pad's diagonals were 70.7% of the way there
+
+`dolphin::BINDINGS` gave every pad's main stick and C-stick the calibration
+`100.00 141.42 ...`, a square, and has since the Rust port. Dolphin reshapes a
+stick as `|input| x gate(angle) / calibration(angle)`
+(`ReshapableInput::Reshape`, StickGate.cpp), so a round thumbstick at full
+tilt, whose diagonal reports a radius of 1.0, reached 1 / 1.414 of the
+GameCube's diagonal notch. Running diagonally was slower than running
+straight, on every pad, in every GameCube game padmap set up. The square
+shape is right for a *keyboard*, where two keys make a true diagonal --
+Dolphin sets it for its own keyboard defaults -- and it looks to have been
+copied from there, or from EmuDeck, which ships the same string for the Steam
+Deck's sticks.
+
+**The first fix was wrong too.** ff0c816 left the pad's Nunchuk stick with
+no calibration, on the reasoning that "Dolphin's default is round". It is
+not: with no calibration Dolphin assumes the input already has the gate's
+shape and size, so a round stick comes out at radius 1.0 against a Nunchuk
+gate of 0.756 -- a third past anything a real Nunchuk can send. Reading
+`Reshape` settled both: a thumbstick gets a circle, `100.00` at the eight
+notches, which is what Dolphin's own calibration records for a round stick.
+
+**Worth generalising.** A default is a claim about what the input looks
+like. Before leaving one out, find out what it assumes instead.

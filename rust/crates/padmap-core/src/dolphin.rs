@@ -7,6 +7,17 @@ pub const SI_NONE: u32 = 0;
 /// Dolphin's GameCube pad has four ports and no more.
 pub const MAX_PLAYERS: u32 = 4;
 
+/// A thumbstick's reach at each of an octagon's eight notches: all the way,
+/// which is what Dolphin records when a round stick is turned against its
+/// rim. Dolphin scales a stick by gate / calibration at each angle, so this
+/// makes a round stick trace the emulated gate exactly.
+pub const ROUND_GATE: &str = "100.00 100.00 100.00 100.00 100.00 100.00 100.00 100.00";
+
+/// A key-driven stick's reach: two keys make a true diagonal. Dolphin's own,
+/// in its words: "Because our defaults use keyboard input, set calibration
+/// shapes to squares."
+pub const SQUARE_GATE: &str = "100.00 141.42 100.00 141.42 100.00 141.42 100.00 141.42";
+
 /// One `[GCPadN]` binding, as `key = value`.
 pub const BINDINGS: [(&str, &str); 22] = [
     ("Buttons/A", "`Button S`"),
@@ -19,18 +30,12 @@ pub const BINDINGS: [(&str, &str); 22] = [
     ("Main Stick/Down", "`Left Y-`|`Pad S`"),
     ("Main Stick/Left", "`Left X-`|`Pad W`"),
     ("Main Stick/Right", "`Left X+`|`Pad E`"),
-    (
-        "Main Stick/Calibration",
-        "100.00 141.42 100.00 141.42 100.00 141.42 100.00 141.42",
-    ),
+    ("Main Stick/Calibration", ROUND_GATE),
     ("C-Stick/Up", "`Right Y+`"),
     ("C-Stick/Down", "`Right Y-`"),
     ("C-Stick/Left", "`Right X-`"),
     ("C-Stick/Right", "`Right X+`"),
-    (
-        "C-Stick/Calibration",
-        "100.00 141.42 100.00 141.42 100.00 141.42 100.00 141.42",
-    ),
+    ("C-Stick/Calibration", ROUND_GATE),
     ("Triggers/L", "`Trigger L`"),
     ("Triggers/R", "`Trigger R`"),
     ("Triggers/L-Analog", "`Trigger L`"),
@@ -57,19 +62,13 @@ pub const KEYBOARD_BINDINGS: [(&str, &str); 24] = [
     ("Main Stick/Left", "`Left`"),
     ("Main Stick/Right", "`Right`"),
     ("Main Stick/Modifier", "`Shift`"),
-    (
-        "Main Stick/Calibration",
-        "100.00 141.42 100.00 141.42 100.00 141.42 100.00 141.42",
-    ),
+    ("Main Stick/Calibration", SQUARE_GATE),
     ("C-Stick/Up", "`I`"),
     ("C-Stick/Down", "`K`"),
     ("C-Stick/Left", "`J`"),
     ("C-Stick/Right", "`L`"),
     ("C-Stick/Modifier", "`Ctrl`"),
-    (
-        "C-Stick/Calibration",
-        "100.00 141.42 100.00 141.42 100.00 141.42 100.00 141.42",
-    ),
+    ("C-Stick/Calibration", SQUARE_GATE),
     ("Triggers/L", "`Q`"),
     ("Triggers/R", "`W`"),
     ("D-Pad/Up", "`T`"),
@@ -85,16 +84,11 @@ pub const MAX_WIIMOTES: u32 = 4;
 pub const WIIMOTE_NONE: u32 = 0;
 pub const WIIMOTE_EMULATED: u32 = 1;
 
-/// The square gate Dolphin sets when a stick is driven by keys, in its own
-/// words: "Because our defaults use keyboard input, set calibration shapes to
-/// squares."
-const SQUARE_GATE: &str = "100.00 141.42 100.00 141.42 100.00 141.42 100.00 141.42";
-
 /// One `[WiimoteN]` binding for a padmap clone, in the SDL backend's own
 /// element names -- the same vocabulary as `BINDINGS`, so the per-model lookup
 /// is still Dolphin's job. It points with the right stick, on the signs
 /// `BINDINGS` already uses for the C-stick, because a pad has no pointer.
-pub const WIIMOTE_BINDINGS: [(&str, &str); 19] = [
+pub const WIIMOTE_BINDINGS: [(&str, &str); 20] = [
     ("Buttons/A", "`Button S`"),
     ("Buttons/B", "`Trigger R`"),
     ("Buttons/1", "`Button E`"),
@@ -110,6 +104,9 @@ pub const WIIMOTE_BINDINGS: [(&str, &str); 19] = [
     ("IR/Down", "`Right Y-`"),
     ("IR/Left", "`Right X-`"),
     ("IR/Right", "`Right X+`"),
+    // The pointer's gate is the screen's square; uncalibrated, a round stick
+    // stops at 70.7% of the way to every corner.
+    ("IR/Calibration", ROUND_GATE),
     ("Shake/X", "`Shoulder L`"),
     ("Shake/Y", "`Shoulder L`"),
     ("Shake/Z", "`Shoulder L`"),
@@ -118,11 +115,12 @@ pub const WIIMOTE_BINDINGS: [(&str, &str); 19] = [
 
 /// The Nunchuk on a clone: the left stick, with C and Z on the shoulder and
 /// trigger the remote's own B does not use.
-pub const WIIMOTE_NUNCHUK: [(&str, &str); 6] = [
+pub const WIIMOTE_NUNCHUK: [(&str, &str); 7] = [
     ("Nunchuk/Stick/Up", "`Left Y+`"),
     ("Nunchuk/Stick/Down", "`Left Y-`"),
     ("Nunchuk/Stick/Left", "`Left X-`"),
     ("Nunchuk/Stick/Right", "`Left X+`"),
+    ("Nunchuk/Stick/Calibration", ROUND_GATE),
     ("Nunchuk/Buttons/C", "`Shoulder R`"),
     ("Nunchuk/Buttons/Z", "`Trigger L`"),
 ];
@@ -205,8 +203,6 @@ pub fn wiimote_sections(
     (1..=MAX_WIIMOTES)
         .map(|port| {
             if sorted.contains(&port) {
-                // No calibration: a stick's gate is round, and Dolphin's
-                // default already says so.
                 wiimote_section(
                     port,
                     &device(&name_for(port)),
@@ -491,6 +487,23 @@ mod tests {
             .filter(|line| line.starts_with("Device"))
             .count();
         assert_eq!(devices, 4, "a name bound a device of its own:\n{text}");
+    }
+
+    #[test]
+    fn a_thumbstick_is_calibrated_round_and_a_keyboards_stick_square() {
+        // Dolphin scales a stick by gate / calibration at each angle. A round
+        // thumbstick given a square calibration reaches 70.7% of a diagonal,
+        // and given none it overshoots the GameCube's gate by a quarter.
+        let round = format!("Calibration = {ROUND_GATE}\n");
+        let square = format!("Calibration = {SQUARE_GATE}\n");
+        let pad = section(1, "SDL/0/padmap Player 1");
+        assert!(pad.contains(&format!("Main Stick/{round}")), "{pad}");
+        assert!(pad.contains(&format!("C-Stick/{round}")), "{pad}");
+        assert!(!pad.contains("141.42"), "{pad}");
+
+        let keys = keyboard_section(2);
+        assert!(keys.contains(&format!("Main Stick/{square}")), "{keys}");
+        assert!(keys.contains(&format!("C-Stick/{square}")), "{keys}");
     }
 
     #[test]

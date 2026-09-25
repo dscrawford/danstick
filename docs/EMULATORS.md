@@ -82,6 +82,16 @@ Two things have to be right, and neither is the bindings:
   no controller declared in it is ignored however well its pad is bound. Note
   `SIDeviceN` is zero-based where `[GCPadN]` is one-based.
 
+A thumbstick's calibration is written **round** -- `100.00` at all eight of
+the octagon's notches, what Dolphin records itself when a round stick is turned
+against its rim -- and a keyboard's **square**, as Dolphin's own keyboard
+defaults set it. Dolphin scales a stick by gate / calibration at each angle, so
+the square one on a thumbstick held its diagonals to 70.7% of the gate, and no
+calibration at all lets it overshoot the GameCube's gate (radius 0.794) by a
+quarter. The Nunchuk and the pointer a pad aims with its right stick are round
+for the same reason; the pointer's gate is the screen's square, which a round
+stick could otherwise never reach the corners of.
+
 Unmanaged ports are set to `SIDEVICE_NONE` rather than left alone, for the
 same reason padmap clears an unused RetroArch reservation: a port still
 declared from a session with more players is a phantom controller in the next
