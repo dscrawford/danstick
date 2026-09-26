@@ -3852,6 +3852,8 @@ impl SteamDriven {
 /// Steam wrapping danstick's own clones: a Steam pad per clone, made after
 /// it, repeating every button the clone presses.
 struct SteamWrap {
+    /// Each clone's Steam pad's `eventN`, in the order of the clones.
+    events: Vec<String>,
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
     echoed: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     thread: Option<std::thread::JoinHandle<()>>,
@@ -3869,6 +3871,7 @@ impl SteamWrap {
                 (clone, steam_pad(id, slot))
             })
             .collect();
+        let events = pairs.iter_mut().map(|(_, steam)| steam.event()).collect();
         let stop = std::sync::Arc::new(AtomicBool::new(false));
         let echoed = std::sync::Arc::new(AtomicUsize::new(0));
         let thread = {
@@ -3895,6 +3898,7 @@ impl SteamWrap {
             })
         };
         SteamWrap {
+            events,
             stop,
             echoed,
             thread: Some(thread),
@@ -3918,7 +3922,7 @@ impl Drop for SteamWrap {
 /// The Deck in Game Mode with fixed slots: Steam wraps each 360 clone and the
 /// Xbox pad, and the Deck's own controls are reachable only through a Steam pad.
 #[test]
-fn under_steam_input_a_controller_is_its_steam_pad_and_a_clones_is_nobody() {
+fn under_steam_input_a_pad_sits_as_itself_and_a_clones_steam_pad_is_nobody() {
     if !uinput_writable() {
         eprintln!("skipped: /dev/uinput is not writable");
         return;
@@ -3940,7 +3944,18 @@ fn under_steam_input_a_controller_is_its_steam_pad_and_a_clones_is_nobody() {
         steam: steam_pad(STEAMLOOP, 1),
     };
     let wrap = SteamWrap::around(&clones, STEAMLOOP, 2);
-    let (deck_node, xbox_steam_node) = (deck.event(), xbox.steam.event());
+    let (deck_node, xbox_node) = (deck.event(), xbox.raw.event());
+    let xbox_steam = PathBuf::from("/dev/input").join(xbox.steam.event());
+    let first_clones_steam = PathBuf::from("/dev/input").join(&wrap.events[0]);
+    // So a node that could not even be opened cannot pass below as held.
+    assert!(
+        grabbable(&xbox_steam),
+        "the Xbox pad's Steam pad starts held"
+    );
+    assert!(
+        grabbable(&first_clones_steam),
+        "a clone's Steam pad starts held"
+    );
 
     daemon.pump(1.5);
     daemon.events.clear();
@@ -3965,8 +3980,12 @@ fn under_steam_input_a_controller_is_its_steam_pad_and_a_clones_is_nobody() {
     assert_eq!(claims.len(), 1, "one hold, one seat: {claims:?}");
     assert_eq!(claim["player"], 1);
     assert_eq!(
-        claim["node"], xbox_steam_node,
-        "seated somewhere other than the Steam pad Steam drives it through: {claim}"
+        claim["node"], xbox_node,
+        "seated on Steam's copy, not the pad itself: {claim}"
+    );
+    assert!(
+        !grabbable(&xbox_steam),
+        "Steam's copy of the seated pad is left for a game under Steam to read"
     );
 
     // Readying up at the door: slot 1's clone presses, and so its Steam pad does.
@@ -3982,6 +4001,10 @@ fn under_steam_input_a_controller_is_its_steam_pad_and_a_clones_is_nobody() {
         daemon.last("claim").is_none(),
         "a seated player's hold seated somebody: {:?}",
         daemon.last("claim")
+    );
+    assert!(
+        grabbable(&first_clones_steam),
+        "the seat's clone's Steam pad was held: a game under Steam would lose the player"
     );
 
     // The Deck's controls, reachable only through Steam, still take a seat.
@@ -4017,6 +4040,13 @@ fn under_steam_input_a_controller_is_its_steam_pad_and_a_clones_is_nobody() {
         state["players"].as_array().map(Vec::len),
         Some(2),
         "{state}"
+    );
+
+    daemon.send(serde_json::json!({"cmd": "unseat", "player": 1}));
+    daemon.pump(1.0);
+    assert!(
+        grabbable(&xbox_steam),
+        "Steam's copy stayed held after its seat was left"
     );
     drop(wrap);
     let _ = std::fs::remove_dir_all(&root);

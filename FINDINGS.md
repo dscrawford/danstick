@@ -3668,19 +3668,30 @@ is time: Steam's pad presses a few milliseconds after what it repeats, every
 time, and danstick sees both -- the pads seating watches, the seated pads it
 forwards, and the clones it writes. `danstick_core::echo` pairs each Steam
 press with the press it follows inside 50ms, one to one, closest first. A
-Steam pad repeating a clone or a seated pad takes nothing; a raw pad whose
-Steam pad repeats it gives way, and the Steam pad sits, because in Game Mode
-Steam's pad is the one Steam's layouts apply to and the one games under Steam
-see. Two people pressing within the window can pair across each other, which
-still makes two seats on two Steam pads; a raw pad Steam does not drive,
-pressed just before somebody's Deck, gives way once and is seated on its next
-hold. What this cannot catch is Steam repeating a press more than 50ms late:
-that echo is its own controller again. The window is a constant in
-`echo.rs`, and the Deck's real lag under a game is not measured yet.
+Steam pad repeating a clone or a seated pad takes nothing. A pad its Steam pad
+repeats sits as itself, and the Steam pad it was paired with at the claim is
+held with the seat, so a game under Steam -- which reads Steam's pads -- sees
+that controller once, through its clone's Steam pad.
 
-A hold can run ten seconds and its first press has to outlive it, so a
-verdict stands once the hold has run a second, and the press log keeps a
-second and a half, 512 presses at most.
+The first answer seated the Steam pad instead, as the request asked, for
+Steam's remaps. It was taken back the same day: it puts Steam's read, remap
+and write between the pad and the game, loses the pad's gyro, name and saved
+profile, ends the seat when Steam restarts, and leaves the raw node ungrabbed.
+The pairing is only learned at the claim: once a pad is seated its press also
+reaches its clone's Steam pad, a few milliseconds apart, and closest-first can
+swap the two, which would hold the clone's and hide the player from the game.
+
+What this cannot catch: Steam repeating more than 50ms late, which makes that
+echo its own controller again; the window is a constant in `echo.rs`, and the
+Deck's real lag under a game is not measured. Two people pressing inside the
+window can cost one of them a retry: a Steam press left over near somebody's
+pad is too unsure to seat, and a Steam pad is only held with a seat when it
+was the only Steam press that could have been that pad's copy -- otherwise the
+seat holds nothing, and a game under Steam reads that pad twice until it is
+seated again. A hold can
+run ten seconds and its first press has to outlive it, so a verdict stands
+once the hold has run a second, and the press log keeps a second and a half,
+512 presses at most.
 
 **Worth generalising.** When nothing on a device says what it copies, watch
 what it does: a copy is always late, and it is always late by about the same.

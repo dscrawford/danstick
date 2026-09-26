@@ -159,13 +159,15 @@ It is sent once, when the fill stops: a button released, or a pad that went
 away mid-hold. A hold that *completes* is not a release -- it ends on
 `frac: 1.0` and then a `claim`.
 
-**Under Steam Input a controller is its Steam pad.** Steam publishes a pad
+**Under Steam Input a controller is still itself.** Steam publishes a pad
 (`28de:11ff`, "Microsoft X-Box 360 pad N") for each controller it drives and
 for each of danstick's 360 clones. A press on a controller arrives twice, on
-its own node and a moment later on Steam's; the `claim` is for Steam's node,
-so Steam's remap is what the game gets, and the raw node never fills. A Steam
-pad repeating a clone or a seated pad never fills either. While any Steam pad
-is about, a raw pad's first `progress` waits 50ms for Steam to repeat it.
+its own node and a moment later on Steam's; the `claim` is for the controller's
+own node, and Steam's pad for it never fills and is held with the seat, so a
+game under Steam does not read that controller twice. A Steam pad repeating a
+clone never fills and is never held: it is how a game under Steam reads that
+seat. A controller danstick cannot read -- the Deck's own controls in Game
+Mode -- sits on its Steam pad.
 
 Two things that do not fill at all, and are deliberate: a pad that already
 holds a seat (holding B to block in a fighting game must not reseat anybody),

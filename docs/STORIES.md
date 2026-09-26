@@ -224,9 +224,9 @@ Xbox pad took three seats: the pad, Steam's pad for it, and -- as soon as the
 seat's clone pressed -- Steam's pad for the clone. Seating now watches every
 Steam pad and pairs each Steam press with the press it follows
 (`danstick_core::echo`): a Steam pad repeating a clone or a seated pad takes
-nothing, and a controller Steam drives sits on its Steam pad, so Steam's remap
-is the one the game gets
-(`under_steam_input_a_controller_is_its_steam_pad_and_a_clones_is_nobody`).
+nothing, and a controller Steam drives sits as itself, its Steam pad held with
+the seat so a game under Steam does not read it twice
+(`under_steam_input_a_pad_sits_as_itself_and_a_clones_steam_pad_is_nobody`).
 
 ## S4 — Holding again confirms, and accepts
 

@@ -21,8 +21,6 @@ pub struct Seating {
     buffer: Vec<evdev::InputEvent>,
     /// Every press that could be a Steam pad's, or one a Steam pad repeats.
     echoes: Echoes,
-    /// A seated player is on a Steam pad, which may repeat a watched pad.
-    steam_seated: bool,
 }
 
 /// What makes a watched pad the same pad across a rebuild.
@@ -48,6 +46,8 @@ pub struct Claimed {
     pub progress: Vec<(usize, f64)>,
     /// Pads that stopped filling without claiming.
     pub released: Vec<usize>,
+    /// Each claiming pad Steam surely repeats, and the Steam pad repeating it.
+    pub twins: Vec<(PathBuf, Pad)>,
 }
 
 impl Seating {
@@ -165,11 +165,6 @@ impl Seating {
         true
     }
 
-    /// Whether a seated player sits on a Steam pad.
-    pub fn set_steam_seated(&mut self, seated: bool) {
-        self.steam_seated = seated;
-    }
-
     /// A button a seated player's pad pressed at `at`, or danstick wrote to its clone.
     pub fn note(&mut self, origin: Origin, at: f64) {
         if self.open {
@@ -202,33 +197,47 @@ impl Seating {
     }
 
     pub fn tick(&mut self, now: f64) -> Claimed {
-        let steam_near = self.steam_seated || self.pads.iter().any(pad::is_steam_virtual);
         let holds = self.assigner.holds();
-        let verdicts = self.echoes.judge(&holds, now, steam_near);
+        let verdicts = self.echoes.judge(&holds, now);
         let pads = &self.pads;
+        let verdict_of = |index: usize, since: f64| {
+            holds
+                .iter()
+                .position(|hold| *hold == (index, since))
+                .map(|at| verdicts[at])
+        };
         let Tick {
             progress,
             claimed,
             released,
-        } = self.assigner.tick_gated(now, |index, since| {
-            let Some(at) = holds.iter().position(|hold| *hold == (index, since)) else {
-                return Gate::Go;
-            };
-            match verdicts[at] {
-                Verdict::Unsettled => Gate::Wait,
-                verdict if verdict.may_claim() => Gate::Go,
-                verdict => {
+        } = self
+            .assigner
+            .tick_gated(now, |index, since| match verdict_of(index, since) {
+                Some(verdict) if !verdict.may_claim() => {
                     if let Some(pad) = pads.get(index) {
                         debug!("seating: {} ({}) is {verdict:?}", pad.name, pad.event());
                     }
                     Gate::Drop
                 }
+                _ => Gate::Go,
+            });
+        let mut twins = Vec::new();
+        // Only while it claims: once seated, its press reaches its clone's Steam
+        // pad too, and which of the two is its own is no longer clear.
+        for (&(index, _), verdict) in holds.iter().zip(&verdicts) {
+            if let Verdict::Mirrored { steam, sure: true } = *verdict {
+                if claimed.iter().any(|claim| claim.pad == index) {
+                    if let (Some(pad), Some(steam)) = (pads.get(index), pads.get(steam)) {
+                        twins.push((pad.path.clone(), steam.clone()));
+                    }
+                }
             }
-        });
+        }
         Claimed {
             pads: claimed.into_iter().map(|claim| claim.pad).collect(),
             progress,
             released,
+            twins,
         }
     }
 

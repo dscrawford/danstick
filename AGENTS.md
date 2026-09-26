@@ -148,8 +148,8 @@ Runtime state lives in `$XDG_RUNTIME_DIR/danstick/` (socket, `assignments.json`,
   read itself, lowest Steam slot first. Seating watches every Steam pad and
   tells whose each is by what it presses and when (`danstick_core::echo`): a
   clone's or a seated pad's is nobody, and a controller Steam drives is seated
-  on its Steam pad. A triton pad (2026 Steam Controller) cannot be grabbed at
-  all.
+  as itself with its Steam pad held beside it. A triton pad (2026 Steam
+  Controller) cannot be grabbed at all.
 - A Steam Deck's own controls (`28de:1205`) are a pad only while nothing holds
   the hidraw node, and Steam holds it: with Steam up there is no `Steam Deck`
   node, just the lizard keyboard and mouse and Steam's mirror. Its d-pad is

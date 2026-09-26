@@ -56,8 +56,6 @@ pub struct Tick {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Gate {
     Go,
-    /// Neither fills nor claims yet, and is kept.
-    Wait,
     /// Is not somebody's hold; it goes, and a fresh press starts another.
     Drop,
 }
@@ -182,14 +180,6 @@ impl Assigner {
             let elapsed = now - started;
             match gate(pad, started) {
                 Gate::Go => {}
-                Gate::Wait => {
-                    // Still reported if it already was, so it is not "released".
-                    if self.filling.contains(&pad) {
-                        out.progress
-                            .push((pad, (elapsed / self.hold_seconds).clamp(0.0, 0.99)));
-                    }
-                    continue;
-                }
                 Gate::Drop => {
                     self.holding.remove(&pad);
                     continue;
@@ -300,77 +290,30 @@ mod tests {
     }
 
     #[test]
-    fn a_hold_the_gate_drops_never_claims_and_one_it_holds_claims_later() {
+    fn a_hold_the_gate_drops_never_claims_and_the_others_go_on() {
         let mut assigner = Assigner::default();
         assigner.feed(0, EV_KEY, A, 1, 0.0);
-        assigner.feed(1, EV_KEY, A, 1, 0.0);
-        let tick = assigner.tick_gated(HOLD_SECONDS + 0.01, |pad, started| {
-            assert_eq!(started, 0.0, "the gate is told when the hold began");
+        assigner.feed(1, EV_KEY, A, 1, 0.05);
+        assert_eq!(assigner.tick(0.1).progress.len(), 2);
+        let tick = assigner.tick_gated(HOLD_SECONDS + 0.1, |pad, started| {
+            assert_eq!(
+                started,
+                pad as f64 * 0.05,
+                "the gate is told when the hold began"
+            );
             if pad == 0 {
                 Gate::Drop
             } else {
-                Gate::Wait
+                Gate::Go
             }
         });
-        assert!(
-            tick.claimed.is_empty() && tick.progress.is_empty(),
-            "{tick:?}"
-        );
-        let tick = assigner.tick(HOLD_SECONDS + 0.02);
-        assert_eq!(
-            tick.claimed
-                .iter()
-                .map(|claim| claim.pad)
-                .collect::<Vec<_>>(),
-            [1],
-            "the dropped hold came back, or the waiting one was lost"
-        );
-    }
-
-    #[test]
-    fn the_holds_in_flight_are_each_pad_and_when_it_pressed() {
-        let mut assigner = Assigner::default();
-        assert!(assigner.holds().is_empty());
-        assigner.feed(2, EV_KEY, A, 1, 0.5);
-        assigner.feed(0, EV_KEY, B, 1, 0.7);
-        assert_eq!(assigner.holds(), [(0, 0.7), (2, 0.5)]);
-        assigner.tick(0.5 + HOLD_SECONDS + 0.01);
-        assert_eq!(assigner.holds(), [(0, 0.7)], "a claim is no hold in flight");
-    }
-
-    #[test]
-    fn a_fill_that_has_to_wait_is_not_reported_released() {
-        let mut assigner = Assigner::default();
-        assigner.feed(0, EV_KEY, A, 1, 0.0);
-        assert_eq!(assigner.tick(0.1).progress.len(), 1);
-        let tick = assigner.tick_gated(0.15, |_, _| Gate::Wait);
-        assert!(tick.released.is_empty(), "{tick:?}");
-        assert!(tick.claimed.is_empty());
-        let tick = assigner.tick_gated(0.2, |_, _| Gate::Drop);
+        let claimed: Vec<usize> = tick.claimed.iter().map(|claim| claim.pad).collect();
+        assert_eq!(claimed, [1]);
         assert_eq!(tick.released, [0], "a dropped fill is let go of");
-    }
-
-    #[test]
-    fn a_hold_kept_waiting_never_fills_to_the_end_nor_claims() {
-        let mut assigner = Assigner::default();
-        assigner.feed(0, EV_KEY, A, 1, 0.0);
-        assigner.tick(0.1);
-        let tick = assigner.tick_gated(HOLD_SECONDS * 10.0, |_, _| Gate::Wait);
-        assert_eq!(tick.progress.len(), 1);
-        assert!(tick.progress[0].1 < 1.0, "{:?}", tick.progress);
-        assert!(tick.claimed.is_empty());
-    }
-
-    #[test]
-    fn a_hold_that_waits_from_its_first_tick_still_claims_on_time() {
-        let mut assigner = Assigner::default();
-        assigner.feed(0, EV_KEY, A, 1, 0.0);
-        let tick = assigner.tick_gated(0.1, |_, _| Gate::Wait);
         assert!(
-            tick.progress.is_empty() && tick.released.is_empty(),
-            "{tick:?}"
+            assigner.tick(10.0).claimed.is_empty(),
+            "the dropped hold came back"
         );
-        assert_eq!(assigner.tick(HOLD_SECONDS + 0.01).claimed.len(), 1);
     }
 
     #[test]

@@ -126,11 +126,14 @@ pub struct Server {
     late_attempts: BTreeMap<PathBuf, u32>,
     /// The keyboard and mouse nodes of seated and candidate pads, grabbed beside their joysticks.
     held: siblings::Held,
+    /// Steam's copy of a seated pad, held with the seat so a game under Steam
+    /// does not read that controller twice: (player, the seat's pad) -> Steam pad.
+    steam_twins: BTreeMap<(u32, PathBuf), Pad>,
     /// The desk's keyboards, read for a held space bar and never grabbed.
     deskkeys: danstick_input::deskkeys::Keyboards,
     keyboard_hold: danstick_core::keyboard::Hold,
     /// What `held` was last computed for: the event nodes and the pads that matter.
-    held_for: Option<(BTreeSet<String>, Vec<PathBuf>, bool)>,
+    held_for: Option<HeldFor>,
     /// When seating's watched set is worth recomputing: the input nodes and the
     /// seated pads are all a rediscovery would find different.
     seating_gate: hotplug::ScanGate<BTreeSet<String>>,
@@ -186,6 +189,10 @@ impl std::fmt::Debug for Server {
             .finish_non_exhaustive()
     }
 }
+
+/// What the held nodes were worked out from: the machine's nodes, the pads that
+/// matter, the Steam pads held with a seat, and whether a hold could seat a keyboard.
+type HeldFor = (BTreeSet<String>, Vec<PathBuf>, Vec<PathBuf>, bool);
 
 /// The consumers' files a seat change leaves to write.
 #[derive(Debug)]
@@ -326,6 +333,7 @@ impl Server {
             last_input: None,
             late_attempts: BTreeMap::new(),
             held: siblings::Held::default(),
+            steam_twins: BTreeMap::new(),
             deskkeys: danstick_input::deskkeys::Keyboards::default(),
             keyboard_hold: danstick_core::keyboard::Hold::default(),
             held_for: None,
@@ -2056,11 +2064,6 @@ impl Server {
             return;
         };
         self.seating_seated = seated.clone();
-        self.seating.set_steam_seated(
-            self.slots_assigned
-                .iter()
-                .any(|slot| pad::is_steam_virtual(&slot.pad)),
-        );
         let wanted = self.seating.wanted(&present, &seated);
         // Only touch epoll when the set actually changes; the unwatch/rewatch
         // churn otherwise ran every tick for no reason.
@@ -2177,6 +2180,23 @@ impl Server {
             self.broadcast(&announced);
             // No reset: `tick` dropped this hold, and the refresh carries the rest.
             self.refresh_seating(&mut Scan::default());
+        }
+        self.note_twins(claimed.twins);
+    }
+
+    /// Hold each claiming pad's Steam pad with its seat.
+    fn note_twins(&mut self, twins: Vec<(PathBuf, Pad)>) {
+        for (pad, steam) in twins {
+            let Some(slot) = self.slots_assigned.iter().find(|slot| slot.pad.path == pad) else {
+                continue;
+            };
+            info!(
+                "player {}: {} is Steam's copy of {}; holding it with the seat",
+                slot.player,
+                steam.path.display(),
+                clean(&slot.pad.name)
+            );
+            self.steam_twins.insert((slot.player, pad), steam);
         }
     }
 
@@ -3014,10 +3034,29 @@ impl Server {
         self.triton_live.clone()
     }
 
-    /// Hold the keyboard and mouse siblings of every seated pad and every pad
-    /// seating is listening to, and only those. Recomputed when the nodes on
-    /// the machine or the pads that matter change, not every tick.
+    /// Hold the keyboard and mouse siblings of every seated pad, every pad
+    /// seating listens to, and Steam's copy of each seated pad -- only those.
+    /// Recomputed when the machine's nodes or the pads that matter change,
+    /// not every tick.
     fn hold_siblings(&mut self) {
+        let nodes = self
+            .last_attach_nodes
+            .clone()
+            .unwrap_or_else(hotplug::event_nodes);
+        // A twin goes with its seat, or with its device: a node number is reused.
+        let moved = self.held_for.as_ref().map(|held| &held.0) != Some(&nodes);
+        let slots = &self.slots_assigned;
+        self.steam_twins.retain(|(player, pad), steam| {
+            slots
+                .iter()
+                .any(|slot| slot.player == *player && slot.pad.path == *pad)
+                && (!moved || still_the_same(steam))
+        });
+        let twins: Vec<PathBuf> = self
+            .steam_twins
+            .values()
+            .map(|steam| steam.path.clone())
+            .collect();
         let mut pads: Vec<&Pad> = self.slots_assigned.iter().map(|slot| &slot.pad).collect();
         if self.seating.is_open() {
             pads.extend(self.seating.pads().iter());
@@ -3025,12 +3064,9 @@ impl Server {
         let mut paths: Vec<PathBuf> = pads.iter().map(|pad| pad.path.clone()).collect();
         paths.sort();
         paths.dedup();
-        let nodes = self
-            .last_attach_nodes
-            .clone()
-            .unwrap_or_else(hotplug::event_nodes);
         let listening = self.listening_for_space();
-        if self.held_for.as_ref() == Some(&(nodes.clone(), paths.clone(), listening)) {
+        let key = (nodes, paths, twins, listening);
+        if self.held_for.as_ref() == Some(&key) {
             return;
         }
         // Nothing seated and nothing listened to: nothing to look for.
@@ -3042,6 +3078,7 @@ impl Server {
         let wanted: BTreeSet<PathBuf> = pads
             .iter()
             .flat_map(|pad| siblings::of(pad, &known))
+            .chain(key.2.iter().cloned())
             .collect();
         self.held.sync(&wanted);
         // The desk's keyboards are read, not held, and only while a hold could
@@ -3051,7 +3088,7 @@ impl Server {
         } else {
             self.deskkeys.close_all();
         }
-        self.held_for = Some((nodes, paths, listening));
+        self.held_for = Some(key);
     }
 
     /// SDL answered for a pad whose mapping was guessed while it was asked:
@@ -3671,6 +3708,14 @@ fn process_exists(pid: u32) -> bool {
         rustix::process::test_kill_process(pid),
         Err(rustix::io::Errno::SRCH)
     )
+}
+
+/// Whether `pad`'s node is still the device it was, and not another given its number.
+fn still_the_same(pad: &Pad) -> bool {
+    pad.path
+        .file_name()
+        .and_then(|node| std::fs::canonicalize(Path::new("/sys/class/input").join(node)).ok())
+        .is_some_and(|now| now == pad.syspath)
 }
 
 fn raw_events(events: &[evdev::InputEvent]) -> Vec<Raw> {
