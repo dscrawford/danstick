@@ -2159,3 +2159,137 @@ mod binding_one_control {
         assert!(!run(Control::A).add, "a plain run replaces");
     }
 }
+
+fn generic_run() -> MappingRun {
+    MappingRun::new(
+        1,
+        layout::get("generic"),
+        joystick_keys(),
+        String::new(),
+        axes(&[(ABS_X, stick()), (ABS_Y, stick()), (0x02, trigger())]),
+        BTreeSet::new(),
+    )
+}
+
+const ABS_Z: u16 = 0x02;
+
+#[test]
+fn a_stick_nudged_while_a_shoulder_is_asked_for_is_not_that_shoulder() {
+    let mut run = generic_run();
+    let clock = skip_to(&mut run, position_of("generic", Control::LeftTrigger));
+    let nudged = run.feed(Event::abs(ABS_Y, 60), clock);
+    assert!(
+        matches!(nudged, Outcome::TooGentle { .. }),
+        "a thumb on the stick answered ZL: {nudged:?}"
+    );
+    assert_eq!(run.current(), Some(Control::LeftTrigger));
+    run.feed(Event::abs(ABS_Y, 0), clock + 0.05);
+    let (control, _) = recorded(&run.feed(Event::abs(ABS_Y, 98), clock + 0.1));
+    assert_eq!(
+        control,
+        Control::LeftTrigger,
+        "a stick pushed to its stop still can"
+    );
+}
+
+#[test]
+fn a_trigger_pulled_part_way_is_still_a_trigger() {
+    let mut run = generic_run();
+    let clock = skip_to(&mut run, position_of("generic", Control::LeftTrigger));
+    let (control, _) = recorded(&run.feed(Event::abs(ABS_Z, 80), clock));
+    assert_eq!(control, Control::LeftTrigger);
+}
+
+#[test]
+fn an_axis_displaced_as_a_step_begins_cannot_answer_it_until_it_has_rested() {
+    let mut run = generic_run();
+    let target = position_of("generic", Control::LeftTrigger);
+    let mut clock = skip_to(&mut run, target - 1);
+    // The trigger is squeezed while the step before is skipped, and held.
+    run.feed(Event::key(SKIP_BUTTON, 1), clock);
+    run.feed(Event::abs(ABS_Z, 40), clock + 0.1);
+    run.feed(Event::abs(ABS_Z, 70), clock + 0.2);
+    clock += SKIP_HOLD_SECONDS + 0.01;
+    assert!(matches!(
+        run.feed(Event::key(SKIP_BUTTON, 0), clock),
+        Outcome::Skipped { .. }
+    ));
+    clock += AFTER_GAP;
+    assert_eq!(
+        run.feed(Event::abs(ABS_Z, 200), clock),
+        Outcome::Ignored,
+        "a trigger already held when ZL was asked for answered it"
+    );
+    run.feed(Event::abs(ABS_Z, 0), clock + 0.1);
+    let (control, _) = recorded(&run.feed(Event::abs(ABS_Z, 200), clock + 0.2));
+    assert_eq!(
+        control,
+        Control::LeftTrigger,
+        "once it rested, a pull counts"
+    );
+}
+
+#[test]
+fn an_axis_pushed_during_the_gap_after_a_capture_waits_for_rest() {
+    let mut run = generic_run();
+    let clock = skip_to(&mut run, position_of("generic", Control::LeftTrigger) - 1);
+    let (control, _) = recorded(&run.feed(Event::abs(ABS_Z, 200), clock));
+    assert_eq!(control, Control::RightShoulder);
+    // Released, then squeezed again inside the gap and held into ZL's step.
+    run.feed(Event::abs(ABS_Z, 0), clock + 0.05);
+    run.feed(Event::abs(ABS_Z, 150), clock + 0.1);
+    assert_eq!(
+        run.feed(Event::abs(ABS_Z, 220), clock + AFTER_GAP),
+        Outcome::Ignored
+    );
+}
+
+#[test]
+fn a_trigger_already_squeezed_as_a_run_opens_waits_until_it_has_rested() {
+    let opened: BTreeMap<u16, i32> = [(ABS_Z, 200), (ABS_HAT0X, -1)].into();
+    let mut run = generic_run()
+        .only(Control::LeftTrigger)
+        .expect("generic has a left trigger")
+        .opened_at(&opened);
+    assert_eq!(run.feed(Event::abs(ABS_Z, 210), 0.0), Outcome::Ignored);
+    run.feed(Event::abs(ABS_Z, 0), 0.1);
+    let (control, _) = recorded(&run.feed(Event::abs(ABS_Z, 200), 0.2));
+    assert_eq!(control, Control::LeftTrigger);
+
+    let mut dpad = snes_run(joystick_keys(), BTreeMap::new(), BTreeSet::new())
+        .only(Control::DpadLeft)
+        .expect("snes has a d-pad")
+        .opened_at(&opened);
+    assert_eq!(
+        dpad.feed(Event::abs(ABS_HAT0X, -1), 0.0),
+        Outcome::Ignored,
+        "a d-pad held as the run opened answered it"
+    );
+}
+
+#[test]
+fn an_axis_settled_just_inside_the_release_band_as_a_step_begins_still_answers() {
+    let mut run = generic_run();
+    let mut clock = skip_to(&mut run, position_of("generic", Control::LeftTrigger) - 1);
+    run.feed(Event::key(SKIP_BUTTON, 1), clock);
+    // 38 of 255 is a deflection of 0.298, inside AXIS_RELEASE.
+    run.feed(Event::abs(ABS_Z, 38), clock + 0.1);
+    clock += SKIP_HOLD_SECONDS + 0.01;
+    run.feed(Event::key(SKIP_BUTTON, 0), clock);
+    clock += AFTER_GAP;
+    let (control, _) = recorded(&run.feed(Event::abs(ABS_Z, 200), clock));
+    assert_eq!(control, Control::LeftTrigger);
+}
+
+#[test]
+fn a_stick_direction_held_through_the_gap_cannot_answer_the_opposite_one() {
+    let mut run = gamecube_run();
+    let clock = skip_to(&mut run, position_of("gamecube", Control::LeftStickUp));
+    let (control, _) = recorded(&run.feed(Event::abs(ABS_Y, -100), clock));
+    assert_eq!(control, Control::LeftStickUp);
+    assert_eq!(run.current(), Some(Control::LeftStickDown));
+    assert_eq!(
+        run.feed(Event::abs(ABS_Y, -100), clock + AFTER_GAP),
+        Outcome::Ignored
+    );
+}

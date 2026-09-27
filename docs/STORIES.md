@@ -407,7 +407,9 @@ console *is* the control set.
 **Expected outcome.** The capture is filed under `""`, `console:<id>` or
 `game:<console>/<key>` on that controller's profile, beside its other scopes,
 and `_players_payload` reports the scope list so the strip can mark what
-already exists.
+already exists. A console's walk is never copied into `""`: a GameCube walk
+binds L and R to the triggers, and as the default it left LB bound to nothing
+on every other console (`a_consoles_walk_is_that_consoles_and_never_the_default`).
 
 **What has gone wrong here before.** *"One controller is not one mapping"* and
 *"Asking what a mapping is *for*"*. *"Per-game scope was limited to the one

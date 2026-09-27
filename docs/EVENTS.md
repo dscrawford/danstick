@@ -409,6 +409,21 @@ followed by an early finish therefore leaves a whole mapping: the controls not
 touched keep their stored bindings, and no two controls end up sharing an
 input. `forget` is still the way to start from nothing.
 
+**An axis answers a step only by leaving rest.** Rest is the axis's calibrated
+centre when the pad has been calibrated, not wherever it sat when the pad was
+opened, and an axis still away from rest when a step begins -- a thumb on the
+stick, a trigger held through the last capture -- answers nothing until it has
+gone back. A stick answers a shoulder or trigger step only pushed to its stop,
+as it answers a face button: resting a thumb on it crosses a trigger's
+threshold without meaning to.
+
+**A console's walk is that console's.** The first walk of the generic layout
+becomes the pad's default (`""`) whatever scope it was filed under; a walk of a
+console's layout never does, because a console's L can be the pad's trigger.
+With no default, a console nobody walked falls through to the pad's own
+mapping (SDL's, or the guess). A default that was only ever a copy of a
+console's walk, as danstick once made, is dropped when the profile is read.
+
 ## Mapping, choosing a layout, and calibrating without a session
 
 `map`, `choose_layout`, `choose_scope`, `map_for_game` and `calibrate` are legal

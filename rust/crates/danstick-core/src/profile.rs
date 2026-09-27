@@ -195,7 +195,8 @@ impl Profile {
         (scope::UNIVERSAL.to_owned(), Mapping::default())
     }
 
-    /// File a capture under a scope, seeding universal from the first.
+    /// File a capture under a scope, seeding universal from the first walk of
+    /// the generic layout: a console's L can be the pad's trigger, not its shoulder.
     pub fn record(&mut self, scope_key: &str, captured: Mapping) {
         self.mappings.insert(scope_key.to_owned(), captured.clone());
         let universal_is_empty = self
@@ -203,8 +204,25 @@ impl Profile {
             .get(scope::UNIVERSAL)
             .map(|m| m.buttons.is_empty())
             .unwrap_or(true);
-        if scope_key != scope::UNIVERSAL && universal_is_empty {
+        if scope_key != scope::UNIVERSAL && universal_is_empty && means_generic(&captured) {
             self.mappings.insert(scope::UNIVERSAL.to_owned(), captured);
+        }
+    }
+
+    /// Drop a universal that is only a copy of a console's walk, as seeding once made.
+    fn unseed_console_copy(&mut self) {
+        let Some(universal) = self.mappings.get(scope::UNIVERSAL) else {
+            return;
+        };
+        // By what it binds: a second input added to the console since is still the copy.
+        let copied = !means_generic(universal)
+            && self.mappings.iter().any(|(key, mapping)| {
+                key != scope::UNIVERSAL
+                    && mapping.layout == universal.layout
+                    && mapping.buttons == universal.buttons
+            });
+        if copied {
+            self.mappings.remove(scope::UNIVERSAL);
         }
     }
 
@@ -242,6 +260,7 @@ impl Profile {
             "mappings": mappings,
             "layout": universal.layout,
             "buttons": universal.buttons_value(),
+            "seeding": SEEDING,
         });
         if !self.tuning.is_default() {
             if let Ok(tuning) = serde_json::to_value(&self.tuning) {
@@ -305,7 +324,7 @@ impl Profile {
             .and_then(|raw| serde_json::from_value(raw.clone()).ok())
             .unwrap_or_default();
 
-        let profile = Profile {
+        let mut profile = Profile {
             signature: string_at(object.get("signature")),
             name: string_at(object.get("name")),
             icon: string_at(object.get("icon")),
@@ -313,8 +332,20 @@ impl Profile {
             mappings,
             tuning,
         };
+        // Only a file from before universal was seeded this way can hold such a copy.
+        if object.get("seeding").and_then(Value::as_str) != Some(SEEDING) {
+            profile.unseed_console_copy();
+        }
         (profile, rejected)
     }
+}
+
+/// Written by every profile whose universal is only ever seeded from a generic walk.
+const SEEDING: &str = "generic";
+
+/// Whether a walk's controls mean what universal's do: the generic layout, or none recorded.
+fn means_generic(mapping: &Mapping) -> bool {
+    mapping.layout.is_empty() || mapping.layout == crate::layout::default_id()
 }
 
 fn string_at(value: Option<&Value>) -> String {
@@ -556,12 +587,115 @@ mod tests {
         assert!(mapping.buttons.is_empty());
     }
 
+    fn walked(layout: &str, control: &str, index: i32) -> Mapping {
+        Mapping {
+            layout: layout.to_owned(),
+            ..capture(control, index)
+        }
+    }
+
     #[test]
-    fn the_first_capture_becomes_the_default_whatever_scope_it_was_for() {
+    fn the_first_generic_walk_becomes_the_default_whatever_scope_it_was_for() {
         let mut profile = Profile::default();
-        profile.record("console:n64", capture("a", 7));
-        assert_eq!(profile.buttons()["a"], Binding::button(7));
-        assert_eq!(profile.resolve("", "").0, scope::UNIVERSAL);
+        profile.record("console:snes", walked("generic", "leftshoulder", 4));
+        assert_eq!(profile.buttons()["leftshoulder"], Binding::button(4));
+        assert_eq!(profile.resolve("n64", "").0, scope::UNIVERSAL);
+    }
+
+    #[test]
+    fn a_consoles_walk_is_that_consoles_and_never_the_default() {
+        // GameCube's L is the pad's trigger; every other console's L is not.
+        let mut profile = Profile::default();
+        profile.record("console:gamecube", walked("gamecube", "leftshoulder", 2));
+        assert!(
+            profile.buttons().is_empty(),
+            "universal was seeded from GameCube"
+        );
+        let (scope, mapping) = profile.resolve("n64", "");
+        assert_eq!(scope, scope::UNIVERSAL);
+        assert!(
+            mapping.buttons.is_empty(),
+            "an empty universal is what falls through to the pad's own mapping"
+        );
+        assert_eq!(
+            profile.resolve("gamecube", "").1.buttons["leftshoulder"],
+            Binding::button(2)
+        );
+    }
+
+    #[test]
+    fn a_default_seeded_from_a_console_is_dropped_when_the_profile_is_read() {
+        let mut seeded = Profile::default();
+        let gamecube = walked("gamecube", "leftshoulder", 2);
+        seeded
+            .mappings
+            .insert("console:gamecube".to_owned(), gamecube.clone());
+        seeded
+            .mappings
+            .insert(scope::UNIVERSAL.to_owned(), gamecube);
+        let mut old = seeded.to_value();
+        old.as_object_mut().map(|file| file.remove("seeding"));
+        let (read, _) = Profile::from_value(&old);
+        assert!(!read.mappings.contains_key(scope::UNIVERSAL), "{read:?}");
+        assert!(read.mappings.contains_key("console:gamecube"));
+    }
+
+    #[test]
+    fn an_old_seeded_default_is_dropped_though_its_console_gained_an_input_since() {
+        let mut gamecube = walked("gamecube", "leftshoulder", 2);
+        let mut seeded = Profile::default();
+        seeded
+            .mappings
+            .insert(scope::UNIVERSAL.to_owned(), gamecube.clone());
+        gamecube.add("leftshoulder", Binding::button(9));
+        seeded
+            .mappings
+            .insert("console:gamecube".to_owned(), gamecube);
+        let mut old = seeded.to_value();
+        old.as_object_mut().map(|file| file.remove("seeding"));
+        let (read, _) = Profile::from_value(&old);
+        assert!(!read.mappings.contains_key(scope::UNIVERSAL), "{read:?}");
+    }
+
+    #[test]
+    fn a_default_from_before_scopes_is_dropped_only_when_a_scope_repeats_it() {
+        let leftshoulder = serde_json::json!({"leftshoulder": {"kind": "button", "index": 2}});
+        let repeated = serde_json::json!({
+            "buttons": leftshoulder,
+            "layout": "gamecube",
+            "mappings": {"console:gamecube": {"buttons": leftshoulder, "layout": "gamecube"}},
+        });
+        let (profile, _) = Profile::from_value(&repeated);
+        assert!(
+            !profile.mappings.contains_key(scope::UNIVERSAL),
+            "{profile:?}"
+        );
+        let alone = serde_json::json!({"buttons": leftshoulder, "layout": "gamecube"});
+        let (profile, _) = Profile::from_value(&alone);
+        assert_eq!(profile.buttons()["leftshoulder"], Binding::button(2));
+    }
+
+    #[test]
+    fn a_default_somebody_walked_for_itself_is_kept_whatever_its_layout() {
+        let mut profile = Profile::default();
+        profile.record(scope::UNIVERSAL, walked("gamecube", "leftshoulder", 2));
+        profile.record("console:gamecube", walked("gamecube", "leftshoulder", 2));
+        let (read, _) = Profile::from_value(&profile.to_value());
+        assert_eq!(
+            read.buttons()["leftshoulder"],
+            Binding::button(2),
+            "a default walked the same as a console's was taken for a seeded copy"
+        );
+        let mut profile = Profile::default();
+        profile.record(scope::UNIVERSAL, walked("gamecube", "leftshoulder", 2));
+        profile.record("console:gamecube", walked("gamecube", "leftshoulder", 3));
+        let (read, _) = Profile::from_value(&profile.to_value());
+        assert_eq!(read.buttons()["leftshoulder"], Binding::button(2));
+        // A generic default equal to a console's walk is a default too.
+        let mut profile = Profile::default();
+        profile.record("console:ps2", walked("generic", "a", 0));
+        let (read, _) = Profile::from_value(&profile.to_value());
+        assert_eq!(read.buttons()["a"], Binding::button(0));
     }
 
     #[test]

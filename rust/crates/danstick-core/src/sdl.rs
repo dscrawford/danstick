@@ -76,8 +76,8 @@ impl AxisSpan {
         if self.maximum <= self.minimum {
             return false;
         }
-        let half = f64::from(self.maximum - self.minimum) / 2.0;
-        let middle = f64::from(self.minimum + self.maximum) / 2.0;
+        let half = (f64::from(self.maximum) - f64::from(self.minimum)) / 2.0;
+        let middle = (f64::from(self.minimum) + f64::from(self.maximum)) / 2.0;
         let offset = (f64::from(self.rest) - middle) / half;
         offset.abs() <= STICK_REST_TOLERANCE
     }
@@ -469,6 +469,10 @@ mod tests {
 
     #[test]
     fn rests_centred_refuses_a_degenerate_range_rather_than_dividing_by_zero() {
+        assert!(
+            AxisSpan::new(i32::MIN, i32::MAX, 0).rests_centred(),
+            "no overflow"
+        );
         assert!(!AxisSpan::new(0, 0, 0).rests_centred());
         assert!(!AxisSpan::new(10, 5, 7).rests_centred());
     }

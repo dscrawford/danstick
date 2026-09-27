@@ -452,10 +452,20 @@ pub fn cmd_map(layout_id: Option<String>, which: Option<String>, scope: String) 
         .map(|source| source.capabilities())
         .unwrap_or_default();
     keys.sort_unstable();
-    let axes = session
+    let spans = session
         .source_mut(0)
         .map(|source| source.axis_spans())
         .unwrap_or_default();
+    let opened: BTreeMap<u16, i32> = spans
+        .iter()
+        .map(|(code, span)| (*code, span.rest))
+        .collect();
+    let axes = danstick_core::capture::calibrated_rests(
+        spans,
+        &profiles::load(&pad, None)
+            .map(|profile| profile.axes)
+            .unwrap_or_default(),
+    );
     let held: BTreeSet<u16> = session
         .source_mut(0)
         .map(|source| source.held_keys().into_iter().collect())
@@ -478,7 +488,7 @@ pub fn cmd_map(layout_id: Option<String>, which: Option<String>, scope: String) 
         capture::SKIP_HOLD_SECONDS
     );
     println!("Ctrl-C to abandon without saving.\n");
-    let mut run = MappingRun::new(1, layout, keys, scope.clone(), axes, held);
+    let mut run = MappingRun::new(1, layout, keys, scope.clone(), axes, held).opened_at(&opened);
     let started = std::time::Instant::now();
     let mut shown = usize::MAX;
     while !run.finished() {

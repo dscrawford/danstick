@@ -3695,3 +3695,31 @@ once the hold has run a second, and the press log keeps a second and a half,
 
 **Worth generalising.** When nothing on a device says what it copies, watch
 what it does: a copy is always late, and it is always late by about the same.
+
+## L went missing everywhere after a GameCube walk
+
+GOTG on the Deck: "L is missing" in GOTG and several games, the exit chord
+(both shoulders and Start) never fired, and on a GameCube walk "L was set by
+itself". `Profile::record` seeded the default scope from the first capture
+filed under any scope. The first walk was GameCube's, where L and R are the
+triggers, so the default bound `leftshoulder` to the left trigger and the
+pad's LB to nothing -- on every console with no capture of its own, since the
+default is what they fall back to.
+
+The default is now seeded only by a walk of the generic layout, and a
+default that equals a console scope's non-generic walk is dropped on load, so
+those consoles fall back to the pad's own mapping again. Seeding only the
+controls that mean the same would not have been enough: a mapping is used
+whole, so an unbound shoulder in it is a dead LB.
+
+The ZL that set itself was the left stick's Y axis. The wizard took an axis's
+rest from its value when the pad was opened, so a stick touched then read its
+release as a press; and a stick answered a trigger step at the trigger's
+threshold, which a thumb resting on it crosses. Rest now comes from the
+calibration when there is one, an axis away from rest as a step begins
+answers nothing until it has gone back, and a stick answers a shoulder step
+only pushed to its stop.
+
+**Worth generalising.** A copy made for convenience carries the meaning of
+where it came from. Seed only from something that means the same thing.
+

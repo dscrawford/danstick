@@ -1236,8 +1236,16 @@ impl Server {
     }
 
     /// Get axis ranges and resting positions.
-    fn absolute_ranges(&mut self, opened: Opened) -> BTreeMap<u16, danstick_core::sdl::AxisSpan> {
-        self.opened_source(opened)
+    fn absolute_ranges(
+        &mut self,
+        opened: Opened,
+        pad: &Pad,
+    ) -> BTreeMap<u16, danstick_core::sdl::AxisSpan> {
+        let calibrated = profiles::load(pad, None)
+            .map(|profile| profile.axes)
+            .unwrap_or_default();
+        let spans = self
+            .opened_source(opened)
             .map(|source| source.axis_spans())
             .unwrap_or_default()
             .into_iter()
@@ -1252,6 +1260,17 @@ impl Server {
                     danstick_core::sdl::AxisSpan::new(span.minimum, span.maximum, rest),
                 )
             })
+            .collect();
+        capture::calibrated_rests(spans, &calibrated)
+    }
+
+    /// Where each axis sits right now, as the pad reports it.
+    fn axis_values(&mut self, opened: Opened) -> BTreeMap<u16, i32> {
+        self.opened_source(opened)
+            .map(|source| source.axis_spans())
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(code, span)| (code, span.rest))
             .collect()
     }
 
@@ -1358,7 +1377,7 @@ impl Server {
                 return;
             }
         };
-        let axes = self.absolute_ranges(opened);
+        let axes = self.absolute_ranges(opened, &pad);
         let held = self.held_keys(opened);
         let stored = publish::stored_layout(&pad);
         let guess = if stored.is_empty() {
@@ -1406,7 +1425,7 @@ impl Server {
             .map(|game| (game.console, game.key, game.title))
             .collect();
         let options = capture::scope_options(&scopes, &guess, &recent);
-        let axes = self.absolute_ranges(opened);
+        let axes = self.absolute_ranges(opened, &pad);
         let held = self.held_keys(opened);
         self.pending_scope.clear();
         let chooser = Chooser::new(
@@ -1441,7 +1460,7 @@ impl Server {
             self.broadcast(&events::error("no console known for this game"));
             return;
         }
-        let axes = self.absolute_ranges(opened);
+        let axes = self.absolute_ranges(opened, &pad);
         let held = self.held_keys(opened);
         self.pending_scope.clear();
         let chooser = Chooser::new(
@@ -1540,11 +1559,13 @@ impl Server {
             .map(|source| source.capabilities().0)
             .unwrap_or_default();
         keys.sort_unstable();
-        let axes = self.absolute_ranges(opened);
+        let axes = self.absolute_ranges(opened, &pad);
         let held = self.held_keys(opened);
+        let values = self.axis_values(opened);
         let stored = publish::stored_mapping(&pad, scope, &layout.id);
-        let run =
-            MappingRun::new(player, layout, keys, scope.to_owned(), axes, held).seeded(&stored);
+        let run = MappingRun::new(player, layout, keys, scope.to_owned(), axes, held)
+            .seeded(&stored)
+            .opened_at(&values);
         self.pending_scope.clear();
         self.confirm.clear();
         self.last_finish = 0.0;
@@ -1605,11 +1626,13 @@ impl Server {
             .map(|source| source.capabilities().0)
             .unwrap_or_default();
         keys.sort_unstable();
-        let axes = self.absolute_ranges(opened);
+        let axes = self.absolute_ranges(opened, &pad);
         let held = self.held_keys(opened);
+        let values = self.axis_values(opened);
         let stored = publish::stored_mapping(&pad, scope, &layout.id);
-        let run =
-            MappingRun::new(player, layout, keys, scope.to_owned(), axes, held).seeded(&stored);
+        let run = MappingRun::new(player, layout, keys, scope.to_owned(), axes, held)
+            .seeded(&stored)
+            .opened_at(&values);
         let Some(mut run) = run.only(wanted) else {
             self.release_solo();
             self.broadcast(&events::error(format!(

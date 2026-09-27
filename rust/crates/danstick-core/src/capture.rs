@@ -61,6 +61,26 @@ impl Event {
     }
 }
 
+/// Each axis's rest from its calibration where it has one, not from wherever it
+/// sat when the pad was opened: a stick held then would read its release as a press.
+pub fn calibrated_rests(
+    spans: BTreeMap<u16, AxisSpan>,
+    calibrated: &BTreeMap<u16, crate::calibration::AxisCalibration>,
+) -> BTreeMap<u16, AxisSpan> {
+    spans
+        .into_iter()
+        .map(|(code, span)| {
+            // Only a centre measured over this range, of a stick: calibration covers no trigger.
+            let rest = calibrated
+                .get(&code)
+                .filter(|axis| (axis.minimum, axis.maximum) == (span.minimum, span.maximum))
+                .map(|axis| AxisSpan::new(span.minimum, span.maximum, axis.center))
+                .filter(AxisSpan::rests_centred);
+            (code, rest.unwrap_or(span))
+        })
+        .collect()
+}
+
 pub fn deflection(span: AxisSpan, value: i32) -> f64 {
     if span.maximum <= span.minimum {
         return 0.0;
@@ -153,6 +173,8 @@ pub struct MappingRun {
     blocked_until: f64,
     conflict: Option<Control>,
     axis_armed: BTreeMap<u16, bool>,
+    /// Each axis's last value, so one still displaced when a step begins is not armed.
+    axis_at: BTreeMap<u16, i32>,
     ended: bool,
     /// Set when the run is for one control only: the last index it walks.
     last: Option<usize>,
@@ -184,6 +206,7 @@ impl MappingRun {
             blocked_until: 0.0,
             conflict: None,
             axis_armed: BTreeMap::new(),
+            axis_at: BTreeMap::new(),
             ended: false,
             last: None,
             add: false,
@@ -201,6 +224,14 @@ impl MappingRun {
         self.index = at;
         self.last = Some(at);
         Some(self)
+    }
+
+    /// Where each axis sat when the pad was opened, so one already displaced
+    /// answers nothing until it has rested.
+    pub fn opened_at(mut self, values: &BTreeMap<u16, i32>) -> Self {
+        self.axis_at.extend(values);
+        self.disarm_displaced();
+        self
     }
 
     /// The press captured adds an input to the control rather than replacing it.
@@ -331,6 +362,7 @@ impl MappingRun {
     pub fn skip(&mut self, now: f64) -> Option<Control> {
         let control = self.current()?;
         self.index += 1;
+        self.disarm_displaced();
         self.conflict = None;
         self.blocked_until = now + CAPTURE_GAP_SECONDS;
         Some(control)
@@ -344,6 +376,7 @@ impl MappingRun {
         self.bindings.insert(control, binding);
         self.claimed.insert(claim, control);
         self.index += 1;
+        self.disarm_displaced();
         self.conflict = None;
         self.blocked_until = now + CAPTURE_GAP_SECONDS;
         Outcome::Recorded { control, binding }
@@ -395,6 +428,9 @@ impl MappingRun {
             return Outcome::Ignored;
         }
 
+        if event.kind == EV_ABS {
+            self.axis_at.insert(event.code, event.value);
+        }
         if now < self.blocked_until {
             if event.kind == EV_KEY && event.value == 0 {
                 self.down.remove(&event.code);
@@ -402,6 +438,7 @@ impl MappingRun {
                 self.opening_held.remove(&event.code);
             } else if event.kind == EV_ABS {
                 self.rearm(event);
+                self.disarm_displaced();
             }
             return Outcome::Ignored;
         }
@@ -474,6 +511,23 @@ impl MappingRun {
         }
     }
 
+    /// An axis away from rest as a step begins is not pressing for it: only a
+    /// travel that starts from rest answers.
+    fn disarm_displaced(&mut self) {
+        for (code, value) in &self.axis_at {
+            let displaced = if *code == ABS_HAT0X || *code == ABS_HAT0Y {
+                *value != 0
+            } else {
+                self.axes
+                    .get(code)
+                    .is_some_and(|span| deflection(*span, *value).abs() >= AXIS_RELEASE)
+            };
+            if displaced {
+                self.axis_armed.insert(*code, false);
+            }
+        }
+    }
+
     fn armed(&self, code: u16) -> bool {
         self.axis_armed.get(&code).copied().unwrap_or(true)
     }
@@ -487,7 +541,14 @@ impl MappingRun {
         let Some(current) = self.layout.controls.get(self.index) else {
             return Outcome::Ignored;
         };
-        if current.kind == "button" {
+        // A stick answers a shoulder only pushed to its stop: a thumb resting on
+        // it crosses the trigger threshold without meaning to.
+        let stick_for_shoulder = current.kind == "shoulder"
+            && self
+                .axes
+                .get(&event.code)
+                .is_some_and(|span| span.rests_centred());
+        if current.kind == "button" || stick_for_shoulder {
             if event.code == ABS_HAT0X || event.code == ABS_HAT0Y {
                 return Outcome::Ignored;
             }
@@ -1203,6 +1264,40 @@ mod tests {
         assert!(deflection(stick, 128).abs() < 0.01);
         assert!(deflection(stick, 0) < -0.9);
         assert!(deflection(stick, 255) > 0.9);
+    }
+
+    #[test]
+    fn a_calibrated_centre_is_the_rest_and_not_where_the_stick_sat_when_opened() {
+        use crate::calibration::AxisCalibration;
+        // The stick was held at 60 when the pad was opened.
+        let spans: BTreeMap<u16, AxisSpan> =
+            [(ABS_Y, span(-100, 100, 60)), (ABS_X, span(-100, 100, 5))].into();
+        let calibrated: BTreeMap<u16, AxisCalibration> = [
+            (ABS_Y, AxisCalibration::new(2, -100, 100)),
+            (ABS_X, AxisCalibration::new(500, -100, 100)),
+        ]
+        .into();
+        let rested = calibrated_rests(spans, &calibrated);
+        assert_eq!(rested[&ABS_Y].rest, 2);
+        assert_eq!(
+            rested[&ABS_X].rest, 5,
+            "a centre outside the range is not believed"
+        );
+        assert!(
+            deflection(rested[&ABS_Y], 2).abs() < AXIS_RELEASE,
+            "letting go is not a press"
+        );
+        // Measured under another driver's range, or at a trigger's end: not this axis's rest.
+        let spans: BTreeMap<u16, AxisSpan> =
+            [(ABS_Y, span(0, 255, 200)), (ABS_X, span(-100, 100, 5))].into();
+        let calibrated: BTreeMap<u16, AxisCalibration> = [
+            (ABS_Y, AxisCalibration::new(0, -32768, 32767)),
+            (ABS_X, AxisCalibration::new(-100, -100, 100)),
+        ]
+        .into();
+        let rested = calibrated_rests(spans, &calibrated);
+        assert_eq!(rested[&ABS_Y].rest, 200, "another range's centre");
+        assert_eq!(rested[&ABS_X].rest, 5, "a centre at one end is no stick's");
     }
 
     #[test]
