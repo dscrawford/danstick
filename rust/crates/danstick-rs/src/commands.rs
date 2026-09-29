@@ -40,10 +40,6 @@ fn controller_json(pad: &Pad) -> serde_json::Value {
 }
 
 /// List plugged-in controllers as JSON, without needing a daemon.
-///
-/// A node discovery left out is still listed, last, with `"dropped"` naming
-/// the reason and no player or virtual pad; a consumer counting controllers
-/// filters on `.dropped == null`.
 pub fn cmd_list_json() -> Result<()> {
     use serde_json::json;
 
@@ -640,9 +636,7 @@ pub fn cmd_calibrate(force: bool) -> Result<()> {
     Ok(())
 }
 
-/// How long a daemon lives and whether it starts unseated. Both name a
-/// *session*: a daemon that already belongs to this one is left alone, one
-/// that belongs to another (or to none) is replaced.
+/// How long a daemon lives and whether it starts unseated.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Lifetime {
     /// Skip restoring saved seats; profiles and mappings are kept.
@@ -850,8 +844,7 @@ pub struct ExecFlags {
     pub game: String,
 }
 
-/// `exec`'s own flags, then the program and everything after it untouched.
-/// `--` ends exec's flags and is optional when the program is not a flag.
+/// `exec`'s own flags, then the program untouched; `--` optionally ends exec's flags.
 pub fn exec_args(args: Vec<String>) -> std::result::Result<(ExecFlags, Vec<String>), String> {
     let mut flags = ExecFlags::default();
     let mut rest = args.into_iter().peekable();
@@ -872,7 +865,6 @@ pub fn exec_args(args: Vec<String>) -> std::result::Result<(ExecFlags, Vec<Strin
             }
             if arg == &format!("--{name}") {
                 rest.next();
-                // The separator or another flag is no value.
                 return match rest.next() {
                     Some(value) if !value.starts_with("--") => Ok(Some(value)),
                     _ => Err(format!("--{name} needs a value")),
@@ -910,9 +902,7 @@ pub fn covers_seats(state: &serde_json::Value, seats: u32) -> bool {
     (1..=seats).all(|player| held("players", player) || held("reserved", player))
 }
 
-/// Send `command` and wait for a `state` that satisfies `until`. The daemon
-/// greets every client with its current `state`, so the first one to arrive
-/// may predate the command; asking by predicate is what tells them apart.
+/// Sends `command` and waits for a `state` that satisfies `until`.
 pub fn daemon_ask_until(
     command: &serde_json::Value,
     until: impl Fn(&serde_json::Value) -> bool,
@@ -1299,7 +1289,6 @@ mod lifetime_tests {
         assert!(ours.owns(Some(42)));
         assert!(!ours.owns(Some(43)));
         assert!(!ours.owns(None));
-        // Without a pid to compare, nothing is "ours": --fresh alone always replaces.
         let fresh_only = Lifetime {
             fresh: true,
             follow: None,
@@ -1323,8 +1312,7 @@ mod lifetime_tests {
     }
 }
 
-/// Whether a daemon's `state` publishes the slots `ours` asks for. A daemon
-/// too old to say is on demand and by position, which is all it could do.
+/// Whether a daemon's `state` publishes the slots `ours` asks for.
 fn slots_match(state: &serde_json::Value, ours: danstick_core::slots::Policy) -> bool {
     let mode = state["slot_mode"].as_str().unwrap_or("on-demand");
     let layout = state["layout"].as_str().unwrap_or("position");

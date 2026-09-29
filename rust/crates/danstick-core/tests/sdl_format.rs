@@ -79,7 +79,6 @@ fn crc16_of_a_single_byte_is_pinned() {
 
 #[test]
 fn crc16_is_byte_order_sensitive() {
-    // A checksum that ignored order would give two differently-named pads the.
     assert_eq!(crc16(b"AB"), 0x61B0);
     assert_eq!(crc16(b"BA"), 0x90F0);
     assert_ne!(crc16(b"AB"), crc16(b"BA"));
@@ -865,7 +864,7 @@ fn just_past_the_tolerance_is_not_a_stick() {
 
 #[test]
 fn a_worn_n64_stick_resting_well_off_centre_is_still_a_stick() {
-    // 174 on 0..255 is 36% deflected -- a stick whose spring has aged, not a.
+    // 174 on 0..255 is an aged spring, not a trigger.
     assert!(AxisSpan::new(0, 255, 174).rests_centred());
     assert!(AxisSpan::new(0, 255, 81).rests_centred());
 }

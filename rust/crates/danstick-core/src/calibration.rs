@@ -6,7 +6,6 @@ use serde::{Deserialize, Serialize};
 pub const EVDEV_VALUE_MIN: i64 = -(1 << 31);
 pub const EVDEV_VALUE_MAX: i64 = (1 << 31) - 1;
 
-/// Measured vs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AxisCalibration {
     pub center: i32,

@@ -11,7 +11,7 @@ pub const VIRTUAL_PHYS_PREFIX: &str = "danstick/";
 /// Test escape hatch: restrict discovery to one device by name.
 pub const ENV_ONLY: &str = "DANSTICK_ONLY_DEVICE";
 
-/// Is this one of danstick's own clones? Check both phys and name (phys may fail to set).
+/// Whether this is one of danstick's own clones, by phys or name (phys may fail to set).
 pub fn is_danstick_clone(name: &str, phys: &str) -> bool {
     phys.starts_with(VIRTUAL_PHYS_PREFIX) || name.starts_with(crate::clone::VIRTUAL_PREFIX)
 }
@@ -70,14 +70,6 @@ pub struct Discovery {
 
 /// One physical controller is one pad: Steam's mirror goes when the pad it
 /// mirrors is one danstick reads, and stays when it is the only way to reach one.
-///
-/// `unreadable` counts controllers Steam drives that danstick cannot read itself
-/// -- the Deck's own controls in Game Mode, which Steam holds -- each reachable
-/// only through its mirror. Steam mirrors at most one per pad danstick reads and
-/// one per clone it can wrap (`clones`), so a surplus over both is kept too.
-/// Kept lowest slot first: Steam numbers them in the order it opened the
-/// controllers, and it opens the Deck's first. One mirror too many shows a pad
-/// twice; one too few hides somebody's controller.
 pub fn without_steam_mirrors(pads: Vec<Pad>, unreadable: usize, clones: usize) -> Discovery {
     let mirrors: Vec<&Pad> = pads.iter().filter(|pad| is_steam_virtual(pad)).collect();
     let readable = pads.len() - mirrors.len();
@@ -137,9 +129,7 @@ pub fn hid_id(text: &str) -> Option<(u16, u16)> {
 const STEAM_DECK_ID: (u16, u16) = (0x28DE, 0x1205);
 
 /// How many controllers Steam drives that danstick reads no gamepad node for: a
-/// Deck whose hidraw is there when no `Steam Deck` event node is. In Game Mode
-/// Steam holds the hidraw, hid-steam publishes nothing, and the Deck exists
-/// only as a Steam mirror (docs/STEAM-DECK.md).
+/// Deck whose hidraw is there when no `Steam Deck` event node is.
 fn steam_driven_unreadable(pads: &[Pad]) -> usize {
     if pads.iter().any(|pad| (pad.vid, pad.pid) == STEAM_DECK_ID) {
         return 0;
@@ -286,8 +276,7 @@ pub fn discover_all(filter: Filter) -> std::io::Result<Discovery> {
             debug!("{ENV_ONLY} is set: {} pad(s) after filtering", pads.len());
         }
     }
-    // A scoped discovery sees only its own pads, and a Deck or a clone
-    // elsewhere on the machine is none of its business.
+    // A scoped discovery sees only its own pads; a Deck or a clone elsewhere is not its business.
     let (unreadable, clones) = if scoped {
         (0, 0)
     } else {
@@ -341,7 +330,7 @@ pub fn motion_sibling<'a>(
         .next()
 }
 
-/// Pads that no static identifier can tell apart (used for explaining press-to-activate requirement).
+/// Pads that no static identifier can tell apart.
 pub fn ambiguous_groups(pads: &[Pad]) -> Vec<Vec<&Pad>> {
     type Identity<'a> = (&'a str, &'a str, &'a str, u16, u16);
 
@@ -366,7 +355,7 @@ pub fn ambiguous_groups(pads: &[Pad]) -> Vec<Vec<&Pad>> {
         .collect()
 }
 
-/// Is this a joypad by capability? Check sysfs first (read bitmaps like udev's input_id builtin).
+/// Whether this is a joypad by capability, checking sysfs first (bitmaps, like udev's builtin).
 fn looks_like_joypad(devnode: &Path) -> bool {
     match capability_verdict(devnode) {
         Some(verdict) => verdict,
@@ -619,8 +608,7 @@ mod tests {
     #[test]
     fn the_decks_mirror_stays_beside_a_pad_danstick_reads() {
         use crate::fakepad::XBOX_360;
-        // The Deck in Game Mode with an Xbox pad: Steam mirrors both, and only
-        // the Xbox pad is readable. Listed out of slot order on purpose.
+        // The Deck (unreadable) and an Xbox pad, listed out of slot order on purpose.
         let pads = vec![
             mirror(1, "event18"),
             XBOX_360.pad("event11"),
@@ -639,8 +627,7 @@ mod tests {
     #[test]
     fn more_mirrors_than_pads_danstick_reads_keeps_the_surplus() {
         use crate::fakepad::XBOX_360;
-        // Steam mirrors at most one per pad danstick reads, so a mirror over
-        // that count is a controller danstick cannot see any other way.
+        // Steam mirrors at most one per readable pad; a mirror over that count is unreadable.
         let pads = vec![
             mirror(0, "event10"),
             mirror(1, "event18"),
@@ -656,21 +643,19 @@ mod tests {
     #[test]
     fn the_decks_mirror_stays_even_when_steam_mirrors_nothing_else() {
         use crate::fakepad::XBOX_360;
-        // Steam Input off for the Xbox pad: one mirror, one pad, and the count
-        // alone would hide the Deck again. Knowing the Deck is there keeps it.
+        // One mirror, one pad; the count alone would hide the Deck the caller says is there.
         let pads = vec![mirror(0, "event10"), XBOX_360.pad("event11")];
         let found = without_steam_mirrors(pads.clone(), 1, 0);
         assert_eq!(found.pads, pads);
         assert!(found.dropped.is_empty());
-        // Without that knowledge it is the mirror of the pad danstick reads.
+        // Without knowing the Deck is there, its mirror looks like the Xbox pad's own.
         assert_eq!(without_steam_mirrors(pads, 0, 0).pads.len(), 1);
     }
 
     #[test]
     fn a_mirror_of_dansticks_own_clone_is_not_a_controller() {
         use crate::fakepad::XBOX_360;
-        // The Deck in Game Mode with four fixed slots and an Xbox pad: Steam
-        // wraps the Deck (slot 0), the Xbox pad and all four 360 clones.
+        // The Deck (slot 0) and an Xbox pad; Steam also wraps all four fixed-slot clones.
         let pads: Vec<Pad> = (0..6)
             .map(|slot| mirror(slot, &format!("event{}", 20 + slot)))
             .chain([XBOX_360.pad("event11")])
@@ -691,7 +676,7 @@ mod tests {
 
     #[test]
     fn mirrors_of_clones_alone_are_nobody() {
-        // Fixed slots stand before anybody plugs in: Steam's pads are all the clones'.
+        // Fixed slots stand before anybody plugs in, so Steam's mirrors are all the clones'.
         let pads: Vec<Pad> = (1..=4)
             .map(|slot| mirror(slot, &format!("event{}", 20 + slot)))
             .collect();
@@ -717,7 +702,7 @@ mod tests {
 
     #[test]
     fn a_deck_known_to_be_there_keeps_a_mirror_even_if_steam_has_not_made_its_yet() {
-        // The count cannot tell whose it keeps; seating's timing can (`echo`).
+        // The count alone can't tell whose mirror it is; seating's timing can (`echo`).
         let pads: Vec<Pad> = (1..=4)
             .map(|slot| mirror(slot, &format!("event{}", 20 + slot)))
             .collect();

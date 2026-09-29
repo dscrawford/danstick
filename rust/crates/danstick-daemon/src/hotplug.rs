@@ -13,14 +13,10 @@ pub fn event_nodes() -> BTreeSet<String> {
         .collect()
 }
 
-/// How long after the input nodes change a rescan keeps following up, because a
-/// node can appear before udev has finished describing it.
+/// How long a rescan keeps following up after the input nodes change.
 pub const SETTLE_SECONDS: f64 = 1.0;
 
-/// When a full device discovery is worth running: at once when what it would
-/// find may have changed, a few more times while that settles, and never
-/// otherwise. Discovery opens devices, and running it every tick left the
-/// event loop inside a tick nearly all the time.
+/// Gates when a full device discovery is worth running.
 #[derive(Debug, Default, Clone)]
 pub struct ScanGate<K> {
     seen: Option<K>,

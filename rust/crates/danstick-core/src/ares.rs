@@ -147,8 +147,7 @@ pub fn assignment(guid: &str, source: Source, indices: &Indices) -> Option<Strin
 /// ares' generic keyboard: vendor 0, product 1, path 0, one `Button` group.
 const KEYBOARD_ID: &str = "0x1";
 
-/// Where a key sits in ares' xlib keyboard table (`ruby/input/keyboard/xlib.cpp`).
-/// The index is the key's position in that list, so it is Linux-specific.
+/// Where a key sits in ares' xlib keyboard table, Linux-specific.
 mod xlib {
     pub const Q: u8 = 51;
     pub const W: u8 = 57;
@@ -173,8 +172,6 @@ mod xlib {
 }
 
 /// danstick's keyboard layout on ares' controls, which ares itself leaves unbound.
-/// Arrows drive the d-pad and the left stick both: ares' pad is one abstraction
-/// over every system, and which of the two is "the direction" depends on the game.
 pub const KEYBOARD: [(&str, u8); 24] = [
     ("Pad.Up", xlib::UP),
     ("Pad.Down", xlib::DOWN),
@@ -202,15 +199,12 @@ pub const KEYBOARD: [(&str, u8); 24] = [
     ("R-Right", xlib::L),
 ];
 
-/// ares' generic mouse: vendor 0, product 2, path 0, an `Axis` group then a
-/// `Button` one (`nall::HID::Mouse`, bound by `ruby/input/mouse/xlib.cpp`).
+/// ares' generic mouse: vendor 0, product 2, path 0, an `Axis` group then a `Button` one.
 const MOUSE_ID: &str = "0x2";
 const GROUP_MOUSE_AXIS: u8 = 0;
 const GROUP_MOUSE_BUTTON: u8 = 1;
 
-/// `VirtualMouseN`'s controls and where each reads on that mouse. `Extra`
-/// binds nothing: ares' xlib mouse appends Left, Middle, Right, Up, Down, so
-/// buttons 3 and 4 are the wheel and no button is left for it.
+/// `VirtualMouseN`'s controls and where each reads on that mouse; `Extra` binds nothing.
 pub const MOUSE_CONTROLS: [(&str, Option<(u8, u8)>); 6] = [
     ("X", Some((GROUP_MOUSE_AXIS, 0))),
     ("Y", Some((GROUP_MOUSE_AXIS, 1))),
@@ -220,10 +214,7 @@ pub const MOUSE_CONTROLS: [(&str, Option<(u8, u8)>); 6] = [
     ("Extra", None),
 ];
 
-/// The `VirtualMouseN` block for one port: the desk's mouse where the
-/// keyboard's seat is, nothing anywhere else. Every per-system mouse device
-/// (N64 Mouse, SNES Mouse) reads `virtualPorts[N-1].mouse`, so one block
-/// covers all of them with no per-system table.
+/// The `VirtualMouseN` block for one port: the desk's mouse where the keyboard's seat is.
 pub fn virtual_mouse(player: u32, bound: bool) -> String {
     let mut out = format!("VirtualMouse{player}\n");
     for (name, source) in MOUSE_CONTROLS {

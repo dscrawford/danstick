@@ -49,7 +49,6 @@ fn every_binding_matches_the_one_cemu_wrote_itself() {
             "Wii U control {mapping} should bind SDL id {button}"
         );
     }
-    // Cemu left Home (11) unbound; danstick adds nothing Cemu did not.
     assert_eq!(
         ours.len(),
         theirs.len(),
@@ -70,7 +69,6 @@ fn a_and_b_are_mirrored_the_way_nintendo_labels_them() {
 
 #[test]
 fn the_uuid_carries_the_guid_with_the_ordinal_prefix() {
-    // The prefix is the ordinal among devices sharing a GUID; danstick's GUIDs never collide.
     let xml = cemu::profile(1, GUID, "danstick Player 1");
     assert!(xml.contains(&format!("<uuid>0_{GUID}</uuid>")), "{xml}");
     assert!(xml.contains("<api>SDLController</api>"));
@@ -79,7 +77,6 @@ fn the_uuid_carries_the_guid_with_the_ordinal_prefix() {
 
 #[test]
 fn the_type_is_the_one_the_mapping_table_is_for() {
-    // VPADController numbers the same controls differently (Home is 27 there, not 11).
     assert!(cemu::profile(2, "0", "x").contains("<type>Wii U Pro Controller</type>"));
     assert!(cemu::profile(1, "0", "x").contains("<type>Wii U GamePad</type>"));
 }
@@ -172,7 +169,6 @@ fn the_motion_uuid_is_a_bare_slot_number() {
 
 #[test]
 fn the_motion_entry_binds_no_buttons() {
-    // Mappings on the DSU entry would deliver every press twice.
     let xml = cemu::profile(1, "0", "danstick");
     let after = xml
         .split("<api>DSUController</api>")

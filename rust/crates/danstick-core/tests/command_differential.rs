@@ -46,7 +46,6 @@ fn as_fields(command: &Command) -> Value {
             json!({"cmd": "set_icon", "player": player, "icon": icon})
         }
         Command::Status => json!({"cmd": "status"}),
-        // Exhaustive on purpose: a command added and never routed is a compile error here.
         Command::Seating {
             open,
             players,
@@ -229,7 +228,6 @@ fn reserving_seats_carries_how_many_a_launch_allows() {
             json!({"cmd": "reserve", "players": 4}),
             4,
         ),
-        // Nought is how a launcher gives the seats back when its game is over.
         ("left out is none", json!({"cmd": "reserve"}), 0),
         (
             "a numeric string",

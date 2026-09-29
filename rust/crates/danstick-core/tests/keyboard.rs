@@ -9,8 +9,6 @@ const GUID: &str = "03000000120900000100000001000000";
 
 #[test]
 fn retroarch_leaves_its_own_key_defaults_alone_when_player_one_is_free() {
-    // The keys are RetroArch's own on player 1 already; only the mouse,
-    // whose defaults spread one per port, still has to be said.
     for text in [
         retroarch::keyboard_config(&[], None),
         retroarch::keyboard_config(&[2, 3], None),
@@ -51,8 +49,6 @@ fn retroarch_moves_the_keyboard_off_a_seated_player_one() {
 
 #[test]
 fn retroarch_gives_the_desks_mouse_to_the_keyboards_player_and_to_nobody_else() {
-    // RetroArch defaults port i to mouse i, so player 1 holds the desk's
-    // mouse whoever is sitting there. The keyboard's seat takes it instead.
     let text = retroarch::keyboard_config(&[1], Some(2));
     assert!(
         text.contains("input_player2_mouse_index = \"0\"\n"),
@@ -74,8 +70,6 @@ fn retroarch_gives_the_desks_mouse_to_the_keyboards_player_and_to_nobody_else() 
         "RetroArch has sixteen ports: {text}"
     );
 
-    // Unseated, the keyboard still sits on the first free port, and the
-    // mouse follows it there rather than staying on the pad's player 1.
     let text = retroarch::keyboard_config(&[1], None);
     assert!(
         text.contains("input_player2_mouse_index = \"0\"\n"),
@@ -83,7 +77,6 @@ fn retroarch_gives_the_desks_mouse_to_the_keyboards_player_and_to_nobody_else() 
     );
     assert!(text.contains(&format!("input_player1_{none}\n")), "{text}");
 
-    // Every port seated: the keyboard drives nobody, and so does the mouse.
     let all: Vec<u32> = (1..=retroarch::MAX_PLAYERS).collect();
     let text = retroarch::keyboard_config(&all, None);
     assert!(
@@ -103,7 +96,6 @@ fn retroarch_with_every_port_seated_gives_the_keyboard_nobody() {
 
 #[test]
 fn a_seated_keyboard_keeps_its_seat_ahead_of_pads_seated_later() {
-    // Keyboard seated first as player 1, a pad after it as player 2.
     let text = retroarch::keyboard_config(&[2], Some(1));
     assert!(
         !text.contains(" = \"nul\""),
@@ -148,10 +140,8 @@ fn dolphin_writes_what_it_would_have_written_itself_for_port_one() {
 
 #[test]
 fn dolphins_wii_remote_follows_the_keyboards_seat_and_the_pads_keep_theirs() {
-    // The request's own check: keyboard on seat 2, a pad on seat 1.
     let text = dolphin::wiimote_sections(&[1], Some(2), |p| format!("danstick Player {p}"));
 
-    // Remote 2 is the mouse and keyboard's, pointing with the cursor.
     assert!(
         text.contains("[Wiimote2]\nSource = 1\nDevice = XInput2/0/Virtual core pointer\n"),
         "{text}"
@@ -174,7 +164,6 @@ fn dolphins_wii_remote_follows_the_keyboards_seat_and_the_pads_keep_theirs() {
         );
     }
 
-    // Remote 1 is the pad's: its own clone, and no cursor anywhere in it.
     let pad_section = text
         .split("[Wiimote2]")
         .next()
@@ -191,9 +180,6 @@ fn dolphins_wii_remote_follows_the_keyboards_seat_and_the_pads_keep_theirs() {
         pad_section.contains("IR/Up = `Right Y+`\n"),
         "the pad points with nothing: {pad_section}"
     );
-    // A thumbstick is round: the Nunchuk's, and the right stick the pad
-    // points with, whose square IR gate a round stick could never reach the
-    // corners of uncalibrated.
     let round = format!("Calibration = {}\n", dolphin::ROUND_GATE);
     assert!(
         pad_section.contains(&format!("Nunchuk/Stick/{round}")),
@@ -205,20 +191,16 @@ fn dolphins_wii_remote_follows_the_keyboards_seat_and_the_pads_keep_theirs() {
     );
     assert!(!pad_section.contains("141.42"), "{pad_section}");
 
-    // Remotes nobody holds are declared off, not left from a bigger session.
     assert!(text.contains("[Wiimote3]\nSource = 0\n"), "{text}");
     assert!(text.contains("[Wiimote4]\nSource = 0\n"), "{text}");
     assert!(!text.contains("[Wiimote5]"), "Dolphin has four remotes");
 
-    // Unseated, the keyboard still lands on the first remote no pad holds,
-    // rather than on remote 1 the way Dolphin ships it.
     let text = dolphin::wiimote_sections(&[1, 2], None, |p| format!("danstick Player {p}"));
     assert!(
         text.contains("[Wiimote3]\nSource = 1\nDevice = XInput2/0/Virtual core pointer\n"),
         "{text}"
     );
 
-    // Every remote seated: nobody gets the cursor.
     let text = dolphin::wiimote_sections(&[1, 2, 3, 4], None, |p| format!("danstick Player {p}"));
     assert!(!text.contains("Cursor"), "{text}");
     assert!(!text.contains("Source = 0"), "{text}");
@@ -306,7 +288,6 @@ fn ares_binds_every_control_to_the_generic_keyboard() {
         block.contains("  Start: 0x1/0/89;;\n"),
         "Return is index 89"
     );
-    // Arrows drive the d-pad and the left stick both.
     assert!(block.contains("  Pad.Up: 0x1/0/84;;\n"));
     assert!(block.contains("  L-Up: 0x1/0/84;;\n"));
     assert!(block.contains("  Rumble: ;;\n"));
@@ -314,8 +295,6 @@ fn ares_binds_every_control_to_the_generic_keyboard() {
 
 #[test]
 fn ares_gives_the_desks_mouse_to_the_keyboards_port_and_clears_the_rest() {
-    // ares' generic mouse is vendor 0, product 2, path 0 -- id 0x2 -- with
-    // its axes in group 0 and its buttons in group 1 (ruby's xlib driver).
     let block = ares::virtual_mouse(2, true);
     assert!(block.starts_with("VirtualMouse2\n"), "{block}");
     for (name, binding) in [
@@ -335,8 +314,6 @@ fn ares_gives_the_desks_mouse_to_the_keyboards_port_and_clears_the_rest() {
         "xlib's mouse has no Extra button to bind: {block}"
     );
 
-    // Every other port names the controls and binds none, so a mouse left
-    // at another port last time cannot make the mouse two players.
     let empty = ares::virtual_mouse(3, false);
     assert!(empty.starts_with("VirtualMouse3\n"), "{empty}");
     assert!(!empty.contains("0x2"), "{empty}");

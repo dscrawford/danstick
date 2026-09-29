@@ -1,8 +1,4 @@
 //! The desk's keyboards, read for a held space bar and never grabbed.
-//!
-//! Raw, not `evdev::Device`: the synchronizing one inserts fake events after a
-//! `SYN_DROPPED`, which here would be a space bar somebody was merely still
-//! holding arriving as a fresh press and taking a seat nobody asked for.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -15,13 +11,10 @@ use log::{debug, info, warn};
 const MAX_KEYBOARDS: usize = 32;
 
 /// Every keyboard with a space bar except the ones `excluded` already owns.
-///
-/// A pad in lizard mode publishes keyboards of its own, already grabbed beside
-/// the pad; reading them here too would let a trackpad click bound to space
-/// seat "the keyboard".
 fn wanted(nodes: &[PathBuf], excluded: &BTreeSet<PathBuf>) -> BTreeSet<PathBuf> {
     let all: BTreeSet<PathBuf> = nodes
         .iter()
+        // A pad's own lizard-mode keyboards, or a trackpad click bound to space would seat this.
         .filter(|path| !excluded.contains(*path))
         .cloned()
         .collect();
@@ -43,10 +36,10 @@ fn device_id(path: &Path) -> u64 {
     hasher.finish()
 }
 
-/// Keyboards held open for reading. Nothing here is grabbed: the space bar
-/// reaches the game and the desktop as it always did.
+/// Keyboards held open for reading.
 #[derive(Debug, Default)]
 pub struct Keyboards {
+    // Raw, not evdev::Device: its SYN_DROPPED recovery would replay a held key as a fresh press.
     open: BTreeMap<PathBuf, RawDevice>,
     buffer: Vec<evdev::InputEvent>,
     /// Whether each node seen so far has a space bar, so a hotplug opens the
@@ -65,13 +58,6 @@ impl Keyboards {
 
     /// Find every keyboard with a space bar and read all of them but the ones
     /// `excluded` already owns.
-    ///
-    /// udev's own `ID_INPUT_KEY` narrows 28 nodes to 13 on this desk before
-    /// anything is opened, which matters because opening an evdev node and
-    /// closing it again costs about 10ms. `ID_INPUT_KEYBOARD` would be
-    /// narrower still and is wrong: a real Bluetooth keyboard here carries
-    /// `ID_INPUT_KEY` alone, so the space bar is confirmed by asking the
-    /// device -- once per node, remembered after that.
     pub fn refresh(&mut self, excluded: &BTreeSet<PathBuf>) {
         let Ok(mut enumerator) = udev::Enumerator::new() else {
             return;
@@ -92,6 +78,7 @@ impl Keyboards {
             if !path.to_string_lossy().starts_with("/dev/input/event") {
                 continue;
             }
+            // ID_INPUT_KEYBOARD is narrower but wrong: a Bluetooth keyboard here has only KEY.
             let keyish = device
                 .property_value("ID_INPUT_KEY")
                 .is_some_and(|value| value.to_string_lossy() == "1");

@@ -43,7 +43,6 @@ fn every_destination_can_be_pointed_somewhere_else() {
     let game = root.join("state/config");
     std::fs::create_dir_all(&game).expect("mkdir");
 
-    // ares and Ryujinx are only rewritten, never invented -- their files hold every other setting those emulators have -- so a launch that wants them written has them in the environment already.
     let ares = game.join("ares/settings.bml");
     let ryujinx = game.join("Ryujinx/Config.json");
     std::fs::create_dir_all(ares.parent().expect("parent")).expect("mkdir");
@@ -166,7 +165,6 @@ fn an_absent_flag_keeps_the_default_location() {
 
 #[test]
 fn a_destination_flag_with_no_value_is_refused() {
-    // `--ryujinx-config` with the path forgotten must not silently mean "the user's own Ryujinx config", which is the one file this exists to avoid.
     let root = std::env::temp_dir().join(format!("danstick-emit-noval-{}", std::process::id()));
     let _ = std::fs::create_dir_all(&root);
     let out = emit(&root, &["--ryujinx-config"]);

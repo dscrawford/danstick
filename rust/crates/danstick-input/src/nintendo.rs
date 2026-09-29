@@ -160,7 +160,7 @@ impl Source {
         &self.path
     }
 
-    /// Ask for report 0x30. Output report via write(), unlike Steam Controller (ioctl).
+    /// Ask for report 0x30 via write(), unlike the Steam Controller's ioctl.
     fn request_full_mode(&mut self) {
         let packet = full_mode_packet(self.counter);
         self.counter = self.counter.wrapping_add(1);

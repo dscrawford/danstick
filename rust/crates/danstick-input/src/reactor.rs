@@ -97,7 +97,7 @@ impl Ready {
 pub struct Reactor {
     epoll: OwnedFd,
     tick: OwnedFd,
-    // Fixed buffer reused (not Vec to avoid EINVAL on cleared Vec: rustix reads length, not capacity).
+    // Fixed buffer, not a Vec: a cleared Vec has length 0, and rustix reads length not capacity.
     raw: [MaybeUninit<epoll::Event>; MAX_READY],
 }
 

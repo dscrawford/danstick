@@ -275,7 +275,7 @@ fn hidraw_index(path: &Path) -> usize {
         .and_then(|name| name.to_str())
         .and_then(|name| name.strip_prefix("hidraw"))
         .and_then(|digits| digits.parse().ok())
-        .unwrap_or(usize::MAX) // Unnumbered nodes sort last
+        .unwrap_or(usize::MAX)
 }
 
 fn hid_ids(device: &udev::Device) -> Option<(u16, u16)> {
@@ -373,7 +373,7 @@ fn first_hidraw(syspath: &Path) -> Option<PathBuf> {
 mod tests {
     use super::*;
 
-    /// Interface 2 of a real Steam Controller Puck (28de:1304), captured from sysfs on kernel 6.18.44. One of the four wireless slots: an emulated mouse, an emulated keyboard, and the Valve protocol.
+    /// Interface 2 of a real Steam Controller Puck (28de:1304), from sysfs on kernel 6.18.44.
     const PUCK_SLOT: [u8; 372] = [
         0x05, 0x01, 0x09, 0x02, 0xA1, 0x01, 0x85, 0x40, 0x09, 0x01, 0xA1, 0x00, 0x05, 0x09, 0x19,
         0x01, 0x29, 0x02, 0x15, 0x00, 0x25, 0x01, 0x75, 0x01, 0x95, 0x02, 0x81, 0x02, 0x75, 0x06,

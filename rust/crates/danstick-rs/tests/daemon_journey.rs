@@ -1,4 +1,5 @@
-//! Real daemon journey: DANSTICK_ONLY_DEVICE isolates the test, and signatures go to prompted first.
+//! Real daemon journey: DANSTICK_ONLY_DEVICE isolates the test, and signatures go to prompted
+//! first.
 
 use std::collections::BTreeSet;
 use std::io::{Read, Write};
@@ -407,8 +408,7 @@ impl Daemon {
         Daemon::start_with_env(root, id, extra, &[])
     }
 
-    /// The daemon's own log, in this test's root. Making a clone is only said
-    /// out loud, so a test asking whether one was made again reads it there.
+    /// The daemon's own log, in this test's root, where a made clone is said out loud.
     fn start_logging(root: &Path, id: PadId) -> Daemon {
         Daemon::spawn(root, id, &[], &[], Some(&root.join("daemon.log")))
     }
@@ -532,10 +532,7 @@ impl Daemon {
 }
 
 impl Daemon {
-    /// Tap a button until the wizard says it bound something, tapping again if
-    /// it does not: a tap that lands inside the capture gap after the previous
-    /// binding is ignored on purpose, and under load that window is not ours to
-    /// time.
+    /// Taps until the wizard says it bound something, retrying a tap the capture gap ignored.
     fn tap_until_bound(&mut self, pad: &mut TestPad, code: u16, index: u64) -> Value {
         for attempt in 0..4 {
             pad.tap(code);
@@ -548,9 +545,8 @@ impl Daemon {
         panic!("tapping never bound control {index}");
     }
 
-    /// Hold a button until a `claim` matching `wanted` arrives, holding again
-    /// if it does not: a freshly made pad is grabbed by Steam for a moment, and
-    /// under a full parallel run how long that moment lasts is not ours to say.
+    /// Holds until a `claim` matching `wanted` arrives, retrying since Steam may briefly grab a
+    /// freshly made pad.
     fn hold_until_claimed(&mut self, pad: &mut TestPad, wanted: impl Fn(&Value) -> bool) -> Value {
         for attempt in 0..4 {
             pad.hold(FIRST_KEY, 0.6);
@@ -574,13 +570,8 @@ impl Daemon {
             .expect("ready after the seat was taken");
     }
 
-    /// Open seating and hold a button until the pad is player 1 and published.
-    ///
-    /// A pad that appeared a moment ago is not readable by anybody yet when
-    /// Steam is running: it grabs every new joystick briefly to look at it,
-    /// and a hold made under that grab reaches nobody. Measured here at a
-    /// little over a second; the seating test above survives it only because
-    /// it holds once while seating is still closed.
+    /// Opens seating and holds until the pad is player 1 and published, allowing for Steam's
+    /// brief grab on a freshly attached pad.
     fn seat_by_hold(&mut self, pad: &mut TestPad) {
         self.pump(1.5);
         self.events.clear();
@@ -934,7 +925,6 @@ fn a_sleeping_pad_does_not_unpublish_the_others() {
             )
         });
 
-    // The sleeping pad's seat survives a save.
     daemon.send(serde_json::json!({"cmd": "status"}));
     daemon.pump(0.5);
     let saved: Value = serde_json::from_str(
@@ -997,8 +987,7 @@ fn a_pad_can_take_a_free_seat_without_a_session() {
         "a seat was taken while seating was closed"
     );
 
-    // A freshly made pad is grabbed by Steam for a moment (see seat_by_hold);
-    // under a full parallel run the hold above no longer covers that window.
+    // A freshly made pad may still be inside Steam's brief grab on arrival.
     daemon.pump(1.5);
     daemon.events.clear();
     daemon.send(serde_json::json!({"cmd": "seating", "open": true, "players": 4}));
@@ -1032,7 +1021,6 @@ fn a_pad_can_take_a_free_seat_without_a_session() {
         .join("autoconfig/udev/danstick Player 1.cfg")
         .is_file());
 
-    // A seated pad is being *played with*.
     daemon.events.clear();
     pad.hold(FIRST_KEY + 1, 0.8);
     daemon.pump(1.0);
@@ -1070,13 +1058,9 @@ fn how_long_a_hold_takes_to_claim_a_seat_can_be_set() {
     // A freshly made pad is grabbed by Steam for a moment (see seat_by_hold).
     daemon.pump(1.5);
     daemon.events.clear();
-    // No `hold` field: the length is the environment's, and asking for seating
-    // without one must not reset it.
+    // No `hold` field: the length is the environment's, unchanged by asking for seating.
     daemon.send(serde_json::json!({"cmd": "seating", "open": true, "players": 4}));
 
-    // A second is a claim at the default and is not one at 1.5s. The progress
-    // events are what say the daemon saw the hold: without them this would
-    // pass just as well for a pad nobody was reading.
     pad.hold(FIRST_KEY, 1.0);
     daemon.pump(0.5);
     let seen: Vec<f64> = daemon
@@ -1096,11 +1080,8 @@ fn how_long_a_hold_takes_to_claim_a_seat_can_be_set() {
         highest < 1.0,
         "progress reached {highest} in a second of a 1.5s hold"
     );
-    // Climbing rather than a single reading: how far it gets in a second is a
-    // question about this machine's load, and not what is being promised.
     assert!(highest > lowest, "the fill never moved: {seen:?}");
 
-    // Opening again with a length of its own replaces it, no restart needed.
     daemon.events.clear();
     daemon.send(serde_json::json!({
         "cmd": "seating", "open": true, "players": 4, "hold": 0.25
@@ -1133,8 +1114,7 @@ fn two_people_pairing_at_once_are_two_fills_in_the_order_they_pressed() {
     let mut daemon = Daemon::start(&root, PAIR_FIRST);
     daemon.wait_for("state", |_| true, 5.0).expect("a greeting");
 
-    // A button already down when seating opens is not a hold: the press the
-    // daemon never saw cannot start one.
+    // A button already held when seating opens is not a hold: the daemon never saw it start.
     daemon.pump(2.5);
     daemon.events.clear();
     one.emit(EventType::KEY.0, FIRST_KEY, 1);
@@ -1155,9 +1135,7 @@ fn two_people_pairing_at_once_are_two_fills_in_the_order_they_pressed() {
     daemon.pump(0.3);
     daemon.events.clear();
 
-    // Pad two presses first, so press order and device order disagree. Both
-    // have to be readable at once, and a pad Steam grabbed on arrival is not
-    // (see seat_by_hold), so this is held until it takes rather than once.
+    // Held until it takes: a pad Steam grabbed on arrival is not readable at once.
     let mut fills: Vec<Value> = Vec::new();
     for attempt in 0..4 {
         daemon.events.clear();
@@ -1173,8 +1151,7 @@ fn two_people_pairing_at_once_are_two_fills_in_the_order_they_pressed() {
             .collect();
         let nodes: BTreeSet<&str> = fills.iter().filter_map(|e| e["node"].as_str()).collect();
         if nodes.len() == 2 {
-            // A fresh window: a release from a previous attempt lands inside
-            // this one, and a promotion it caused is not the steady state.
+            // Cleared and repumped: a release from a previous attempt could still land here.
             daemon.events.clear();
             daemon.pump(0.4);
             fills = daemon
@@ -1197,9 +1174,7 @@ fn two_people_pairing_at_once_are_two_fills_in_the_order_they_pressed() {
         assert!(event["name"].is_string(), "a fill with no pad: {event}");
     }
 
-    // Whichever press the daemon saw first is seat one and is further along.
-    // Which one that is cannot be asserted: a pad Steam grabbed on arrival is
-    // read late, so the order of the emits is not the order of the presses.
+    // Which press the daemon saw first cannot be asserted: a Steam-grabbed pad is read late.
     let latest = |name: &str| {
         fills
             .iter()
@@ -1225,7 +1200,6 @@ fn two_people_pairing_at_once_are_two_fills_in_the_order_they_pressed() {
     let leader = ahead["name"].as_str().expect("a name").to_owned();
     let next = behind["name"].as_str().expect("a name").to_owned();
 
-    // The one in front lets go: said out loud, and its place is lost.
     daemon.events.clear();
     if leader == PAIR_FIRST.name {
         one.emit(EventType::KEY.0, FIRST_KEY, 0);
@@ -1244,7 +1218,6 @@ fn two_people_pairing_at_once_are_two_fills_in_the_order_they_pressed() {
         "a released fill still names a seat: {released}"
     );
 
-    // The one still holding is promoted into the seat that was given up.
     let promoted = daemon
         .wait_for(
             "progress",
@@ -1254,7 +1227,6 @@ fn two_people_pairing_at_once_are_two_fills_in_the_order_they_pressed() {
         .expect("the next in line was not moved up");
     assert!(promoted["frac"].as_f64().unwrap_or(0.0) > 0.0, "{promoted}");
 
-    // The one still holding takes seat one, not seat two.
     let claim = daemon
         .wait_for("claim", |event| event["name"] == next, 6.0)
         .expect("the pad that kept holding took a seat");
@@ -1268,8 +1240,6 @@ fn two_people_pairing_at_once_are_two_fills_in_the_order_they_pressed() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
-/// The claim that landed first used to reset the whole assigner, so the second
-/// person's fill died on the spot and no down edge ever came back to restart it.
 #[test]
 fn one_person_taking_a_seat_leaves_the_next_person_still_holding() {
     if !uinput_writable() {
@@ -1287,14 +1257,12 @@ fn one_person_taking_a_seat_leaves_the_next_person_still_holding() {
     daemon.wait_for("state", |_| true, 5.0).expect("a greeting");
     daemon.pump(2.5);
 
-    // Long enough both presses overlap under load; pressed after the open, since a
-    // button already down when seating opens is not a hold.
+    // Pressed after the open: a button already held when seating opens is not a hold.
     daemon.send(serde_json::json!({
         "cmd": "seating", "open": true, "players": 4, "hold": 2.0
     }));
 
-    // Both have to be readable at once, and a pad Steam grabbed on arrival is
-    // not (see seat_by_hold), so this is held until it takes rather than once.
+    // Held until it takes: a pad Steam grabbed on arrival is not readable at once.
     let mut filling = 0;
     for attempt in 0..4 {
         daemon.events.clear();
@@ -1319,7 +1287,6 @@ fn one_person_taking_a_seat_leaves_the_next_person_still_holding() {
     }
     assert_eq!(filling, 2, "two holds never ran at once");
 
-    // Neither thumb lifts from here on: both claims have to arrive anyway.
     let first_claim = daemon
         .wait_for("claim", |_| true, 6.0)
         .expect("nobody took a seat");
@@ -1357,9 +1324,8 @@ const SEATS_SECOND: PadId = PadId {
     only: "RSTESTSEATS",
 };
 
-/// A launch binds the `/dev/input` it starts with and nothing can be added to
-/// it afterwards, so a seat has to exist before the person does -- and taking
-/// one has to keep its node, or the game is bound to a device nobody feeds.
+/// A launch binds `/dev/input` once and nothing can be added, so a seat must exist and keep
+/// its node before the game does.
 #[test]
 fn a_seat_reserved_for_a_launch_keeps_its_node_when_somebody_takes_it() {
     if !uinput_writable() {
@@ -1412,8 +1378,7 @@ fn a_seat_reserved_for_a_launch_keeps_its_node_when_somebody_takes_it() {
             "the seat was announced but its node is not there: {seat}"
         );
     }
-    // Every seat's mapping is written, not only the ones with somebody in them:
-    // a game bound to port 3 needs SDL to know what port 3 is.
+    // Every seat's mapping is written: a game bound to port 3 needs SDL to know what port 3 is.
     let sdl = std::fs::read_to_string(root.join("sdl_controllers.txt")).expect("the SDL database");
     for player in 1..=4 {
         assert!(
@@ -1430,12 +1395,11 @@ fn a_seat_reserved_for_a_launch_keeps_its_node_when_somebody_takes_it() {
     }
 
     let reserved_one = seats[0]["node"].as_str().expect("a node").to_owned();
-    // Held open the way a running game holds it: the kernel reuses event numbers,
-    // so only this fd -- not the node reappearing -- proves it is the same device.
+    // Held open the way a running game holds it: the kernel reuses event numbers, so only this
+    // fd proves it stays the same device.
     let mut bound = evdev::Device::open(&reserved_one).expect("a launch opens the seat");
     bound.set_nonblocking(true).expect("nonblocking");
 
-    // The device has to be the one already there.
     daemon.send(serde_json::json!({"cmd": "seating", "open": true, "players": 4}));
     daemon.events.clear();
     daemon.hold_until_claimed(&mut pad, |event| event["name"] == SEATS_FIRST.name);
@@ -1459,9 +1423,7 @@ fn a_seat_reserved_for_a_launch_keeps_its_node_when_somebody_takes_it() {
         "the seat was taken and the device the launch held went silent"
     );
 
-    // Now the case that matters: a join while the game runs, not the seat-one
-    // rebuild. Every seat still waiting is opened first, because which one the
-    // joiner takes is the daemon's to decide, not this test's to assume.
+    // Every waiting seat is opened first: which one the joiner takes is the daemon's to decide.
     let mut waiting: Vec<(u64, evdev::Device)> = seated["reserved"]
         .as_array()
         .expect("reserved")
@@ -1569,8 +1531,6 @@ const ROOM: [PadId; 4] = [
     },
 ];
 
-/// Every join used to work out every seated player's files again, so a seat cost
-/// more the fuller the room, and the fourth person waited longest to see their own.
 #[test]
 fn a_join_does_not_work_the_rest_of_the_room_out_again() {
     if !uinput_writable() {
@@ -1595,8 +1555,7 @@ fn a_join_does_not_work_the_rest_of_the_room_out_again() {
         daemon.pump(0.4);
     }
 
-    // Counted rather than timed: how long a loaded machine takes is not the
-    // promise, that it does each player's once is.
+    // Counted rather than timed: what's promised is once per join, not how fast.
     for player in 1..=4 {
         let times = worked_out(&root, player);
         assert_eq!(
@@ -1610,9 +1569,8 @@ fn a_join_does_not_work_the_rest_of_the_room_out_again() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
-/// Caching what a player's files were worked out from has to notice a capture:
-/// nothing rewrites the consumers when the wizard stores one, so the next join
-/// would otherwise write the guess it made before.
+/// Caching what a player's files were worked out from has to notice a capture, or the next
+/// join keeps the guess it made before.
 #[test]
 fn a_capture_is_not_lost_when_the_next_person_joins() {
     if !uinput_writable() {
@@ -1637,9 +1595,7 @@ fn a_capture_is_not_lost_when_the_next_person_joins() {
         .expect("ready after the first seat");
     daemon.pump(0.6);
 
-    // A mapping stored for player one. Written straight to the profile store
-    // because `danstick map` from a terminal is another process: nothing tells
-    // the daemon, and nothing rewrites the consumers either way.
+    // Written straight to the profile store: `danstick map` from a terminal is another process.
     let before = worked_out(&root, 1);
     let stored = serde_json::json!({
         "signature": format!("1209:{:04x}:{}", KEEP_FIRST.pid, KEEP_FIRST.name),
@@ -1652,8 +1608,6 @@ fn a_capture_is_not_lost_when_the_next_person_joins() {
     )
     .expect("store a mapping");
 
-    // Somebody else joins. Player one's files have to be written from the
-    // capture, which means working them out again rather than reusing.
     daemon.events.clear();
     daemon.hold_until_claimed(&mut two, |event| event["name"] == KEEP_SECOND.name);
     daemon
@@ -1671,10 +1625,8 @@ fn a_capture_is_not_lost_when_the_next_person_joins() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
-/// Hold a button down until this pad takes a seat, rather than in pulses: four
-/// pads at once is the heaviest journey here and a fixed pulse is this machine's
-/// load rather than a promise. The buffer is cleared first, since an earlier
-/// seat's claim would otherwise answer for this one.
+/// Holds a button until this pad takes a seat, clearing the buffer first so an earlier
+/// seat's claim cannot answer for this one.
 fn seat_by_holding(daemon: &mut Daemon, pad: &mut TestPad, name: &'static str) {
     for attempt in 0..5 {
         daemon.events.clear();
@@ -1709,10 +1661,7 @@ fn profile_filename(id: PadId) -> String {
     format!("{}.json", out.chars().take(120).collect::<String>())
 }
 
-/// How many times the daemon worked this player's files out from scratch.
-/// How many times a player's files were worked out to the end. A guess made
-/// while SDL was still being asked is worked out once more when it answers,
-/// by design, and is not what a join must not repeat.
+/// How many times this player's files were worked out to completion.
 fn worked_out(root: &Path, player: u32) -> usize {
     let log = std::fs::read_to_string(root.join("daemon.log")).unwrap_or_default();
     let done = format!("player {player}: worked out its files");
@@ -1721,8 +1670,6 @@ fn worked_out(root: &Path, player: u32) -> usize {
         .count()
 }
 
-/// Joining mid-game used to tear down every clone and make them again, so the
-/// people already playing had their controllers unplugged under them.
 #[test]
 fn a_join_leaves_the_players_already_in_the_game_plugged_in() {
     if !uinput_writable() {
@@ -1753,7 +1700,6 @@ fn a_join_leaves_the_players_already_in_the_game_plugged_in() {
     let clones_before = clone_lines(&root, 1);
     assert_eq!(clones_before.len(), 1, "{clones_before:?}");
 
-    // Player two joins while player one is playing.
     daemon.events.clear();
     daemon.hold_until_claimed(&mut two, |event| event["name"] == JOIN_SECOND.name);
     daemon.pump(1.0);
@@ -1770,7 +1716,6 @@ fn a_join_leaves_the_players_already_in_the_game_plugged_in() {
         "player two got no clone, or several: {joined:?}"
     );
 
-    // And still the same device once the join has fully settled.
     daemon.pump(1.0);
     assert_eq!(
         clone_lines(&root, 1),
@@ -1794,8 +1739,7 @@ fn clone_lines(root: &Path, player: u32) -> Vec<String> {
         .collect()
 }
 
-/// A pad arriving rebuilds the watched set, which used to reset every hold with
-/// it -- so somebody switching a pad on cancelled whoever was already holding.
+/// A pad arriving rebuilds the watched set, which could cancel a hold already running.
 #[test]
 fn a_pad_switched_on_does_not_cancel_the_hold_already_running() {
     if !uinput_writable() {
@@ -1822,14 +1766,11 @@ fn a_pad_switched_on_does_not_cancel_the_hold_already_running() {
         .expect("the hold never started");
     let before = started["frac"].as_f64().expect("a fraction");
 
-    // A second pad appears mid-hold, which is what rebuilds the watched set.
     let arriving = TestPad::new(ARRIVE_SECOND);
     daemon.pump(1.0);
 
-    // The thumb never lifted, so a release here is the bug, and the fill has to
-    // keep climbing from where it was rather than start again.
-    // A release is a fill at zero naming no seat. The hold's own first tick
-    // can read 0.0 too -- it is still in `events` -- but it names a seat.
+    // A release is a fill at zero naming no seat; the hold's own first tick can read 0.0 too,
+    // but names a seat.
     assert!(
         !daemon
             .events
@@ -1860,8 +1801,7 @@ fn a_pad_switched_on_does_not_cancel_the_hold_already_running() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
-/// Two holds that finish inside one tick are two indices into a pad list the
-/// first claim rebuilds, so seating by position seated one pad and lost the other.
+/// Two holds finishing in the same tick index into a pad list the first claim rebuilds.
 #[test]
 fn two_people_pressing_on_go_are_two_seats_not_one() {
     if !uinput_writable() {
@@ -1943,9 +1883,7 @@ fn the_last_seat_goes_to_one_of_two_and_the_other_is_told_the_room_is_full() {
         "cmd": "seating", "open": true, "players": 1, "hold": 1.0
     }));
 
-    // Pressed together so both holds finish in one tick, and held until they are
-    // read: a pad grabbed on arrival is read late, and one press landing alone
-    // is this machine's load rather than anything promised.
+    // Pressed together and held until read: a pad grabbed on arrival is read late.
     let mut full = None;
     for attempt in 0..4 {
         daemon.events.clear();
@@ -1980,9 +1918,6 @@ fn the_last_seat_goes_to_one_of_two_and_the_other_is_told_the_room_is_full() {
         "the pad that took the seat was told the room was full"
     );
 
-    // `tick` marked the refused pad claimed on its way to a seat it did not get,
-    // so being forgotten is what lets it take one when the room has room -- and
-    // by index that undid the wrong pad, the refresh having already renumbered.
     let refused = fulls[0]["name"].as_str().expect("a name").to_owned();
     one.emit(EventType::KEY.0, FIRST_KEY, 0);
     two.emit(EventType::KEY.0, FIRST_KEY, 0);
@@ -2041,9 +1976,8 @@ fn a_pad_cannot_take_a_seat_that_does_not_exist() {
         "a pad took a seat that was already held by an absent controller"
     );
 
-    // This daemon publishes mirror identities, whose layout comes from the pad
-    // behind the clone -- so there is nothing to reserve a seat with, and the
-    // answer has to say so rather than publish a pad that mirrors nobody.
+    // A mirror identity's layout comes from the pad behind the clone, so there is nothing to
+    // reserve a seat with.
     daemon.events.clear();
     daemon.send(serde_json::json!({"cmd": "reserve", "players": 4}));
     daemon.pump(0.8);
@@ -2177,8 +2111,7 @@ fn a_seated_pad_is_rebound_and_finished_from_the_pad_with_no_session() {
     let mut pad = TestPad::new(REBIND);
     let mut daemon = Daemon::start(&root, REBIND);
 
-    // Seat the pad through a session, then accept: the daemon grabs and keeps
-    // it, so it is genuinely seated when the session closes.
+    // Seated through a session then accepted: the daemon grabs and keeps it once closed.
     daemon.send(serde_json::json!({"cmd": "begin", "players": 1}));
     daemon
         .wait_for("state", |e| e["state"] == "assigning", 6.0)
@@ -2221,8 +2154,7 @@ fn a_seated_pad_is_rebound_and_finished_from_the_pad_with_no_session() {
         "a session announced its pads"
     );
 
-    // Bind two controls by tapping. Each press is reported as it happens,
-    // press and release, in the terms the profile will use for it.
+    // Each press is reported as it happens, press and release, in the profile's own terms.
     daemon.events.clear();
     daemon.tap_until_bound(&mut pad, FIRST_KEY + 4, 1);
     let inputs: Vec<&Value> = daemon
@@ -2275,7 +2207,6 @@ fn a_seated_pad_is_rebound_and_finished_from_the_pad_with_no_session() {
     pad.emit(EventType::KEY.0, FIRST_KEY + 2, 0);
     daemon.pump(0.3);
 
-    // Exactly what was bound is on disk; the daemon never left ready.
     let stored: Value = serde_json::from_str(
         &std::fs::read_to_string(
             std::fs::read_dir(&daemon.profiles)
@@ -2450,8 +2381,6 @@ fn unseat_drops_the_seat_and_the_next_hold_takes_it_again() {
         )
         .expect("a state with nobody seated");
     assert_eq!(state["state"], "idle");
-    // The freed pad is re-announced as unconfigured right after; the removal
-    // is the event before that one.
     assert!(
         daemon
             .events
@@ -2473,8 +2402,7 @@ fn unseat_drops_the_seat_and_the_next_hold_takes_it_again() {
         Some(0),
         "the seat survived on disk"
     );
-    // Other journeys publish a "danstick Player 1" of their own, so the clone's
-    // absence is read from this daemon's consumer files, not from sysfs.
+    // Other journeys publish a "danstick Player 1" of their own, so this reads consumer files.
     assert_eq!(
         sdl_mappings_in(&sdl_db),
         Some(0),
@@ -2704,7 +2632,6 @@ fn the_keyboard_takes_a_seat_by_command_and_a_pad_sits_after_it() {
         "the pad's port kept the desk's mouse: {launch}"
     );
 
-    // Unseating the keyboard frees seat 1; the pad keeps seat 2.
     daemon.events.clear();
     daemon.send(serde_json::json!({"cmd": "unseat", "player": 1}));
     let state = daemon
@@ -2753,7 +2680,6 @@ fn a_pad_switched_on_during_a_session_can_take_a_seat() {
         Some(1.into())
     );
 
-    // The second pad is switched on now, with the session open.
     let mut two = TestPad::new(LATE_SECOND);
     daemon
         .wait_for("pads", |e| e["count"] == 2, 6.0)
@@ -2762,7 +2688,6 @@ fn a_pad_switched_on_during_a_session_can_take_a_seat() {
     let claim = daemon.hold_until_claimed(&mut two, |e| e["name"] == LATE_SECOND.name);
     assert_eq!(claim["player"], 1);
 
-    // Switched off again: the session says so, and does not fall over.
     daemon.events.clear();
     drop(two);
     daemon
@@ -2867,8 +2792,7 @@ fn a_seated_pads_keyboard_sibling_is_held_and_released_with_the_seat() {
             5.0,
         )
         .expect("unseated");
-    // Waited for rather than pumped for: the promise is that the keyboard comes
-    // back, not that a loaded machine manages it inside a fixed second.
+    // Waited for rather than pumped for: the promise is only that it comes back, not how fast.
     let released = (0..40).any(|_| {
         daemon.pump(0.2);
         grabbable(&keyboard_node)
@@ -2916,7 +2840,6 @@ fn one_control_is_bound_on_its_own_and_can_take_a_second_input() {
         "an unknown control was accepted"
     );
 
-    // Bind B on its own: one press, one control, stored.
     daemon.events.clear();
     daemon.send(serde_json::json!({"cmd": "bind", "player": 1, "control": "b"}));
     daemon
@@ -2938,7 +2861,6 @@ fn one_control_is_bound_on_its_own_and_can_take_a_second_input() {
     );
     assert!(!first.is_array());
 
-    // And now a second input for the same control.
     daemon.events.clear();
     daemon.send(serde_json::json!({"cmd": "bind", "player": 1, "control": "b", "add": true}));
     daemon
@@ -3006,8 +2928,6 @@ fn a_held_space_bar_seats_the_keyboard_and_is_never_grabbed() {
         node.display()
     );
 
-    // Let go half way: a fill that stops is reported as stopping, and claims
-    // nothing.
     daemon.events.clear();
     key(&mut keyboard, KeyCode::KEY_SPACE.0, 1);
     daemon.pump(0.6);
@@ -3033,7 +2953,6 @@ fn a_held_space_bar_seats_the_keyboard_and_is_never_grabbed() {
     );
     assert!(daemon.last("claim").is_none(), "a half hold took a seat");
 
-    // Hold it the whole way: a claim and a state, as `seat_keyboard` sends.
     daemon.events.clear();
     key(&mut keyboard, KeyCode::KEY_SPACE.0, 1);
     let claim = daemon
@@ -3047,7 +2966,6 @@ fn a_held_space_bar_seats_the_keyboard_and_is_never_grabbed() {
     assert_eq!(state["players"][0]["player"], 1, "{state}");
     assert_eq!(state["players"][0]["mouse"], true, "{state}");
 
-    // Not twice: holding again with the keyboard seated fills nothing.
     daemon.events.clear();
     key(&mut keyboard, KeyCode::KEY_SPACE.0, 0);
     daemon.pump(0.3);
@@ -3080,11 +2998,8 @@ fn percentile(sorted: &[f64], fraction: f64) -> f64 {
     sorted[at]
 }
 
-/// A seated player's presses, timed from the source pad's write to the clone's
-/// read, while three more people hold to join and claim. GOTG measures the same
-/// thing on its cluster; a frame is 16.7ms. A measurement, not a promise, so it
-/// is ignored by default and prints rather than asserts -- this machine's load
-/// is not danstick's contract.
+/// A seated player's presses, timed from write to clone read while three more join; a
+/// measurement, not a promise, so it is ignored and prints.
 ///
 ///     cargo test -p danstick-rs --test daemon_journey -- --ignored --nocapture seated_player
 #[test]
@@ -3161,8 +3076,7 @@ fn a_seated_players_presses_while_others_hold_to_join() {
             }
             std::hint::spin_loop();
         }
-        // A press that never arrived is the worst case, not a missing one:
-        // counted at the deadline so the tail cannot hide it.
+        // A press that never arrived counts as the deadline, the worst case, not a missing one.
         let ms = seen.unwrap_or(200.0);
         if seen.is_none() {
             lost += 1;
@@ -3204,9 +3118,6 @@ fn a_seated_players_presses_while_others_hold_to_join() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
-/// A press made while another pad's claim is being handled is kept: the pad
-/// is already being watched, and closing its descriptor to rebuild the list
-/// threw away a button that then stayed down and sent no new edge.
 #[test]
 fn a_press_made_while_a_claim_is_handled_still_takes_a_seat() {
     if !uinput_writable() {
@@ -3225,8 +3136,7 @@ fn a_press_made_while_a_claim_is_handled_still_takes_a_seat() {
     daemon.send(serde_json::json!({"cmd": "seating", "open": true, "players": 4, "hold": 0.5}));
     daemon.pump(0.5);
 
-    // The third pad claims; the fourth goes down the moment that is announced,
-    // while the claim's own work is still running, and never lets go.
+    // The fourth presses the moment the third's claim is announced, while it is still handled.
     daemon.events.clear();
     pads[2].emit(EventType::KEY.0, FIRST_KEY, 1);
     daemon
@@ -3244,9 +3154,8 @@ fn a_press_made_while_a_claim_is_handled_still_takes_a_seat() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
-/// A seat's `state` goes out before its files are written, so how full the room
-/// is does not decide how soon a front-end sees somebody sit down. The
-/// `controller` `added` announcement, which carries the written files, follows.
+/// A seat's `state` goes out before its files are written, however full the room, and the
+/// `controller` `added` announcement follows with them.
 #[test]
 fn a_seats_state_comes_before_its_files_however_full_the_room() {
     if !uinput_writable() {
@@ -3363,7 +3272,6 @@ fn switching_identity_keeps_every_seat() {
         "an unknown identity was taken"
     );
 
-    // And back again, still seated.
     daemon.send(serde_json::json!({"cmd": "identity", "mode": "mirror"}));
     let state = daemon
         .wait_for("state", |e| e["identity"] == "mirror", 8.0)
@@ -3471,10 +3379,8 @@ fn exec_reserves_the_seats_a_launch_wants_and_gives_them_back() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
-/// Four pads held one after another, each the moment the one before it is
-/// seated, timed from the end of each hold to its `claim`. GOTG measures the
-/// same on its cluster and wants the median under 150ms. A measurement, not a
-/// promise, so it is ignored and prints.
+/// Four pads held one after another, timed from the end of each hold to its `claim`; a
+/// measurement, not a promise, so it is ignored and prints.
 ///
 ///     tools/cluster-test -p danstick-rs --test daemon_journey -- --ignored --nocapture claims_land
 #[test]
@@ -3583,9 +3489,7 @@ fn standing(state: &Value) -> std::collections::BTreeMap<u64, String> {
         .unwrap_or_default()
 }
 
-/// Under `DANSTICK_SLOTS=fixed` four 360 clones, each its own GUID, stand
-/// before anybody holds a button. A hold drives slot 1's clone where it
-/// already was; leaving keeps it there, quiet, and the next hold takes it.
+/// Under `DANSTICK_SLOTS=fixed`, four 360 clones stand before anybody holds a button.
 #[test]
 fn fixed_slots_stand_before_anybody_and_outlive_their_players() {
     if !uinput_writable() {

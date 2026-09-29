@@ -1,4 +1,4 @@
-//! Pump events between physical pads and their clones (presses source->clone, force feedback reverse).
+//! Pump events between physical pads and their clones (presses forward, force feedback back).
 
 use std::io::ErrorKind;
 use std::time::Instant;
@@ -78,8 +78,7 @@ impl Republisher {
         }
     }
 
-    /// Take on one more pad, returning its index. Appended so that every index
-    /// already handed to the reactor still means the pad it meant.
+    /// Take on one more pad, returning its index; earlier indices still mean the same pad.
     pub fn add(&mut self, pad: VirtualPad) -> usize {
         self.pads.push(pad);
         self.held_back.push(false);

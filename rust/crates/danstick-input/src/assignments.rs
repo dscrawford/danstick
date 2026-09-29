@@ -30,7 +30,6 @@ pub enum AssignmentsError {
     Parse(PathBuf, #[source] serde_json::Error),
 }
 
-/// A missing file is an empty order, not an error.
 /// The keyboard's seat is saved beside the pads' with this in place of a node.
 pub const KEYBOARD_PATH: &str = "keyboard";
 
@@ -87,7 +86,6 @@ pub fn resolve<'a>(
     let mut missing = Vec::new();
     let mut taken: Vec<&Path> = Vec::new();
 
-    // The keyboard is a seat, not a pad: nothing to find and nothing missing.
     for assignment in assignments.iter().filter(|a| !is_keyboard(a)) {
         if let Some(pad) = pads.iter().find(|pad| pad.path == assignment.path) {
             taken.push(pad.path.as_path());
@@ -97,7 +95,6 @@ pub fn resolve<'a>(
         }
     }
 
-    // Then by identity, for a wireless pad that woke on a new node -- but only when the match is unique, or somebody else's controller would be handed a seat.
     let mut still_missing = Vec::new();
     for assignment in missing {
         let mut candidates = pads.iter().filter(|pad| {

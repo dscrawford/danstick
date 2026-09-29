@@ -167,12 +167,7 @@ fn index_of(entry: &Value) -> Option<u32> {
         .and_then(|number| number.parse().ok())
 }
 
-/// Merge danstick entries, keeping other controllers (match by player_index).
-///
-/// The keyboard is kept too, moved to the first port nobody holds: Ryujinx
-/// seeds one on Player1, which is where danstick's first pad goes. The user's
-/// own keyboard entry is the one moved when there is one, so their keys
-/// survive; otherwise Ryujinx's defaults are written. One keyboard only.
+/// Merge danstick entries, keeping other controllers and moving the keyboard to a free port.
 pub fn merge(existing: &Value, ours: Vec<Value>, seat: Option<u32>) -> Value {
     let taken: Vec<&Value> = ours
         .iter()

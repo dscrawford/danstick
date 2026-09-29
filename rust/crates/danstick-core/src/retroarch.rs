@@ -328,7 +328,6 @@ pub fn launch_config(
 }
 
 /// RetroArch's own keyboard defaults for one player, as suffix-less binds.
-/// From `config.def.keybinds.h`; only player 1 has them compiled in.
 pub const KEYBOARD_DEFAULTS: [(&str, &str); 12] = [
     ("b", "z"),
     ("y", "a"),
@@ -344,20 +343,13 @@ pub const KEYBOARD_DEFAULTS: [(&str, &str); 12] = [
     ("r", "w"),
 ];
 
-/// The desk's mouse: first in udev's pointer list, and RetroArch's own
-/// default for player 1.
+/// The desk's mouse: first in udev's pointer list, and RetroArch's own default for player 1.
 pub const DESK_MOUSE: u32 = 0;
 
-/// The first mouse index RetroArch has no device for: `udev_get_mouse` reads
-/// `pointers[index]` only while `index < MAX_INPUT_DEVICES` (16), else leaves
-/// `dev_index` at -1 -- a cfg's only way to say a port has no mouse.
+/// The first mouse index RetroArch has no device for, a cfg's only way to say a port has none.
 pub const NO_MOUSE: u32 = 16;
 
-/// Which mouse each port reads: the desk's for the keyboard's seat, none
-/// elsewhere. RetroArch seeds `input_mouse_index[i] = i`, so player 1 holds
-/// the desk's mouse whoever sits there; every port is written rather than
-/// only the ones that differ, because `--appendconfig` merges into a live
-/// config that may still carry a stale index from an earlier session.
+/// Which mouse each port reads: the desk's for the keyboard's seat, none elsewhere.
 pub fn mouse_config(keyboard: Option<u32>) -> Vec<String> {
     let mut lines = vec![
         String::new(),
@@ -377,14 +369,7 @@ pub fn mouse_config(keyboard: Option<u32>) -> Vec<String> {
     lines
 }
 
-/// The keyboard's binds for the first port no managed pad holds, and the
-/// mouse that sits beside it.
-///
-/// RetroArch compiles the keyboard into player 1 only, independent of
-/// whatever pad also binds that port, so a pad seated there needs the
-/// keyboard's defaults nulled and rewritten on the port it moved to. The
-/// mouse indices are written either way: the keys' defaults agree with
-/// danstick when the keyboard is player 1 and the mice's do not.
+/// The keyboard's binds for the first port no managed pad holds, and the mouse beside it.
 pub fn keyboard_config(managed: &[u32], seat: Option<u32>) -> String {
     let free = crate::keyboard::port(seat, managed, MAX_PLAYERS);
     if free == Some(1) {

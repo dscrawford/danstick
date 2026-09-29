@@ -14,7 +14,7 @@ const VID: u16 = 0x045E;
 const PID: u16 = 0x028E;
 
 fn uinput_available() -> bool {
-    // Writable, not merely present: in a Nix build /dev/uinput may exist and.
+    // Writable, not merely present: a Nix build sandbox may have the node but not the permission.
     std::fs::OpenOptions::new()
         .write(true)
         .open("/dev/uinput")
@@ -121,7 +121,7 @@ fn a_spawned_pad_is_discovered_with_the_identity_it_declared() {
     assert_eq!(found.name, NAME);
     assert_eq!((found.vid, found.pid), (VID, PID));
     assert!(!found.event().is_empty());
-    // It is a real pad, not one of danstick's own clones -- which discover().
+    // A real pad, not danstick's own clone, which discover() already excludes.
     assert!(!pad::is_danstick_clone(&found.name, &found.phys));
 }
 
@@ -177,7 +177,7 @@ fn a_press_on_the_source_arrives_on_the_clone() {
     let found = find(&mut source).expect("discover");
     let mut republisher = republish::Republisher::new(vec![clone_of(&found, 1)]);
 
-    // Drain whatever the kernel queued while the clone was being built, so.
+    // Drain whatever the kernel queued while the clone was built, so the count below starts clean.
     let _ = republisher.forward(0);
 
     source
@@ -265,7 +265,7 @@ fn discovery_survives_a_machine_with_no_pads_at_all() {
 
 #[test]
 fn undriven_controllers_are_included_by_default_but_never_for_retroarch() {
-    // `Filter`'s Default is written out rather than derived because one field.
+    // Filter's Default is written out because include_undriven defaults true, not false.
     let default = pad::Filter::default();
     assert!(!default.include_virtual);
     assert!(!default.retroarch_only);
@@ -274,7 +274,7 @@ fn undriven_controllers_are_included_by_default_but_never_for_retroarch() {
         "a controller danstick drives itself must be findable without an env var"
     );
 
-    // RetroArch cannot see a device with no evdev node, and counting one would.
+    // RetroArch cannot see a device with no evdev node, so retroarch_only must still exclude it.
     let filtered = pad::discover(pad::Filter {
         include_virtual: false,
         retroarch_only: true,
@@ -708,7 +708,7 @@ fn an_imu_that_vanishes_is_reported_gone_not_an_error() {
     assert!(gone, "the sensor never noticed its device had gone");
 }
 
-/// A clone of `found` built with `tuning`, and its own node opened for.
+/// A clone of `found` built with `tuning`, and its own node reopened for reading.
 fn tuned_clone_of(
     found: &pad::Pad,
     tuning: danstick_core::tuning::Tuning,
@@ -1074,8 +1074,7 @@ fn a_reserved_seat_is_a_pad_in_the_360_layout_with_a_node_of_its_own() {
     needs_uinput!();
     let mut device = clone::reserve(3, clone::Identity::XBOX360).expect("a seat can be published");
     let node = clone::node_of(&mut device).expect("udev makes it a node");
-    // udev applies the ACL a moment after making the node; a launch opens it
-    // well after that, so waiting here is the test catching up, not a promise.
+    // udev's ACL lags the node by a moment; this loop is the test catching up, not a promise.
     let mut opened = None;
     for _ in 0..40 {
         match Device::open(&node) {
@@ -1106,8 +1105,7 @@ fn a_reserved_seat_is_a_pad_in_the_360_layout_with_a_node_of_its_own() {
 #[test]
 fn a_claim_that_cannot_open_its_pad_leaves_the_reserved_seat_alone() {
     needs_uinput!();
-    // The device a launch is bound to must outlive a failed claim: nothing can
-    // put a replacement inside a sandbox that has already started.
+    // The device a launch is bound to must outlive a failed claim, or nothing can replace it.
     let mut reserved =
         Some(clone::reserve(2, clone::Identity::XBOX360).expect("a seat can be published"));
     let missing = pad::Pad {

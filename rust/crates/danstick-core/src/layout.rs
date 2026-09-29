@@ -176,10 +176,7 @@ fn face_letter(label: &str) -> Option<&str> {
         .filter(|word| word.len() == 1 && word.chars().all(|c| c.is_ascii_uppercase()))
 }
 
-/// Where each of `layout_id`'s face buttons goes on a 360 pad when its label
-/// is kept rather than its position: the button labelled A to the 360's A.
-/// Only controls that move are listed, and a layout whose labels are not
-/// all the 360's letters (symbols, a C button) lists none and keeps position.
+/// Where each of `layout_id`'s face buttons goes on a 360 pad when its label is kept.
 pub fn label_faces(layout_id: &str) -> BTreeMap<Control, Control> {
     let letters = |layout: &Layout| -> Option<BTreeMap<Control, String>> {
         layout
@@ -259,7 +256,6 @@ mod tests {
 
     #[test]
     fn a_layout_labelled_as_the_360_or_otherwise_keeps_position() {
-        // GameCube's letters sit where the 360's do; the rest are not the 360's letters.
         for id in [
             "generic", "gamecube", "n64", "ps2", "arcade", "genesis", "nothing",
         ] {

@@ -1,12 +1,4 @@
-//! A clone that looks like a wired Xbox 360 pad: the identity, the layout the
-//! `xpad` driver gives it, and the translation of a source's inputs onto it.
-//!
-//! Every SDL since 2.0 maps `030000005e0400008e02000010010000` out of the box,
-//! draws Xbox prompts for it, and never needs a mapping handed to it. Steam
-//! Input publishes exactly this for every game it launches. A source's inputs
-//! are translated onto the layout through the profile danstick already has for
-//! it -- control to source binding -- the way the SDL mapping string is; a
-//! control the source lacks is simply never pressed.
+//! A clone that looks like a wired Xbox 360 pad, translating a source's inputs onto it.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -24,8 +16,8 @@ pub const BUS_USB: u16 = 0x03;
 pub const KEYS: [u16; 11] = [
     0x130, // BTN_A     (south)
     0x131, // BTN_B     (east)
-    0x133, // BTN_X     (west) -- the kernel also calls this BTN_NORTH; xpad sends it for X
-    0x134, // BTN_Y     (north) -- and this, BTN_WEST, for Y
+    0x133, // BTN_X (west); xpad sends it for X, though the kernel also calls it BTN_NORTH
+    0x134, // BTN_Y (north); xpad sends it, BTN_WEST, for Y
     0x136, // BTN_TL
     0x137, // BTN_TR
     0x13A, // BTN_SELECT (back)
@@ -73,9 +65,7 @@ pub fn axis_codes() -> Vec<u16> {
     AXES.iter().map(|&(code, ..)| code).collect()
 }
 
-/// Where each control lives on the layout, in danstick's own binding terms
-/// (SDL ordinals over `KEYS`, axis ordinals skipping hats) -- so every
-/// consumer's config for the clone derives from this, not from the source.
+/// Where each control lives on the layout, in danstick's own binding terms.
 pub fn bindings() -> BTreeMap<Control, Binding> {
     let mut out = BTreeMap::new();
     let button =
@@ -172,8 +162,7 @@ fn pulled(value: i32) -> bool {
     i64::from(value) * 2 >= i64::from(TRIGGER_MAX)
 }
 
-/// What `out` says: a button or trigger down or up, a d-pad direction, or a
-/// stick's axis. A hat's centre says both of its directions are up.
+/// What `out` says: a button or trigger down or up, a d-pad direction, or a stick's axis.
 pub fn heard(out: Out) -> Vec<Heard> {
     let control = |name: &'static str, down: bool| Heard::Control { name, down };
     match (out.kind, out.code) {
@@ -207,8 +196,7 @@ pub fn heard(out: Out) -> Vec<Heard> {
     }
 }
 
-/// Where a source axis sits, as a fraction: -1..1 about its rest for a stick,
-/// 0..1 from its minimum for a trigger.
+/// Where a source axis sits, as a fraction: -1..1 about its rest for a stick, 0..1 for a trigger.
 fn position(span: AxisSpan, value: i32) -> f64 {
     if span.maximum <= span.minimum {
         return 0.0;
@@ -265,9 +253,8 @@ pub struct Translator {
 }
 
 impl Translator {
-    /// `keys` and `spans` describe the source; `bindings` is its stored capture,
-    /// or empty for a pad that follows the kernel's gamepad convention, which
-    /// is then carried across by code.
+    /// `keys` and `spans` describe the source; `bindings` is its stored capture, or empty
+    /// for a pad on the kernel's own convention, carried across by code.
     pub fn new(
         keys: &[u16],
         spans: &BTreeMap<u16, AxisSpan>,
@@ -291,8 +278,7 @@ impl Translator {
             last: BTreeMap::new(),
         };
         if bindings.is_empty() {
-            // The kernel's convention is the 360's, code for code, except that
-            // xpad's X and Y are the kernel's north and west swapped.
+            // The kernel's convention is the 360's, code for code, except X and Y are swapped.
             for &code in keys {
                 let control = match code {
                     0x130 => Some(Control::A),
@@ -566,8 +552,7 @@ impl Translator {
         }
     }
 
-    /// Press, for every control in `faces`, the control it names instead: a
-    /// pad kept by label rather than position.
+    /// Press, for every control in `faces`, the control it names instead.
     pub fn relabel(&mut self, faces: &BTreeMap<Control, Control>) {
         let moved = |control: &mut Control| {
             if let Some(to) = faces.get(control) {
@@ -627,30 +612,27 @@ mod tests {
 
     /// An N64-ish pad: no standard codes, a capture that says where things are.
     fn captured() -> Translator {
-        // Keys in SDL order: 0x120 (0), 0x121 (1), 0x122 (2), 0x123 (3)
         let keys = [0x120, 0x121, 0x122, 0x123];
         let mut spans = BTreeMap::new();
         spans.insert(ABS_X, stick());
         spans.insert(ABS_Y, stick());
-        spans.insert(ABS_Z, trigger()); // ordinal 2
+        spans.insert(ABS_Z, trigger());
         let mut bindings = BTreeMap::new();
         bindings.insert(Control::A, Binding::button(0));
         bindings.insert(Control::B, Binding::button(1));
-        bindings.insert(Control::RightStickUp, Binding::button(2)); // a C-button
+        bindings.insert(Control::RightStickUp, Binding::button(2));
         bindings.insert(Control::RightStickDown, Binding::button(3));
-        bindings.insert(Control::LeftTrigger, Binding::axis(2, 1)); // Z trigger on an axis
+        bindings.insert(Control::LeftTrigger, Binding::axis(2, 1));
         Translator::new(&keys, &spans, &bindings, &BTreeMap::new())
     }
 
     #[test]
     fn a_pad_kept_by_label_presses_the_button_its_label_names() {
-        // A pad on the kernel's convention: the bottom button is BTN_SOUTH.
         let keys = [0x130, 0x131, 0x133, 0x134];
         let mut t = Translator::new(&keys, &BTreeMap::new(), &BTreeMap::new(), &BTreeMap::new());
         let bottom = t.translate(EV_KEY, 0x130, 1);
         t.translate(EV_KEY, 0x130, 0);
         t.relabel(&crate::layout::label_faces("switch"));
-        // Nintendo's A is on the right; kept by label it is the 360's A.
         let right = t.translate(EV_KEY, 0x131, 1);
         assert_eq!(
             right, bottom,
@@ -665,8 +647,6 @@ mod tests {
 
     #[test]
     fn a_left_stick_bound_to_buttons_is_not_fought_by_the_carried_axis() {
-        // A pad whose stick reports as four keys: the source still declares
-        // ABS_X/ABS_Y, and both must not drive the clone's stick at once.
         let keys = [0x120, 0x121, 0x122, 0x123];
         let mut spans = BTreeMap::new();
         spans.insert(ABS_X, stick());
@@ -678,7 +658,6 @@ mod tests {
         bindings.insert(Control::LeftStickRight, Binding::button(3));
         let mut t = Translator::new(&keys, &spans, &bindings, &BTreeMap::new());
 
-        // Holding up drives the clone's stick to the top.
         assert_eq!(
             t.translate(EV_KEY, 0x120, 1),
             vec![Out {
@@ -687,8 +666,6 @@ mod tests {
                 value: -STICK_MAX
             }]
         );
-        // The source's own ABS_Y is not what the capture named, so it must not
-        // reach the clone and undo the press still being held.
         assert_eq!(
             t.translate(EV_ABS, ABS_Y, 128),
             Vec::new(),
@@ -698,8 +675,6 @@ mod tests {
 
     #[test]
     fn a_stick_captured_onto_other_axes_is_the_only_thing_driving_the_clones() {
-        // An adapter that puts the stick on ABS_RX/ABS_RY: the clone's left
-        // stick must come from there, not from the source's own ABS_X/ABS_Y.
         let mut spans = BTreeMap::new();
         spans.insert(ABS_X, stick());
         spans.insert(ABS_Y, stick());
@@ -884,8 +859,7 @@ mod tests {
         spans.insert(ABS_HAT0X, AxisSpan::new(-1, 1, 0));
         spans.insert(ABS_HAT0Y, AxisSpan::new(-1, 1, 0));
         let mut t = Translator::new(&keys, &spans, &BTreeMap::new(), &BTreeMap::new());
-        // The kernel's BTN_NORTH (0x133) is danstick's Y; xpad sends 0x133 for X. So Y
-        // on a standard pad comes out as xpad's Y, which is 0x134.
+        // xpad sends 0x133 for X, so danstick's Y (kernel BTN_NORTH) comes out as 0x134.
         assert_eq!(
             t.translate(EV_KEY, 0x133, 1),
             vec![Out {

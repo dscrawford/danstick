@@ -307,7 +307,6 @@ fn the_shadowed_axis_rule_drops_the_same_lines() {
 
 #[test]
 fn every_recorded_axis_reading_rescales_to_the_same_count() {
-    // Swept, not sampled: a one-count disagreement at one value reads as a stick that drifts.
     let cases = corpus("calibration");
     let mut checked = 0usize;
     for case in &cases {
@@ -532,7 +531,6 @@ fn every_controller_name_gets_the_same_icon_as_the_python() {
 
 #[test]
 fn the_udev_rules_match_the_python_rule_for_rule() {
-    // The rules, not the file: udev ignores comments and blank lines, and the headers differ deliberately.
     fn effective(rules: &str) -> Vec<&str> {
         rules
             .lines()

@@ -86,7 +86,6 @@ fn a_player_with_no_mappings_says_so_rather_than_omitting_them() {
     };
     let value = serde_json::to_value(&player).expect("serialises");
     assert_eq!(value["mappings"], json!([]));
-    // `configured` means mapped, not merely known: calibration writes a profile too.
     assert_eq!(value["configured"], false);
 }
 

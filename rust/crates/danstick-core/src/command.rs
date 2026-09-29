@@ -74,7 +74,7 @@ pub enum Command {
         icon: String,
     },
     Status,
-    /// Listen for an unseated controller taking a free seat, with no session open and nothing grabbed.
+    /// Listen for an unseated controller taking a free seat, nothing grabbed.
     Seating {
         open: bool,
         /// How many seats exist.
@@ -82,17 +82,17 @@ pub enum Command {
         /// How long a hold must run to claim one; omitted leaves it as it was.
         hold: Option<f64>,
     },
-    /// Set what a misbehaving controller needs: a deadzone, a debounce, an axis or button to ignore.
+    /// Set what a misbehaving controller needs: a deadzone, debounce, or an axis/button to ignore.
     Tune {
         player: i64,
         signature: String,
         request: crate::tuning::Request,
     },
-    /// Drop a seat (player 0: every seat), stop its clone, ungrab its pad; seating stays as it was.
+    /// Drop a seat (player 0: every seat), stop its clone, ungrab its pad.
     Unseat {
         player: i64,
     },
-    /// Seat the keyboard as the next player: no device, no clone, just every emulator's keyboard on that port.
+    /// Seat the keyboard as the next player: no device, no clone.
     SeatKeyboard,
     /// Capture the next press onto one control: replacing its binding, or with `add`, beside it.
     Bind {
@@ -102,8 +102,7 @@ pub enum Command {
         add: bool,
         strict: bool,
     },
-    /// Publish a clone per seat a launch allows, so the seats exist before the
-    /// people do and a game bound to them can be joined mid-play.
+    /// Publish a clone per seat a launch allows, so the seats exist before the people do.
     Reserve {
         players: i64,
     },
@@ -111,15 +110,13 @@ pub enum Command {
     Identity {
         mode: String,
     },
-    /// What is being played, so each clone is built from that scope's walk;
-    /// a lease lasts as long as the connection that took it.
+    /// What is being played, so each clone is built from that scope's walk.
     Scope {
         console: String,
         game: String,
         lease: bool,
     },
-    /// A menu holds one player's pad from its clone and hears it as controls,
-    /// for as long as the connection that opened it.
+    /// A menu holds one player's pad from its clone and hears it as controls.
     Focus {
         player: i64,
         open: bool,
@@ -136,8 +133,7 @@ pub enum Command {
         open: bool,
         scope: String,
     },
-    /// Whether the game hears one seat: off puts its clone at rest until on, or
-    /// until the connection that switched it off goes.
+    /// Whether the game hears one seat: off puts its clone at rest until on.
     Port {
         player: i64,
         open: bool,
@@ -262,8 +258,6 @@ impl Command {
                     Some(_) => return Err(Refused::NotANumber { field: "open" }),
                 },
                 players: number("players", 4)?,
-                // Never refused: a comfort setting is not worth failing to open
-                // seating over, so a length nobody can read is the default.
                 hold: message
                     .get("hold")
                     .filter(|value| !value.is_null())

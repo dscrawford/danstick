@@ -11,7 +11,7 @@ impl Fields {
         Fields(Vec::new())
     }
 
-    /// Set a field, keeping its original position if it is already present -- exactly what `dict.__setitem__` and `dict.update` do.
+    /// Set a field, keeping its original position if already present, like `dict.__setitem__`.
     pub fn insert(&mut self, field: impl Into<String>, target: impl Into<String>) {
         let field = field.into();
         let target = target.into();

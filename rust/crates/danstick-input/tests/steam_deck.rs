@@ -1,10 +1,4 @@
 //! A Steam Deck's built-in controls, checked against SDL's own answer for them.
-//!
-//! The fixture in `fakepad` is a live recording; SDL's built-in database has an
-//! entry for the same device, computed by people with the hardware. Holding the
-//! two against each other says more than either alone: where they agree, the
-//! recording is right, and where they disagree, the disagreement is danstick's
-//! and is named here rather than discovered on a Deck.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::OnceLock;
@@ -71,7 +65,6 @@ const BEYOND_DANSTICKS_VOCABULARY: [&str; 6] = [
 fn sdl_knows_this_exact_device_so_the_fixture_is_checkable() {
     let fields = sdl_deck();
     assert!(!fields.is_empty());
-    // Every button SDL names must exist on the fixture at that index.
     assert_eq!(fields.get("a").map(String::as_str), Some("b3"));
     assert_eq!(fields.get("b").map(String::as_str), Some("b4"));
 }
@@ -92,7 +85,6 @@ fn danstick_and_sdl_agree_about_a_deck_except_where_this_test_says_they_do_not()
         "danstick's guess drifted from SDL somewhere new"
     );
 
-    // Everything danstick did not bind is a control it has no word for.
     let unbound: BTreeSet<&str> = theirs
         .keys()
         .filter(|name| !ours.contains_key(*name) && *name != NOT_A_CONTROL)
@@ -110,8 +102,7 @@ fn danstick_and_sdl_agree_about_a_deck_except_where_this_test_says_they_do_not()
 fn a_decks_x_and_y_land_on_each_others_buttons() {
     let ours = guessed(&STEAM_DECK);
     let theirs = sdl_deck();
-    // hid-steam writes BTN_X for the west button, and BTN_X is BTN_NORTH, so
-    // danstick's positional reading of the codes comes out the wrong way round.
+    // hid-steam writes BTN_X for the west button, and BTN_X is BTN_NORTH.
     assert_eq!(theirs.get("x").map(String::as_str), Some("b5"));
     assert_eq!(theirs.get("y").map(String::as_str), Some("b6"));
     assert_eq!(ours.get("x").map(String::as_str), Some("b6"));
@@ -169,8 +160,7 @@ fn a_decks_dpad_comes_from_its_keys_and_never_from_the_trackpad_under_it() {
 fn a_decks_triggers_are_digital_because_sdls_analogue_answer_sits_on_hat_codes() {
     let ours = guessed(&STEAM_DECK);
     let theirs = sdl_deck();
-    // SDL counts ABS_HAT2X/Y among the axes; danstick's axis numbering excludes
-    // 0x10..0x18 outright, so it can only offer BTN_TL2/BTN_TR2.
+    // SDL counts ABS_HAT2X/Y among the axes; danstick's numbering excludes 0x10..0x18 outright.
     assert_eq!(theirs.get("lefttrigger").map(String::as_str), Some("a9"));
     assert_eq!(theirs.get("righttrigger").map(String::as_str), Some("a8"));
     assert_eq!(ours.get("lefttrigger").map(String::as_str), Some("b9"));

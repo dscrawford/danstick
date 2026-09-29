@@ -152,7 +152,7 @@ fn writing_a_launch_keeps_the_same_few_in_the_same_order() {
 
 #[test]
 fn the_build_id_falls_back_to_the_newest_mtime() {
-    // Not corpused: the Python's answer embeds an absolute path and a.
+    // Not corpused: the answer embeds an absolute path and a timing-dependent mtime.
     let temp = std::env::temp_dir().join(format!("danstick-build-id-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&temp);
     std::fs::create_dir_all(&temp).expect("temp dir");
@@ -178,7 +178,7 @@ fn the_build_id_falls_back_to_the_newest_mtime() {
 
 #[test]
 fn a_store_path_wins_over_any_mtime() {
-    // DANSTICK_BUILD_ID is what the Nix wrapper sets, and it is the whole point:.
+    // DANSTICK_BUILD_ID is what the Nix wrapper sets; overriding it is the whole point.
     let missing = PathBuf::from("/nonexistent-danstick-build-id");
     match std::env::var("DANSTICK_BUILD_ID") {
         Ok(store) if !store.is_empty() => {
@@ -190,7 +190,7 @@ fn a_store_path_wins_over_any_mtime() {
 
 #[test]
 fn a_non_string_field_is_dropped_rather_than_rendered() {
-    // A decision, not a translation, and the one divergence this port.
+    // A decision, not a translation: the one place this port diverges from Python.
     let cases = [
         (r#"{"key": "a", "title": null}"#, "", ""),
         (r#"{"key": "a", "title": true}"#, "", ""),

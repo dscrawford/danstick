@@ -583,8 +583,6 @@ mod tests {
         assert!(!debouncer.is_holding());
     }
 
-    // --- requests ---------------------------------------------------------
-
     #[test]
     fn a_blanket_deadzone_lands_on_every_stick_and_trigger_the_pad_has() {
         let request = Request::from_json(&serde_json::json!({"deadzone": 0.2})).expect("parses");

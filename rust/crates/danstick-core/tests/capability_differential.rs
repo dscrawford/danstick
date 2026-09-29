@@ -19,7 +19,6 @@ fn mask(text: &str) -> Mask {
 #[test]
 fn every_bitmap_parses_to_the_same_bits() {
     for case in corpus("capability_masks") {
-        // A null `raw` is "the file was not there".
         let raw = case["raw"].as_str();
         let parsed = raw.and_then(Mask::parse);
         assert_eq!(
@@ -63,7 +62,6 @@ fn a_mask_of_zero_is_not_a_mask_that_could_not_be_read() {
 
 #[test]
 fn the_words_are_most_significant_first() {
-    // "1 0" is bit 64, not bit 0.
     assert!(mask("1 0").bit(64));
     assert!(!mask("1 0").bit(0));
     assert!(mask("0 1").bit(0));

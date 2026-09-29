@@ -510,7 +510,7 @@ fn an_axis_ra_index_wins_over_the_sdl_one() {
 
 #[test]
 fn an_axis_is_never_refused_for_a_negative_ra_index_the_way_a_button_is() {
-    // Deliberate, and worth pinning because it looks like an oversight: the.
+    // Deliberate: the negative-index guard is about evdev key codes, which an axis has none of.
     let binding = Binding::axis(3, -1).with_ra_index(Some(RA_INVISIBLE));
     assert!(binding.retroarch_visible());
     assert_eq!(binding.retroarch().expect("retroarch"), "--1");

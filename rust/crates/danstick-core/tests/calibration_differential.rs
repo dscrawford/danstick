@@ -93,7 +93,6 @@ fn a_sweep_inside_the_dead_band_is_not_a_measurement() {
 
 #[test]
 fn a_direction_that_never_moved_falls_back_to_the_declared_range() {
-    // Pinning it to centre gives `apply` a zero span and kills that direction outright.
     let cal = unmeasured(0, -32768, 32767, 128);
     let none = cal.merge_reach(None);
     assert_eq!((none.reach_min, none.reach_max), (None, None));

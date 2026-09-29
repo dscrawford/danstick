@@ -1,10 +1,5 @@
-//! A second input on one control: when the pad is mirrored, the clone still
-//! has one button for that control, so a press on the second input comes out
-//! as the first, and the control is down while either is.
-//!
-//! Everything downstream keeps its single binding -- the SDL line, every
-//! emulator's config -- because the virtual pad still has one button. This is
-//! the second `if` in the loop that reads the pad and writes the clone.
+//! A second input on one control: a press on either comes out as the first, and the
+//! control is down while either is.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -258,7 +253,7 @@ impl Twins {
 mod tests {
     use super::*;
 
-    /// A pad where R (0x137, SDL ordinal 5) also answers to the right trigger axis (ABS_RZ, ordinal 5).
+    /// A pad where R also answers to the right trigger axis.
     fn twins() -> Twins {
         let keys = [0x130, 0x131, 0x133, 0x134, 0x136, 0x137];
         let mut spans = BTreeMap::new();
@@ -316,7 +311,6 @@ mod tests {
         let mut t = twins();
         t.translate(EV_KEY, 0x137, 1);
         t.translate(EV_ABS, 0x05, 255);
-        // Letting go of the bumper while the trigger is held: R stays down.
         assert!(
             t.translate(EV_KEY, 0x137, 0).is_empty(),
             "no release while the twin holds it"

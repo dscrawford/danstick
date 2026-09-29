@@ -23,7 +23,7 @@ fn the_ioctl_opcode_is_the_one_the_kernel_expects() {
 #[test]
 #[should_panic(expected = "out of range")]
 fn a_length_that_would_run_into_the_direction_bits_is_refused() {
-    // 0x4000 overflows the fourteen-bit size field into bit 30, which is.
+    // 0x4000 overflows the size field into bit 30, one of the direction bits.
     let _ = triton::hidiocsfeature(0x4000);
 }
 
@@ -221,7 +221,7 @@ fn only_valve_ids_on_a_hidraw_node_are_ours() {
 
 #[test]
 fn scanning_a_real_machine_does_not_fail() {
-    // Whatever is attached, this must answer rather than raise: it runs from.
+    // Whatever is attached, this must answer rather than raise: CI has no pad attached.
     let all = triton::slots(false);
     let live = triton::slots(true);
     assert!(live.len() <= all.len(), "a live slot is one of the slots");
@@ -229,7 +229,7 @@ fn scanning_a_real_machine_does_not_fail() {
         assert!(triton::owns(pad), "{} is not ours", pad.path.display());
         assert!(!pad.retroarch_visible, "nothing else can see a hidraw pad");
     }
-    // Two slots of one receiver must be distinguishable, or assignment cannot.
+    // Two slots of one receiver must be distinguishable, or assignment cannot tell them apart.
     let mut uniqs: Vec<&String> = all.iter().map(|pad| &pad.uniq).collect();
     uniqs.sort();
     uniqs.dedup();
@@ -260,7 +260,7 @@ impl FakeHidraw {
         unlockpt(&master).ok()?;
         let name = ptsname(&master, Vec::new()).ok()?;
         let mut attrs = tcgetattr(&master).ok()?;
-        // Not an optimisation: a cooked tty line-buffers on \n and swallows.
+        // Not an optimisation: a cooked tty line-buffers on \n and can swallow binary data.
         attrs.make_raw();
         tcsetattr(&master, OptionalActions::Now, &attrs).ok()?;
         Some(FakeHidraw {
@@ -381,7 +381,7 @@ fn releasing_becomes_a_key_up() {
 
 #[test]
 fn a_disconnect_lifts_held_buttons_in_the_same_frame() {
-    // A version that queued these for the next call would pass every other.
+    // A version that queued these releases for later would still pass every other test.
     let mut fake = needs_pty!();
     let mut source = triton::Source::open(fake.slave.as_path()).expect("open");
     fake.push(REPORT_STATE, &state(BIT_A | BIT_B, 0, 0, 0, 0, 0, 0));
@@ -464,7 +464,7 @@ fn a_press_on_a_puck_claims_a_seat() {
     let mut fake = needs_pty!();
     let mut source = triton::Source::open(&fake.slave).expect("open the pty as a source");
 
-    // Nothing held: the resting report must claim nothing, or a pad sitting on.
+    // Nothing held: the resting report must claim nothing, or an unattended pad claims a seat.
     fake.push(REPORT_STATE, &state(0, 0, 0, 0, 0, 0, 0));
     let mut assigner = Assigner::default();
     let mut now = 0.0;
@@ -489,7 +489,7 @@ fn a_press_on_a_puck_claims_a_seat() {
     for event in pressed {
         assigner.feed(0, event.event_type().0, event.code(), event.value(), now);
     }
-    // Not yet: a tap must not claim.
+    // Not yet: a tap must not claim a seat.
     assert!(assigner.tick(now + HOLD_SECONDS / 2.0).claimed.is_empty());
 
     let claimed = assigner.tick(now + HOLD_SECONDS * 1.5).claimed;

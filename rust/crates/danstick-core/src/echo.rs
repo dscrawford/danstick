@@ -1,13 +1,9 @@
-//! Which Steam pad repeats whose press. Steam's pads name no source, but each
-//! presses a moment after the one it repeats, so a Steam press that follows
-//! another inside [`ECHO_SECONDS`] is that one's echo -- paired one to one,
-//! closest first, since Steam makes one pad per source.
+//! Which Steam pad repeats whose press, paired one to one, closest first.
 
 /// How long after its source Steam's pad presses, at the most.
 pub const ECHO_SECONDS: f64 = 0.05;
 
-/// How long a hold is judged afresh before its verdict stands: long enough
-/// for a press the loop read late to have been noted.
+/// How long a hold is judged afresh before its verdict stands.
 const SETTLE_SECONDS: f64 = 1.0;
 
 /// How long a press is kept to pair with: until every hold it could start has settled.
@@ -48,9 +44,7 @@ pub struct Press {
 pub enum Verdict {
     /// Nothing else pressed with it: its own controller.
     Own,
-    /// A pad Steam repeats on the watched Steam pad `steam`: the pad sits, and
-    /// Steam's copy is held with the seat if it was the only Steam press that
-    /// could have been (`sure`).
+    /// A pad Steam repeats on the watched Steam pad `steam`, held with the seat if `sure`.
     Mirrored { steam: usize, sure: bool },
     /// A Steam pad repeating danstick's own clone.
     CloneEcho { player: u32 },
@@ -60,8 +54,7 @@ pub enum Verdict {
     EchoOf { pad: usize },
     /// A pad a seated Steam pad repeats: that controller already has a seat.
     SeatedThroughSteam { player: u32 },
-    /// A Steam pad nobody's echo, pressing just after a pad that was paired
-    /// with another: it may be that pad's copy, so it presses again to sit.
+    /// A Steam pad nobody's echo, pressing just after a pad already paired with another.
     Ambiguous,
 }
 
@@ -72,8 +65,7 @@ impl Verdict {
     }
 }
 
-/// Recent presses on every node that could be a Steam pad's source or a Steam
-/// pad, and the verdicts that have settled.
+/// Recent presses on every node that could be a Steam pad's source or a Steam pad.
 #[derive(Debug, Clone, Default)]
 pub struct Echoes {
     presses: Vec<Press>,
@@ -88,7 +80,7 @@ impl Echoes {
         self.presses.push(Press { origin, at });
     }
 
-    /// Carry each watched pad's presses to its new index, as [`crate::assign::Assigner::remap`] does.
+    /// Carry each watched pad's presses to its new index.
     pub fn remap(&mut self, moved: impl Fn(usize) -> Option<usize>) {
         self.presses.retain_mut(|press| match &mut press.origin {
             Origin::Watched { pad, .. } => match moved(*pad) {
@@ -198,8 +190,7 @@ impl Echoes {
     }
 }
 
-/// Each Steam press paired with the press it repeats, as indices into
-/// `presses`: closest in time first, each press used once.
+/// Each Steam press paired with the press it repeats, closest first, each used once.
 fn pairs(presses: &[Press]) -> Vec<(usize, usize)> {
     let mut candidates: Vec<(f64, usize, usize)> = Vec::new();
     for (echo, repeat) in presses.iter().enumerate() {
@@ -333,8 +324,6 @@ mod tests {
 
     #[test]
     fn somebody_on_the_deck_pressing_with_a_pad_is_neither_held_nor_a_second_seat() {
-        // The Deck's owner presses 10ms after an Xbox pad, whose own Steam copy
-        // follows at 12ms: the Xbox pad pairs with the Deck's press.
         let echoes = echoes(&[(RAW, 0.0), (DECK, 0.010), (RAWS_STEAM, 0.012)]);
         assert_eq!(
             verdict(&echoes, 0, 0.0, 0.3),
@@ -367,8 +356,6 @@ mod tests {
 
     #[test]
     fn somebody_on_the_deck_pressing_as_a_seated_player_does_keeps_their_own_press() {
-        // Player 1 readies up: Steam repeats the pad and its clone, each on its
-        // own Steam pad; the Deck's owner presses 20ms later and is nobody's echo.
         let clone = Origin::Clone { player: 1 };
         let seated = Origin::Seated {
             player: 1,
@@ -401,8 +388,6 @@ mod tests {
             (RAWS_STEAM, 1.004),
             (others_steam, 1.005),
         ]);
-        // Two milliseconds apart, which Steam pad is whose is not knowable;
-        // either way both people sit on their own pads.
         for (pad, since) in [(0, 1.0), (4, 1.002)] {
             assert!(verdict(&echoes, pad, since, 1.3).may_claim());
         }
@@ -421,7 +406,6 @@ mod tests {
             pad: 5,
             steam: true,
         };
-        // Pad 5 is 1ms after pad 4 and 11ms after pad 0; pad 1 is 21ms after pad 0.
         let echoes = echoes(&[
             (RAW, 1.000),
             (other, 1.010),
@@ -447,8 +431,6 @@ mod tests {
 
     #[test]
     fn a_hold_is_judged_by_the_press_that_started_it() {
-        // The Steam pad's hold began on its own; a later press repeating the
-        // clone does not make the earlier one an echo.
         let echoes = echoes(&[
             (DECK, 1.0),
             (Origin::Clone { player: 1 }, 2.0),
@@ -476,7 +458,6 @@ mod tests {
             (Origin::Clone { player: 1 }, 1.0),
         ]);
         let mut echoes = echoes_before.clone();
-        // Pad 0 went; pad 1 is now pad 0.
         echoes.remap(|pad| (pad == 1).then_some(0));
         assert_eq!(
             verdict(&echoes, 0, 1.003, 1.3),
@@ -498,7 +479,6 @@ mod tests {
                 sure: true
             }]
         );
-        // A pad in front of both went: each moves down one.
         echoes.remap(|pad| Some(pad + 1));
         assert_eq!(
             echoes.judge(&[(1, 1.0)], 1.0 + SETTLE_SECONDS + 0.1),
@@ -527,7 +507,6 @@ mod tests {
     #[test]
     fn a_settled_verdict_whose_other_pad_went_is_judged_again() {
         let settle = 1.003 + SETTLE_SECONDS;
-        // The Steam pad went; the pad stays.
         let mut echoes = echoes(&[(RAW, 1.0), (RAWS_STEAM, 1.003)]);
         assert!(matches!(
             echoes.judge(&[(0, 1.0)], settle)[0],
@@ -535,7 +514,6 @@ mod tests {
         ));
         echoes.remap(|pad| (pad == 0).then_some(0));
         assert_eq!(echoes.judge(&[(0, 1.0)], settle + 0.4), [Verdict::Own]);
-        // The pad went; its Steam pad stays.
         let mut echoes = self::echoes(&[(RAW, 1.0), (RAWS_STEAM, 1.003)]);
         assert_eq!(
             echoes.judge(&[(1, 1.003)], settle),
@@ -557,14 +535,12 @@ mod tests {
 
     #[test]
     fn a_long_holds_verdict_stands_after_the_presses_behind_it_are_forgotten() {
-        // A 10s hold starting on a clone's echo must not become its own at the end.
         let mut echoes = echoes(&[(Origin::Clone { player: 1 }, 5.0), (CLONES_STEAM, 5.004)]);
         let hold = [(3, 5.004)];
         let echo = Verdict::CloneEcho { player: 1 };
         assert_eq!(echoes.judge(&hold, 5.1), [echo]);
         assert_eq!(echoes.judge(&hold, 5.004 + SETTLE_SECONDS), [echo]);
         assert_eq!(echoes.judge(&hold, 15.0), [echo], "the verdict was lost");
-        // Once the hold ends its verdict goes with it.
         assert!(echoes.judge(&[], 15.1).is_empty());
         assert_eq!(echoes.judge(&hold, 15.2), [Verdict::Own]);
     }

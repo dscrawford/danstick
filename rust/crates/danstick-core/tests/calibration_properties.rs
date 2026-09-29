@@ -1,4 +1,4 @@
-//! `AxisCalibration::apply` runs per `EV_ABS` event: it must never panic and never leave `minimum..=maximum` (a +-2^40 profile once killed the daemon mid-game).
+//! `AxisCalibration::apply` never panics and never leaves `minimum..=maximum`.
 
 use danstick_core::calibration::{AxisCalibration, EVDEV_VALUE_MAX, EVDEV_VALUE_MIN};
 use proptest::prelude::*;
@@ -72,7 +72,7 @@ fn any_calibration() -> impl Strategy<Value = AxisCalibration> {
     prop_oneof![3 => plausible_calibration(), 1 => adversarial_calibration()]
 }
 
-/// A negative `flat` is an inverted band, pinned separately; centred-at-rest properties want a real one.
+/// A non-negative `flat`, since a negative one is pinned separately.
 fn calibration_with_a_real_dead_band() -> impl Strategy<Value = AxisCalibration> {
     any_calibration().prop_map(|cal| AxisCalibration {
         flat: cal.flat.saturating_abs(),
@@ -392,7 +392,6 @@ fn a_signed_sixteen_bit_axis_centres_on_the_declared_midpoint_not_on_zero() {
 
 #[test]
 fn a_dead_band_costs_the_stick_none_of_its_travel() {
-    // Offset and span both come from the band edge, or full deflection stops `flat` counts short.
     for band in [10, 20] {
         let cal = AxisCalibration::new(128, 0, 255).with_flat(band);
         for value in 128 - band..=128 + band {
@@ -428,7 +427,6 @@ fn a_dead_band_wider_than_the_axis_flattens_every_reading_to_the_midpoint() {
 
 #[test]
 fn a_negative_dead_band_widens_the_scale_instead_of_narrowing_it() {
-    // Matches the Python: `abs(..) <= flat` is never true, so the band edges move outward from centre.
     let inverted_band = AxisCalibration::new(128, 0, 255).with_flat(-10);
     assert_eq!(
         inverted_band.apply(128),
@@ -507,7 +505,6 @@ fn the_midpoint_floors_towards_negative_infinity_across_zero() {
 
 #[test]
 fn every_range_an_i32_can_hold_is_one_evdev_can_carry() {
-    // The i32 extremes are legal __s32 values; the guard must not over-correct.
     let extremes = cal(
         0,
         i32::MIN,
@@ -535,7 +532,6 @@ fn a_calibration_round_trips_through_the_exact_python_json_keys() {
 
 #[test]
 fn an_unmeasured_reach_reads_back_as_unmeasured_rather_than_as_zero() {
-    // `Some(0)` would pin the bottom of travel to zero on every pre-reach profile.
     let raw = serde_json::json!({"center": 128, "min": 0, "max": 255});
     let parsed: AxisCalibration = serde_json::from_value(raw).expect("parse");
     assert_eq!((parsed.reach_min, parsed.reach_max), (None, None));

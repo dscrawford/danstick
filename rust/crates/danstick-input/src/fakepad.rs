@@ -172,10 +172,6 @@ pub const XBOX_360: Fixture = Fixture {
 
 /// Steam Input's virtual gamepad: what Steam publishes for an application it
 /// launches while it is handling a controller on that application's behalf.
-///
-/// One physical press arrives here and on the pad it mirrors, which is why
-/// seating pairs them (`danstick_core::echo`). It borrows xpad's name and
-/// table with a trailing index, and is only ever told apart by id.
 pub const STEAM_VIRTUAL: Fixture = Fixture {
     name: "Microsoft X-Box 360 pad 0",
     vid: 0x28DE,
@@ -280,13 +276,6 @@ pub const MAYFLASH_GAMECUBE: Fixture = Fixture {
 /// A Steam Deck's own controls, which are a pad only while Steam is not
 /// holding the hidraw node: `hid-steam` withdraws this node for any client
 /// that opens the device, and Steam is such a client.
-///
-/// It is not shaped like an Xbox pad in any of the four ways that matter.
-/// The d-pad is four keys, and `ABS_HAT0X/Y` -- where a d-pad usually lives --
-/// is the left trackpad. The triggers are `ABS_HAT2Y`/`ABS_HAT2X` of 0..32767,
-/// not `ABS_Z`/`ABS_RZ` of 0..255, which the pad does not declare at all. And
-/// X and Y arrive on each other's codes, because `hid-steam` writes `BTN_X`
-/// for the west button and `BTN_X` *is* `BTN_NORTH`.
 pub const STEAM_DECK: Fixture = Fixture {
     name: "Steam Deck",
     vid: 0x28DE,
@@ -460,7 +449,6 @@ mod tests {
                     fixture.name
                 );
             }
-            // Axes must have range and rest within that range.
             for (name, axis) in fixture.axes {
                 assert!(
                     axis.maximum > axis.minimum,
@@ -513,7 +501,6 @@ mod tests {
         assert_eq!(XBOX_360.button("y"), Some(BTN_NORTH));
         assert_eq!(STEAM_DECK.button("x"), XBOX_360.button("y"));
         assert_eq!(STEAM_DECK.button("y"), XBOX_360.button("x"));
-        // A and B are not swapped, so this is not a whole-pad rotation.
         assert_eq!(STEAM_DECK.button("a"), XBOX_360.button("a"));
         assert_eq!(STEAM_DECK.button("b"), XBOX_360.button("b"));
     }
@@ -553,8 +540,7 @@ mod tests {
 
     #[test]
     fn a_decks_grips_are_on_codes_the_headers_do_not_name() {
-        // SteamOS's hid-steam puts them at 0x224..0x227, in the gap after
-        // BTN_DPAD_RIGHT; mainline v6.16 uses BTN_TRIGGER_HAPPY1..4.
+        // SteamOS puts them at 0x224..0x227; mainline v6.16 uses BTN_TRIGGER_HAPPY1..4 instead.
         let grips: Vec<u16> = ["l4", "r4", "l5", "r5"]
             .iter()
             .map(|name| STEAM_DECK.button(name).expect("a grip"))
@@ -609,7 +595,6 @@ mod tests {
                 let codes = fixture.abs_codes();
                 assert!(codes.contains(&ABS_HAT0X), "{}", fixture.name);
                 assert!(codes.contains(&ABS_HAT0Y), "{}", fixture.name);
-                // Pad must answer to all four directions.
                 for direction in DPAD {
                     assert!(
                         fixture.controls().contains(&direction),

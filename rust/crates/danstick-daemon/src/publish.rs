@@ -30,8 +30,7 @@ pub struct PadFacts {
     pub physical_guid: Option<String>,
 }
 
-/// The 360 identity a player's clone wears under `mode`, which a reserved
-/// seat wears before it has a pad; `None` when it depends on the pad.
+/// The 360 identity a player's clone wears under `mode`, or `None` when it depends on the pad.
 pub fn xbox_identity(mode: IdentityMode, player: u32) -> Option<Identity> {
     mode.xbox_identity(player).map(|identity| Identity {
         bustype: identity.bustype,
@@ -204,8 +203,7 @@ enum Carried {
     Absent,
 }
 
-/// Mapping already on disk or in SDL's database for this GUID. SDL is never
-/// asked here: a probe is a subprocess, and this runs on the event loop.
+/// Mapping already on disk or in SDL's database for this GUID.
 fn carried(guid: Option<&str>) -> Carried {
     let Some(guid) = guid else {
         return Carried::Absent;
@@ -302,8 +300,7 @@ pub fn visible_order() -> BTreeMap<usize, String> {
 #[derive(Debug, Default, Clone)]
 pub struct Written {
     pub sdl_lines: Vec<String>,
-    /// Some seated player's mapping was guessed while SDL was still being
-    /// asked, so these files are worth writing again when it answers.
+    /// Whether some seated player's mapping was guessed while SDL was still answering.
     pub awaiting_sdl: bool,
 }
 
@@ -311,8 +308,7 @@ pub struct Written {
 #[derive(Debug, Clone)]
 struct Derived {
     from: Source,
-    /// Whether the pad's capabilities could be read; a guess made without them
-    /// is not worth keeping, since the next join would otherwise repeat it.
+    /// Whether the pad's capabilities could be read.
     sound: bool,
     /// Guessed while SDL was being asked about this pad.
     provisional: bool,
@@ -326,8 +322,7 @@ struct Derived {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Source {
     signature: String,
-    /// The stored profile as it was. A capture or a `forget` rewrites this file
-    /// and nothing else tells the daemon, not even when the CLI did it.
+    /// The stored profile as it was; nothing else tells the daemon when it changes.
     profile: Option<String>,
     identity: Identity,
     xbox: bool,
@@ -347,8 +342,7 @@ impl Cache {
     }
 }
 
-/// Work one player's files out from scratch: reading the pad's capabilities and
-/// asking SDL about its GUID, which is most of what writing them costs.
+/// Works one player's files out from scratch: capabilities and SDL's GUID lookup.
 fn derive(
     slot: &Slot,
     identity: Identity,
@@ -418,8 +412,7 @@ fn derive(
     };
     Derived {
         from,
-        // A guess made while SDL is asked is not kept: when it answers, the
-        // next write works this player out again and gets the real line.
+        // A guess made while SDL answers is not kept, so the next write redoes it.
         sound: (xbox || !facts.keys.is_empty()) && !provisional,
         provisional,
         profile,
@@ -434,8 +427,7 @@ fn derive(
 pub struct Launch<'a> {
     pub config: &'a Path,
     pub args: &'a Path,
-    /// Seats published for the launch that nobody has taken. They are written
-    /// like any other player, so a game can bind ports nobody is sitting at.
+    /// Seats published for the launch that nobody has taken.
     pub reserved: &'a [u32],
 }
 
@@ -466,8 +458,7 @@ pub fn write_all(
         .collect();
     let players: Vec<u32> = slots.iter().map(|slot| slot.player).collect();
 
-    // Under the 360 identity every consumer describes the clone's layout,
-    // which is the same for every pad, rather than the pad behind it.
+    // Under the 360 identity every consumer describes the clone's layout, not the pad's.
     let xbox = mode.is_xbox_layout();
     let scope = (console.to_owned(), game.to_owned(), context.to_owned());
     let mut previous = std::mem::take(&mut cache.players);
@@ -586,8 +577,7 @@ pub fn write_all(
         info!("{target}: not written ({why})");
     }
 
-    // A player whose pad could not be read is left out, so the next join has
-    // another go rather than keeping a mapping guessed from nothing.
+    // A player whose pad could not be read is left out, so the next join tries again.
     let awaiting_sdl = derived.values().any(|one| one.provisional);
     cache.players = derived.into_iter().filter(|(_, one)| one.sound).collect();
     Written {
@@ -615,8 +605,7 @@ pub fn store_mapping(
     if profile.icon.is_empty() && scope.is_empty() && danstick_core::icons::known(layout_id) {
         profile.icon = layout_id.to_owned();
     }
-    // A control's second inputs survive a rewrite of its first, unless the new
-    // capture put that input on some control as a first: then it is spoken for.
+    // A control's second inputs survive unless the new capture claims them as a first.
     let buttons: BTreeMap<String, Binding> = bindings
         .iter()
         .map(|(control, binding)| (control.to_string(), *binding))
@@ -704,13 +693,7 @@ pub fn icon_for(pad: &Pad, overrides: &BTreeMap<String, String>) -> &'static str
     danstick_core::icons::for_pad(pad.vid, pad.pid, &pad.name, stored.as_deref(), overrides)
 }
 
-/// The capture already filed under exactly this scope, if it was made for this layout.
-///
-/// A run seeded from it refines the mapping instead of replacing it; a
-/// capture under another layout is about to be replaced wholesale, so there
-/// is nothing to carry over.
-/// One more input for one control, beside the one it has; the first input a
-/// control ever gets becomes its binding.
+/// One more input for a control, beside the one it has; the first input it gets is its binding.
 pub fn add_binding(pad: &Pad, layout_id: &str, control: Control, binding: Binding, scope: &str) {
     let mut profile = profile_for(pad);
     let scope_key = if scope.is_empty() {
@@ -781,9 +764,7 @@ mod tests {
 
     #[test]
     fn a_profile_stored_or_forgotten_is_a_different_answer() {
-        // Nothing tells the daemon when the wizard stores one or `forget_pad`
-        // removes it, and the CLI writes the same file from another process --
-        // so the file's contents are what says whether a cached answer stands.
+        // Nothing tells the daemon of a store, forget, or another process's rewrite.
         let none = source(None);
         let stored = source(Some(r#"{"mappings":{"":{"buttons":{"a":{}}}}}"#));
         let other = source(Some(r#"{"mappings":{"":{"buttons":{"b":{}}}}}"#));

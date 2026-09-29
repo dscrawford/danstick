@@ -1,18 +1,11 @@
 //! The keyboard takes the first port no pad holds, in each emulator's own keys.
-//!
-//! Every emulator danstick writes for either binds the keyboard to port 1 by
-//! default (RetroArch, Dolphin, Ryujinx) or not at all (ares, Cemu), so seating
-//! a pad on port 1 used to take the keyboard's port with it. The per-emulator
-//! key tables are in `docs/KEYBOARD.md`.
 
 use std::collections::BTreeMap;
 
-/// What the seat is called in `claim` and `state`: one person with both hands
-/// busy, so the seat carries the keys and the pointer alike.
+/// What the seat is called in `claim` and `state`.
 pub const SEAT_NAME: &str = "Keyboard and Mouse";
 
-/// The seat's icon, drawn by the front-end; not one of `icons::ICON_NAMES`,
-/// which are a pad's.
+/// The seat's icon, drawn by the front-end.
 pub const SEAT_ICON: &str = "keyboard-mouse";
 
 /// What `state.players[]` and `claim` say of the keyboard's seat.
@@ -44,11 +37,7 @@ pub struct HoldTick {
     pub released: bool,
 }
 
-/// A held space bar, timed like a pad's hold on a button. Never grabbed, so a
-/// character still jumps in the game while somebody joins.
-///
-/// One per keyboard: the same keyboard often has two nodes, and a release on
-/// one must not cancel a fill running on the other.
+/// A held space bar, timed like a pad's hold on a button.
 #[derive(Debug, Clone, Default)]
 pub struct Hold {
     down: BTreeMap<u64, f64>,
@@ -56,8 +45,7 @@ pub struct Hold {
 }
 
 impl Hold {
-    /// Offer one event from the keyboard `device` hashes to. Autorepeat
-    /// (value 2) is not an edge.
+    /// Offer one event from the keyboard `device` hashes to.
     pub fn feed(&mut self, device: u64, kind: u16, code: u16, value: i32, now: f64) {
         if kind != crate::capture::EV_KEY || code != SEAT_KEY {
             return;
@@ -71,8 +59,7 @@ impl Hold {
 
     /// Advance the timer; a claim clears the hold, so it cannot seat twice.
     pub fn tick(&mut self, now: f64, hold_seconds: f64) -> HoldTick {
-        // The keyboard held longest: two people cannot both be the keyboard,
-        // so the earliest press is the one filling.
+        // Two people cannot both be the keyboard, so the earliest press fills.
         let Some(started) = self.down.values().copied().reduce(f64::min) else {
             let released = std::mem::take(&mut self.filling);
             return HoldTick {
@@ -112,10 +99,8 @@ pub fn first_free(players: &[u32], max: u32) -> Option<u32> {
     (1..=max).find(|port| !players.contains(port))
 }
 
-/// The keyboard's port in an emulator with `max` ports: its seat when it holds
-/// one (and only if that seat is a port this emulator has), else the first
-/// port no pad holds. A seat pins the keyboard ahead of pads seated later; it
-/// never falls back, because "player 6 is the keyboard" is not "player 2 is".
+/// The keyboard's port in an emulator with `max` ports: its seat when it holds one, else the
+/// first port no pad holds.
 pub fn port(seat: Option<u32>, players: &[u32], max: u32) -> Option<u32> {
     match seat {
         Some(seat) => ((1..=max).contains(&seat) && !players.contains(&seat)).then_some(seat),
@@ -153,7 +138,6 @@ mod tests {
         assert!(tick.claimed, "the hold ran its length");
         assert_eq!(tick.progress, None);
 
-        // Still held: the claim cleared it, so nobody is seated twice.
         let tick = hold.tick(9.0, 1.5);
         assert!(!tick.claimed && !tick.released && tick.progress.is_none());
     }
@@ -169,7 +153,6 @@ mod tests {
         let tick = hold.tick(0.7, 1.5);
         assert!(tick.released, "a fill that stopped is a fill that stopped");
         assert!(!tick.claimed);
-        // And only once.
         assert!(!hold.tick(0.8, 1.5).released);
     }
 
@@ -194,8 +177,7 @@ mod tests {
     #[test]
     fn a_release_on_one_keyboard_leaves_a_hold_running_on_another() {
         use super::{Hold, SEAT_KEY};
-        // The same keyboard often has two nodes, so this is the ordinary case
-        // and not a two-people one.
+        // The same keyboard often has two nodes; this is not a two-people case.
         let mut hold = Hold::default();
         hold.feed(1, crate::capture::EV_KEY, SEAT_KEY, 1, 0.0);
         hold.feed(2, crate::capture::EV_KEY, SEAT_KEY, 1, 0.2);

@@ -8,9 +8,7 @@ pub const HOLD_SECONDS: f64 = 0.25;
 /// What a hold can be set to: nought is a press, and a minute is not a hold.
 pub const HOLD_RANGE: std::ops::RangeInclusive<f64> = 0.05..=10.0;
 
-/// The hold length asked for, or [`HOLD_SECONDS`] where none was or it is
-/// outside [`HOLD_RANGE`]. A comfort setting is not worth refusing over, so
-/// there is no error here and NaN falls through like any other non-length.
+/// The hold length asked for, or [`HOLD_SECONDS`] where none was or it is outside [`HOLD_RANGE`].
 pub fn hold_or_default(seconds: Option<f64>) -> f64 {
     seconds
         .filter(|seconds| HOLD_RANGE.contains(seconds))
@@ -98,10 +96,7 @@ impl Assigner {
         self.hold_seconds
     }
 
-    /// Set how long a hold has to run. A *change* drops every hold in flight,
-    /// because a press that became a claim when the number moved under it is
-    /// the accident a longer hold exists to prevent; setting the same length
-    /// again is not a change and costs nobody their fill.
+    /// Set how long a hold has to run; a change drops every hold in flight.
     pub fn set_hold_seconds(&mut self, hold_seconds: f64) {
         if (hold_seconds - self.hold_seconds).abs() <= f64::EPSILON {
             return;
@@ -141,8 +136,7 @@ impl Assigner {
         if value == 1 {
             self.holding.entry(pad).or_insert((code, now));
         } else if value == 0 {
-            // Only the button that started the hold: a thumb lifting off B must not
-            // cancel a hold running on A.
+            // Only the button that started the hold cancels it.
             if self.holding.get(&pad).map(|(held, _)| *held) == Some(code) {
                 self.holding.remove(&pad);
             }
@@ -154,12 +148,10 @@ impl Assigner {
         self.tick_gated(now, |_, _| Gate::Go)
     }
 
-    /// [`tick`](Self::tick), asking `gate` of each hold -- by pad and when it
-    /// started -- whether it is one that may fill and claim.
+    /// [`tick`](Self::tick), asking `gate` of each hold whether it may fill and claim.
     pub fn tick_gated(&mut self, now: f64, gate: impl Fn(usize, f64) -> Gate) -> Tick {
         let mut out = Tick::default();
-        // Earliest press first: `holding` is keyed by pad index, which is the
-        // order the pads were plugged in and not the order anybody pressed.
+        // Earliest press first; `holding` is keyed by pad index, not press order.
         let mut pending: Vec<(usize, (u16, f64))> = self
             .holding
             .iter()
@@ -191,9 +183,7 @@ impl Assigner {
                 continue;
             }
             let assignment = Assignment {
-                // Past the highest given out rather than the count, so dropping
-                // one of several does not hand the next claim a number somebody
-                // still seated already has.
+                // Highest given out, not the count, so a dropped claim's number isn't reused.
                 player: self.highest_player() + 1,
                 pad,
                 button: code,
@@ -205,7 +195,6 @@ impl Assigner {
             out.claimed.push(assignment);
         }
 
-        // A pad that was filling and is no longer: let go of, or gone.
         let seen: BTreeSet<usize> = out.progress.iter().map(|(pad, _)| *pad).collect();
         out.released = self.filling.difference(&seen).copied().collect();
         self.filling = out
@@ -217,17 +206,14 @@ impl Assigner {
         out
     }
 
-    /// Undo everything one pad did -- its hold, and its claim if it had one --
-    /// leaving everybody else's alone, so it can try again later.
+    /// Undo everything one pad did -- its hold and its claim -- leaving the rest alone.
     pub fn forget(&mut self, pad: usize) {
         self.holding.remove(&pad);
         self.claimed.retain(|claimed| *claimed != pad);
         self.assignments.retain(|assignment| assignment.pad != pad);
     }
 
-    /// Carries each hold to its pad's new index via `moved`, so a pad leaving the
-    /// watched set does not end everybody else's: no down edge comes back for a
-    /// thumb that never lifted.
+    /// Carries each hold to its pad's new index via `moved`, dropping pads that left.
     pub fn remap(&mut self, moved: impl Fn(usize) -> Option<usize>) {
         self.holding = self
             .holding
@@ -248,7 +234,7 @@ impl Assigner {
         self.filling = self.filling.iter().filter_map(|pad| moved(*pad)).collect();
     }
 
-    /// Drop every claim. Caller must discard queued pad events.
+    /// Drop every claim; caller must discard queued pad events.
     pub fn reset(&mut self) {
         self.assignments.clear();
         self.claimed.clear();
@@ -335,7 +321,6 @@ mod tests {
         assert_eq!(hold_from(Some("1.5")), 1.5);
         assert_eq!(hold_from(Some("  0.05  ")), 0.05, "the ends are inside");
         assert_eq!(hold_from(Some("10")), 10.0);
-        // Nothing here is worth refusing to start over.
         for asked in ["", "soon", "0", "-2", "600", "nan", "inf", "1,5"] {
             assert_eq!(hold_from(Some(asked)), HOLD_SECONDS, "{asked:?}");
         }
@@ -350,7 +335,6 @@ mod tests {
         assigner.feed(0, EV_KEY, A, 1, 0.0);
         assert!(assigner.tick(0.3).claimed.is_empty(), "0.3s is not a claim");
         assert!(assigner.tick(1.4).claimed.is_empty(), "nor is 1.4s");
-        // Progress fills over whatever length is set, not over the default.
         let part = assigner.tick(0.75).progress[0].1;
         assert!((part - 0.5).abs() < 0.01, "progress at half was {part}");
         assert_eq!(assigner.tick(1.51).claimed.len(), 1);
@@ -361,21 +345,18 @@ mod tests {
         let mut assigner = Assigner::new(1.5);
         assigner.feed(0, EV_KEY, A, 1, 0.0);
         assigner.tick(1.0);
-        // A press that became a claim because the number moved is the accident.
         assigner.set_hold_seconds(0.25);
         assert!(
             assigner.tick(1.1).claimed.is_empty(),
             "the hold in flight claimed on the new length"
         );
         assert!(assigner.tick(100.0).claimed.is_empty(), "and never does");
-        // A fresh press measures the new length.
         assigner.feed(0, EV_KEY, A, 1, 2.0);
         assert_eq!(assigner.tick(2.26).claimed.len(), 1);
     }
 
     #[test]
     fn two_pads_take_their_seats_in_the_order_the_buttons_went_down() {
-        // Pad 1 presses first, so pad index and press order disagree.
         let mut assigner = Assigner::default();
         assigner.feed(1, EV_KEY, A, 1, 0.0);
         assigner.feed(0, EV_KEY, A, 1, 0.1);
@@ -412,7 +393,6 @@ mod tests {
         assigner.feed(0, EV_KEY, A, 1, 0.0);
         assigner.feed(1, EV_KEY, A, 1, 0.01);
         assigner.tick(HOLD_SECONDS * 0.8);
-        // Pad 0 pressed first and lets go at 80%.
         assigner.feed(0, EV_KEY, A, 0, HOLD_SECONDS * 0.8);
         let tick = assigner.tick(HOLD_SECONDS + 0.1);
         assert_eq!(
@@ -452,7 +432,6 @@ mod tests {
 
     #[test]
     fn a_pad_that_goes_away_mid_hold_has_its_fill_taken_back() {
-        // reset() is what the daemon calls when the set of pads changes.
         let mut assigner = Assigner::default();
         assigner.feed(0, EV_KEY, A, 1, 0.0);
         assigner.feed(1, EV_KEY, A, 1, 0.0);
@@ -468,7 +447,6 @@ mod tests {
         let mut assigner = Assigner::default();
         assigner.feed(0, EV_KEY, A, 1, 0.0);
         assigner.tick(HOLD_SECONDS + 0.01);
-        // Holding B to block in a fighting game must not reseat anybody.
         assigner.feed(0, EV_KEY, B, 1, 1.0);
         let tick = assigner.tick(1.0 + HOLD_SECONDS + 0.01);
         assert!(tick.progress.is_empty(), "{:?}", tick.progress);
@@ -494,7 +472,6 @@ mod tests {
 
     #[test]
     fn two_presses_the_clock_cannot_separate_are_ordered_by_pad() {
-        // Deterministic rather than correct: nothing else can be known.
         let mut assigner = Assigner::default();
         assigner.feed(1, EV_KEY, A, 1, 0.0);
         assigner.feed(0, EV_KEY, A, 1, 0.0);
@@ -510,8 +487,6 @@ mod tests {
 
     #[test]
     fn setting_the_same_length_again_costs_nobody_their_fill() {
-        // A front-end that sends `seating` on every screen sends the same
-        // number each time; the hold in flight must survive that.
         let mut assigner = Assigner::new(1.5);
         assigner.feed(0, EV_KEY, A, 1, 0.0);
         assigner.tick(0.5);
@@ -535,7 +510,6 @@ mod tests {
 
     #[test]
     fn a_pad_that_was_forgotten_can_hold_again() {
-        // The seats were full when it finished; one frees and it tries again.
         let mut assigner = Assigner::default();
         assigner.feed(0, EV_KEY, A, 1, 0.0);
         assert_eq!(assigner.tick(HOLD_SECONDS + 0.01).claimed.len(), 1);
@@ -672,8 +646,6 @@ mod tests {
 
     #[test]
     fn two_holds_finishing_together_both_claim_in_one_tick() {
-        // The daemon seats these one at a time and rebuilds its pad list as it
-        // goes, so it has to resolve both to pads before it touches the list.
         let mut assigner = Assigner::default();
         assigner.feed(0, EV_KEY, A, 1, 0.0);
         assigner.feed(1, EV_KEY, B, 1, 0.0);
@@ -687,8 +659,7 @@ mod tests {
 
     #[test]
     fn a_claim_after_one_was_dropped_does_not_reuse_a_number_still_held() {
-        // Player numbers are stamped once and `remap`/`forget` drop assignments
-        // without renumbering, so counting them would collide with a survivor.
+        // Player numbers are stamped once; forget/remap don't renumber survivors.
         let mut assigner = Assigner::default();
         assigner.feed(0, EV_KEY, A, 1, 0.0);
         assigner.feed(1, EV_KEY, B, 1, 0.01);
@@ -716,7 +687,6 @@ mod tests {
 
     #[test]
     fn moved_indices_says_where_each_pad_went() {
-        // One pad in the middle claims a seat and stops being watched.
         let before = ["event1", "event2", "event3"];
         let after = ["event1", "event3"];
         assert_eq!(moved_indices(&before, &after), vec![Some(0), None, Some(1)]);
@@ -745,8 +715,7 @@ mod tests {
 
     #[test]
     fn remapping_carries_a_hold_to_its_new_index_at_the_time_it_started() {
-        // Pad 1 claims and leaves the watched set, so pad 2 becomes pad 1. The
-        // kernel sends no second down edge for a thumb that never lifted.
+        // The kernel sends no second down edge for a thumb that never lifted.
         let mut assigner = Assigner::default();
         assigner.feed(1, EV_KEY, A, 1, 0.0);
         assigner.feed(2, EV_KEY, B, 1, 0.5);
@@ -755,7 +724,6 @@ mod tests {
             2 => Some(1),
             _ => None,
         });
-        // Still filling, still from 0.5: its own clock, not restarted here.
         let mid = assigner.tick(0.7);
         assert_eq!(mid.claimed, vec![], "it claimed early");
         assert_eq!(mid.progress.len(), 1);

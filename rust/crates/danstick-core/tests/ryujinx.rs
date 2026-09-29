@@ -123,7 +123,6 @@ fn merging_keeps_entries_danstick_is_not_managing() {
     assert_eq!(one.len(), 1, "the keyboard entry was not replaced");
     assert_eq!(one[0]["name"], "danstick Player 1");
     assert!(entries.iter().any(|e| e["name"] == "Someone else's pad"));
-    // The keyboard is not dropped: it moves to the first free player.
     let keyboard = entries
         .iter()
         .find(|e| e["name"] == "Keyboard")

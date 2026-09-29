@@ -94,7 +94,6 @@ fn identity_names_the_mode_and_slots_was_appended_after_it() {
             mode: "xbox360".to_owned()
         })
     );
-    // An unknown mode is the daemon's to refuse, with the modes it has.
     assert_eq!(
         Command::parse(&json!({"cmd": "identity"})),
         Ok(Command::Identity {
@@ -127,7 +126,6 @@ fn scope_names_what_is_being_played_and_empty_is_the_default() {
 
 #[test]
 fn a_scope_or_game_name_ends_no_line_of_a_file_it_is_written_into() {
-    // A name reaches an autoconfig comment; a newline in it would end that comment.
     assert!(matches!(
         Command::parse(&json!({"cmd": "scope", "game": "n64/x\ninput_a_btn = \"9\""})),
         Err(Refused::NotAName { field: "game" })
@@ -183,7 +181,6 @@ fn a_name_at_the_byte_limit_is_fine_and_one_byte_over_is_not() {
         Command::parse(&json!({"cmd": "map", "player": 1, "scope": "x".repeat(257)})),
         Err(Refused::NotAName { field: "scope" })
     ));
-    // Bytes, not characters: "é" is two.
     assert!(Command::parse(&json!({"cmd": "scope", "console": "é".repeat(128)})).is_ok());
     assert!(matches!(
         Command::parse(&json!({"cmd": "scope", "console": "é".repeat(129)})),

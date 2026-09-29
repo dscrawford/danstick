@@ -89,13 +89,11 @@ pub fn write_env(value: &str, path: Option<&Path>) -> Result<PathBuf, artefacts:
     Ok(target)
 }
 
-/// Write all emulator configs; skips instead of failing.
-/// `seat` is the keyboard's, when it holds one; otherwise it takes the first free port.
+/// Write all emulator configs and skip failures; `seat` is the keyboard's port if it has one.
 pub fn publish(pads: &[Published], dirs: &Destinations, seat: Option<u32>) -> Written {
     let mut written = Written::default();
 
-    // The one door every writer is reached through, `danstick-rs emit`'s stdin
-    // included: a GUID is refused here rather than escaped in five formats.
+    // The one choke point for every writer: a GUID is refused here, not escaped in five formats.
     let (pads, forged): (Vec<&Published>, Vec<&Published>) = pads
         .iter()
         .partition(|pad| danstick_core::sdl::is_guid(&pad.guid));
@@ -134,9 +132,7 @@ pub fn publish(pads: &[Published], dirs: &Destinations, seat: Option<u32>) -> Wr
         Err(error) => written.skipped.push(("dolphin", error.to_string())),
     }
 
-    // Every one of ares' five ports is written: a pad's, the keyboard's on the
-    // first free one, and nothing on the rest -- a keyboard block left at
-    // another port from last time would make the keyboard two players.
+    // Every ares port is written, or a stale keyboard block from last time doubles the keyboard.
     let keyboard = danstick_core::keyboard::port(seat, &players, ares::MAX_PLAYERS);
     let blocks: BTreeMap<u32, String> = (1..=ares::MAX_PLAYERS)
         .map(|port| {
@@ -167,7 +163,7 @@ pub fn publish(pads: &[Published], dirs: &Destinations, seat: Option<u32>) -> Wr
         artefacts::write_ryujinx_config(entries, seat, dirs.ryujinx_config.as_deref()),
     );
 
-    // The environment file, which is the only way into Cemu and works for any other SDL program that loads its database once and never again.
+    // The only way into Cemu, and any SDL program that loads its controller database once.
     let lines: BTreeMap<u32, String> = by_player
         .values()
         .filter(|pad| !pad.sdl_line.is_empty())
@@ -330,9 +326,7 @@ mod tests {
 
     #[test]
     fn a_guid_that_is_not_a_guid_is_written_nowhere() {
-        // `danstick-rs emit` takes its pads from stdin. A newline in a GUID
-        // closed ares' `VirtualPad1` and opened a mouse block of its own, and
-        // an angle bracket did the same to Cemu's XML.
+        // A newline in a GUID opened a mouse block in ares; an angle bracket broke Cemu's XML.
         let dir = scratch("forged-guid");
         std::fs::write(dir.join("ares.bml"), "Video\n").expect("seed");
         std::fs::write(dir.join("Config.json"), r#"{"version": 50}"#).expect("seed");
@@ -361,7 +355,6 @@ mod tests {
             "a pad dropped for its guid was dropped silently: {:?}",
             written.skipped
         );
-        // The pad beside it is written as ever.
         assert!(ares.contains("VirtualPad2\n  Pad.Up: 0300000"), "{ares}");
     }
 
@@ -370,7 +363,6 @@ mod tests {
         let dir = scratch("keyboard");
         std::fs::write(dir.join("ares.bml"), "Video\n").expect("seed");
         std::fs::write(dir.join("Config.json"), r#"{"version": 50}"#).expect("seed");
-        // A keyboard profile danstick left at port 3 last time, and one the user made at port 5.
         std::fs::create_dir_all(dir.join("cemu")).expect("mkdir");
         std::fs::write(
             dir.join("cemu/controller2.xml"),
@@ -398,7 +390,6 @@ mod tests {
             dolphin.contains("[GCPad2]\nDevice = XInput2/0/Virtual core pointer\n"),
             "{dolphin}"
         );
-        // The Wii side: the keyboard's seat holds the remote with the cursor.
         let wii = std::fs::read_to_string(dir.join("dolphin-emu/WiimoteNew.ini")).expect("ini");
         assert!(
             wii.contains("[Wiimote2]\nSource = 1\nDevice = XInput2/0/Virtual core pointer\n"),
@@ -422,8 +413,6 @@ mod tests {
         );
         assert!(ares.contains("VirtualPad3\n  Pad.Up: ;;\n"), "{ares}");
         assert!(ares.contains("VirtualPad5\n"));
-        // The desk's mouse sits on the keyboard's port and nowhere else, so
-        // an N64 or SNES Mouse there answers to the person at the keyboard.
         assert!(
             ares.contains("VirtualMouse2\n  X: 0x2/0/0;;\n"),
             "the keyboard's port has no mouse: {ares}"

@@ -158,7 +158,6 @@ const NOTHING_DSU_CAN_CARRY: [&str; 8] = [
 
 #[test]
 fn every_gamepad_button_a_fixture_declares_lands_somewhere_or_is_the_guide() {
-    // A button the tracker does not know is a press nobody sees.
     for fixture in fakepad::EVERY {
         for (control, code) in fixture.buttons {
             let mut tracker = tracker_for(fixture);
@@ -210,7 +209,6 @@ fn the_xbox_face_buttons_land_by_position() {
 
 #[test]
 fn a_hat_dpad_and_a_button_dpad_produce_the_same_bits() {
-    // Up and left held at once, however the pad happens to say so.
     for fixture in fakepad::EVERY {
         let mut tracker = tracker_for(fixture);
         if fixture.dpad_is_hat {

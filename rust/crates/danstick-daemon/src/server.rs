@@ -1,5 +1,5 @@
-//! The daemon proper: one process, one loop, every long-lived thing.
-//! Only command dispatch and the tick are guarded against panics.
+//! The daemon proper: one process, one loop, every long-lived thing; only command dispatch
+//! and the tick are guarded against panics.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Read, Write};
@@ -38,8 +38,7 @@ use crate::{clean, events, now};
 
 pub const ENV_NO_AUTOSETUP: &str = "DANSTICK_NO_AUTOSETUP";
 pub const ENV_NO_AUTOATTACH: &str = "DANSTICK_NO_AUTOATTACH";
-/// Turns off reading keyboards for a held space bar; the seat is still
-/// available over the socket with `seat_keyboard`.
+/// Turns off reading keyboards for a held space bar; still available via `seat_keyboard`.
 pub const ENV_NO_KEYBOARD_HOLD: &str = "DANSTICK_NO_KEYBOARD_HOLD";
 
 pub const PAD_SCAN_SECONDS: f64 = 1.0;
@@ -126,23 +125,19 @@ pub struct Server {
     late_attempts: BTreeMap<PathBuf, u32>,
     /// The keyboard and mouse nodes of seated and candidate pads, grabbed beside their joysticks.
     held: siblings::Held,
-    /// Steam's copy of a seated pad, held with the seat so a game under Steam
-    /// does not read that controller twice: (player, the seat's pad) -> Steam pad.
+    /// Steam's copy of a seated pad, held with the seat: (player, the seat's pad) -> Steam pad.
     steam_twins: BTreeMap<(u32, PathBuf), Pad>,
     /// The desk's keyboards, read for a held space bar and never grabbed.
     deskkeys: danstick_input::deskkeys::Keyboards,
     keyboard_hold: danstick_core::keyboard::Hold,
     /// What `held` was last computed for: the event nodes and the pads that matter.
     held_for: Option<HeldFor>,
-    /// When seating's watched set is worth recomputing: the input nodes and the
-    /// seated pads are all a rediscovery would find different.
+    /// When seating's watched set is worth recomputing.
     seating_gate: hotplug::ScanGate<BTreeSet<String>>,
-    /// The pads seating last found, and who was seated then: a claim changes
-    /// who is seated, never what is plugged in, so it needs no discovery.
+    /// The pads seating last found, and who was seated then.
     seating_present: Vec<Pad>,
     seating_seated: Vec<PathBuf>,
-    /// How many answers SDL's database had given when the files were last
-    /// written, so a pad guessed at while it was asked is upgraded once it has.
+    /// How many answers SDL's database had given when the files were last written.
     sdl_answers: u64,
     /// Whether the files last written hold a guess made while SDL was asked.
     awaiting_sdl: bool,
@@ -200,8 +195,7 @@ impl std::fmt::Debug for Server {
     }
 }
 
-/// What the held nodes were worked out from: the machine's nodes, the pads that
-/// matter, the Steam pads held with a seat, and whether a hold could seat a keyboard.
+/// What the held nodes were worked out from.
 type HeldFor = (BTreeSet<String>, Vec<PathBuf>, Vec<PathBuf>, bool);
 
 /// One player's pad held back from its clone and heard as controls, by a menu.
@@ -281,8 +275,7 @@ impl Scan {
         &self.found().pads
     }
 
-    /// Every pad, Steam's included: which Steam pad is whose shows in what
-    /// each one presses, so seating watches all of them (`echo`).
+    /// Every pad, Steam's included.
     fn seatable(&mut self) -> Vec<Pad> {
         let found = self.found();
         let mut pads = found.pads.clone();
@@ -569,9 +562,7 @@ impl Server {
         }
     }
 
-    /// End with `pid`: once it is gone the daemon exits and releases every pad.
-    /// Polled, because PR_SET_PDEATHSIG does not survive the reparenting
-    /// `ensure-daemon` does.
+    /// Ends with `pid`; once it is gone the daemon exits and releases every pad.
     pub fn follow(&mut self, pid: u32) {
         self.follow = Some(pid);
         info!("following pid {pid}; ending when it does");
@@ -1066,10 +1057,7 @@ impl Server {
         self.broadcast(&state);
     }
 
-    /// Drop one seat, or every seat for player 0. The clone stops, the pad is
-    /// released, consumers are rewritten, and the seat is free to be taken
-    /// again by a hold -- seating is left exactly as it was, because "hold a
-    /// button to take a seat" is the next thing that happens.
+    /// Drops one seat, or every seat for player 0.
     fn unseat(&mut self, player: u32) {
         if self.session.is_some() {
             self.broadcast(&events::error("a session is open; cancel it first"));
@@ -1159,8 +1147,7 @@ impl Server {
         self.broadcast(&state);
     }
 
-    /// Under `destroy`, a fixed slot its player left is made again at a new
-    /// node; under `stay` it is already waiting where it was.
+    /// Replaces the fixed slots that `left` vacated, according to the leave policy.
     fn replace_left_slots(&mut self, left: &[u32]) {
         let standing = self.slot_policy.standing();
         if standing == 0 || self.slot_policy.on_leave == slots::OnLeave::Stay {
@@ -1254,8 +1241,7 @@ impl Server {
         Ok((pad, index))
     }
 
-    /// A player's pad, open for a modal flow: in the session if one is open,
-    /// otherwise through its clone's source, otherwise grabbed on its own.
+    /// A player's pad, open for a modal flow, however it must be reached.
     fn modal_pad(&mut self, player: u32, what: &str) -> Result<(Pad, Opened), Value> {
         if self.session.is_some() {
             return self
@@ -1724,9 +1710,7 @@ impl Server {
         }
     }
 
-    /// Capture the next press onto one control of the pad's own layout, as a
-    /// replacement for its binding or, with `add`, a second input beside it.
-    /// The same events the wizard sends, for one step.
+    /// Captures the next press onto one control, replacing its binding or adding to it with `add`.
     fn begin_bind(&mut self, player: u32, control: &str, scope: &str, add: bool, strict: bool) {
         let Ok(wanted) = control.parse::<danstick_core::Control>() else {
             self.broadcast(&events::error(format!("no control called {control:?}")));
@@ -2198,15 +2182,13 @@ impl Server {
             .iter()
             .map(|slot| slot.pad.path.clone())
             .collect();
-        // Discovery opens devices. Run it when a node that is not danstick's own
-        // appears or goes, not on every tick of a whole game, nor on a claim.
+        // Discovery opens devices; run it only when a non-danstick node appears or goes.
         let own = self.own_nodes();
         let mut nodes = hotplug::event_nodes();
         nodes.retain(|node| !own.contains(node));
         let present: Vec<Pad> = if self.seating_gate.due(nodes, now()) || scan.scanned() {
             let found = scan.seatable();
-            // An enumeration that failed is not everybody unplugging: acting on
-            // it would drop the holds this rebuild exists to carry.
+            // A failed enumeration is not everybody unplugging; acting on it would drop holds.
             if scan.failed() {
                 return;
             }
@@ -2219,8 +2201,7 @@ impl Server {
         };
         self.seating_seated = seated.clone();
         let wanted = self.seating.wanted(&present, &seated);
-        // Only touch epoll when the set actually changes; the unwatch/rewatch
-        // churn otherwise ran every tick for no reason.
+        // Only touch epoll when the set changes, to avoid unwatch/rewatch churn every tick.
         if !self.seating.would_change(&wanted) {
             return;
         }
@@ -2248,8 +2229,7 @@ impl Server {
             return;
         }
         let claimed = self.seating.tick(now());
-        // Named and seated before broadcasting: two people holding at once are
-        // two fills, and a front-end can only tell them apart by the pad.
+        // Named and seated before broadcasting, so simultaneous holds are told apart by pad.
         let seats =
             danstick_core::announce::next_players(&self.taken_seats(), claimed.progress.len());
         let filling: Vec<(f64, String, String, Option<u32>)> = claimed
@@ -2273,8 +2253,7 @@ impl Server {
         for (fraction, name, node, player) in filling {
             self.broadcast(&events::progress(fraction, &name, &node, player));
         }
-        // Resolve to pads before the loop: the refresh after each claim renumbers
-        // the list, so acting by index seats the wrong pad or drops a finished hold.
+        // Resolved to pads first: the refresh after each claim renumbers the list.
         let taking: Vec<Pad> = claimed
             .pads
             .iter()
@@ -2284,8 +2263,7 @@ impl Server {
             let player = danstick_core::announce::next_player(&self.taken_seats());
             if player > self.seating.seats() {
                 info!("{} held a button but every seat is taken", clean(&pad.name));
-                // This pad's hold and no other: the fifth person at the party
-                // must not cancel the fourth person joining.
+                // This pad's hold only; a full seat must not cancel another pad's join.
                 self.seating.forget(&pad.path);
                 let seats = self.seating.seats();
                 let event = events::full(&clean(&pad.name), pad.event(), seats);
@@ -2322,9 +2300,7 @@ impl Server {
             if self.republisher.is_some() {
                 self.state = STATE_READY;
             }
-            // The seat first: it is live, and nothing in `state` depends on the
-            // emulators' files. The `controller` announcement carries those, so
-            // it follows them.
+            // The seat first; `state` doesn't depend on the emulators' files, `controller` does.
             let state = self.state_event();
             self.broadcast(&state);
             self.write_after_join(write);
@@ -2741,10 +2717,7 @@ impl Server {
         }
     }
 
-    /// Publish a clone for every seat a launch allows, so they exist before it starts.
-    /// Publish every clone under another identity, keeping every seat. The
-    /// clones are made again, at new nodes, so it belongs before a launch:
-    /// a game already holding one would lose it.
+    /// Sets the clone identity mode, republishing every clone under it.
     fn set_identity(&mut self, mode: &str) {
         if self.session.is_some() {
             self.broadcast(&events::error("a session is open; cancel it first"));
@@ -2818,12 +2791,10 @@ impl Server {
         self.broadcast(&state);
     }
 
-    /// Publish a clone for every seat from 1 to `wanted` that has neither a
-    /// player nor one already, under the identity in force.
+    /// Publishes a clone for every unclaimed seat from 1 to `wanted`, under the identity in force.
     fn fill_reserved(&mut self, wanted: u32) {
         let taken: Vec<u32> = self.slots_assigned.iter().map(|slot| slot.player).collect();
-        // Published first and waited for once: finding a node waits on udev, and
-        // the daemon reads nobody's pad while this command runs.
+        // Published first and waited for once, since finding a node waits on udev.
         let mut made: BTreeMap<u32, evdev::uinput::VirtualDevice> = BTreeMap::new();
         for player in 1..=wanted {
             if taken.contains(&player) || self.reserved.contains_key(&player) {
@@ -2846,15 +2817,13 @@ impl Server {
                     self.reserved_nodes.insert(player, node.clone());
                     self.reserved.insert(player, device);
                 }
-                // Dropped on purpose: a device with no node is one no launch can
-                // bind, and keeping it would hold the seat against every retry.
+                // Dropped on purpose: a device with no node is one no launch can bind.
                 None => warn!("seat {player}: no node appeared for it; not reserved"),
             }
         }
     }
 
-    /// The capture a pad's clone is driven by: the most specific scope for
-    /// what is being played, or the default.
+    /// The capture a pad's clone is driven by, most specific scope first.
     fn mapping_in_play(&self, pad: &Pad) -> danstick_core::profile::Mapping {
         let (scope, mapping) = publish::resolved(pad, &self.playing.console, &self.playing.game);
         if !mapping.buttons.is_empty() {
@@ -2869,8 +2838,7 @@ impl Server {
         mapping
     }
 
-    /// The game the consumers' files are worked out for: what `scope` said is
-    /// being played, or else the last launch.
+    /// The game the consumers' files are worked out for.
     fn game_in_play(&self) -> Option<runtime::Game> {
         let recent = runtime::read_recent_games();
         if self.playing.console.is_empty() && self.playing.game.is_empty() {
@@ -2896,8 +2864,7 @@ impl Server {
         }
     }
 
-    /// A client that leased the scope has gone: the newest lease puts back
-    /// what it found, and an older one hands what it found to the lease after it.
+    /// Handles a scope lease's client going away.
     fn release_scope(&mut self, fd: i32) {
         let Some(at) = self
             .scope_leases
@@ -3114,8 +3081,7 @@ impl Server {
         self.ports_off.retain(|seat, _| !seats.contains(seat));
     }
 
-    /// Switch whether the game hears `player`: off rests the clone until on, or
-    /// until `fd` goes.
+    /// Switches whether the game hears `player`, until `fd` goes if switched off.
     fn switch_port(&mut self, fd: i32, player: u32, open: bool) {
         if self.session.is_some() {
             self.broadcast(&events::error("a session is open; cancel it first"));
@@ -3235,9 +3201,7 @@ impl Server {
         }
     }
 
-    /// Put `player`'s pad in seat `to`, swapping with whoever sits there. Under
-    /// fixed slots the clones stay where the game opened them; each is driven by
-    /// its new pad from here on.
+    /// Puts `player`'s pad in seat `to`, swapping with whoever sits there.
     fn move_seat(&mut self, player: u32, to: u32) {
         if self.session.is_some() {
             self.broadcast(&events::error("a session is open; cancel it first"));
@@ -3330,8 +3294,7 @@ impl Server {
         self.broadcast(&state);
     }
 
-    /// Where a pad's face buttons land when kept by label: its capture's
-    /// layout names its labels, or else the console its icon says it is.
+    /// Where a pad's face buttons land when kept by label.
     fn faces_for(
         &self,
         pad: &Pad,
@@ -3348,9 +3311,7 @@ impl Server {
         danstick_core::layout::label_faces(&layout)
     }
 
-    /// Change how slots are published. Fixed slots are made at once, and a
-    /// daemon on an identity that cannot stand before its pad is moved to
-    /// the numbered 360 first.
+    /// Changes how slots are published.
     fn set_slots(&mut self, change: &slots::Change) {
         if self.session.is_some() {
             self.broadcast(&events::error("a session is open; cancel it first"));
@@ -3403,10 +3364,7 @@ impl Server {
         self.broadcast(&state);
     }
 
-    /// Republish one newly seated player, leaving every clone already open at the
-    /// same device and node, since a game mid-read cannot follow them moving.
-    /// Hands back which files that leaves to write, written by the caller once
-    /// the seat has been announced.
+    /// Republishes one newly seated player; the caller writes what this leaves to write.
     fn join_republisher(&mut self, player: u32) -> Result<ToWrite, clone::CloneError> {
         // The first seat has nothing to add to.
         if self.republisher.is_none() {
@@ -3416,8 +3374,7 @@ impl Server {
             .republisher
             .as_ref()
             .is_some_and(|republisher| republisher.pads.iter().any(|pad| pad.player == player));
-        // Already republished: rewrite the roster's files, but never rebuild --
-        // a second clone is wrong and a rebuild is the thing this avoids.
+        // Already republished: rewrite the files, never rebuild -- a second clone is wrong.
         if already {
             return Ok(ToWrite::Reusing(self.virtual_paths()));
         }
@@ -3500,8 +3457,7 @@ impl Server {
         Ok(())
     }
 
-    /// Every seat's clone on the air and watched, and the paths the consumers'
-    /// files should name -- everything `start_republisher` does but the writing.
+    /// Everything `start_republisher` does but writing the consumers' files.
     fn bring_up_republisher(&mut self) -> Result<BTreeMap<u32, String>, clone::CloneError> {
         self.stop_republisher();
         let mut vpads = Vec::with_capacity(self.slots_assigned.len());
@@ -3548,8 +3504,7 @@ impl Server {
                 return Err(error);
             }
         }
-        // Seeded with the seats waiting for somebody, the same as `virtual_paths`:
-        // a rebuild must not drop the ports a launch is already bound to.
+        // Seeded with waiting seats, since a rebuild must not drop bound ports.
         let mut virtual_paths: BTreeMap<u32, String> = self
             .reserved_nodes
             .iter()
@@ -3602,11 +3557,7 @@ impl Server {
         Ok(virtual_paths)
     }
 
-    /// Write every consumer's config for the seats as they are now -- with no
-    /// seats, that is a launch config naming nobody, not yesterday's roster.
-    ///
-    /// Everything a player's files were worked out from is thrown away first,
-    /// since anything but a join may have changed it.
+    /// Writes every consumer's config for the seats as they are now.
     fn rewrite_consumers(&mut self, virtual_paths: &BTreeMap<u32, String>) {
         self.publish_cache.clear();
         self.rewrite_consumers_reusing(virtual_paths);
@@ -3760,9 +3711,7 @@ impl Server {
         if Some(&nodes) == self.last_attach_nodes.as_ref() {
             return;
         }
-        // A claim puts a clone on the air, and a clone is a node. Looking at
-        // every device again for it found nothing, and held the loop long
-        // enough to make the next person's claim late.
+        // A claim's own clone is a node; looking at every device for it found nothing but delay.
         let own = self.own_nodes();
         let only_ours = self.last_attach_nodes.as_ref().is_some_and(|last| {
             last.symmetric_difference(&nodes)
@@ -3827,10 +3776,7 @@ impl Server {
         self.triton_live.clone()
     }
 
-    /// Hold the keyboard and mouse siblings of every seated pad, every pad
-    /// seating listens to, and Steam's copy of each seated pad -- only those.
-    /// Recomputed when the machine's nodes or the pads that matter change,
-    /// not every tick.
+    /// Holds the keyboard and mouse siblings of every pad that matters, recomputed only on change.
     fn hold_siblings(&mut self) {
         let nodes = self
             .last_attach_nodes
@@ -3874,8 +3820,7 @@ impl Server {
             .chain(key.2.iter().cloned())
             .collect();
         self.held.sync(&wanted);
-        // The desk's keyboards are read, not held, and only while a hold could
-        // seat one: a pad's own lizard keyboards stay the pad's.
+        // The desk's keyboards are read, not held, only while a hold could seat one.
         if listening {
             self.deskkeys.refresh(&wanted);
         } else {
@@ -3884,16 +3829,14 @@ impl Server {
         self.held_for = Some(key);
     }
 
-    /// SDL answered for a pad whose mapping was guessed while it was asked:
-    /// write the files again, and only that player is worked out afresh.
+    /// SDL answered for a pad whose mapping was guessed while it was asked.
     fn upgrade_guessed_mappings(&mut self) {
         let answers = danstick_input::sdlprobe::answered();
         if answers == self.sdl_answers {
             return;
         }
         self.sdl_answers = answers;
-        // Most answers are for pads only being watched; nothing was guessed
-        // for them, and rewriting the room for each would be a stall apiece.
+        // Most answers are for pads only being watched, with nothing guessed to upgrade.
         if self.awaiting_sdl && self.republisher.is_some() {
             let virtual_paths = self.virtual_paths();
             self.rewrite_consumers_reusing(&virtual_paths);
@@ -3913,8 +3856,7 @@ impl Server {
                 <= self.slots.max(self.seating.seats())
     }
 
-    /// A held space bar seats the keyboard, reported as a hold so a front-end
-    /// draws it like a pad's without a special case.
+    /// A held space bar seats the keyboard, reported as a hold like a pad's.
     fn tick_keyboard_hold(&mut self) {
         if !self.listening_for_space() || self.state == STATE_ASSIGNING {
             self.keyboard_hold.reset();
@@ -3953,9 +3895,7 @@ impl Server {
         }
     }
 
-    /// A pad switched on during a session joins it: grabbed and watched like
-    /// the others, claimable by the same hold. `pads` is sent again with the
-    /// new count, so "no controllers found" can stop saying it.
+    /// A pad switched on during a session joins it, grabbed and watched like the others.
     fn admit_late_pads(&mut self, scan: &mut Scan) {
         let Some(session) = self.session.as_mut() else {
             return;
@@ -3993,8 +3933,7 @@ impl Server {
                     }
                 }
                 Err(error) => {
-                    // udev grants access a beat after the node appears; try again
-                    // on the next scan, as the hotplug path does, up to a limit.
+                    // udev grants access a beat after the node appears; retry on the next scan.
                     let tries = self.late_attempts.entry(path).or_insert(0);
                     *tries += 1;
                     if *tries < hotplug::ATTACH_ATTEMPTS {
@@ -4364,11 +4303,7 @@ impl Server {
         players
     }
 
-    /// Seat the keyboard as the next player. No device is read and nothing is
-    /// grabbed -- the keyboard stays the compositor's -- but every emulator's
-    /// config now names it as that player, and a pad seated after it takes
-    /// the seat after. Refused while a session is open, when it already holds
-    /// a seat, and when every seat is taken.
+    /// Seats the keyboard as the next player; no device is read or grabbed.
     fn seat_keyboard(&mut self) {
         if self.session.is_some() {
             self.broadcast(&events::error("a session is open; cancel it first"));
@@ -4402,9 +4337,7 @@ impl Server {
         self.broadcast(&state);
     }
 
-    /// The clone node of every published player, and of every seat waiting for one.
-    /// The `/dev/input` nodes danstick made itself: its clones and reserved
-    /// seats. One of these appearing is a claim going through, not a pad.
+    /// The `/dev/input` nodes danstick made itself: its clones and reserved seats.
     fn own_nodes(&mut self) -> BTreeSet<String> {
         self.virtual_paths()
             .into_values()
@@ -4478,8 +4411,7 @@ impl Server {
     }
 }
 
-/// The slots `DANSTICK_SLOTS` and its siblings ask for; one nobody can read is
-/// said and left at its default.
+/// The slots `DANSTICK_SLOTS` and its siblings ask for.
 fn configured_slots() -> slots::Policy {
     let (policy, complaints) = slots::Policy::from_env(|name| std::env::var(name).ok());
     for complaint in complaints {
@@ -4494,8 +4426,7 @@ fn as_player(player: i64) -> u32 {
 
 const FOLLOW_POLL_SECONDS: f64 = 0.25;
 
-/// Whether `pid` is still around. A signal of 0 checks without sending; EPERM
-/// means it exists but is not ours, which is still "exists".
+/// Whether `pid` is still around, even if it is not ours to signal.
 fn process_exists(pid: u32) -> bool {
     let Some(pid) = i32::try_from(pid)
         .ok()

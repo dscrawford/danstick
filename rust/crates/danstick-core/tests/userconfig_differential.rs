@@ -9,7 +9,6 @@ fn corpus(name: &str) -> Vec<Value> {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("tests/corpus/{name}.json"));
     let text = std::fs::read_to_string(&path)
         .unwrap_or_else(|error| panic!("reading {}: {error}", path.display()));
-    // Read raw: these are configs padmap left behind, which are still cleaned.
     serde_json::from_str(&text).expect("the corpus is JSON")
 }
 
@@ -23,7 +22,6 @@ fn unhex(value: &Value) -> Vec<u8> {
 
 #[test]
 fn every_config_cleans_to_the_same_bytes() {
-    // The corpus is hex because the interesting cases are not valid UTF-8.
     for case in corpus("clean_user_config") {
         let input = unhex(&case["in"]);
         let (changes, out) = userconfig::clean_bytes(&input);
@@ -91,7 +89,6 @@ fn line_endings_and_spacing_survive_a_change() {
 
 #[test]
 fn an_unquoted_line_stays_unquoted_unless_it_cannot() {
-    // Empty is no token at all to strtok_r, so it must be quoted or the setting vanishes.
     assert_eq!(userconfig::render_value("2", false), "2");
     assert_eq!(userconfig::render_value("2", true), "\"2\"");
     assert_eq!(userconfig::render_value("", false), "\"\"");

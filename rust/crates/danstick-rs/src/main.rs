@@ -217,8 +217,7 @@ fn cmd_emit(args: &[String]) -> Result<()> {
     Ok(())
 }
 
-/// Whether bwrap is on PATH. Without it there is no sandbox to run in, and a
-/// game that starts seeing too many pads beats one that does not start.
+/// Whether bwrap is on PATH.
 fn which_bwrap() -> Option<std::path::PathBuf> {
     std::env::var_os("PATH").and_then(|paths| {
         std::env::split_paths(&paths)
@@ -238,10 +237,7 @@ struct Borrowed {
     scope_lease: Option<std::os::unix::net::UnixStream>,
 }
 
-/// Make seats 1..=`seats` exist before the game starts: the seated ones as they
-/// are, the rest reserved. Reserving needs the 360 identity, and a daemon that
-/// publishes another is switched in place, keeping every seat. Nothing here is
-/// fatal -- a game with fewer seats than it wanted still runs.
+/// Makes seats 1..=`seats` exist before the game starts, reserving what is not already seated.
 fn borrow_seats(seats: u32) -> Borrowed {
     let mut borrowed = Borrowed::default();
     let seats = seats.min(danstick_core::retroarch::MAX_PLAYERS);
@@ -252,7 +248,6 @@ fn borrow_seats(seats: u32) -> Borrowed {
         warn!("--reserve {seats}: no daemon is running, so no seats are reserved");
         return borrowed;
     };
-    // Fixed slots already stand for every launch; there is nothing to borrow.
     if state["slot_mode"] == "fixed" && state["slot_count"].as_u64() >= Some(u64::from(seats)) {
         info!("--reserve {seats}: the daemon's fixed slots already cover it");
         return borrowed;
@@ -267,7 +262,6 @@ fn borrow_seats(seats: u32) -> Borrowed {
                 .max()
         })
         .unwrap_or(0) as u32;
-    // Either 360 identity's layout is known before the pad; only the others are switched.
     if !matches!(identity.as_str(), "xbox360" | "xbox360-numbered") {
         let asked = serde_json::json!({"cmd": "identity", "mode": "xbox360"});
         match commands::daemon_ask_until(&asked, |state| state["identity"] == "xbox360", 15.0) {
@@ -292,10 +286,8 @@ fn borrow_seats(seats: u32) -> Borrowed {
     borrowed
 }
 
-/// Tell the daemon what is being played, so each clone is built from that
-/// scope's walk before the game reads it. The scope is leased on this
-/// connection, so a launch killed mid-game takes it away with it. Nothing
-/// here is fatal either.
+/// Tells the daemon what is being played, leased on this connection so a killed
+/// launch takes it back.
 fn borrow_scope(console: &str, game: &str, borrowed: &mut Borrowed) {
     let asked = serde_json::json!({
         "cmd": "scope", "console": console, "game": game, "lease": true
@@ -313,8 +305,7 @@ fn borrow_scope(console: &str, game: &str, borrowed: &mut Borrowed) {
     }
 }
 
-/// Give back what `borrow_seats` and `borrow_scope` took. A daemon that has
-/// already ended with the session has nothing to give back to, and that is fine.
+/// Gives back what `borrow_seats` and `borrow_scope` took.
 fn hand_back(borrowed: Borrowed) {
     // Closing the lease is the daemon's cue to put back what this launch found.
     drop(borrowed.scope_lease);
@@ -352,8 +343,6 @@ fn cmd_exec(args: Vec<String>) -> Result<()> {
     let Some((program, rest)) = args.split_first() else {
         std::process::exit(2);
     };
-    // Before anything reads the files or /dev/input: the seats have to exist
-    // when the bind plan is built, and their mappings have to be in `env.sh`.
     let mut borrowed = flags.reserve.map(borrow_seats).unwrap_or_default();
     if !flags.console.is_empty() || !flags.game.is_empty() {
         borrow_scope(&flags.console, &flags.game, &mut borrowed);
@@ -371,13 +360,7 @@ fn cmd_exec(args: Vec<String>) -> Result<()> {
         }
     };
 
-    // danstick's pads and nothing else. Every consumer is meant to read the
-    // clones -- the mapping, the player order, the motion and the remapping
-    // all live there -- and nothing stopped a game from opening the physical
-    // pad as well and binding whichever SDL saw first. See `isolate`.
-    //
-    // DANSTICK_NO_ISOLATE=1 turns it off, for somebody who has to reach a
-    // controller danstick has not republished.
+    // DANSTICK_NO_ISOLATE=1 skips isolation, to reach a pad danstick has not republished.
     let mut argv: Vec<String> = std::iter::once(program.clone())
         .chain(rest.iter().cloned())
         .collect();
@@ -387,8 +370,6 @@ fn cmd_exec(args: Vec<String>) -> Result<()> {
             .unwrap_or_default();
         let plan = isolate::plan(&isolate::event_nodes(), &raw, &isolate::hidraw_nodes());
         if !plan.worth_it() {
-            // No clone published: hiding this game's controllers would leave
-            // it with none at all, which is worse than the problem.
             info!("no virtual pads published; {program} will see the controllers as they are");
         } else if which_bwrap().is_none() {
             warn!("bwrap is not here; {program} will see the physical pads as well as danstick's");

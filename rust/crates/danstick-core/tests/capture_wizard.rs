@@ -246,7 +246,6 @@ fn a_finished_run_ignores_everything_afterwards() {
     assert!(run.finished());
     let recorded_count = run.bindings().len();
 
-    // A pad does not stop reporting because the wizard is done, and whatever.
     for event in [
         Event::key(0x130, 1),
         Event::key(0x130, 0),
@@ -380,7 +379,6 @@ fn skipping_the_last_control_finishes_the_run() {
 
 #[test]
 fn a_skip_starts_the_same_gap_a_capture_does() {
-    // The button released after a skip-hold must not answer the control the.
     let mut run = run();
     let released = SKIP_HOLD_SECONDS + 0.01;
     hold(&mut run, 0x130, 0.0);
@@ -474,7 +472,6 @@ fn a_release_inside_the_gap_clears_the_press_it_belonged_to() {
 
 #[test]
 fn an_axis_released_inside_the_gap_is_still_re_armed() {
-    // Release during gap must still re-arm; drop it and trigger gets stuck.
     let mut run = snes_run(Vec::new(), axes(&[(ABS_X, stick())]), BTreeSet::new());
     let clock = skip_to(&mut run, first_dpad());
 
@@ -548,7 +545,6 @@ fn one_button_may_answer_two_prompts_and_the_share_is_said() {
     );
     assert_eq!(run.bindings()[&first], run.bindings()[&second]);
     assert_eq!(run.bindings().len(), 2);
-    // A third control on the same button is told about one of them.
     let third = run.current().expect("a third prompt");
     assert_eq!(recorded(&tap(&mut run, 0x130, 2.0)).0, third);
     assert!(run.conflict().is_some());
@@ -651,7 +647,6 @@ fn the_other_half_of_an_axis_is_a_separate_claim() {
 
 #[test]
 fn a_later_capture_clears_the_conflict() {
-    // A stale conflict pinned under a later control names a clash that is not.
     let mut run = run();
     tap(&mut run, 0x130, 0.0);
     tap(&mut run, 0x130, 1.0);
@@ -747,14 +742,12 @@ fn a_trigger_resting_at_its_minimum_still_re_arms_after_it_is_let_go() {
         again.advanced() && run.conflict().is_some(),
         "the trigger went dead after one press: {again:?}"
     );
-    // The share is a capture too, so the other trigger waits out its gap.
     let (_, second) = recorded(&run.feed(Event::abs(0x05, 255), clock + 2.0 * AFTER_GAP));
     assert_eq!(second, Binding::axis(1, 1));
 }
 
 #[test]
 fn a_resting_axis_reports_nothing_at_all() {
-    // Continuous resting axis events must not bury session.
     let mut run = snes_run(Vec::new(), axes(&[(0x02, stick())]), BTreeSet::new());
     assert_eq!(run.layout.controls[0].kind, "button");
 
@@ -848,7 +841,6 @@ fn an_axis_the_pad_never_declared_cannot_answer_a_face_button() {
 
 #[test]
 fn a_hat_never_answers_a_face_button_prompt_at_any_value() {
-    // Hat answering face button is never correct; undeclared hat must not fill face buttons.
     let mut run = run();
     assert_eq!(run.layout.controls[0].kind, "button");
 
@@ -996,7 +988,6 @@ fn a_hat_binding_is_always_hat_zero_whichever_code_it_arrived_on() {
 
 #[test]
 fn an_axis_records_its_index_among_the_pads_axes_not_its_evdev_code() {
-    // Code 0x05 may not be axis 5 in the map.
     let mut run = snes_run(
         Vec::new(),
         axes(&[(0x00, stick()), (0x01, stick()), (0x05, stick())]),
@@ -1111,7 +1102,6 @@ fn an_event_that_is_neither_a_key_nor_an_axis_is_ignored() {
 
 #[test]
 fn the_scope_is_carried_on_the_run_because_it_is_needed_at_the_end() {
-    // Scope must persist across wizard abandon/restart.
     let run = snes_run(joystick_keys(), BTreeMap::new(), BTreeSet::new());
     assert_eq!(run.scope, "");
 
@@ -1176,7 +1166,6 @@ fn a_claim_describes_itself_in_the_terms_a_log_reader_has_to_match() {
 
 #[test]
 fn a_claim_on_a_hat_value_that_is_not_a_direction_still_describes_itself() {
-    // A diagonal reads 3 and is not a control, but a log line that raised.
     assert_eq!(Claim::Hat { index: 0, value: 3 }.to_string(), "hat 3");
     assert_eq!(Claim::Hat { index: 0, value: 0 }.to_string(), "hat 0");
 }
@@ -1226,7 +1215,6 @@ fn play_chooser(chooser: &mut Chooser, script: &[(Event, f64)]) -> Vec<bool> {
 
 #[test]
 fn a_chooser_moves_on_the_transition_into_a_direction_only() {
-    // Move on transition only; held stick would spin selection past entry.
     let mut chooser = chooser(BTreeMap::new(), BTreeSet::new());
     assert_eq!(chooser.index(), 0);
 
@@ -1309,7 +1297,6 @@ fn a_chooser_ignores_an_axis_whose_span_is_degenerate() {
 
 #[test]
 fn a_chooser_wraps_at_both_ends() {
-    // Strip is a loop; wrapping keeps all consoles reachable.
     let count = layout_options(&BTreeSet::new()).len();
     let mut chooser = chooser(BTreeMap::new(), BTreeSet::new());
 
@@ -1332,7 +1319,6 @@ fn a_chooser_wraps_at_both_ends() {
 
 #[test]
 fn an_empty_chooser_reports_no_choice_rather_than_indexing_past_the_end() {
-    // game_scope_options returns empty for unknown console; daemon must not crash.
     let mut chooser = Chooser::new(
         1,
         Vec::new(),
@@ -1418,7 +1404,6 @@ fn a_confirmed_chooser_ignores_everything_afterwards() {
 
 #[test]
 fn a_chooser_settles_before_it_accepts_anything() {
-    // Opening press held = *hold*, would confirm first entry.
     let mut chooser = chooser(axes(&[(ABS_X, stick())]), [0x130].into());
     assert!(chooser.settling());
 
@@ -1551,7 +1536,6 @@ fn a_game_scope_strip_offers_the_console_first() {
 
 #[test]
 fn both_game_scope_entries_draw_the_consoles_pad() {
-    // Game mapping is still N64 control set; pad shown must match wizard's.
     let options = game_scope_options("n64", "n64/goldeneye", "GoldenEye 007", &BTreeSet::new());
 
     assert_eq!(options[0].layout, "n64");
@@ -1560,7 +1544,6 @@ fn both_game_scope_entries_draw_the_consoles_pad() {
 
 #[test]
 fn a_game_with_no_console_is_offered_nothing_rather_than_the_generic_pad() {
-    // Exporter omits console for unrecognized cores; strip would promise wrong controller.
     assert!(game_scope_options("", "x/y", "Title", &BTreeSet::new()).is_empty());
     assert!(game_scope_options("", "", "", &BTreeSet::new()).is_empty());
 }
@@ -1751,7 +1734,6 @@ fn a_console_less_sighting_does_not_hide_the_same_game_s_usable_entry() {
 
 #[test]
 fn a_scope_strip_marks_what_is_already_captured() {
-    // Mark captured scopes so user knows what re-mapping would destroy.
     let scopes: BTreeSet<String> = [
         scope::UNIVERSAL.to_owned(),
         "console:n64".to_owned(),
@@ -1847,7 +1829,6 @@ fn a_hold_between_the_two_tiers_still_skips() {
     ));
     assert_eq!(outcome, Outcome::Skipped { control: first });
     assert!(!run.finished());
-    // The tiers must be far enough apart that a slow skip cannot finish.
     const {
         assert!(FINISH_HOLD_SECONDS >= 2.0 * SKIP_HOLD_SECONDS);
     }
@@ -2235,7 +2216,6 @@ fn an_axis_displaced_as_a_step_begins_cannot_answer_it_until_it_has_rested() {
     let mut run = generic_run();
     let target = position_of("generic", Control::LeftTrigger);
     let mut clock = skip_to(&mut run, target - 1);
-    // The trigger is squeezed while the step before is skipped, and held.
     run.feed(Event::key(SKIP_BUTTON, 1), clock);
     run.feed(Event::abs(ABS_Z, 40), clock + 0.1);
     run.feed(Event::abs(ABS_Z, 70), clock + 0.2);
@@ -2265,7 +2245,6 @@ fn an_axis_pushed_during_the_gap_after_a_capture_waits_for_rest() {
     let clock = skip_to(&mut run, position_of("generic", Control::LeftTrigger) - 1);
     let (control, _) = recorded(&run.feed(Event::abs(ABS_Z, 200), clock));
     assert_eq!(control, Control::RightShoulder);
-    // Released, then squeezed again inside the gap and held into ZL's step.
     run.feed(Event::abs(ABS_Z, 0), clock + 0.05);
     run.feed(Event::abs(ABS_Z, 150), clock + 0.1);
     assert_eq!(
@@ -2302,7 +2281,6 @@ fn an_axis_settled_just_inside_the_release_band_as_a_step_begins_still_answers()
     let mut run = generic_run();
     let mut clock = skip_to(&mut run, position_of("generic", Control::LeftTrigger) - 1);
     run.feed(Event::key(SKIP_BUTTON, 1), clock);
-    // 38 of 255 is a deflection of 0.298, inside AXIS_RELEASE.
     run.feed(Event::abs(ABS_Z, 38), clock + 0.1);
     clock += SKIP_HOLD_SECONDS + 0.01;
     run.feed(Event::key(SKIP_BUTTON, 0), clock);

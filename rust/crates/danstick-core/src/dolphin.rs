@@ -7,15 +7,10 @@ pub const SI_NONE: u32 = 0;
 /// Dolphin's GameCube pad has four ports and no more.
 pub const MAX_PLAYERS: u32 = 4;
 
-/// A thumbstick's reach at each of an octagon's eight notches: all the way,
-/// which is what Dolphin records when a round stick is turned against its
-/// rim. Dolphin scales a stick by gate / calibration at each angle, so this
-/// makes a round stick trace the emulated gate exactly.
+/// A round stick's calibration gate, matching what Dolphin records at each notch.
 pub const ROUND_GATE: &str = "100.00 100.00 100.00 100.00 100.00 100.00 100.00 100.00";
 
-/// A key-driven stick's reach: two keys make a true diagonal. Dolphin's own,
-/// in its words: "Because our defaults use keyboard input, set calibration
-/// shapes to squares."
+/// A key-driven stick's calibration gate, where two keys make a true diagonal.
 pub const SQUARE_GATE: &str = "100.00 141.42 100.00 141.42 100.00 141.42 100.00 141.42";
 
 /// One `[GCPadN]` binding, as `key = value`.
@@ -84,10 +79,7 @@ pub const MAX_WIIMOTES: u32 = 4;
 pub const WIIMOTE_NONE: u32 = 0;
 pub const WIIMOTE_EMULATED: u32 = 1;
 
-/// One `[WiimoteN]` binding for a danstick clone, in the SDL backend's own
-/// element names -- the same vocabulary as `BINDINGS`, so the per-model lookup
-/// is still Dolphin's job. It points with the right stick, on the signs
-/// `BINDINGS` already uses for the C-stick, because a pad has no pointer.
+/// One `[WiimoteN]` binding for a danstick clone, pointing with the right stick.
 pub const WIIMOTE_BINDINGS: [(&str, &str); 20] = [
     ("Buttons/A", "`Button S`"),
     ("Buttons/B", "`Trigger R`"),
@@ -104,8 +96,7 @@ pub const WIIMOTE_BINDINGS: [(&str, &str); 20] = [
     ("IR/Down", "`Right Y-`"),
     ("IR/Left", "`Right X-`"),
     ("IR/Right", "`Right X+`"),
-    // The pointer's gate is the screen's square; uncalibrated, a round stick
-    // stops at 70.7% of the way to every corner.
+    // Uncalibrated, a round stick reaches only 70.7% of the screen-square pointer gate.
     ("IR/Calibration", ROUND_GATE),
     ("Shake/X", "`Shoulder L`"),
     ("Shake/Y", "`Shoulder L`"),
@@ -113,8 +104,7 @@ pub const WIIMOTE_BINDINGS: [(&str, &str); 20] = [
     ("Extension", "Nunchuk"),
 ];
 
-/// The Nunchuk on a clone: the left stick, with C and Z on the shoulder and
-/// trigger the remote's own B does not use.
+/// The Nunchuk on a clone: the left stick, with C and Z on the shoulder and trigger.
 pub const WIIMOTE_NUNCHUK: [(&str, &str); 7] = [
     ("Nunchuk/Stick/Up", "`Left Y+`"),
     ("Nunchuk/Stick/Down", "`Left Y-`"),
@@ -125,9 +115,7 @@ pub const WIIMOTE_NUNCHUK: [(&str, &str); 7] = [
     ("Nunchuk/Buttons/Z", "`Trigger L`"),
 ];
 
-/// Dolphin's own Wii Remote 1 defaults on the mouse and keyboard
-/// (`WiimoteEmu::Wiimote::LoadDefaults`, `HAVE_X11`, `Nunchuk::LoadDefaults`);
-/// danstick only moves the section to the seat that owns the mouse.
+/// Dolphin's own Wii Remote 1 defaults, moved to the seat that owns the mouse.
 pub const WIIMOTE_KEYBOARD_BINDINGS: [(&str, &str); 25] = [
     ("Buttons/A", "`Click 1`"),
     ("Buttons/B", "`Click 3`"),
@@ -156,8 +144,7 @@ pub const WIIMOTE_KEYBOARD_BINDINGS: [(&str, &str); 25] = [
     ("Nunchuk/Buttons/Z", "`Shift_L`"),
 ];
 
-/// One `[WiimoteN]` section, ending in a newline. `Source` leads it: a remote
-/// Dolphin is not sourcing is ignored however well it is bound.
+/// One `[WiimoteN]` section, ending in a newline.
 fn wiimote_section<'a>(
     port: u32,
     device_line: &str,
@@ -170,23 +157,17 @@ fn wiimote_section<'a>(
     out
 }
 
-/// A remote nobody holds: sourced from nothing, for the same reason an
-/// unmanaged GameCube port is `SIDEVICE_NONE` -- a remote still declared from
-/// a session with more players is a phantom in the next game.
+/// A remote nobody holds, sourced from nothing.
 fn wiimote_off(port: u32) -> String {
     format!("[Wiimote{port}]\nSource = {WIIMOTE_NONE}\n")
 }
 
-/// The remote the keyboard's seat takes: its seat, else the first of the four
-/// no pad holds. The same rule as the GameCube port, so one person is one
-/// player on both sides of Dolphin.
+/// The remote the keyboard's seat takes: its seat, else the first of the four no pad holds.
 pub fn wiimote_port(players: &[u32], seat: Option<u32>) -> Option<u32> {
     crate::keyboard::port(seat, players, MAX_WIIMOTES)
 }
 
-/// Every remote, in port order. Dolphin emulates remote 1 on the mouse and
-/// keyboard on a fresh install and leaves 2-4 off, so seating a pad there
-/// first gave that player the mouse's remote and the keyboard's seat none.
+/// Every remote, in port order, giving the keyboard's default remote to whichever port it seats.
 pub fn wiimote_sections(
     players: &[u32],
     seat: Option<u32>,
@@ -223,10 +204,7 @@ pub fn wiimote_sections(
         .collect()
 }
 
-/// Replace all `[Wiimote1..4]` sections, keeping everything else in the file,
-/// `[BalanceBoard]` among it. A remote the user paired for real lives *in* one
-/// of these sections as `Source = 2` and is replaced with the seat danstick has
-/// given that port: danstick's answer to who player N is has to be the only one.
+/// Replace all `[Wiimote1..4]` sections, keeping everything else in the file.
 pub fn rewrite_wiimotes(existing: &str, body: &str) -> String {
     rewrite_sections(existing, body, is_wiimote_section)
 }
@@ -257,8 +235,7 @@ pub fn keyboard_port(players: &[u32], seat: Option<u32>) -> Option<u32> {
     crate::keyboard::port(seat, players, MAX_PLAYERS)
 }
 
-/// Slot always 0 (it counts devices sharing a name; danstick pads are unique per
-/// player), on one line so a name cannot close the section it is written into.
+/// Slot always 0, on one line so a name cannot close the section it is written into.
 pub fn device(name: &str) -> String {
     let name: String = name.chars().filter(|c| !c.is_control()).collect();
     format!("SDL/0/{}", name.trim())
@@ -301,8 +278,7 @@ pub fn rewrite_bindings(existing: &str, body: &str) -> String {
     rewrite_sections(existing, body, is_pad_section)
 }
 
-/// Drop every section `ours` claims and append `body`, keeping the rest of
-/// the file: neither ini is only danstick's.
+/// Drop every section `ours` claims and append `body`, keeping the rest of the file.
 fn rewrite_sections(existing: &str, body: &str, ours: impl Fn(&str) -> bool) -> String {
     let mut out = String::with_capacity(existing.len() + body.len());
     let mut dropping = false;
@@ -467,8 +443,6 @@ mod tests {
 
     #[test]
     fn a_name_cannot_close_the_remote_it_is_written_into() {
-        // The sibling of the GCPad test below: a remote's device line comes
-        // from the same caller-supplied name, so it gets the same scrubbing.
         let forged = "X\n[Wiimote3]\nSource = 1\nDevice = SDL/0/X";
         let text = wiimote_sections(&[1, 2, 3, 4], None, |_| forged.to_owned());
         let headers: Vec<&str> = text.lines().filter(|line| line.starts_with('[')).collect();
@@ -491,9 +465,6 @@ mod tests {
 
     #[test]
     fn a_thumbstick_is_calibrated_round_and_a_keyboards_stick_square() {
-        // Dolphin scales a stick by gate / calibration at each angle. A round
-        // thumbstick given a square calibration reaches 70.7% of a diagonal,
-        // and given none it overshoots the GameCube's gate by a quarter.
         let round = format!("Calibration = {ROUND_GATE}\n");
         let square = format!("Calibration = {SQUARE_GATE}\n");
         let pad = section(1, "SDL/0/danstick Player 1");
@@ -513,8 +484,7 @@ mod tests {
 
     #[test]
     fn a_name_cannot_close_the_section_it_is_written_into() {
-        // The name comes from a caller's JSON; a newline in it would end the
-        // port's section and everything under it would bind somewhere else.
+        // A newline in the name would otherwise end the section early.
         let forged = device("X\n[GCPad2]\nDevice = SDL/0/X");
         assert_eq!(forged, "SDL/0/X[GCPad2]Device = SDL/0/X");
         let text = sections(&[1], None, |_| "X\n[GCPad2]\nDevice = SDL/0/X".to_owned());
@@ -556,10 +526,6 @@ mod tests {
 
     #[test]
     fn every_wiimote_section_is_replaced_and_everything_else_is_kept() {
-        // `[BalanceBoard]` is not a numbered remote. A real remote's own
-        // pairing lives *inside* a `[WiimoteN]` block danstick owns, so it goes
-        // with the rest of that block rather than surviving as a real
-        // controller on a port danstick has given to somebody.
         let existing = "[BalanceBoard]\nSource = 0\n\
                         [Wiimote1]\nSource = 2\nID0 = 1122334455\nID1 = 6\n\
                         [Wiimote4]\nSource = 1\nDevice = SDL/0/gone\n\
@@ -608,7 +574,6 @@ mod tests {
 
     #[test]
     fn an_unmanaged_port_is_emptied_rather_than_left_alone() {
-        // Port 3 is the keyboard's; port 4 is nobody's.
         let devices = si_devices(&[1, 2], None);
         assert_eq!(
             devices,
@@ -688,7 +653,6 @@ mod tests {
 
     #[test]
     fn a_key_whose_name_is_a_prefix_of_another_is_not_confused_for_it() {
-        // SIDevice1 must not be mistaken for SIDevice10, nor the reverse.
         let existing = "[Core]\nSIDevice10 = 1\nSIDevice1 = 0\n";
         let out = set_ini(existing, "Core", "SIDevice1", "6");
         assert_eq!(out, "[Core]\nSIDevice10 = 1\nSIDevice1 = 6\n");
@@ -716,7 +680,6 @@ mod tests {
 
     #[test]
     fn a_users_other_dsu_servers_are_kept() {
-        // danstick owns its entry, not the list.
         let existing = "[Server]\nEnabled = False\nEntries = phone:192.168.1.5:26760;\n";
         let text = dsu_client_ini(existing);
         assert_eq!(

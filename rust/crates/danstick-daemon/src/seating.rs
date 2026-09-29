@@ -14,8 +14,7 @@ pub struct Seating {
     open: bool,
     pads: Vec<Pad>,
     sources: Vec<Source>,
-    /// The pads last asked for, opened or not: a pad that cannot be opened
-    /// must not look like a change on every tick.
+    /// The pads last asked for, opened or not.
     wanted: Vec<PathBuf>,
     assigner: Assigner,
     buffer: Vec<evdev::InputEvent>,
@@ -26,8 +25,7 @@ pub struct Seating {
 /// What makes a watched pad the same pad across a rebuild.
 type Identity = (PathBuf, u16, u16, String, String, String);
 
-/// The kernel reuses `/dev/input/eventN`, so a hold must not follow the node on
-/// its own: a pad unplugged and another plugged into its number would inherit it.
+/// A pad's identity, stable across node number reuse.
 fn identity(pad: &Pad) -> Identity {
     (
         pad.path.clone(),
@@ -71,8 +69,7 @@ impl Seating {
         self.seats
     }
 
-    /// Open for `seats` players. `hold` omitted leaves the length as it was,
-    /// so a caller that does not care never resets one that does.
+    /// Opens for `seats` players; `hold` omitted leaves the length unchanged.
     pub fn open(&mut self, seats: u32, hold: Option<f64>) {
         self.open = true;
         self.seats = seats.max(1);
@@ -106,8 +103,7 @@ impl Seating {
             .collect()
     }
 
-    /// Whether [`refresh`] would change the set, measured against what was last
-    /// asked for: a pad that cannot be opened must not differ forever.
+    /// Whether [`refresh`] would change the watched set.
     pub fn would_change(&self, wanted: &[Pad]) -> bool {
         self.wanted.len() != wanted.len()
             || self
@@ -124,9 +120,7 @@ impl Seating {
         self.wanted = wanted.iter().map(|pad| pad.path.clone()).collect();
         // Pads as watched before the rebuild, so holds can follow to their new index.
         let before: Vec<Identity> = self.pads.iter().map(identity).collect();
-        // A pad that stays watched keeps its descriptor. Closing it to rebuild
-        // the list threw away whatever was queued on it, and a button that went
-        // down in that moment stays down and never sends another edge.
+        // A pad that stays watched keeps its source, so queued input is not lost.
         let mut kept: Vec<Option<Source>> = std::mem::take(&mut self.sources)
             .into_iter()
             .map(Some)
@@ -141,8 +135,7 @@ impl Seating {
                 Some(source) => source,
                 None => match clone::open_source(&pad, false) {
                     Ok(source) => {
-                        // Ask SDL about it now, off the loop, so the answer is
-                        // there by the time this pad claims.
+                        // Ask SDL about it now, off the loop, so the answer is ready by claim time.
                         if let Some(guid) = source.physical_guid() {
                             danstick_input::sdlprobe::shared().prefetch(&guid);
                         }
@@ -185,8 +178,7 @@ impl Seating {
         }
         let steam = self.pads.get(index).is_some_and(pad::is_steam_virtual);
         for event in &self.buffer {
-            // When it happened, not when this got round to reading it: a
-            // claim just before can hold the loop for a good part of a second.
+            // When it happened, not when this got read: a claim can hold the loop a while.
             let at = now - clone::event_age(event);
             let (kind, code, value) = (event.event_type().0, event.code(), event.value());
             if is_press(kind, code, value) {
@@ -222,8 +214,7 @@ impl Seating {
                 _ => Gate::Go,
             });
         let mut twins = Vec::new();
-        // Only while it claims: once seated, its press reaches its clone's Steam
-        // pad too, and which of the two is its own is no longer clear.
+        // Only while it claims: once seated, telling its press from its clone's is no longer clear.
         for (&(index, _), verdict) in holds.iter().zip(&verdicts) {
             if let Verdict::Mirrored { steam, sure: true } = *verdict {
                 if claimed.iter().any(|claim| claim.pad == index) {
@@ -245,8 +236,7 @@ impl Seating {
     pub fn forget(&mut self, path: &std::path::Path) {
         match self.pads.iter().position(|pad| pad.path == path) {
             Some(index) => self.assigner.forget(index),
-            // Not reachable today, and silent it would be a pad that can never
-            // retry: it keeps a claim on a seat it was refused.
+            // Not reachable today; silent it would be a pad stuck holding a refused seat.
             None => warn!("seating: no pad at {} to forget", path.display()),
         }
     }

@@ -204,8 +204,7 @@ mod tests {
 
     #[test]
     fn a_decks_built_in_controls_are_valve_hardware_by_id_and_by_name() {
-        // hid-steam names the node "Steam Deck"; the lizard nodes beside it
-        // say only "Valve Software Steam Controller".
+        // The lizard nodes beside "Steam Deck" only say "Valve Software Steam Controller".
         let deck = |name: &str| for_pad(0x28DE, 0x1205, name, None, &BTreeMap::new());
         assert_eq!(deck("Steam Deck"), STEAM);
         assert_eq!(deck(""), STEAM, "the id alone is enough");

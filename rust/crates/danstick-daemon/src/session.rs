@@ -99,8 +99,7 @@ impl Session {
         Err(OpenError::AllGone(last))
     }
 
-    /// A pad switched on after the session opened: grabbed and read like the
-    /// others, claimable by the same hold. Returns its index.
+    /// Admits a pad switched on after the session opened, returning its index.
     pub fn admit(&mut self, pad: Pad) -> Result<usize, clone::CloneError> {
         let mut source = clone::open_source(&pad, false)?;
         if source.grab().is_err() {

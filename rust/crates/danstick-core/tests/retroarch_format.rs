@@ -529,7 +529,6 @@ fn a_minus_button_kills_the_plus_axis_on_every_stem() {
 
 #[test]
 fn a_plus_button_kills_the_minus_axis_on_every_stem() {
-    // The rule is symmetric even though the hardware is not: FINDINGS notes a.
     for stem in ANALOG_STEMS {
         let out = drop_shadowed_axis_halves(vec![
             format!("{stem}_plus_btn = \"12\""),

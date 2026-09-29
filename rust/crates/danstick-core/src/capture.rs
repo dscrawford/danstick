@@ -61,8 +61,7 @@ impl Event {
     }
 }
 
-/// Each axis's rest from its calibration where it has one, not from wherever it
-/// sat when the pad was opened: a stick held then would read its release as a press.
+/// Each axis's rest from its calibration where it has one, not from where it sat on open.
 pub fn calibrated_rests(
     spans: BTreeMap<u16, AxisSpan>,
     calibrated: &BTreeMap<u16, crate::calibration::AxisCalibration>,
@@ -147,8 +146,7 @@ impl Outcome {
     }
 }
 
-/// A raw input in the terms a profile uses: kind, ordinal, and a value that is
-/// 0 or 1 for a button, a direction bit for a hat, -1..1 for an axis.
+/// A raw input in the terms a profile uses: kind, ordinal, and value.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Pressed {
     pub kind: BindingKind,
@@ -216,8 +214,7 @@ impl MappingRun {
         }
     }
 
-    /// Walk one control only: start on it and finish after it. None if the
-    /// layout has no such control.
+    /// Walk one control only: start on it and finish after it, or None if the layout lacks it.
     pub fn only(mut self, control: Control) -> Option<Self> {
         let at = self
             .layout
@@ -229,8 +226,7 @@ impl MappingRun {
         Some(self)
     }
 
-    /// Where each axis sat when the pad was opened, so one already displaced
-    /// answers nothing until it has rested.
+    /// Where each axis sat when the pad was opened, so a displaced one answers only once rested.
     pub fn opened_at(mut self, values: &BTreeMap<u16, i32>) -> Self {
         self.axis_at.extend(values);
         self.disarm_displaced();
@@ -256,8 +252,7 @@ impl MappingRun {
             .map(|entry| entry.canonical)
     }
 
-    /// Start from a stored capture, so the conflict guard sees it and an early
-    /// finish leaves a whole mapping.
+    /// Start from a stored capture, so an early finish still leaves a whole mapping.
     pub fn seeded(mut self, stored: &BTreeMap<Control, Binding>) -> Self {
         for (control, binding) in stored {
             if let Some(claim) = self.claim_of(*binding) {
@@ -413,8 +408,7 @@ impl MappingRun {
         Outcome::Refused { claim, held_by }
     }
 
-    /// What `event` is on this pad, whether or not it binds anything -- so a
-    /// front-end can show the button under the thumb while the wizard runs.
+    /// What `event` is on this pad, whether or not it binds anything.
     pub fn describe(&self, event: Event) -> Option<Pressed> {
         match event.kind {
             EV_KEY => Some(Pressed {
@@ -483,7 +477,7 @@ impl MappingRun {
             return Outcome::Ignored;
         }
         if event.value != 0 {
-            return Outcome::Ignored; // Autorepeat
+            return Outcome::Ignored;
         }
 
         self.down.remove(&event.code);
@@ -533,8 +527,7 @@ impl MappingRun {
         }
     }
 
-    /// An axis away from rest as a step begins is not pressing for it: only a
-    /// travel that starts from rest answers.
+    /// An axis away from rest as a step begins is not pressing for it.
     fn disarm_displaced(&mut self) {
         for (code, value) in &self.axis_at {
             let displaced = if *code == ABS_HAT0X || *code == ABS_HAT0Y {
@@ -563,8 +556,7 @@ impl MappingRun {
         let Some(current) = self.layout.controls.get(self.index) else {
             return Outcome::Ignored;
         };
-        // A stick answers a shoulder only pushed to its stop: a thumb resting on
-        // it crosses the trigger threshold without meaning to.
+        // A resting thumb crosses the trigger threshold, so a shoulder needs a push to the stop.
         let stick_for_shoulder = current.kind == "shoulder"
             && self
                 .axes
@@ -1107,7 +1099,6 @@ mod tests {
 
     #[test]
     fn an_axis_springing_back_through_centre_does_not_answer_the_next_prompt() {
-        // Axis overshoots centre when released, must not answer next control.
         let axes: BTreeMap<u16, AxisSpan> = [(ABS_X, span(0, 255, 128))].into_iter().collect();
         let dpad = layout::get("snes");
         let start = dpad
@@ -1126,7 +1117,6 @@ mod tests {
 
     #[test]
     fn an_axis_released_inside_the_gap_is_still_re_armed() {
-        // Release usually lands inside gap; must still re-arm.
         let axes: BTreeMap<u16, AxisSpan> = [(ABS_X, span(0, 255, 128))].into_iter().collect();
         let dpad = layout::get("snes");
         let start = dpad
@@ -1138,7 +1128,7 @@ mod tests {
         run.index = start;
 
         assert!(run.feed(Event::abs(ABS_X, 0), 0.0).advanced());
-        run.feed(Event::abs(ABS_X, 128), 0.05); // inside the gap
+        run.feed(Event::abs(ABS_X, 128), 0.05);
         assert!(
             run.feed(Event::abs(ABS_X, 255), 0.5).advanced(),
             "the axis never re-armed"
@@ -1292,7 +1282,6 @@ mod tests {
 
     #[test]
     fn deflection_is_measured_from_rest_not_from_the_declared_middle() {
-        // Trigger at rest must read 0, not fully deflected.
         let trigger = span(0, 255, 0);
         assert_eq!(
             deflection(trigger, 0),
@@ -1312,7 +1301,6 @@ mod tests {
     #[test]
     fn a_calibrated_centre_is_the_rest_and_not_where_the_stick_sat_when_opened() {
         use crate::calibration::AxisCalibration;
-        // The stick was held at 60 when the pad was opened.
         let spans: BTreeMap<u16, AxisSpan> =
             [(ABS_Y, span(-100, 100, 60)), (ABS_X, span(-100, 100, 5))].into();
         let calibrated: BTreeMap<u16, AxisCalibration> = [
@@ -1330,7 +1318,6 @@ mod tests {
             deflection(rested[&ABS_Y], 2).abs() < AXIS_RELEASE,
             "letting go is not a press"
         );
-        // Measured under another driver's range, or at a trigger's end: not this axis's rest.
         let spans: BTreeMap<u16, AxisSpan> =
             [(ABS_Y, span(0, 255, 200)), (ABS_X, span(-100, 100, 5))].into();
         let calibrated: BTreeMap<u16, AxisCalibration> = [

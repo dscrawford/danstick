@@ -1,4 +1,4 @@
-//! The DSU wire format, attacked: the socket is unauthenticated, so the parser must never read past what it measured.
+//! The DSU parser, attacked: it must never read past what it measured.
 
 use danstick_core::dsu::{self, analog, button, Kind, Pad, Port, Request, Subscribe, Touch};
 use danstick_core::dsupad::Range;
@@ -26,7 +26,6 @@ fn stamp_crc(packet: &mut [u8]) {
 
 #[test]
 fn a_client_that_pads_its_datagram_past_a_hundred_bytes_is_still_believed() {
-    // The client's CRC covers everything it sent; checking only the first hundred rejects it for ever.
     let mut packet = client_packet(Kind::Version, &[]);
     packet.extend_from_slice(&[0xAB; 200]);
     stamp_crc(&mut packet);
@@ -57,7 +56,6 @@ proptest! {
     ) {
         let packet = client_packet(kind, &body);
         let _ = dsu::parse_request(&packet);
-        // Some clients send a blank CRC.
         let mut blank = packet.clone();
         blank[8..12].fill(0);
         let _ = dsu::parse_request(&blank);
@@ -119,7 +117,6 @@ fn a_port_request_naming_more_slots_than_exist_asks_only_about_the_first_four() 
 
 #[test]
 fn an_unknown_subscription_flag_is_declined_rather_than_treated_as_all() {
-    // Flag 3 is not in RegisterFlags; "all pads" would hand a malformed client every player.
     let packet = client_packet(Kind::PadData, &[3, 0, 0, 0, 0, 0, 0, 0]);
     assert!(dsu::parse_request(&packet).is_none());
 }

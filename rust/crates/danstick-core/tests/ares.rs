@@ -51,7 +51,6 @@ fn hat(vertical: bool, half: Half) -> Source {
 
 #[test]
 fn every_control_name_is_one_ares_uses() {
-    // ares keeps an unbound entry beside a name it does not know, so only its own file can say.
     let theirs = reference_controls();
     assert!(!theirs.is_empty(), "the reference file has no VirtualPad1");
     let ours: Vec<&str> = ares::CONTROLS.iter().map(|(name, _)| *name).collect();
@@ -61,7 +60,6 @@ fn every_control_name_is_one_ares_uses() {
             "{name:?} is not a control ares writes"
         );
     }
-    // Rumble is the one ares has that danstick does not bind.
     assert!(theirs.contains(&"Rumble".to_owned()));
     assert_eq!(ours.len() + 1, theirs.len(), "ours {ours:?} vs {theirs:?}");
 }
@@ -95,7 +93,6 @@ fn an_index_is_the_ordinal_in_ascending_evdev_order() {
 
 #[test]
 fn a_control_the_pad_does_not_have_is_left_unbound() {
-    // Index zero would bind a real button to a control the user never pressed.
     let no_hat = Indices::of(&[0x130], &[0x00, 0x01]);
     for source in [
         hat(true, Half::Lo),

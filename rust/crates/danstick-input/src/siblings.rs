@@ -1,16 +1,4 @@
 //! A controller's keyboard and mouse are danstick's to hold while it is seated.
-//!
-//! A Steam Controller Puck is, in hardware, four keyboards and four mice
-//! until something turns lizard mode off; an Xbox pad over Bluetooth carries
-//! `Keyboard` and `Mouse` collections the kernel exposes as their own nodes.
-//! A front-end takes the keyboard and the mouse on purpose and cannot tell
-//! these from a real one. While a pad is seated, or is a candidate for a seat,
-//! its siblings are grabbed as well as its joystick, and released with it.
-//!
-//! A sibling is known by `uniq` -- the device's own address -- or, for Valve
-//! hardware, by vendor, since the Puck's lizard nodes carry no uniq. Never by
-//! `phys`: over Bluetooth every device on an adapter reports the adapter's
-//! address, and BlueZ's own media-control keyboard shares it with the pad.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -40,6 +28,7 @@ pub fn of(pad: &Pad, nodes: &[Node]) -> Vec<PathBuf> {
         .iter()
         .filter(|node| node.path != pad.path && (node.keyboard || node.mouse))
         .filter(|node| {
+            // Never by phys: Bluetooth pads share it.
             (!pad.uniq.is_empty() && node.uniq == pad.uniq)
                 || (pad.vid == VALVE_VID && node.vid == VALVE_VID)
         })

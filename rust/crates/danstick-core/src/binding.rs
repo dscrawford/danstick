@@ -129,7 +129,7 @@ impl Binding {
         if !self.sdl_visible() {
             return false;
         }
-        // Any negative index, not just RA_INVISIBLE itself: a profile off disk can hold whatever it likes, and no real button is negative.
+        // Any negative index, not just RA_INVISIBLE: no real button number is negative.
         match (self.kind, self.ra_index) {
             (BindingKind::Button, Some(index)) => index >= 0,
             _ => true,

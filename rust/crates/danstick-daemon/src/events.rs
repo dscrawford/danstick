@@ -48,8 +48,7 @@ pub fn pads(count: usize) -> Value {
     json!({ "event": "pads", "count": count })
 }
 
-/// A raw input under the wizard, whether or not it binds anything. An axis is
-/// rounded to twentieths so a resting stick's jitter is one event, not many.
+/// A raw input under the wizard, whether or not it binds anything.
 pub fn input(player: u32, pressed: danstick_core::capture::Pressed) -> Value {
     let value = match pressed.kind {
         danstick_core::binding::BindingKind::Axis => {

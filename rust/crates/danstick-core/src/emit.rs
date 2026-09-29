@@ -86,7 +86,7 @@ pub fn retroarch_profile(
     out.push("input_driver = \"udev\"".to_owned());
     out.push(format!("input_device = \"{name}\""));
     out.push(format!("input_device_display_name = \"{name}\""));
-    // The ids the virtual pad actually advertises, not danstick's own: by default it mirrors the source controller, and a profile claiming different ids scores against itself in RetroArch's autoconfig match.
+    // The ids the pad actually advertises; wrong ids fail RetroArch's autoconfig match.
     out.push(format!("input_vendor_id = \"{}\"", identity.vendor));
     out.push(format!("input_product_id = \"{}\"", identity.product));
 
@@ -293,7 +293,6 @@ mod tests {
 
     #[test]
     fn a_captured_left_stick_is_not_overwritten_by_the_default_one() {
-        // The defaults name axes 0 and 1; a pad whose stick is elsewhere says so.
         let captured: BTreeMap<Control, Binding> = [
             (Control::LeftStickLeft, Binding::axis(3, -1)),
             (Control::LeftStickRight, Binding::axis(3, 1)),
@@ -321,7 +320,6 @@ mod tests {
 
     #[test]
     fn a_left_stick_half_on_a_button_does_not_leave_the_other_half_shadowing_it() {
-        // The wound drop_shadowed_axis_halves exists for, reached from the default.
         let captured: BTreeMap<Control, Binding> = [(Control::LeftStickUp, Binding::button(7))]
             .into_iter()
             .collect();

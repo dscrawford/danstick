@@ -131,8 +131,8 @@ impl Identity {
         version: DANSTICK_VERSION,
     };
 
-    /// The wired 360 pad's, version and all: SDL's GUID carries the version,
-    /// and the database entry is for 0x0110. The player lives in phys instead.
+    /// The wired 360 pad's, version and all: SDL's GUID carries the version, and the database
+    /// entry is for 0x0110; the player lives in phys instead.
     pub const XBOX360: Identity = Identity {
         vendor: xbox::VENDOR,
         product: xbox::PRODUCT,
@@ -411,9 +411,6 @@ pub enum CloneError {
 }
 
 /// Grab a pad and publish its clone.
-/// `mapping` is the pad's stored capture: what translates it onto the 360
-/// layout under `IdentityMode::Xbox360`, and what says which controls have a
-/// second input under the others. Default for an unmapped pad.
 pub fn create(
     pad: &Pad,
     player: u32,
@@ -451,9 +448,7 @@ pub fn create_on(
     faces: &BTreeMap<danstick_core::Control, danstick_core::Control>,
     reserved: &mut Option<VirtualDevice>,
 ) -> Result<VirtualPad, CloneError> {
-    // Taken only once there is a pad to feed it: everything above this can fail,
-    // and a reserved device dropped on the way out is a port a running game has
-    // bound and nothing can replace inside its sandbox.
+    // Taken only once there is a pad to feed it, or a drop here silences a port a game bound.
     let source = open_source(pad, grab)?;
     let bindings = mapping.resolved();
     let extras = mapping.resolved_extra();

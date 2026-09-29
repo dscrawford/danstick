@@ -98,8 +98,7 @@ pub fn stick_fields(
         .map(|binding| binding.index)
         .collect();
 
-    // A stick a capture named in halves is that stick, whatever the halves are
-    // bound to; `taken` only sees the ones that happen to be axes.
+    // A stick a capture named in halves is that stick, even if the halves aren't axes.
     let halved = |field: &str| {
         bindings
             .keys()
@@ -194,8 +193,6 @@ pub fn mapping_line(
 }
 
 /// Whether `text` is an SDL GUID: thirty-two hex digits and nothing else.
-/// Anything else is refused before it reaches a config file, where a newline
-/// or a bracket in it would be a line or an element of its own.
 pub fn is_guid(text: &str) -> bool {
     text.len() == 32 && text.chars().all(|c| c.is_ascii_hexdigit())
 }
@@ -351,7 +348,6 @@ mod tests {
 
     #[test]
     fn a_binding_sdl_cannot_express_is_left_out_not_fatal() {
-        // A half-written profile holds a hat value naming two directions.
         let bindings: BTreeMap<Control, Binding> = [
             (Control::A, Binding::button(1)),
             (Control::DpadUp, Binding::hat(0, 3)),
@@ -423,8 +419,6 @@ mod tests {
     #[test]
     fn a_stick_a_capture_named_in_halves_is_not_also_offered_whole() {
         let codes = [0x00_u16, 0x01, 0x03, 0x04];
-        // Whatever the half is bound to: a stick half is often a button, which
-        // is what an N64 C-button and a fumbled stick prompt both record.
         for half in [
             Binding::button(12),
             Binding::hat(0, 8),
@@ -445,8 +439,6 @@ mod tests {
 
     #[test]
     fn an_n64_c_cluster_does_not_also_claim_the_whole_right_stick() {
-        // Four C-buttons are the right stick as far as SDL is concerned, and a
-        // physical right axis on the adapter is not what they are.
         let codes = [0x00_u16, 0x01, 0x03, 0x04];
         let bindings: BTreeMap<Control, Binding> = [
             (Control::RightStickUp, Binding::button(2)),

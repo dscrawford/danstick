@@ -1,29 +1,8 @@
 //! Showing a game danstick's pads and nothing else.
-//!
-//! danstick republishes every controller as a virtual pad, and every consumer is
-//! meant to read those: the mapping, the player order, the motion and the
-//! remapping all live there. Nothing stopped a game from reading the physical
-//! pad *as well*. SDL opens whatever it finds, so a launch saw both -- the
-//! clone and the controller it was cloned from -- and bound whichever came
-//! first. Four Swords Adventures bound a raw Steam Controller to player one
-//! while danstick had that seat pointed at an Xbox pad's clone.
-//!
-//! `danstick-rs exec` therefore starts the game in a sandbox where `/dev/input`
-//! holds the clones and nothing that is a controller besides. The keyboard and
-//! the mouse stay: they are not pads and something has to drive a menu.
-//!
-//! hidraw is the other half, and the half that is easy to forget. A Steam
-//! Controller has no event node at all until something creates one -- SDL
-//! reaches it through `/dev/hidraw*` -- so hiding event nodes alone leaves it
-//! in full view. A clone is a uinput device and has no hidraw node, so every
-//! one of them is covered over.
-//!
-//! Pure: what to bind and what to cover is decided here, from lists, and is
-//! what the tests hold. Nothing in this module touches a device.
 
 use std::path::{Path, PathBuf};
 
-/// What danstick names its virtual pads. `emit::virtual_name` writes it.
+/// What danstick names its virtual pads, as `emit::virtual_name` writes it.
 pub const CLONE_PREFIX: &str = "danstick Player ";
 
 /// Whether a device name is one of danstick's own pads.
@@ -41,9 +20,7 @@ pub struct Plan {
 }
 
 impl Plan {
-    /// Whether there is any point sandboxing. With no clone published there is
-    /// nothing to put in front of the game, and hiding its controllers would
-    /// leave it with none at all -- worse than the problem.
+    /// Whether there is any point sandboxing.
     pub fn worth_it(&self) -> bool {
         self.keep.iter().any(|path| {
             path.file_name()
@@ -54,12 +31,6 @@ impl Plan {
 }
 
 /// Pure: which nodes a game may see.
-///
-/// `nodes` is every `/dev/input/event*` with the name its device reports;
-/// `raw` is the physical pads danstick knows about, by node. A node is kept
-/// unless it is one of those pads -- so the clones stay, and so does every
-/// keyboard, mouse and touchpad, which are not pads and are not danstick's to
-/// take away.
 pub fn plan(nodes: &[(PathBuf, String)], raw: &[PathBuf], hidraw: &[PathBuf]) -> Plan {
     let mut keep: Vec<PathBuf> = Vec::new();
     for (path, name) in nodes {
@@ -74,9 +45,6 @@ pub fn plan(nodes: &[(PathBuf, String)], raw: &[PathBuf], hidraw: &[PathBuf]) ->
 }
 
 /// The bwrap command that runs `argv` under that plan.
-///
-/// `--dev-bind` rather than `--bind` throughout: these are device nodes, and a
-/// plain bind hands over a file the kernel will not talk through.
 pub fn bwrap_argv(plan: &Plan, argv: &[String], bwrap: &str) -> Vec<String> {
     let mut out: Vec<String> = vec![
         bwrap.to_owned(),
@@ -87,6 +55,7 @@ pub fn bwrap_argv(plan: &Plan, argv: &[String], bwrap: &str) -> Vec<String> {
         "--tmpfs".into(),
         "/dev/input".into(),
     ];
+    // --dev-bind, not --bind: a plain bind hands over a file the kernel will not talk through.
     for path in &plan.keep {
         out.push("--dev-bind".into());
         out.push(path.display().to_string());
@@ -180,8 +149,7 @@ mod tests {
 
     #[test]
     fn every_hidraw_is_covered_because_a_steam_controller_lives_there() {
-        // It has no event node at all: hiding event nodes alone leaves it in
-        // full view of SDL's hidapi driver.
+        // It has no event node at all, so hiding event nodes leaves it visible to hidapi.
         let plan = plan(
             &[node("/dev/input/event9", "danstick Player 1")],
             &[],
@@ -195,8 +163,6 @@ mod tests {
 
     #[test]
     fn with_no_clone_published_there_is_nothing_to_put_in_front_of_the_game() {
-        // Hiding its controllers would leave it with none, which is worse than
-        // the problem this solves.
         let plan = plan(
             &[node("/dev/input/event3", "Xbox Wireless Controller")],
             &[PathBuf::from("/dev/input/event3")],
@@ -231,7 +197,6 @@ mod tests {
 
     #[test]
     fn a_seat_nobody_has_taken_is_still_bound_into_the_launch() {
-        // A clone made after a launch starts is not in its /dev/input, so this has to hold.
         let nodes = vec![
             (
                 PathBuf::from("/dev/input/event20"),

@@ -11,10 +11,6 @@ use crate::scope;
 use crate::tuning::Tuning;
 
 /// One capture: where every control of one layout lives on this pad.
-///
-/// On disk a control's entry is one binding, or a list whose first entry is
-/// what everything downstream reads and whose rest are second inputs for the
-/// same control. A file with no lists is byte-for-byte what it always was.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Mapping {
     /// Canonical control name -> where it lives on this pad.
@@ -195,8 +191,7 @@ impl Profile {
         (scope::UNIVERSAL.to_owned(), Mapping::default())
     }
 
-    /// File a capture under a scope, seeding universal from the first walk of
-    /// the generic layout: a console's L can be the pad's trigger, not its shoulder.
+    /// File a capture under a scope, seeding universal from the first generic-layout walk.
     pub fn record(&mut self, scope_key: &str, captured: Mapping) {
         self.mappings.insert(scope_key.to_owned(), captured.clone());
         let universal_is_empty = self
@@ -209,8 +204,7 @@ impl Profile {
         }
     }
 
-    /// Drop a universal walked as a console's layout: before `seeding` was
-    /// written, the only way one came to be was a copy of that console's walk.
+    /// Drop a universal walked as a console's layout before `seeding` existed.
     fn unseed_console_copy(&mut self) {
         let copied = self
             .mappings
@@ -448,7 +442,6 @@ mod tests {
         assert_eq!(listed.len(), 2);
         assert_eq!(listed[0]["kind"], "button");
         assert_eq!(listed[1]["kind"], "axis");
-        // An old reader takes the first entry; a new one round-trips the whole list.
         assert_eq!(
             Mapping::from_value(&serde_json::to_value(&mapping).expect("json")),
             mapping
@@ -605,7 +598,6 @@ mod tests {
 
     #[test]
     fn a_consoles_walk_is_that_consoles_and_never_the_default() {
-        // GameCube's L is the pad's trigger; every other console's L is not.
         let mut profile = Profile::default();
         profile.record("console:gamecube", walked("gamecube", "leftshoulder", 2));
         assert!(
@@ -643,8 +635,6 @@ mod tests {
 
     #[test]
     fn an_old_seeded_default_is_dropped_whatever_its_console_binds_now() {
-        // The GameCube walk was redone with four more controls; the copy
-        // made from the first walk matches nothing and is still a copy.
         let mut seeded = Profile::default();
         seeded.mappings.insert(
             scope::UNIVERSAL.to_owned(),
@@ -659,7 +649,6 @@ mod tests {
         let (read, _) = Profile::from_value(&old);
         assert!(!read.mappings.contains_key(scope::UNIVERSAL), "{read:?}");
         assert!(read.mappings.contains_key("console:gamecube"));
-        // Nor does an old default walked as a console need any console scope at all.
         let mut alone = Profile::default();
         alone.mappings.insert(
             scope::UNIVERSAL.to_owned(),
@@ -668,7 +657,6 @@ mod tests {
         let mut old = alone.to_value();
         old.as_object_mut().map(|file| file.remove("seeding"));
         assert!(Profile::from_value(&old).0.mappings.is_empty());
-        // A generic one from the same era is somebody's own walk.
         let mut generic = Profile::default();
         generic.mappings.insert(
             scope::UNIVERSAL.to_owned(),
@@ -715,7 +703,6 @@ mod tests {
         profile.record("console:gamecube", walked("gamecube", "leftshoulder", 3));
         let (read, _) = Profile::from_value(&profile.to_value());
         assert_eq!(read.buttons()["leftshoulder"], Binding::button(2));
-        // A generic default equal to a console's walk is a default too.
         let mut profile = Profile::default();
         profile.record("console:ps2", walked("generic", "a", 0));
         let (read, _) = Profile::from_value(&profile.to_value());
@@ -793,7 +780,6 @@ mod tests {
             "buttons": {"a": {"kind": "button", "index": 1}},
         });
         let (profile, _) = Profile::from_value(&raw);
-        // Walked as an N64 pad before there were scopes: it is the N64's walk.
         assert_eq!(profile.layout(), "");
         assert!(profile.buttons().is_empty());
         let (scope, mapping) = profile.resolve("n64", "");

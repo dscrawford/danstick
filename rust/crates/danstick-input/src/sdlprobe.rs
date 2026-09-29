@@ -92,10 +92,6 @@ struct Shared {
 }
 
 /// Asks SDL on a thread of its own, one GUID at a time.
-///
-/// A probe is a subprocess that initialises SDL, about half a second, and it
-/// used to run on the daemon's event loop -- which forwards every seated
-/// player's presses -- once for every new pad that claimed without a mapping.
 #[derive(Debug)]
 pub struct Prober {
     shared: Arc<Shared>,
@@ -112,13 +108,11 @@ impl Prober {
             .name("sdl-probe".to_owned())
             .spawn(move || {
                 for guid in asked {
-                    // A probe that panics is a probe that failed, not the end of
-                    // every answer after it.
+                    // A probe that panics fails only that answer, not every answer after it.
                     let result =
                         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| ask(&guid)))
                             .unwrap_or(Err(()));
-                    // Remembered before it stops being asked, so a lookup in
-                    // between never sees neither and queues it again.
+                    // Marked known before removed from asking, so no lookup in between is lost.
                     if let Ok(line) = result {
                         if let Ok(mut known) = worker.known.lock() {
                             known.insert(guid.clone(), line);
@@ -147,8 +141,7 @@ impl Prober {
         Lookup::Pending
     }
 
-    /// Start asking about `guid` now, so the answer is there by the time
-    /// somebody needs it. Asking twice at once is asking once.
+    /// Ask about `guid` now, so the answer is ready later; asking twice is asking once.
     pub fn prefetch(&self, guid: &str) {
         if guid.is_empty() {
             return;
@@ -220,7 +213,7 @@ fn answer(ran: bool, stdout: &str) -> Result<Option<String>, ()> {
 mod tests {
     use super::*;
 
-    /// One test, sequential: `SDL_Init`/`SDL_Quit` are process-global and the harness runs tests on threads.
+    /// One test, since `SDL_Init` and `SDL_Quit` are process-global.
     #[test]
     fn the_built_in_database_is_reachable() {
         let ds4 = builtin_mapping("030000004c050000c405000011810000");
@@ -300,7 +293,6 @@ mod tests {
 
         prober.lookup("flaky");
         release.send(Err(())).expect("release");
-        // A failure bumps nothing, so wait for the asker to have run instead.
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         while calls.load(std::sync::atomic::Ordering::SeqCst) < 2
             && std::time::Instant::now() < deadline
@@ -348,9 +340,7 @@ mod tests {
 
     #[test]
     fn a_probe_that_could_not_run_is_not_sdl_knowing_nothing() {
-        // Only `Ok` is remembered, so a probe that failed has to say so rather
-        // than answer None: otherwise one bad moment denies a pad its mapping
-        // for the rest of the daemon's life.
+        // A failed probe must say so, not answer None, or one bad moment denies a mapping forever.
         assert_eq!(
             answer(false, ""),
             Err(()),

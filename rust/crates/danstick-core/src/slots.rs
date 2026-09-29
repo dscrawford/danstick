@@ -122,8 +122,7 @@ pub struct Change {
 }
 
 impl Policy {
-    /// This policy with `change` applied, or why it cannot be: nothing is
-    /// half-applied.
+    /// This policy with `change` applied, or why it cannot be.
     pub fn with(self, change: &Change) -> Result<Policy, String> {
         let mut next = self;
         if let Some(mode) = change.mode.as_deref() {
@@ -147,9 +146,7 @@ impl Policy {
         Ok(next)
     }
 
-    /// Read from the environment through `get`; a value that cannot be read is
-    /// named in the second half and left at its default, since a daemon that
-    /// will not start over a typo seats nobody.
+    /// Read from the environment through `get`; a bad value is named and left at its default.
     pub fn from_env(get: impl Fn(&str) -> Option<String>) -> (Policy, Vec<String>) {
         let mut policy = Policy::default();
         let mut complaints = Vec::new();
@@ -210,8 +207,7 @@ impl Policy {
         }
     }
 
-    /// How many seats a `reserve` for `players` leaves standing: never fewer
-    /// than the fixed slots, which outlive every launch.
+    /// How many seats a `reserve` for `players` leaves standing.
     pub fn reserving(&self, players: u32) -> u32 {
         players.max(self.standing())
     }

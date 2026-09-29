@@ -147,10 +147,7 @@ pub fn write_cemu_profiles(
         std::fs::write(&path, body).map_err(io_at(&path))?;
         written.push(path);
     }
-    // The keyboard takes the first free port. A keyboard profile danstick left
-    // at another port last time would make the keyboard two players at once,
-    // so those go; a keyboard profile the user made themselves is not ours to
-    // touch.
+    // A leftover keyboard profile elsewhere would double it; a user's own profile stays.
     let keyboard = danstick_core::keyboard::port(seat, players, cemu::MAX_PLAYERS);
     for port in 1..=cemu::MAX_PLAYERS {
         if players.contains(&port) || keyboard == Some(port) {
@@ -191,8 +188,7 @@ pub fn write_dolphin_config(
     std::fs::write(&bindings, dolphin::rewrite_bindings(&existing, &body))
         .map_err(io_at(&bindings))?;
 
-    // The Wii side of the same seats: Dolphin emulates remote 1 on the mouse
-    // and keyboard, which is the wrong player the moment a pad sits there.
+    // Dolphin emulates remote 1 on the mouse/keyboard, the wrong player once a pad sits there.
     let wiimotes = target.join("WiimoteNew.ini");
     let existing = read_lossy(&wiimotes).unwrap_or_default();
     let body = dolphin::wiimote_sections(players, seat, &name_for);
@@ -223,8 +219,7 @@ pub fn ryujinx_config_path() -> PathBuf {
         .unwrap_or_else(|| config_home().join("Ryujinx").join("Config.json"))
 }
 
-/// A port's own header in settings.bml, if danstick manages that port. Both of
-/// ares' virtual devices are one port to danstick: the pad and the mouse.
+/// A port's own header in settings.bml, if danstick manages that port.
 fn ares_managed_port(header: &str, blocks: &BTreeMap<u32, String>) -> Option<u32> {
     let rest = header
         .strip_prefix("VirtualPad")
@@ -234,9 +229,7 @@ fn ares_managed_port(header: &str, blocks: &BTreeMap<u32, String>) -> Option<u32
 }
 
 /// Replace the `VirtualPadN` and `VirtualMouseN` blocks danstick manages,
-/// appending any it does not find. A port's block carries both devices and
-/// lands where its pad was: ares writes the mouse after the pad, and a
-/// leftover mouse block would point a port danstick has since given away.
+/// appending any it does not find.
 pub fn rewrite_ares_settings(existing: &str, blocks: &BTreeMap<u32, String>) -> String {
     let mut out = String::with_capacity(existing.len());
     let mut skipping: Option<u32> = None;
