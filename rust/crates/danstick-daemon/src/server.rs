@@ -162,6 +162,8 @@ pub struct Server {
     playing: danstick_core::state::Playing,
     /// Clients whose scope lasts as long as they do, each with what was in play before it.
     scope_leases: Vec<(i32, danstick_core::state::Playing)>,
+    /// The player a menu holds and hears, for as long as the client that opened it.
+    focus: Option<Focus>,
 
     prompted: BTreeSet<String>,
     prompted_stamp: i128,
@@ -197,6 +199,30 @@ impl std::fmt::Debug for Server {
 /// What the held nodes were worked out from: the machine's nodes, the pads that
 /// matter, the Steam pads held with a seat, and whether a hold could seat a keyboard.
 type HeldFor = (BTreeSet<String>, Vec<PathBuf>, Vec<PathBuf>, bool);
+
+/// One player's pad held back from its clone and heard as controls, by a menu.
+struct Focus {
+    player: u32,
+    /// The pad held, by its node: a seat that changes hands ends the focus.
+    pad: PathBuf,
+    /// The client that opened it; the focus ends with it.
+    fd: i32,
+    /// The pad's events onto the 360 layout, after its walk for the scope in play.
+    translator: danstick_core::xbox::Translator,
+    /// Each control as last heard, so a repeat is not said twice.
+    controls: BTreeMap<&'static str, bool>,
+    /// Each stick as last heard.
+    sticks: BTreeMap<&'static str, (f64, f64)>,
+}
+
+impl std::fmt::Debug for Focus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Focus")
+            .field("player", &self.player)
+            .field("fd", &self.fd)
+            .finish_non_exhaustive()
+    }
+}
 
 /// The consumers' files a seat change leaves to write.
 #[derive(Debug)]
@@ -356,6 +382,7 @@ impl Server {
             slot_policy: configured_slots(),
             playing: danstick_core::state::Playing::default(),
             scope_leases: Vec::new(),
+            focus: None,
             prompted,
             prompted_stamp,
             last_scan_signature: None,
@@ -672,6 +699,10 @@ impl Server {
             let _ = self.reactor.unwatch(client.stream.as_fd());
         }
         self.release_scope(fd);
+        if self.focus.as_ref().is_some_and(|focus| focus.fd == fd) {
+            info!("the client that focused a player has gone; it is live again");
+            self.close_focus(None);
+        }
         // A session holds every pad and a modal flow holds one; neither may outlive its client.
         if self.clients.is_empty() && (self.session.is_some() || self.modal_open()) {
             info!("last client disconnected mid-session; releasing pads");
@@ -843,6 +874,14 @@ impl Server {
                 }
                 self.set_scope(console, game);
             }
+            Command::Focus { player, open } => {
+                if open {
+                    self.open_focus(fd, as_player(player));
+                } else {
+                    self.close_focus(Some(as_player(player)));
+                }
+            }
+            Command::Move { player, to } => self.move_seat(as_player(player), as_player(to)),
             Command::Bind {
                 player,
                 control,
@@ -861,6 +900,9 @@ impl Server {
 
     fn begin(&mut self, players: u32) {
         self.release_solo();
+        if self.focus.is_some() {
+            self.close_focus(None);
+        }
         self.stop_republisher();
         self.end_session();
 
@@ -1025,6 +1067,7 @@ impl Server {
         {
             info!("player {seat}: unseated (was away)");
         }
+        self.close_focus_on(&targets);
         self.stop_republisher();
         self.replace_left_slots(&targets);
         if self.slots_assigned.is_empty() {
@@ -1224,18 +1267,19 @@ impl Server {
     }
 
     /// The pads modal flows are reading right now.
-    fn modal_paths(&self) -> Vec<PathBuf> {
-        let mut paths = Vec::with_capacity(3);
-        if let Some(modal) = &self.mapping {
-            paths.push(modal.pad_path.clone());
-        }
-        if let Some(modal) = &self.choice {
-            paths.push(modal.pad_path.clone());
-        }
-        if let Some(run) = &self.calibration {
-            paths.push(PathBuf::from(&run.pad_path));
-        }
-        paths
+    fn modal_paths(&self) -> [Option<&Path>; 3] {
+        [
+            self.mapping.as_ref().map(|modal| modal.pad_path.as_path()),
+            self.choice.as_ref().map(|modal| modal.pad_path.as_path()),
+            self.calibration
+                .as_ref()
+                .map(|run| Path::new(run.pad_path.as_str())),
+        ]
+    }
+
+    /// Whether a modal flow is reading the pad at `path`.
+    fn modal_reads(&self, path: &Path) -> bool {
+        self.modal_paths().into_iter().flatten().any(|p| p == path)
     }
 
     /// Let go of a pad grabbed on its own; dropping the descriptor ungrabs it.
@@ -2250,6 +2294,10 @@ impl Server {
     }
 
     fn on_source_read(&mut self, index: usize) {
+        if self.focus_index() == Some(index) && !self.modal_open_on(index) {
+            self.on_focus_read(index);
+            return;
+        }
         if self
             .republisher
             .as_ref()
@@ -2706,6 +2754,301 @@ impl Server {
         }) {
             vpad.remap(&mapping, &faces);
         }
+        if self
+            .focus
+            .as_ref()
+            .is_some_and(|focus| focus.player == player)
+        {
+            if let Some(translator) = self.focus_translator(player) {
+                if let Some(focus) = self.focus.as_mut() {
+                    focus.translator = translator;
+                }
+            }
+        }
+    }
+
+    /// Where the focused player's pad sits in the republisher, if it is published.
+    fn focus_index(&self) -> Option<usize> {
+        let focus = self.focus.as_ref()?;
+        self.republisher.as_ref()?.pads.iter().position(|vpad| {
+            vpad.player == focus.player && vpad.pad.path == focus.pad && !vpad.gone
+        })
+    }
+
+    /// Whether a modal flow is reading the pad at `index`, which then hears it first.
+    fn modal_open_on(&self, index: usize) -> bool {
+        self.republisher
+            .as_ref()
+            .and_then(|republisher| republisher.pads.get(index))
+            .is_some_and(|vpad| self.modal_reads(&vpad.pad.path))
+    }
+
+    /// A translator from a published pad onto the 360 layout, after its walk in play.
+    fn focus_translator(&mut self, player: u32) -> Option<danstick_core::xbox::Translator> {
+        let pad = self.pad_for_player(player)?;
+        let mapping = self.mapping_in_play(&pad);
+        let faces = self.faces_for(&pad, &mapping);
+        let vpad = self
+            .republisher
+            .as_ref()?
+            .pads
+            .iter()
+            .find(|vpad| vpad.player == player && !vpad.gone)?;
+        let (keys, _) = vpad.source.capabilities();
+        let mut translator = danstick_core::xbox::Translator::new(
+            &keys,
+            &vpad.source.axis_spans(),
+            &mapping.resolved(),
+            &mapping.resolved_extra(),
+        );
+        translator.relabel(&faces);
+        Some(translator)
+    }
+
+    /// Hold `player`'s pad back from its clone, at rest, and hear it for `fd`.
+    fn open_focus(&mut self, fd: i32, player: u32) {
+        if self.session.is_some() {
+            self.broadcast(&events::error("a session is open; cancel it first"));
+            return;
+        }
+        let Some((translator, pad)) = self
+            .focus_translator(player)
+            .zip(self.pad_for_player(player).map(|pad| pad.path))
+        else {
+            self.broadcast(&events::error(format!(
+                "player {player} has no published controller to focus"
+            )));
+            return;
+        };
+        if self
+            .focus
+            .as_ref()
+            .is_some_and(|focus| focus.player != player)
+        {
+            self.let_go_of_focus();
+        }
+        self.focus = Some(Focus {
+            player,
+            pad,
+            fd,
+            translator,
+            controls: BTreeMap::new(),
+            sticks: BTreeMap::new(),
+        });
+        info!("player {player}: focused; its clone is at rest and a menu hears it");
+        self.sync_republish_pause();
+        let state = self.state_event();
+        self.broadcast(&state);
+    }
+
+    /// Let the focused pad drive its clone again, from its next change on.
+    fn close_focus(&mut self, only: Option<u32>) {
+        let Some(focus) = self.focus.as_ref() else {
+            if let Some(player) = only {
+                self.broadcast(&events::error(format!("player {player} is not focused")));
+            }
+            return;
+        };
+        if only.is_some_and(|player| player != focus.player) {
+            self.broadcast(&events::error(format!(
+                "player {} is the one focused",
+                focus.player
+            )));
+            return;
+        }
+        info!("player {}: focus closed; its clone is live", focus.player);
+        self.let_go_of_focus();
+        self.sync_republish_pause();
+        let state = self.state_event();
+        self.broadcast(&state);
+    }
+
+    /// End the focus, telling the menu every control it still heard down is up.
+    fn let_go_of_focus(&mut self) {
+        let Some(focus) = self.focus.take() else {
+            return;
+        };
+        for (name, down) in &focus.controls {
+            if *down {
+                self.broadcast(&events::focus_control(focus.player, name, false));
+            }
+        }
+        for (side, (x, y)) in &focus.sticks {
+            if *x != 0.0 || *y != 0.0 {
+                self.broadcast(&events::focus_stick(focus.player, side, 0.0, 0.0));
+            }
+        }
+    }
+
+    /// A seat changing hands ends a focus on it: the menu hears the pad, not the seat.
+    fn close_focus_on(&mut self, seats: &[u32]) {
+        if self
+            .focus
+            .as_ref()
+            .is_some_and(|focus| seats.contains(&focus.player))
+        {
+            info!("the focused seat changed hands; its player is live again");
+            self.close_focus(None);
+        }
+    }
+
+    /// What the focused pad just did, said as controls to every client.
+    fn on_focus_read(&mut self, index: usize) {
+        let Some(republisher) = self.republisher.as_mut() else {
+            return;
+        };
+        let Some(vpad) = republisher.pads.get_mut(index) else {
+            return;
+        };
+        self.scratch.clear();
+        match vpad.source.fetch_events(&mut self.scratch) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => return,
+            Err(error) => {
+                warn!(
+                    "player {}: source disappeared under focus ({error})",
+                    vpad.player
+                );
+                vpad.gone = true;
+                let _ = self.reactor.unwatch(vpad.source.as_fd());
+                self.close_focus(None);
+                return;
+            }
+        }
+        // Steam's copy of this pad repeats these too; seating must know whose they are.
+        let (player, steam, clock) = (vpad.player, pad::is_steam_virtual(&vpad.pad), now());
+        if let Some(press) = self.scratch.iter().find(|event| {
+            danstick_core::assign::is_press(event.event_type().0, event.code(), event.value())
+        }) {
+            self.seating.note(
+                Origin::Seated { player, steam },
+                clock - clone::event_age(press),
+            );
+        }
+        let Some(focus) = self.focus.as_mut() else {
+            return;
+        };
+        let mut said = Vec::new();
+        let mut moved: BTreeSet<&'static str> = BTreeSet::new();
+        for event in &self.scratch {
+            let outs =
+                focus
+                    .translator
+                    .translate(event.event_type().0, event.code(), event.value());
+            for out in outs {
+                for heard in danstick_core::xbox::heard(out) {
+                    match heard {
+                        danstick_core::xbox::Heard::Control { name, down } => {
+                            if focus.controls.insert(name, down) != Some(down) {
+                                said.push(events::focus_control(player, name, down));
+                            }
+                        }
+                        danstick_core::xbox::Heard::Stick {
+                            side,
+                            vertical,
+                            position,
+                        } => {
+                            // Said to two places, so a jitter under that is not said at all.
+                            let position = (position * 100.0).round() / 100.0;
+                            let stick = focus.sticks.entry(side).or_insert((0.0, 0.0));
+                            let axis = if vertical { &mut stick.1 } else { &mut stick.0 };
+                            if (*axis - position).abs() >= 0.005 {
+                                *axis = position;
+                                moved.insert(side);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        for side in moved {
+            let (x, y) = focus.sticks.get(side).copied().unwrap_or_default();
+            said.push(events::focus_stick(player, side, x, y));
+        }
+        for event in said {
+            self.broadcast(&event);
+        }
+    }
+
+    /// Put `player`'s pad in seat `to`, swapping with whoever sits there. Under
+    /// fixed slots the clones stay where the game opened them; each is driven by
+    /// its new pad from here on.
+    fn move_seat(&mut self, player: u32, to: u32) {
+        if self.session.is_some() {
+            self.broadcast(&events::error("a session is open; cancel it first"));
+            return;
+        }
+        if self.modal_open() {
+            self.broadcast(&events::error(
+                "a controller is being set up; finish that first",
+            ));
+            return;
+        }
+        if to == 0 || to > self.slots {
+            self.broadcast(&events::error(format!(
+                "seat {to} is not one of the {} seats",
+                self.slots
+            )));
+            return;
+        }
+        let seated = self.slots_assigned.iter().any(|slot| slot.player == player)
+            || self.keyboard_seat == Some(player);
+        if !seated {
+            self.broadcast(&events::error(format!(
+                "no controller assigned to player {player}"
+            )));
+            return;
+        }
+        if player == to {
+            let state = self.state_event();
+            self.broadcast(&state);
+            return;
+        }
+        let swap = |seat: u32| -> u32 {
+            if seat == player {
+                to
+            } else if seat == to {
+                player
+            } else {
+                seat
+            }
+        };
+        for slot in &mut self.slots_assigned {
+            slot.player = swap(slot.player);
+        }
+        for entry in &mut self.away {
+            entry.player = swap(entry.player);
+        }
+        self.keyboard_seat = self.keyboard_seat.map(swap);
+        for seat in self.attached.live.values_mut() {
+            *seat = swap(*seat);
+        }
+        self.steam_twins = std::mem::take(&mut self.steam_twins)
+            .into_iter()
+            .map(|((seat, pad), steam)| ((swap(seat), pad), steam))
+            .collect();
+        if let Some(focus) = self.focus.as_mut() {
+            focus.player = swap(focus.player);
+        }
+        info!("player {player} moved to seat {to}; whoever sat there is player {player}");
+        self.stop_republisher();
+        if let Err(error) = self.start_republisher() {
+            warn!("could not republish after the move: {error}");
+            self.broadcast(&events::error(format!(
+                "could not republish after the move: {error}"
+            )));
+            let virtual_paths = self.virtual_paths();
+            self.rewrite_consumers(&virtual_paths);
+        }
+        self.state = if self.republisher.is_some() {
+            STATE_READY
+        } else {
+            STATE_IDLE
+        };
+        self.save_assignments();
+        self.refresh_seating(&mut Scan::default());
+        let state = self.state_event();
+        self.broadcast(&state);
     }
 
     /// Where a pad's face buttons land when kept by label: its capture's
@@ -3051,10 +3394,28 @@ impl Server {
 
     /// Only the pad a modal flow is reading is held back from its clone; everyone else plays on.
     fn sync_republish_pause(&mut self) {
-        let paths = self.modal_paths();
+        let focused = self
+            .focus
+            .as_ref()
+            .map(|focus| (focus.player, focus.pad.clone()));
+        let held: Vec<bool> = self
+            .republisher
+            .as_ref()
+            .map(|republisher| {
+                republisher
+                    .pads
+                    .iter()
+                    .map(|vpad| {
+                        self.modal_reads(&vpad.pad.path)
+                            || focused.as_ref().is_some_and(|(player, pad)| {
+                                *player == vpad.player && *pad == vpad.pad.path
+                            })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         if let Some(republisher) = self.republisher.as_mut() {
-            for index in 0..republisher.pads.len() {
-                let held = paths.contains(&republisher.pads[index].pad.path);
+            for (index, held) in held.into_iter().enumerate() {
                 republisher.hold_back(index, held);
             }
         }
@@ -3797,6 +4158,7 @@ impl Server {
             self.reserved_payload(),
             self.slot_policy,
             self.playing.clone(),
+            self.focus.as_ref().map(|focus| focus.player),
         )
     }
 

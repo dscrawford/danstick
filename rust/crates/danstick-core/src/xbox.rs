@@ -113,6 +113,76 @@ pub struct Out {
     pub value: i32,
 }
 
+/// The controls on the 360 layout, in [`KEYS`] order, by SDL's names.
+pub const KEY_NAMES: [&str; 11] = [
+    "a",
+    "b",
+    "x",
+    "y",
+    "leftshoulder",
+    "rightshoulder",
+    "back",
+    "start",
+    "guide",
+    "leftstick",
+    "rightstick",
+];
+
+/// What an event for the clone says, in a control's own name.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Heard {
+    Control {
+        name: &'static str,
+        down: bool,
+    },
+    /// One axis of a stick, -1..1, `vertical` for its Y.
+    Stick {
+        side: &'static str,
+        vertical: bool,
+        position: f64,
+    },
+}
+
+/// A trigger past half its travel is down.
+fn pulled(value: i32) -> bool {
+    i64::from(value) * 2 >= i64::from(TRIGGER_MAX)
+}
+
+/// What `out` says: a button or trigger down or up, a d-pad direction, or a
+/// stick's axis. A hat's centre says both of its directions are up.
+pub fn heard(out: Out) -> Vec<Heard> {
+    let control = |name: &'static str, down: bool| Heard::Control { name, down };
+    match (out.kind, out.code) {
+        (EV_KEY, code) => KEYS
+            .iter()
+            .position(|key| *key == code)
+            .map(|at| vec![control(KEY_NAMES[at], out.value != 0)])
+            .unwrap_or_default(),
+        (EV_ABS, ABS_HAT0X) => match out.value {
+            v if v < 0 => vec![control("dpleft", true), control("dpright", false)],
+            v if v > 0 => vec![control("dpright", true), control("dpleft", false)],
+            _ => vec![control("dpleft", false), control("dpright", false)],
+        },
+        (EV_ABS, ABS_HAT0Y) => match out.value {
+            v if v < 0 => vec![control("dpup", true), control("dpdown", false)],
+            v if v > 0 => vec![control("dpdown", true), control("dpup", false)],
+            _ => vec![control("dpup", false), control("dpdown", false)],
+        },
+        (EV_ABS, ABS_Z) => vec![control("lefttrigger", pulled(out.value))],
+        (EV_ABS, ABS_RZ) => vec![control("righttrigger", pulled(out.value))],
+        (EV_ABS, code @ (ABS_X | ABS_Y | ABS_RX | ABS_RY)) => vec![Heard::Stick {
+            side: if code == ABS_X || code == ABS_Y {
+                "left"
+            } else {
+                "right"
+            },
+            vertical: code == ABS_Y || code == ABS_RY,
+            position: (f64::from(out.value) / f64::from(STICK_MAX)).clamp(-1.0, 1.0),
+        }],
+        _ => Vec::new(),
+    }
+}
+
 /// Where a source axis sits, as a fraction: -1..1 about its rest for a stick,
 /// 0..1 from its minimum for a trigger.
 fn position(span: AxisSpan, value: i32) -> f64 {
@@ -886,6 +956,106 @@ mod tests {
             value: 0
         }));
         assert!(t.release_all().is_empty());
+    }
+
+    #[test]
+    fn what_the_clone_reads_is_heard_by_a_controls_name() {
+        let key = |code: u16, value: i32| Out {
+            kind: EV_KEY,
+            code,
+            value,
+        };
+        let abs = |code: u16, value: i32| Out {
+            kind: EV_ABS,
+            code,
+            value,
+        };
+        let down = |name: &'static str, down: bool| Heard::Control { name, down };
+        assert_eq!(heard(key(0x130, 1)), [down("a", true)]);
+        assert_eq!(heard(key(0x13B, 0)), [down("start", false)]);
+        assert_eq!(heard(key(0x13C, 1)), [down("guide", true)]);
+        assert!(heard(key(0x120, 1)).is_empty(), "no 360 button");
+        assert_eq!(
+            heard(abs(ABS_HAT0X, -1)),
+            [down("dpleft", true), down("dpright", false)]
+        );
+        assert_eq!(
+            heard(abs(ABS_HAT0Y, 0)),
+            [down("dpup", false), down("dpdown", false)]
+        );
+        assert_eq!(heard(abs(ABS_Z, 127)), [down("lefttrigger", false)]);
+        assert_eq!(heard(abs(ABS_RZ, 128)), [down("righttrigger", true)]);
+        assert_eq!(heard(abs(ABS_RZ, i32::MAX)), [down("righttrigger", true)]);
+        assert_eq!(
+            heard(abs(ABS_RY, STICK_MIN)),
+            [Heard::Stick {
+                side: "right",
+                vertical: true,
+                position: -1.0
+            }],
+            "the stick's far end is one, whatever the range's odd edge"
+        );
+        assert_eq!(
+            heard(abs(ABS_X, 0)),
+            [Heard::Stick {
+                side: "left",
+                vertical: false,
+                position: 0.0
+            }]
+        );
+        assert!(heard(abs(0x20, 5)).is_empty(), "an axis the clone has not");
+    }
+
+    #[test]
+    fn a_hat_is_heard_as_two_directions_whatever_its_value() {
+        let abs = |code: u16, value: i32| Out {
+            kind: EV_ABS,
+            code,
+            value,
+        };
+        let cases: [(u16, i32, &str, &str); 6] = [
+            (ABS_HAT0X, -1, "dpleft", "dpright"),
+            (ABS_HAT0X, -5, "dpleft", "dpright"),
+            (ABS_HAT0X, 5, "dpright", "dpleft"),
+            (ABS_HAT0Y, -1, "dpup", "dpdown"),
+            (ABS_HAT0Y, 1, "dpdown", "dpup"),
+            (ABS_HAT0Y, i32::MAX, "dpdown", "dpup"),
+        ];
+        for (code, value, active, other) in cases {
+            assert_eq!(
+                heard(abs(code, value)),
+                [
+                    Heard::Control {
+                        name: active,
+                        down: true
+                    },
+                    Heard::Control {
+                        name: other,
+                        down: false
+                    },
+                ],
+                "code {code:#x} value {value}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_trigger_is_heard_down_from_half_its_travel_on() {
+        let abs = |value: i32| Out {
+            kind: EV_ABS,
+            code: ABS_Z,
+            value,
+        };
+        for (value, down) in [(0, false), (127, false), (128, true), (TRIGGER_MAX, true)] {
+            assert_eq!(
+                heard(abs(value)),
+                [Heard::Control {
+                    name: "lefttrigger",
+                    down
+                }],
+                "value {value}"
+            );
+        }
     }
 
     #[test]

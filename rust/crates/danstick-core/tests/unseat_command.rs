@@ -84,8 +84,8 @@ fn map_and_bind_share_an_input_unless_told_to_be_strict() {
 #[test]
 fn identity_names_the_mode_and_slots_was_appended_after_it() {
     assert_eq!(
-        COMMANDS[COMMANDS.len() - 3..],
-        ["identity", "slots", "scope"],
+        COMMANDS[COMMANDS.len() - 5..],
+        ["identity", "slots", "scope", "focus", "move"],
         "commands are only appended"
     );
     assert_eq!(
@@ -105,7 +105,8 @@ fn identity_names_the_mode_and_slots_was_appended_after_it() {
 
 #[test]
 fn scope_names_what_is_being_played_and_empty_is_the_default() {
-    assert_eq!(COMMANDS.last(), Some(&"scope"), "appended, never reordered");
+    let at = |name: &str| COMMANDS.iter().position(|c| *c == name);
+    assert!(at("scope") > at("slots"), "appended, never reordered");
     assert_eq!(
         Command::parse(&json!({"cmd": "scope", "console": "n64", "game": "n64/dk64"})),
         Ok(Command::Scope {
@@ -188,4 +189,50 @@ fn a_name_at_the_byte_limit_is_fine_and_one_byte_over_is_not() {
         Command::parse(&json!({"cmd": "scope", "console": "é".repeat(129)})),
         Err(Refused::NotAName { field: "console" })
     ));
+}
+
+#[test]
+fn focus_opens_unless_told_to_close_and_move_names_both_seats() {
+    assert_eq!(
+        Command::parse(&json!({"cmd": "focus", "player": 2})),
+        Ok(Command::Focus {
+            player: 2,
+            open: true
+        })
+    );
+    assert_eq!(
+        Command::parse(&json!({"cmd": "focus", "player": 2, "open": false})),
+        Ok(Command::Focus {
+            player: 2,
+            open: false
+        })
+    );
+    assert!(matches!(
+        Command::parse(&json!({"cmd": "focus", "player": 2, "open": "no"})),
+        Err(Refused::NotANumber { field: "open" })
+    ));
+    assert_eq!(
+        Command::parse(&json!({"cmd": "move", "player": 1, "to": 3})),
+        Ok(Command::Move { player: 1, to: 3 })
+    );
+    assert!(matches!(
+        Command::parse(&json!({"cmd": "move", "player": 1, "to": "three"})),
+        Err(Refused::NotANumber { field: "to" })
+    ));
+}
+
+#[test]
+fn focus_and_move_default_a_missing_player_or_seat_to_zero() {
+    assert_eq!(
+        Command::parse(&json!({"cmd": "focus"})),
+        Ok(Command::Focus {
+            player: 0,
+            open: true
+        }),
+        "no player named is player 0, refused by the daemon and not the parser"
+    );
+    assert_eq!(
+        Command::parse(&json!({"cmd": "move", "player": 1})),
+        Ok(Command::Move { player: 1, to: 0 })
+    );
 }

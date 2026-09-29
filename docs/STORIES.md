@@ -703,6 +703,15 @@ pad's GUID because the virtual pad mirrors its identity by default.
 
 **Preconditions.** The udev rules must cover both adapters.
 
+**Seats are theirs to swap.** People sit down in whatever order they picked
+their pads up; `{"cmd": "move", "player": 1, "to": 2}` makes the game's
+player one whoever they decide, and under fixed slots the clones stay where
+the game opened them
+(`a_moved_pad_drives_the_seat_it_was_dropped_on_without_the_game_noticing`).
+A menu over the game holds one player's pad and hears it as controls while
+everyone else plays on (`focus`,
+`a_focused_pad_is_heard_by_the_menu_and_not_by_the_game`).
+
 **Expected outcome.** `{1: index, 2: index}`, two profiles, two SDL lines, and
 ports 3-16 emptied.
 

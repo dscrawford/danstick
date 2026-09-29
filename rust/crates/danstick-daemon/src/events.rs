@@ -27,10 +27,12 @@ pub fn state(
     reserved: Vec<danstick_core::state::ReservedSeat>,
     policy: danstick_core::slots::Policy,
     playing: danstick_core::state::Playing,
+    focus: Option<u32>,
 ) -> Value {
     let mut event = StateEvent::new(state, slots, players, build, std::process::id(), identity)
         .with_slots(policy);
     event.scope = playing;
+    event.focus = focus;
     event.following = following;
     event.seating = seating;
     event.hold = hold;
@@ -58,6 +60,20 @@ pub fn input(player: u32, pressed: danstick_core::capture::Pressed) -> Value {
         "index": pressed.index,
         "value": value,
     })
+}
+
+/// A control a focused player pressed or let go of, as a menu hears it.
+pub fn focus_control(player: u32, control: &str, down: bool) -> Value {
+    json!({"event": "focus", "player": player, "control": control, "down": down})
+}
+
+/// Where a focused player's stick sits, -1..1 each way, as a menu hears it.
+pub fn focus_stick(player: u32, side: &str, x: f64, y: f64) -> Value {
+    json!({"event": "focus", "player": player, "stick": side, "x": round2(x), "y": round2(y)})
+}
+
+fn round2(value: f64) -> f64 {
+    (value * 100.0).round() / 100.0
 }
 
 /// One pad's hold filling; `player` is the seat it takes if it finishes now.

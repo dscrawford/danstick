@@ -4179,14 +4179,25 @@ fn a_clone_is_driven_by_the_walk_for_the_console_being_played() {
 
 /// A second connection leasing the scope: the connection is the lease.
 fn lease_scope(daemon: &Daemon, console: &str, game: &str) -> UnixStream {
+    ask_on_a_connection(
+        daemon,
+        serde_json::json!({"cmd": "scope", "console": console, "game": game, "lease": true}),
+        |state| state["scope"]["console"] == console && state["scope"]["game"] == game,
+    )
+}
+
+/// A second connection that sends `command` and is kept once a `state`
+/// satisfies `until`: what the command tied to it lasts as long as it does.
+fn ask_on_a_connection(
+    daemon: &Daemon,
+    command: Value,
+    until: impl Fn(&Value) -> bool,
+) -> UnixStream {
     let socket = daemon.runtime.join("danstick").join("danstick.sock");
     let mut sock = UnixStream::connect(&socket).expect("a second connection");
     sock.set_read_timeout(Some(Duration::from_millis(200)))
         .expect("timeout");
-    let mut line = serde_json::to_vec(&serde_json::json!({
-        "cmd": "scope", "console": console, "game": game, "lease": true
-    }))
-    .expect("json");
+    let mut line = serde_json::to_vec(&command).expect("json");
     line.push(b'\n');
     sock.write_all(&line).expect("send");
     let mut buffer = Vec::new();
@@ -4203,15 +4214,12 @@ fn lease_scope(daemon: &Daemon, console: &str, game: &str) -> UnixStream {
             let Ok(value) = serde_json::from_slice::<Value>(&line[..line.len() - 1]) else {
                 continue;
             };
-            if value["event"] == "state"
-                && value["scope"]["console"] == console
-                && value["scope"]["game"] == game
-            {
+            if value["event"] == "state" && until(&value) {
                 return sock;
             }
         }
     }
-    panic!("the lease on {console:?}/{game:?} was never acknowledged");
+    panic!("{command} was never acknowledged");
 }
 
 const NESTLEASE: PadId = PadId {
@@ -4415,5 +4423,417 @@ fn a_second_input_reaches_the_clone_once_its_scope_is_in_play_under_the_danstick
         "the SNES twins outlived the scope that made them"
     );
     pad.emit(EventType::KEY.0, FIRST_KEY + 2, 0);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+const MENU: PadId = PadId {
+    name: "DANSTICK RSTESTMENU",
+    pid: 0x0fd0,
+    only: "RSTESTMENU",
+};
+
+/// Two pads seated in slots 1 and 2 under fixed slots, with a watcher on each clone.
+fn two_seated(
+    root: &Path,
+    id: PadId,
+    env: &[(&str, &str)],
+) -> (Daemon, Vec<TestPad>, Vec<Watcher>) {
+    let mut pads = four_pads(id);
+    pads.truncate(2);
+    let mut settings = vec![("DANSTICK_SLOTS", "fixed")];
+    settings.extend_from_slice(env);
+    let mut daemon = Daemon::start_with_env(root, id, &[], &settings);
+    let before = daemon
+        .wait_for("state", |e| standing(e).len() == 4, 8.0)
+        .expect("four slots never stood");
+    let nodes = standing(&before);
+    let watchers = vec![Watcher::open(&nodes[&1]), Watcher::open(&nodes[&2])];
+    daemon.seat_by_hold_as(&mut pads[0], 1);
+    pads[0].emit(EventType::KEY.0, FIRST_KEY, 0);
+    daemon.seat_by_hold_as(&mut pads[1], 2);
+    pads[1].emit(EventType::KEY.0, FIRST_KEY, 0);
+    daemon.pump(0.5);
+    (daemon, pads, watchers)
+}
+
+/// A menu holds one player's pad: the clone rests, the menu hears controls,
+/// everyone else plays on, a button held when it closes is not pressed into
+/// the game, and the menu dying lets the player go.
+#[test]
+fn a_focused_pad_is_heard_by_the_menu_and_not_by_the_game() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let root = std::env::temp_dir().join(format!("danstick-menu-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let (mut daemon, mut pads, mut slots) = two_seated(&root, MENU, &[]);
+    const A: u16 = 0x130;
+    const B: u16 = 0x131;
+
+    daemon.events.clear();
+    let menu = ask_on_a_connection(
+        &daemon,
+        serde_json::json!({"cmd": "focus", "player": 1}),
+        |state| state["focus"] == 1,
+    );
+    daemon
+        .wait_for("state", |e| e["focus"] == 1, 5.0)
+        .expect("the focus never opened");
+    daemon.pump(0.3);
+
+    pads[0].emit(EventType::KEY.0, FIRST_KEY, 1);
+    let heard = daemon
+        .wait_for("focus", |e| e["control"] == "a" && e["down"] == true, 3.0)
+        .expect("the menu never heard A");
+    assert_eq!(heard["player"], 1, "{heard}");
+    assert!(
+        !slots[0].sees_press(&mut daemon, A, 1.0),
+        "the game heard the focused player's A"
+    );
+    pads[0].emit(EventType::KEY.0, FIRST_KEY, 0);
+    daemon
+        .wait_for("focus", |e| e["control"] == "a" && e["down"] == false, 3.0)
+        .expect("the menu never heard A let go");
+    pads[1].emit(EventType::KEY.0, FIRST_KEY, 1);
+    assert!(
+        slots[1].sees_press(&mut daemon, A, 3.0),
+        "player 2 stopped reaching the game"
+    );
+    pads[1].emit(EventType::KEY.0, FIRST_KEY, 0);
+    daemon.pump(0.3);
+
+    // B held as the menu closes stays out of the game; the next press is in.
+    pads[0].emit(EventType::KEY.0, FIRST_KEY + 1, 1);
+    daemon.pump(0.3);
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "focus", "player": 1, "open": false}));
+    daemon
+        .wait_for("state", |e| e["focus"].is_null(), 5.0)
+        .expect("the focus never closed");
+    assert!(
+        !slots[0].sees_press(&mut daemon, B, 1.0),
+        "a button held as the menu closed was pressed into the game"
+    );
+    pads[0].emit(EventType::KEY.0, FIRST_KEY + 1, 0);
+    daemon.pump(0.3);
+    pads[0].emit(EventType::KEY.0, FIRST_KEY, 1);
+    assert!(
+        slots[0].sees_press(&mut daemon, A, 3.0),
+        "player 1 is not live again after the menu closed"
+    );
+    pads[0].emit(EventType::KEY.0, FIRST_KEY, 0);
+    daemon.pump(0.3);
+
+    // The menu dies with the focus open: the player is live again.
+    drop(menu);
+    let again = ask_on_a_connection(
+        &daemon,
+        serde_json::json!({"cmd": "focus", "player": 1}),
+        |state| state["focus"] == 1,
+    );
+    daemon
+        .wait_for("state", |e| e["focus"] == 1, 5.0)
+        .expect("the focus never opened again");
+    drop(again);
+    daemon
+        .wait_for("state", |e| e["focus"].is_null(), 5.0)
+        .expect("the menu's death left the player held");
+    daemon.pump(0.3);
+    pads[0].emit(EventType::KEY.0, FIRST_KEY, 1);
+    assert!(
+        slots[0].sees_press(&mut daemon, A, 3.0),
+        "player 1 was left dead in the game"
+    );
+    pads[0].emit(EventType::KEY.0, FIRST_KEY, 0);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+const SWAP: PadId = PadId {
+    name: "DANSTICK RSTESTSWAP",
+    pid: 0x0fe0,
+    only: "RSTESTSWAP",
+};
+
+/// `move` swaps two seated pads under fixed slots: each clone stays where the
+/// game opened it and is driven by the other pad; an empty seat is simply taken.
+#[test]
+fn a_moved_pad_drives_the_seat_it_was_dropped_on_without_the_game_noticing() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let root = std::env::temp_dir().join(format!("danstick-swap-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let (mut daemon, mut pads, mut slots) = two_seated(&root, SWAP, &[]);
+    const A: u16 = 0x130;
+    let name = |state: &Value, player: u64| -> String {
+        state["players"]
+            .as_array()
+            .and_then(|players| players.iter().find(|p| p["player"] == player))
+            .and_then(|p| p["name"].as_str())
+            .unwrap_or_default()
+            .to_owned()
+    };
+    let before = daemon.last("state").expect("state").clone();
+    let (first, second) = (name(&before, 1), name(&before, 2));
+    assert_ne!(first, second);
+
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "move", "player": 1, "to": 2}));
+    let swapped = daemon
+        .wait_for(
+            "state",
+            |e| e["players"].as_array().is_some_and(|p| p.len() == 2),
+            8.0,
+        )
+        .expect("no state after the move");
+    assert_eq!(name(&swapped, 1), second, "{swapped}");
+    assert_eq!(name(&swapped, 2), first, "{swapped}");
+    daemon.pump(0.5);
+    assert!(
+        slots[0].still_there() && slots[1].still_there(),
+        "a clone was remade"
+    );
+    pads[0].emit(EventType::KEY.0, FIRST_KEY, 1);
+    assert!(
+        slots[1].sees_press(&mut daemon, A, 3.0),
+        "the moved pad does not drive seat 2's clone"
+    );
+    pads[0].emit(EventType::KEY.0, FIRST_KEY, 0);
+    pads[1].emit(EventType::KEY.0, FIRST_KEY, 1);
+    assert!(
+        slots[0].sees_press(&mut daemon, A, 3.0),
+        "the pad swapped out does not drive seat 1's clone"
+    );
+    pads[1].emit(EventType::KEY.0, FIRST_KEY, 0);
+    daemon.pump(0.3);
+
+    // Into an empty seat: seat 2 is left empty, and seat 3's clone is the pad's.
+    let mut slot_three = Watcher::open(&standing(&swapped)[&3]);
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "move", "player": 2, "to": 3}));
+    let moved = daemon
+        .wait_for("state", |e| !name(e, 3).is_empty(), 8.0)
+        .expect("no state after the second move");
+    assert_eq!(name(&moved, 3), first, "{moved}");
+    assert!(name(&moved, 2).is_empty(), "{moved}");
+    assert!(
+        standing(&moved).contains_key(&2),
+        "seat 2 does not stand empty: {moved}"
+    );
+    daemon.pump(0.5);
+    pads[0].emit(EventType::KEY.0, FIRST_KEY, 1);
+    assert!(
+        slot_three.sees_press(&mut daemon, A, 3.0),
+        "the pad moved to seat 3 does not drive its clone"
+    );
+    pads[0].emit(EventType::KEY.0, FIRST_KEY, 0);
+
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "move", "player": 3, "to": 9}));
+    assert!(
+        daemon.wait_for("error", |_| true, 3.0).is_some(),
+        "seat 9 was taken"
+    );
+    daemon.send(serde_json::json!({"cmd": "move", "player": 4, "to": 1}));
+    assert!(
+        daemon.wait_for("error", |_| true, 3.0).is_some(),
+        "nobody is player 4"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+const FOCUSMORE: PadId = PadId {
+    name: "DANSTICK RSTESTFOCUSMORE",
+    pid: 0x0ff0,
+    only: "RSTESTFOCUSMORE",
+};
+
+/// A focus survives a `map` on its player, follows the pad through a `move`,
+/// and is refused for a player nobody is.
+#[test]
+fn a_focus_outlives_a_map_on_its_player_and_follows_the_pad_to_another_seat() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let root = std::env::temp_dir().join(format!("danstick-focusmore-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let (mut daemon, mut pads, mut slots) = two_seated(&root, FOCUSMORE, &[]);
+    const A: u16 = 0x130;
+
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "focus", "player": 3}));
+    assert!(
+        daemon.wait_for("error", |_| true, 3.0).is_some(),
+        "a player nobody is was focused"
+    );
+
+    let _menu = ask_on_a_connection(
+        &daemon,
+        serde_json::json!({"cmd": "focus", "player": 1}),
+        |state| state["focus"] == 1,
+    );
+    daemon
+        .wait_for("state", |e| e["focus"] == 1, 5.0)
+        .expect("the focus never opened");
+
+    // A map on the focused player hears the pad for its run; the focus has it back after.
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "map", "player": 1, "layout": "snes"}));
+    daemon
+        .wait_for("mapping", |e| e["done"] == false, 6.0)
+        .expect("the wizard never opened on the focused player");
+    daemon.tap_until_bound(&mut pads[0], FIRST_KEY + 4, 1);
+    daemon.send(serde_json::json!({"cmd": "cancel"}));
+    daemon
+        .wait_for("mapping", |e| e["done"] == true, 6.0)
+        .expect("cancel closes the wizard");
+    let after = daemon.last("state").expect("state").clone();
+    assert_eq!(
+        after["focus"], 1,
+        "the map ending closed the focus: {after}"
+    );
+    daemon.pump(0.5);
+    daemon.events.clear();
+    pads[0].emit(EventType::KEY.0, FIRST_KEY, 1);
+    daemon
+        .wait_for("focus", |e| e["control"] == "a" && e["down"] == true, 3.0)
+        .expect("the focus stopped hearing the pad after the map ended");
+    assert!(
+        !slots[0].sees_press(&mut daemon, A, 1.0),
+        "the game heard the focused player after a map on it ended"
+    );
+    pads[0].emit(EventType::KEY.0, FIRST_KEY, 0);
+    daemon.pump(0.3);
+
+    // Moved to seat 2, the pad is still the one held and heard, as player 2.
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "move", "player": 1, "to": 2}));
+    daemon
+        .wait_for("state", |e| e["focus"] == 2, 8.0)
+        .expect("the focus did not follow the pad to seat 2");
+    daemon.pump(0.5);
+    daemon.events.clear();
+    pads[0].emit(EventType::KEY.0, FIRST_KEY, 1);
+    let heard = daemon
+        .wait_for("focus", |e| e["control"] == "a" && e["down"] == true, 3.0)
+        .expect("the moved pad is no longer heard");
+    assert_eq!(heard["player"], 2, "{heard}");
+    assert!(
+        !slots[1].sees_press(&mut daemon, A, 1.0),
+        "seat 2's clone heard the focused pad that moved into it"
+    );
+    pads[0].emit(EventType::KEY.0, FIRST_KEY, 0);
+    pads[1].emit(EventType::KEY.0, FIRST_KEY, 1);
+    assert!(
+        slots[0].sees_press(&mut daemon, A, 3.0),
+        "the pad swapped into seat 1 is not live there"
+    );
+    pads[1].emit(EventType::KEY.0, FIRST_KEY, 0);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+const KEYSWAP: PadId = PadId {
+    name: "DANSTICK RSTESTKEYSWAP",
+    pid: 0x1000,
+    only: "RSTESTKEYSWAP",
+};
+
+/// The keyboard's seat moves like any other, named either way round.
+#[test]
+fn the_keyboard_seat_swaps_with_a_pad_by_move() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let root = std::env::temp_dir().join(format!("danstick-keyswap-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let mut pad = TestPad::new(KEYSWAP);
+    let mut daemon = Daemon::start_with_env(&root, KEYSWAP, &[], &[("DANSTICK_SLOTS", "fixed")]);
+    daemon
+        .wait_for("state", |e| standing(e).len() == 4, 8.0)
+        .expect("four slots never stood");
+    daemon.send(serde_json::json!({"cmd": "seat_keyboard"}));
+    daemon
+        .wait_for("claim", |e| e["name"] == KEYBOARD_SEAT_NAME, 5.0)
+        .expect("the keyboard never took a seat");
+    daemon.seat_by_hold_as(&mut pad, 2);
+    pad.emit(EventType::KEY.0, FIRST_KEY, 0);
+    let keyboard_at = |state: &Value| -> Option<u64> {
+        state["players"]
+            .as_array()?
+            .iter()
+            .find(|p| p["keyboard"] == true)
+            .and_then(|p| p["player"].as_u64())
+    };
+
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "move", "player": 2, "to": 1}));
+    let swapped = daemon
+        .wait_for("state", |e| keyboard_at(e) == Some(2), 8.0)
+        .expect("the pad never took the keyboard's seat");
+    assert_eq!(
+        swapped["players"].as_array().map(Vec::len),
+        Some(2),
+        "{swapped}"
+    );
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "move", "player": 2, "to": 1}));
+    daemon
+        .wait_for("state", |e| keyboard_at(e) == Some(1), 8.0)
+        .expect("the keyboard, named as the player, did not move back");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+const ODSWAP: PadId = PadId {
+    name: "DANSTICK RSTESTODSWAP",
+    pid: 0x1020,
+    only: "RSTESTODSWAP",
+};
+
+/// Under on-demand slots a move swaps the seats too; the clones are made
+/// again, as any rebuild makes them, so only the roster is promised.
+#[test]
+fn a_move_under_on_demand_slots_swaps_the_seats() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let root = std::env::temp_dir().join(format!("danstick-odswap-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let mut pads = four_pads(ODSWAP);
+    pads.truncate(2);
+    let mut daemon = Daemon::start(&root, ODSWAP);
+    daemon.seat_by_hold_as(&mut pads[0], 1);
+    pads[0].emit(EventType::KEY.0, FIRST_KEY, 0);
+    daemon.seat_by_hold_as(&mut pads[1], 2);
+    pads[1].emit(EventType::KEY.0, FIRST_KEY, 0);
+    let name = |state: &Value, player: u64| -> String {
+        state["players"]
+            .as_array()
+            .and_then(|players| players.iter().find(|p| p["player"] == player))
+            .and_then(|p| p["name"].as_str())
+            .unwrap_or_default()
+            .to_owned()
+    };
+    let before = daemon.last("state").expect("state").clone();
+    let (first, second) = (name(&before, 1), name(&before, 2));
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "move", "player": 1, "to": 2}));
+    let swapped = daemon
+        .wait_for(
+            "state",
+            |e| name(e, 1) == second && name(e, 2) == first,
+            8.0,
+        )
+        .expect("the seats never swapped under on-demand slots");
+    assert_eq!(swapped["state"], "ready", "{swapped}");
     let _ = std::fs::remove_dir_all(&root);
 }

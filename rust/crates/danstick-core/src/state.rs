@@ -69,6 +69,9 @@ pub struct StateEvent {
     /// What is being played: the scope each clone is built from.
     #[serde(default)]
     pub scope: Playing,
+    /// The player whose pad a menu holds and hears, when one does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub focus: Option<u32>,
 }
 
 /// The console and game in play, as `scope` set them; empty is the default scope.
@@ -121,6 +124,7 @@ impl StateEvent {
             on_leave: crate::slots::OnLeave::Stay.as_str().to_owned(),
             layout: crate::slots::Layout::Position.as_str().to_owned(),
             scope: Playing::default(),
+            focus: None,
         }
     }
 

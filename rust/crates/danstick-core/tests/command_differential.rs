@@ -61,6 +61,8 @@ fn as_fields(command: &Command) -> Value {
         Command::Scope { console, game, .. } => {
             json!({"cmd": "scope", "console": console, "game": game})
         }
+        Command::Focus { player, open } => json!({"cmd": "focus", "player": player, "open": open}),
+        Command::Move { player, to } => json!({"cmd": "move", "player": player, "to": to}),
         Command::Slots(change) => json!({
             "cmd": "slots", "mode": change.mode, "count": change.count, "on_leave": change.on_leave,
             "layout": change.layout

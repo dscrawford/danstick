@@ -778,6 +778,59 @@ clone is driven from whatever resolves for it now.
 `danstick-rs exec --console ID [--game KEY]` leases it for a launch, on a
 connection it holds until the game ends, beside `--reserve`.
 
+## A menu holds one player: `focus`
+
+```json
+{"cmd": "focus", "player": 2}
+{"cmd": "focus", "player": 2, "open": false}
+```
+
+A menu over the game -- GOTG's overlay -- needs one player's presses to reach
+it and **not the game**: A on "exit" must not also jump. `focus` holds that
+player's pad back from its clone, which goes to rest (every button up, the
+sticks centred, as a `stay` leave leaves it) and stays there; everyone else
+plays on. While held, each change on the pad is said as a control, after the
+pad's walk for the scope in play, so `a` is whatever that player bound as A:
+
+```json
+{"event": "focus", "player": 2, "control": "a", "down": true}
+{"event": "focus", "player": 2, "control": "dpdown", "down": false}
+{"event": "focus", "player": 2, "stick": "left", "x": 0.0, "y": -0.9}
+```
+
+Controls carry SDL's names, as `map` and `captured` use them, `guide`,
+`leftstick` and `rightstick` included; a trigger is `down` past half its
+travel; a d-pad direction let go is said down `false`, and a stick as both
+its axes, -1 to 1, whenever either moves. A control is said once per change.
+
+`open: false` closes it, and so does the connection that opened it going
+away, so an overlay that dies cannot leave a player dead in the game. The
+clone resumes from the pad's next change: a button still held when the menu
+closes is not pressed into the game. `state` carries `"focus": 2` while one
+is open and no `focus` at all otherwise. A `map` or `bind` on the focused
+player hears the pad for its run and hands it back to the focus when it
+ends. Refused with an `error` for a player with no published clone, and while
+a session is open. One player is focused at a time; opening on another moves
+it.
+
+## A controller in another seat: `move`
+
+```json
+{"cmd": "move", "player": 1, "to": 3}
+```
+
+The pad in seat 1 is in seat 3 afterwards. If somebody sat in seat 3 they
+are in seat 1 now -- a swap, so nobody is dropped; an empty seat 3 leaves
+seat 1 empty. **Under fixed slots the clones stay where they are**: seat 3's
+node, the one a game opened as player 3, is driven by the moved pad from
+here on, let go (at rest) first, and nothing is made or destroyed, so a
+running game sees the controls change hands and never a device come or go.
+Under on-demand slots the clones are made again, as any rebuild makes them.
+Each pad keeps what is its own -- its walk, its tuning, a `focus` on it --
+in its new seat; the keyboard's seat moves like any other. One `state`
+follows, with the new seats. Refused with an `error` for a seat outside the
+slots, a `player` nobody is in, a session open or a controller being set up.
+
 ## Changing identity without losing anybody: `identity`
 
 ```json
