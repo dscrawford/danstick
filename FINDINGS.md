@@ -3763,3 +3763,25 @@ keeps the refusal for a front-end that wants it.
 **Worth generalising.** A guard against accidents becomes a wall once the
 accident is caught earlier. Turn it into a warning, or somebody who means it
 cannot finish.
+
+## A walk for N64 never reached an N64 game
+
+DK64 on the desktop, the Xbox pad seated: controls missing, and GOTG's rebind
+chord never fired. The pad had a `console:n64` walk of fourteen controls,
+made on purpose. Every clone was built from the default scope -- both places
+that make one asked `resolved` with an empty console and game -- so only
+RetroArch's autoconfig ever saw a console's walk, and a rebind from GOTG's
+overlay stored a walk the clone the game was reading never picked up.
+
+The daemon now knows what is being played. `scope` names the console and
+game, `exec --console`/`--game` leases it for a launch on a connection held
+until the game ends -- a launch killed mid-game cannot leave its scope
+behind, and two launches over each other nest -- and each clone is driven from `resolve(console, game)`: the translator is
+rebuilt on the clone it has, after letting go of what the old one held, so
+the device and node a game opened stay as they are. A `map` or `bind` that
+stores does the same for its player, which is what makes a rebind mid-game
+land. The consumers' files are worked out for the same scope.
+
+**Worth generalising.** A resolution order is only as good as what is passed
+to it. When every caller passes the empty case, the order is decoration.
+

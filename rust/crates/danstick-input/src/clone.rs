@@ -838,6 +838,37 @@ impl VirtualPad {
             .collect()
     }
 
+    /// Drive this clone by another capture from now on, letting go of whatever
+    /// the old one held: the device and its node stay as the game opened them.
+    pub fn remap(
+        &mut self,
+        mapping: &Mapping,
+        faces: &BTreeMap<danstick_core::Control, danstick_core::Control>,
+    ) {
+        let mut released = self.outgoing_release_all();
+        if !released.is_empty() {
+            released.push(InputEvent::new(EventType::SYNCHRONIZATION.0, 0, 0));
+            if let Err(error) = self.clone.emit(&released) {
+                self.note_dropped(&error);
+            }
+        }
+        let (keys, _) = self.source.capabilities();
+        let spans = self.source.axis_spans();
+        let bindings = mapping.resolved();
+        let extras = mapping.resolved_extra();
+        if self.translator.is_some() {
+            let mut translating = xbox::Translator::new(&keys, &spans, &bindings, &extras);
+            translating.relabel(faces);
+            self.translator = Some(translating);
+        } else {
+            self.twins = if extras.is_empty() {
+                None
+            } else {
+                Twins::new(&keys, &spans, &bindings, &extras)
+            };
+        }
+    }
+
     /// Every event the clone needs to read "nothing held", in its own codes.
     pub fn outgoing_release_all(&mut self) -> Vec<InputEvent> {
         let outs = if let Some(translator) = self.translator.as_mut() {

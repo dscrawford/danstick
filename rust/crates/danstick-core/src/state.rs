@@ -66,6 +66,18 @@ pub struct StateEvent {
     /// How a pad's buttons land on a 360 clone: `position` or `label`.
     #[serde(default)]
     pub layout: String,
+    /// What is being played: the scope each clone is built from.
+    #[serde(default)]
+    pub scope: Playing,
+}
+
+/// The console and game in play, as `scope` set them; empty is the default scope.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Playing {
+    #[serde(default)]
+    pub console: String,
+    #[serde(default)]
+    pub game: String,
 }
 
 fn on_demand() -> String {
@@ -108,6 +120,7 @@ impl StateEvent {
             slot_count: crate::slots::DEFAULT_COUNT,
             on_leave: crate::slots::OnLeave::Stay.as_str().to_owned(),
             layout: crate::slots::Layout::Position.as_str().to_owned(),
+            scope: Playing::default(),
         }
     }
 

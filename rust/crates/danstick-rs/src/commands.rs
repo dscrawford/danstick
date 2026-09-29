@@ -841,36 +841,63 @@ pub fn daemon_ask(
     None
 }
 
+/// What `exec` was asked to arrange on the daemon before the game starts.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ExecFlags {
+    pub reserve: Option<u32>,
+    /// The console and game being played, for the scope the clones are built from.
+    pub console: String,
+    pub game: String,
+}
+
 /// `exec`'s own flags, then the program and everything after it untouched.
 /// `--` ends exec's flags and is optional when the program is not a flag.
-pub fn exec_args(args: Vec<String>) -> std::result::Result<(Option<u32>, Vec<String>), String> {
-    let mut reserve = None;
+pub fn exec_args(args: Vec<String>) -> std::result::Result<(ExecFlags, Vec<String>), String> {
+    let mut flags = ExecFlags::default();
     let mut rest = args.into_iter().peekable();
     while let Some(arg) = rest.peek() {
         if arg == "--" {
             rest.next();
             break;
         }
-        let value = if let Some(value) = arg.strip_prefix("--reserve=") {
-            let value = value.to_owned();
-            rest.next();
-            value
-        } else if arg == "--reserve" {
-            rest.next();
-            rest.next().ok_or("--reserve needs a number of seats")?
+        // `--name=value` or `--name value`, for each flag exec has.
+        let mut take = |name: &str| -> std::result::Result<Option<String>, String> {
+            let Some(arg) = rest.peek() else {
+                return Ok(None);
+            };
+            if let Some(value) = arg.strip_prefix(&format!("--{name}=")) {
+                let value = value.to_owned();
+                rest.next();
+                return Ok(Some(value));
+            }
+            if arg == &format!("--{name}") {
+                rest.next();
+                // The separator or another flag is no value.
+                return match rest.next() {
+                    Some(value) if !value.starts_with("--") => Ok(Some(value)),
+                    _ => Err(format!("--{name} needs a value")),
+                };
+            }
+            Ok(None)
+        };
+        if let Some(value) = take("reserve")? {
+            let seats = value
+                .parse::<u32>()
+                .map_err(|_| format!("--reserve needs a number of seats, not {value:?}"))?;
+            flags.reserve = Some(seats);
+        } else if let Some(value) = take("console")? {
+            flags.console = value;
+        } else if let Some(value) = take("game")? {
+            flags.game = value;
         } else {
             break;
-        };
-        let seats = value
-            .parse::<u32>()
-            .map_err(|_| format!("--reserve needs a number of seats, not {value:?}"))?;
-        reserve = Some(seats);
+        }
     }
     let program: Vec<String> = rest.collect();
     if program.is_empty() {
         return Err("no program to run".to_owned());
     }
-    Ok((reserve, program))
+    Ok((flags, program))
 }
 
 /// Whether every seat 1..=`seats` is either somebody's or reserved for somebody.
@@ -922,6 +949,51 @@ pub fn daemon_ask_until(
                         .to_owned())
                 }
                 Some("state") if until(&message) => return Ok(message),
+                _ => {}
+            }
+        }
+    }
+    Err(format!("the daemon did not answer within {timeout:.0}s"))
+}
+
+/// [`daemon_ask_until`], keeping the connection: what the command leased
+/// on it lasts until the stream is dropped.
+pub fn daemon_lease_until(
+    command: &serde_json::Value,
+    until: impl Fn(&serde_json::Value) -> bool,
+    timeout: f64,
+) -> std::result::Result<std::os::unix::net::UnixStream, String> {
+    use std::io::Read;
+    use std::os::unix::net::UnixStream;
+
+    let mut sock = UnixStream::connect(runtime::socket_path())
+        .map_err(|error| format!("no daemon to ask: {error}"))?;
+    let window = std::time::Duration::from_secs_f64(timeout);
+    sock.set_read_timeout(Some(window))
+        .map_err(|error| error.to_string())?;
+    let mut line = serde_json::to_string(command).map_err(|error| error.to_string())?;
+    line.push('\n');
+    sock.write_all(line.as_bytes())
+        .map_err(|error| format!("could not ask the daemon: {error}"))?;
+    let mut reader = danstick_core::wire::LineReader::new();
+    let deadline = std::time::Instant::now() + window;
+    let mut chunk = [0u8; 65536];
+    while std::time::Instant::now() < deadline {
+        let count = match sock.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(count) => count,
+            Err(_) => break,
+        };
+        for message in reader.feed(&chunk[..count]) {
+            let message = serde_json::Value::Object(message);
+            match message["event"].as_str() {
+                Some("error") => {
+                    return Err(message["message"]
+                        .as_str()
+                        .unwrap_or("the daemon refused it")
+                        .to_owned())
+                }
+                Some("state") if until(&message) => return Ok(sock),
                 _ => {}
             }
         }
@@ -1266,7 +1338,7 @@ fn slots_match(state: &serde_json::Value, ours: danstick_core::slots::Policy) ->
 
 #[cfg(test)]
 mod exec_tests {
-    use super::{covers_seats, exec_args, slots_match};
+    use super::{covers_seats, exec_args, slots_match, ExecFlags};
     use danstick_core::slots::{Layout, Mode, OnLeave, Policy};
 
     #[test]
@@ -1307,29 +1379,56 @@ mod exec_tests {
         text.split_whitespace().map(str::to_owned).collect()
     }
 
+    fn reserving(seats: u32) -> ExecFlags {
+        ExecFlags {
+            reserve: Some(seats),
+            ..ExecFlags::default()
+        }
+    }
+
     #[test]
     fn exec_takes_the_program_after_its_own_flags_and_leaves_the_programs_alone() {
+        let none = ExecFlags::default();
         assert_eq!(
             exec_args(words("-- game --fast")),
-            Ok((None, words("game --fast")))
+            Ok((none.clone(), words("game --fast")))
         );
         assert_eq!(
             exec_args(words("game --fast")),
-            Ok((None, words("game --fast")))
+            Ok((none, words("game --fast")))
         );
         assert_eq!(
             exec_args(words("--reserve 2 -- dolphin-emu --reserve 9")),
-            Ok((Some(2), words("dolphin-emu --reserve 9"))),
+            Ok((reserving(2), words("dolphin-emu --reserve 9"))),
             "the game's own --reserve is the game's"
         );
         assert_eq!(
             exec_args(words("--reserve=4 -- game")),
-            Ok((Some(4), words("game")))
+            Ok((reserving(4), words("game")))
         );
         assert_eq!(
             exec_args(words("--reserve 3 game")),
-            Ok((Some(3), words("game")))
+            Ok((reserving(3), words("game")))
         );
+    }
+
+    #[test]
+    fn exec_takes_the_console_and_game_being_played_in_any_order() {
+        let played = ExecFlags {
+            reserve: Some(4),
+            console: "n64".to_owned(),
+            game: "n64/dk64".to_owned(),
+        };
+        assert_eq!(
+            exec_args(words("--console n64 --reserve 4 --game=n64/dk64 -- game")),
+            Ok((played.clone(), words("game")))
+        );
+        assert_eq!(
+            exec_args(words("--game n64/dk64 --console=n64 --reserve=4 game")),
+            Ok((played, words("game")))
+        );
+        assert!(exec_args(words("--console -- game")).is_err());
+        assert!(exec_args(words("--game")).is_err());
     }
 
     #[test]

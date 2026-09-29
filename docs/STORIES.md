@@ -599,6 +599,11 @@ ones the user corrected for this console or this game specifically.
 records the launch with `protocol.write_last_game`, and calls
 `retroarch.install_profiles(assignments, console=, game=, context=)`.
 Resolution order is `game:<console>/<key>`, then `console:<id>`, then `""`.
+The clone a game reads follows the same order once the launch says what is
+being played (`{"cmd": "scope"}`, or `exec --console`); before that it was
+built from `""` whatever was walked for the console, and a walk done for N64
+never reached an N64 game
+(`a_clone_is_driven_by_the_walk_for_the_console_being_played`).
 
 **Preconditions.** Assignments exist in `assignments.json`; the ROM path
 exists (it is identified by *existing*, not by position, since danstick-play

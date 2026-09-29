@@ -140,9 +140,16 @@ pub fn sdl_line_for(
     emit::sdl_line_for(player, identity, bindings, Some(&sticks))
 }
 
-/// The stored mapping's line, or empty.
-pub fn stored_sdl_line(player: u32, pad: &Pad, identity: Identity, facts: &PadFacts) -> String {
-    let bindings = resolved(pad, "", "").1.resolved();
+/// The stored mapping's line for what is being played, or empty.
+pub fn stored_sdl_line(
+    player: u32,
+    pad: &Pad,
+    identity: Identity,
+    facts: &PadFacts,
+    console: &str,
+    game: &str,
+) -> String {
+    let bindings = resolved(pad, console, game).1.resolved();
     if bindings.is_empty() {
         return String::new();
     }
@@ -377,7 +384,7 @@ fn derive(
             &facts,
         )
     } else {
-        stored_sdl_line(slot.player, &slot.pad, identity, &facts)
+        stored_sdl_line(slot.player, &slot.pad, identity, &facts, console, game)
     };
     let (line, note, provisional) = if stored.is_empty() {
         match fallback_line_for(slot.player, identity, &facts) {

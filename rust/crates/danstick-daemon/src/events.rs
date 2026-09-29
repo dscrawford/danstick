@@ -26,9 +26,11 @@ pub fn state(
     hold: f64,
     reserved: Vec<danstick_core::state::ReservedSeat>,
     policy: danstick_core::slots::Policy,
+    playing: danstick_core::state::Playing,
 ) -> Value {
     let mut event = StateEvent::new(state, slots, players, build, std::process::id(), identity)
         .with_slots(policy);
+    event.scope = playing;
     event.following = following;
     event.seating = seating;
     event.hold = hold;

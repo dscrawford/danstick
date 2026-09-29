@@ -4054,3 +4054,125 @@ fn under_steam_input_a_pad_sits_as_itself_and_a_clones_steam_pad_is_nobody() {
     drop(wrap);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// A pad with a default walk and an N64 walk, for the clone to follow the console in play.
+const PLAYED: PadId = PadId {
+    name: "DANSTICK RSTESTPLAYED Xbox Wireless Controller",
+    pid: 0x0fb0,
+    only: "RSTESTPLAYED",
+};
+
+/// A stored profile: the first key is A by default and B when playing N64.
+fn write_played_profile(dir: &Path) {
+    let button = |index: u32| serde_json::json!({"kind": "button", "index": index});
+    let profile = serde_json::json!({
+        "signature": signature(PLAYED),
+        "seeding": "generic",
+        "mappings": {
+            "": {"layout": "generic", "buttons": {"a": button(0), "b": button(1)}},
+            "console:n64": {"layout": "n64", "buttons": {"b": button(0), "a": button(1)}},
+        },
+    });
+    std::fs::create_dir_all(dir).expect("profiles dir");
+    std::fs::write(
+        dir.join(profile_filename(PLAYED)),
+        serde_json::to_string_pretty(&profile).expect("json"),
+    )
+    .expect("a profile");
+}
+
+/// A clone is built from the walk for what is being played, `scope` changes
+/// it in place, and a `bind` under that scope reaches the game at once.
+#[test]
+fn a_clone_is_driven_by_the_walk_for_the_console_being_played() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    const A: u16 = 0x130;
+    const B: u16 = 0x131;
+    let root = std::env::temp_dir().join(format!("danstick-played-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    write_played_profile(&root.join("devices"));
+
+    let mut pad = TestPad::new(PLAYED);
+    // A pad with a stored walk seats itself on attach; the hold below is the seat here.
+    let mut daemon = Daemon::start_with_env(
+        &root,
+        PLAYED,
+        &[],
+        &[("DANSTICK_SLOTS", "fixed"), ("DANSTICK_NO_AUTOATTACH", "1")],
+    );
+    let before = daemon
+        .wait_for("state", |e| standing(e).len() == 4, 8.0)
+        .expect("four slots never stood");
+    assert_eq!(before["scope"]["console"], "", "{before}");
+    let mut slot_one = Watcher::open(&standing(&before)[&1]);
+    daemon.seat_by_hold_as(&mut pad, 1);
+    pad.emit(EventType::KEY.0, FIRST_KEY, 0);
+    daemon.pump(0.3);
+
+    pad.emit(EventType::KEY.0, FIRST_KEY, 1);
+    assert!(
+        slot_one.sees_press(&mut daemon, A, 3.0),
+        "by default the first key is A"
+    );
+    pad.emit(EventType::KEY.0, FIRST_KEY, 0);
+    daemon.pump(0.3);
+
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "scope", "console": "n64", "game": "n64/dk64"}));
+    let playing = daemon
+        .wait_for("state", |e| e["scope"]["console"] == "n64", 5.0)
+        .expect("the daemon never said what is being played");
+    assert_eq!(playing["scope"]["game"], "n64/dk64", "{playing}");
+    daemon.pump(0.5);
+    pad.emit(EventType::KEY.0, FIRST_KEY, 1);
+    assert!(
+        slot_one.sees_press(&mut daemon, B, 3.0),
+        "playing N64 the first key is B, on the node the game already reads"
+    );
+    pad.emit(EventType::KEY.0, FIRST_KEY, 0);
+    daemon.pump(0.3);
+
+    // A rebind under the scope in play changes the game's controls, no relaunch.
+    daemon.events.clear();
+    daemon.send(serde_json::json!({
+        "cmd": "bind", "player": 1, "control": "a", "scope": "console:n64"
+    }));
+    daemon
+        .wait_for("mapping", |e| e["done"] == false, 6.0)
+        .expect("bind opened");
+    daemon.tap_until_bound(&mut pad, FIRST_KEY + 2, 1);
+    let done = daemon
+        .wait_for("mapping", |e| e["done"] == true, 6.0)
+        .expect("one press binds the control");
+    assert_eq!(done["stored"], true, "{done}");
+    daemon.pump(0.8);
+    assert!(
+        slot_one.still_there(),
+        "the rebind replaced the clone under the game"
+    );
+    pad.emit(EventType::KEY.0, FIRST_KEY + 2, 1);
+    assert!(
+        slot_one.sees_press(&mut daemon, A, 3.0),
+        "the key just walked as N64's A does not reach the game as A"
+    );
+    pad.emit(EventType::KEY.0, FIRST_KEY + 2, 0);
+    daemon.pump(0.3);
+
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "scope"}));
+    daemon
+        .wait_for("state", |e| e["scope"]["console"] == "", 5.0)
+        .expect("the scope never went back to the default");
+    daemon.pump(0.5);
+    pad.emit(EventType::KEY.0, FIRST_KEY, 1);
+    assert!(
+        slot_one.sees_press(&mut daemon, A, 3.0),
+        "back on the default the first key is A again"
+    );
+    pad.emit(EventType::KEY.0, FIRST_KEY, 0);
+    let _ = std::fs::remove_dir_all(&root);
+}

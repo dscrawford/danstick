@@ -58,6 +58,9 @@ fn as_fields(command: &Command) -> Value {
         Command::SeatKeyboard => json!({"cmd": "seat_keyboard"}),
         Command::Reserve { players } => json!({"cmd": "reserve", "players": players}),
         Command::Identity { mode } => json!({"cmd": "identity", "mode": mode}),
+        Command::Scope { console, game, .. } => {
+            json!({"cmd": "scope", "console": console, "game": game})
+        }
         Command::Slots(change) => json!({
             "cmd": "slots", "mode": change.mode, "count": change.count, "on_leave": change.on_leave,
             "layout": change.layout

@@ -84,8 +84,8 @@ fn map_and_bind_share_an_input_unless_told_to_be_strict() {
 #[test]
 fn identity_names_the_mode_and_slots_was_appended_after_it() {
     assert_eq!(
-        COMMANDS[COMMANDS.len() - 2..],
-        ["identity", "slots"],
+        COMMANDS[COMMANDS.len() - 3..],
+        ["identity", "slots", "scope"],
         "commands are only appended"
     );
     assert_eq!(
@@ -100,5 +100,46 @@ fn identity_names_the_mode_and_slots_was_appended_after_it() {
         Ok(Command::Identity {
             mode: String::new()
         })
+    );
+}
+
+#[test]
+fn scope_names_what_is_being_played_and_empty_is_the_default() {
+    assert_eq!(COMMANDS.last(), Some(&"scope"), "appended, never reordered");
+    assert_eq!(
+        Command::parse(&json!({"cmd": "scope", "console": "n64", "game": "n64/dk64"})),
+        Ok(Command::Scope {
+            console: "n64".to_owned(),
+            game: "n64/dk64".to_owned(),
+            lease: false,
+        })
+    );
+    assert_eq!(
+        Command::parse(&json!({"cmd": "scope", "lease": true})),
+        Ok(Command::Scope {
+            console: String::new(),
+            game: String::new(),
+            lease: true,
+        })
+    );
+}
+
+#[test]
+fn a_scope_or_game_name_ends_no_line_of_a_file_it_is_written_into() {
+    // A name reaches an autoconfig comment; a newline in it would end that comment.
+    assert!(matches!(
+        Command::parse(&json!({"cmd": "scope", "game": "n64/x\ninput_a_btn = \"9\""})),
+        Err(Refused::NotAName { field: "game" })
+    ));
+    assert!(matches!(
+        Command::parse(&json!({"cmd": "bind", "player": 1, "control": "a", "scope": "a\tb"})),
+        Err(Refused::NotAName { field: "scope" })
+    ));
+    assert!(matches!(
+        Command::parse(&json!({"cmd": "map", "player": 1, "scope": "x".repeat(300)})),
+        Err(Refused::NotAName { field: "scope" })
+    ));
+    assert!(
+        Command::parse(&json!({"cmd": "scope", "console": "n64", "game": "n64/dk 64"})).is_ok()
     );
 }

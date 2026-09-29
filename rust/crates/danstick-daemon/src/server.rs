@@ -158,6 +158,10 @@ pub struct Server {
     mode: IdentityMode,
     /// Whether slots stand before anybody sits in them, and what a leave does.
     slot_policy: slots::Policy,
+    /// What is being played: the scope every clone is built from.
+    playing: danstick_core::state::Playing,
+    /// Clients whose scope lasts as long as they do, each with what was in play before it.
+    scope_leases: Vec<(i32, danstick_core::state::Playing)>,
 
     prompted: BTreeSet<String>,
     prompted_stamp: i128,
@@ -350,6 +354,8 @@ impl Server {
             reserved_nodes: BTreeMap::new(),
             mode: IdentityMode::from_env(),
             slot_policy: configured_slots(),
+            playing: danstick_core::state::Playing::default(),
+            scope_leases: Vec::new(),
             prompted,
             prompted_stamp,
             last_scan_signature: None,
@@ -665,6 +671,7 @@ impl Server {
         if let Some(client) = self.clients.remove(&fd) {
             let _ = self.reactor.unwatch(client.stream.as_fd());
         }
+        self.release_scope(fd);
         // A session holds every pad and a modal flow holds one; neither may outlive its client.
         if self.clients.is_empty() && (self.session.is_some() || self.modal_open()) {
             info!("last client disconnected mid-session; releasing pads");
@@ -826,6 +833,16 @@ impl Server {
             Command::Reserve { players } => self.reserve_seats(players),
             Command::Identity { mode } => self.set_identity(&mode),
             Command::Slots(change) => self.set_slots(&change),
+            Command::Scope {
+                console,
+                game,
+                lease,
+            } => {
+                if lease {
+                    self.lease_scope(fd);
+                }
+                self.set_scope(console, game);
+            }
             Command::Bind {
                 player,
                 control,
@@ -1617,7 +1634,7 @@ impl Server {
                 return;
             }
         };
-        let (_, current) = publish::resolved(&pad, "", "");
+        let current = self.mapping_in_play(&pad);
         let chosen = if current.layout.is_empty() {
             publish::icon_for(&pad, &self.icon_overrides).to_owned()
         } else {
@@ -1716,6 +1733,11 @@ impl Server {
                         }
                     );
                 }
+            }
+        }
+        if store {
+            if let Some(player) = modal.as_ref().map(|modal| modal.run.player) {
+                self.remap_clone(player);
             }
         }
         self.broadcast(&events::mapping_done(modal.as_ref().map(|m| &m.run), store));
@@ -2586,6 +2608,106 @@ impl Server {
         }
     }
 
+    /// The capture a pad's clone is driven by: the most specific scope for
+    /// what is being played, or the default.
+    fn mapping_in_play(&self, pad: &Pad) -> danstick_core::profile::Mapping {
+        let (scope, mapping) = publish::resolved(pad, &self.playing.console, &self.playing.game);
+        if !mapping.buttons.is_empty() {
+            info!(
+                "{}: clone driven by scope {:?} ({}, {} controls)",
+                clean(&pad.name),
+                if scope.is_empty() { "default" } else { &scope },
+                mapping.layout,
+                mapping.buttons.len()
+            );
+        }
+        mapping
+    }
+
+    /// The game the consumers' files are worked out for: what `scope` said is
+    /// being played, or else the last launch.
+    fn game_in_play(&self) -> Option<runtime::Game> {
+        let recent = runtime::read_recent_games();
+        if self.playing.console.is_empty() && self.playing.game.is_empty() {
+            return recent.into_iter().next();
+        }
+        // The launch record has the title, when this is the game it recorded.
+        let title = recent
+            .iter()
+            .find(|game| game.key == self.playing.game && !self.playing.game.is_empty())
+            .map(|game| game.title.clone())
+            .unwrap_or_default();
+        Some(runtime::Game {
+            console: self.playing.console.clone(),
+            key: self.playing.game.clone(),
+            title,
+        })
+    }
+
+    /// Remember what `fd` found in play, to put back when it goes.
+    fn lease_scope(&mut self, fd: i32) {
+        if !self.scope_leases.iter().any(|(holder, _)| *holder == fd) {
+            self.scope_leases.push((fd, self.playing.clone()));
+        }
+    }
+
+    /// A client that leased the scope has gone: the newest lease puts back
+    /// what it found, and an older one hands what it found to the lease after it.
+    fn release_scope(&mut self, fd: i32) {
+        let Some(at) = self
+            .scope_leases
+            .iter()
+            .position(|(holder, _)| *holder == fd)
+        else {
+            return;
+        };
+        let (_, before) = self.scope_leases.remove(at);
+        match self.scope_leases.get_mut(at) {
+            Some((_, found)) => *found = before,
+            None => {
+                info!("the launch that set the scope has gone; putting back what it found");
+                self.set_scope(before.console, before.game);
+            }
+        }
+    }
+
+    /// Set what is being played, and drive every clone from that scope's walk.
+    fn set_scope(&mut self, console: String, game: String) {
+        let next = danstick_core::state::Playing { console, game };
+        if next != self.playing {
+            info!(
+                "playing {:?} / {:?}: clones follow that scope",
+                next.console, next.game
+            );
+            self.playing = next;
+            let players: Vec<u32> = self.slots_assigned.iter().map(|slot| slot.player).collect();
+            for player in players {
+                self.remap_clone(player);
+            }
+            let virtual_paths = self.virtual_paths();
+            self.rewrite_consumers(&virtual_paths);
+        }
+        let state = self.state_event();
+        self.broadcast(&state);
+    }
+
+    /// Drive one player's clone by the capture in play, at the node it has.
+    fn remap_clone(&mut self, player: u32) {
+        let Some(pad) = self.pad_for_player(player) else {
+            return;
+        };
+        let mapping = self.mapping_in_play(&pad);
+        let faces = self.faces_for(&pad, &mapping);
+        if let Some(vpad) = self.republisher.as_mut().and_then(|republisher| {
+            republisher
+                .pads
+                .iter_mut()
+                .find(|vpad| vpad.player == player)
+        }) {
+            vpad.remap(&mapping, &faces);
+        }
+    }
+
     /// Where a pad's face buttons land when kept by label: its capture's
     /// layout names its labels, or else the console its icon says it is.
     fn faces_for(
@@ -2689,7 +2811,7 @@ impl Server {
             .map(|profile| profile.axes)
             .unwrap_or_default();
         let tuning = publish::tuning_for(&slot.pad);
-        let mapping = publish::resolved(&slot.pad, "", "").1;
+        let mapping = self.mapping_in_play(&slot.pad);
         let faces = self.faces_for(&slot.pad, &mapping);
         let node = self.reserved_nodes.remove(&slot.player);
         let mut reserved = self.reserved.remove(&slot.player);
@@ -2768,7 +2890,7 @@ impl Server {
                 .map(|profile| profile.axes)
                 .unwrap_or_default();
             let tuning = publish::tuning_for(&slot.pad);
-            let mapping = publish::resolved(&slot.pad, "", "").1;
+            let mapping = self.mapping_in_play(&slot.pad);
             let faces = self.faces_for(&slot.pad, &mapping);
             // A seat a launch is already bound to keeps its node through a rebuild.
             let node = self.reserved_nodes.remove(&slot.player);
@@ -2868,7 +2990,7 @@ impl Server {
     /// The same for a join, which changes nothing about anybody already seated.
     fn rewrite_consumers_reusing(&mut self, virtual_paths: &BTreeMap<u32, String>) {
         let reserved: Vec<u32> = self.reserved_nodes.keys().copied().collect();
-        let last = runtime::read_recent_games().into_iter().next();
+        let last = self.game_in_play();
         let written = publish::write_all(
             &self.slots_assigned,
             virtual_paths,
@@ -3371,7 +3493,7 @@ impl Server {
     }
 
     fn controller_event(&mut self, action: &str, player: u32, pad: &Pad, reason: &str) -> Value {
-        let last = runtime::read_recent_games().into_iter().next();
+        let last = self.game_in_play();
         let console = last.as_ref().map(|g| g.console.clone()).unwrap_or_default();
         let game = last.as_ref().map(|g| g.key.clone()).unwrap_or_default();
         let title = last.as_ref().map(|g| g.title.clone()).unwrap_or_default();
@@ -3440,7 +3562,9 @@ impl Server {
                         .to_string(),
                     binds: danstick_core::userconfig::parse_profile_text(&profile_text),
                 }),
-                sdl_mapping: publish::stored_sdl_line(player, pad, identity, &facts),
+                sdl_mapping: publish::stored_sdl_line(
+                    player, pad, identity, &facts, &console, &game,
+                ),
             }
         };
         let subject = attach(player, pad);
@@ -3672,6 +3796,7 @@ impl Server {
             self.seating.hold_seconds(),
             self.reserved_payload(),
             self.slot_policy,
+            self.playing.clone(),
         )
     }
 

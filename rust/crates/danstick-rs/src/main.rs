@@ -227,13 +227,15 @@ fn which_bwrap() -> Option<std::path::PathBuf> {
     })
 }
 
-/// What `exec --reserve` changed on the daemon, to put back when the game ends.
+/// What `exec` changed on the daemon, to put back when the game ends.
 #[derive(Debug, Default)]
 struct Borrowed {
     /// The identity the daemon had before it was asked for the 360's.
     identity: Option<String>,
     /// How many seats were reserved before, restored with `reserve`.
     reserved: Option<u32>,
+    /// The connection whose scope lease names what is being played; dropped when the game ends.
+    scope_lease: Option<std::os::unix::net::UnixStream>,
 }
 
 /// Make seats 1..=`seats` exist before the game starts: the seated ones as they
@@ -290,9 +292,32 @@ fn borrow_seats(seats: u32) -> Borrowed {
     borrowed
 }
 
-/// Give back what `borrow_seats` took. A daemon that has already ended with
-/// the session has nothing to give back to, and that is fine.
+/// Tell the daemon what is being played, so each clone is built from that
+/// scope's walk before the game reads it. The scope is leased on this
+/// connection, so a launch killed mid-game takes it away with it. Nothing
+/// here is fatal either.
+fn borrow_scope(console: &str, game: &str, borrowed: &mut Borrowed) {
+    let asked = serde_json::json!({
+        "cmd": "scope", "console": console, "game": game, "lease": true
+    });
+    match commands::daemon_lease_until(
+        &asked,
+        |state| state["scope"]["console"] == console && state["scope"]["game"] == game,
+        15.0,
+    ) {
+        Ok(stream) => {
+            info!("--console {console:?}: the clones follow that scope until this ends");
+            borrowed.scope_lease = Some(stream);
+        }
+        Err(error) => warn!("--console {console:?}: {error}; the clones stay on the default"),
+    }
+}
+
+/// Give back what `borrow_seats` and `borrow_scope` took. A daemon that has
+/// already ended with the session has nothing to give back to, and that is fine.
 fn hand_back(borrowed: Borrowed) {
+    // Closing the lease is the daemon's cue to put back what this launch found.
+    drop(borrowed.scope_lease);
     if let Some(before) = borrowed.reserved {
         let asked = serde_json::json!({"cmd": "reserve", "players": before});
         let _ = commands::daemon_ask_until(
@@ -314,10 +339,13 @@ fn hand_back(borrowed: Borrowed) {
 }
 
 fn cmd_exec(args: Vec<String>) -> Result<()> {
-    let (reserve, args) = match commands::exec_args(args) {
+    let (flags, args) = match commands::exec_args(args) {
         Ok(parsed) => parsed,
         Err(why) => {
-            eprintln!("{why}\nusage: danstick-rs exec [--reserve N] -- <program> [args...]");
+            eprintln!(
+                "{why}\nusage: danstick-rs exec [--reserve N] [--console ID] [--game KEY] \
+                 -- <program> [args...]"
+            );
             std::process::exit(2);
         }
     };
@@ -326,7 +354,10 @@ fn cmd_exec(args: Vec<String>) -> Result<()> {
     };
     // Before anything reads the files or /dev/input: the seats have to exist
     // when the bind plan is built, and their mappings have to be in `env.sh`.
-    let borrowed = reserve.map(borrow_seats).unwrap_or_default();
+    let mut borrowed = flags.reserve.map(borrow_seats).unwrap_or_default();
+    if !flags.console.is_empty() || !flags.game.is_empty() {
+        borrow_scope(&flags.console, &flags.game, &mut borrowed);
+    }
 
     let value = match std::fs::read_to_string(emulators::env_path()) {
         Ok(text) => emulators::value_from_script(&text).unwrap_or_default(),

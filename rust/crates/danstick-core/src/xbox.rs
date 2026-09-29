@@ -493,6 +493,13 @@ impl Translator {
                 self.push(&mut out, EV_KEY, code, 0);
             }
         }
+        // A stick carried by code is let go of too, or it reads deflected until moved.
+        let axes: Vec<u16> = self.carried_axes.iter().copied().collect();
+        for code in axes {
+            if self.last.get(&(EV_ABS, code)).copied().unwrap_or(0) != 0 {
+                self.push(&mut out, EV_ABS, code, 0);
+            }
+        }
         out
     }
 }
@@ -879,6 +886,22 @@ mod tests {
             value: 0
         }));
         assert!(t.release_all().is_empty());
+    }
+
+    #[test]
+    fn release_all_centres_a_stick_carried_across_by_code() {
+        let mut t = captured();
+        t.translate(EV_ABS, ABS_X, 0);
+        let released = t.release_all();
+        assert!(
+            released.contains(&Out {
+                kind: EV_ABS,
+                code: ABS_X,
+                value: 0
+            }),
+            "{released:?}"
+        );
+        assert!(t.release_all().is_empty(), "centred once is centred");
     }
 
     #[test]

@@ -3,7 +3,7 @@
 use serde_json::Value;
 
 /// Every command the socket accepts.
-pub const COMMANDS: [&str; 22] = [
+pub const COMMANDS: [&str; 23] = [
     "begin",
     "reset",
     "accept",
@@ -26,6 +26,7 @@ pub const COMMANDS: [&str; 22] = [
     "reserve",
     "identity",
     "slots",
+    "scope",
 ];
 
 /// A parsed command, with its arguments already coerced.
@@ -106,6 +107,13 @@ pub enum Command {
     Identity {
         mode: String,
     },
+    /// What is being played, so each clone is built from that scope's walk;
+    /// a lease lasts as long as the connection that took it.
+    Scope {
+        console: String,
+        game: String,
+        lease: bool,
+    },
     /// Change how slots are published; a field left out keeps what is in force.
     Slots(crate::slots::Change),
 }
@@ -122,7 +130,13 @@ pub enum Refused {
     /// A field that must be a number was something else.
     #[error("{field} is not a number")]
     NotANumber { field: &'static str },
+    /// A name with control characters in it, or too long to be one.
+    #[error("{field} is not a name")]
+    NotAName { field: &'static str },
 }
+
+/// The most a scope, console or game name may run to.
+const NAME_MAX: usize = 256;
 
 impl Command {
     /// Parse one message.
@@ -161,6 +175,14 @@ impl Command {
                 _ => String::new(),
             }
         };
+        // A name that can be written into a file without ending the line it is on.
+        let label = |field: &'static str| -> Result<String, Refused> {
+            let value = text(field);
+            if value.len() > NAME_MAX || value.chars().any(char::is_control) {
+                return Err(Refused::NotAName { field });
+            }
+            Ok(value)
+        };
 
         Ok(match name {
             "begin" => Command::Begin {
@@ -172,7 +194,7 @@ impl Command {
             "map" => Command::Map {
                 player: number("player", 0)?,
                 layout: text("layout"),
-                scope: text("scope"),
+                scope: label("scope")?,
                 strict: flag("strict")?,
             },
             "choose_layout" => Command::ChooseLayout {
@@ -252,9 +274,14 @@ impl Command {
             "bind" => Command::Bind {
                 player: number("player", 0)?,
                 control: text("control"),
-                scope: text("scope"),
+                scope: label("scope")?,
                 add: flag("add")?,
                 strict: flag("strict")?,
+            },
+            "scope" => Command::Scope {
+                console: label("console")?,
+                game: label("game")?,
+                lease: flag("lease")?,
             },
             other => return Err(Refused::Unknown(other.to_owned())),
         })

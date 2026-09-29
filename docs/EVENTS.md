@@ -719,6 +719,7 @@ clone where it was.
 
 ```sh
 danstick-rs exec --reserve 4 -- dolphin-emu -e game.rvz
+danstick-rs exec --reserve 4 --console gamecube --game gamecube/melee -- dolphin-emu -e game.rvz
 ```
 
 The one step that knows when the bind plan is built is `exec`, so it can do
@@ -736,6 +737,46 @@ sixteen, RetroArch's limit.
 If `exec` is killed rather than let finish it cannot give anything back; a
 daemon started with `--follow` ends with the session anyway, and otherwise
 `{"cmd": "reserve", "players": 0}` and `identity` put it right.
+
+## What is being played: `scope`
+
+```json
+{"cmd": "scope", "console": "n64", "game": "n64/dk64"}
+{"cmd": "scope", "console": "n64", "game": "n64/dk64", "lease": true}
+{"cmd": "scope"}
+```
+
+Every clone is driven by a walk: the most specific scope stored for what is
+being played -- `game:<console>/<key>`, then `console:<id>`, then the
+default -- as `Profile::resolve` has always chosen for RetroArch's files.
+Until told, a daemon plays nothing in particular and every clone follows the
+default. `scope` says what is being played; each seated pad's clone is
+driven from that scope's walk **at the node it already has**, letting go of
+whatever the old walk held, so a game mid-read keeps its device. Both fields
+optional; sending neither is the default again. The consumers' files are
+written for the same scope. A name with a control character in it, or over
+256 bytes, is refused with an `error`: it is written into the files.
+
+With `lease` the scope lasts as long as the connection that set it: when
+that client goes, what it found in play is put back, so a launch killed
+mid-game takes its scope away with it. Leases nest -- a second launch over
+the first hands back to the first when it ends, and the first to what it
+found -- and a plain `scope` from anybody else sets what every lease after
+it will put back.
+
+`state` carries it back:
+
+```json
+{"event": "state", "...": "...", "scope": {"console": "n64", "game": "n64/dk64"}}
+```
+
+A `map` or `bind` that stores changes that player's clone the same way when
+it finishes, so a rebind in the middle of a game changes the game's controls
+without a relaunch, whether or not the scope walked is the one in play: the
+clone is driven from whatever resolves for it now.
+
+`danstick-rs exec --console ID [--game KEY]` leases it for a launch, on a
+connection it holds until the game ends, beside `--reserve`.
 
 ## Changing identity without losing anybody: `identity`
 
