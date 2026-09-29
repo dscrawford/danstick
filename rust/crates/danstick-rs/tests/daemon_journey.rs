@@ -4176,3 +4176,244 @@ fn a_clone_is_driven_by_the_walk_for_the_console_being_played() {
     pad.emit(EventType::KEY.0, FIRST_KEY, 0);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// A second connection leasing the scope: the connection is the lease.
+fn lease_scope(daemon: &Daemon, console: &str, game: &str) -> UnixStream {
+    let socket = daemon.runtime.join("danstick").join("danstick.sock");
+    let mut sock = UnixStream::connect(&socket).expect("a second connection");
+    sock.set_read_timeout(Some(Duration::from_millis(200)))
+        .expect("timeout");
+    let mut line = serde_json::to_vec(&serde_json::json!({
+        "cmd": "scope", "console": console, "game": game, "lease": true
+    }))
+    .expect("json");
+    line.push(b'\n');
+    sock.write_all(&line).expect("send");
+    let mut buffer = Vec::new();
+    let mut chunk = [0u8; 65536];
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        match sock.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(count) => buffer.extend_from_slice(&chunk[..count]),
+            Err(_) => continue,
+        }
+        while let Some(end) = buffer.iter().position(|b| *b == b'\n') {
+            let line: Vec<u8> = buffer.drain(..=end).collect();
+            let Ok(value) = serde_json::from_slice::<Value>(&line[..line.len() - 1]) else {
+                continue;
+            };
+            if value["event"] == "state"
+                && value["scope"]["console"] == console
+                && value["scope"]["game"] == game
+            {
+                return sock;
+            }
+        }
+    }
+    panic!("the lease on {console:?}/{game:?} was never acknowledged");
+}
+
+const NESTLEASE: PadId = PadId {
+    name: "DANSTICK RSTESTNESTLEASE",
+    pid: 0x0fc0,
+    only: "RSTESTNESTLEASE",
+};
+
+/// Leases nest: the inner's end hands back to the outer, the outer's to what
+/// was there before; a plain `scope` made under a lease is what the lease
+/// put back over, not what it puts back.
+#[test]
+fn scope_leases_nest_and_each_puts_back_what_it_found() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let root = std::env::temp_dir().join(format!("danstick-nestlease-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let mut daemon = Daemon::start(&root, NESTLEASE);
+    let greeting = daemon.wait_for("state", |_| true, 5.0).expect("a greeting");
+    assert_eq!(greeting["scope"]["console"], "", "{greeting}");
+
+    let outer = lease_scope(&daemon, "n64", "n64/dk64");
+    daemon
+        .wait_for("state", |e| e["scope"]["console"] == "n64", 5.0)
+        .expect("the outer lease never took");
+    let inner = lease_scope(&daemon, "snes", "snes/yoshi");
+    daemon
+        .wait_for("state", |e| e["scope"]["console"] == "snes", 5.0)
+        .expect("the inner lease never took");
+
+    drop(inner);
+    let after_inner = daemon
+        .wait_for("state", |e| e["scope"]["console"] == "n64", 5.0)
+        .expect("the inner lease's end did not hand back to the outer");
+    assert_eq!(after_inner["scope"]["game"], "n64/dk64", "{after_inner}");
+
+    // A plain change under the lease: the lease knows only what it found.
+    daemon.send(serde_json::json!({"cmd": "scope", "console": "gamecube"}));
+    daemon
+        .wait_for("state", |e| e["scope"]["console"] == "gamecube", 5.0)
+        .expect("the plain change never took");
+    drop(outer);
+    let after_outer = daemon
+        .wait_for("state", |e| e["scope"]["console"] == "", 5.0)
+        .expect("the outer lease's end did not put the default back");
+    assert_eq!(after_outer["scope"]["game"], "", "{after_outer}");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+const EXECKILL: PadId = PadId {
+    name: "DANSTICK RSTESTEXECKILL",
+    pid: 0x0fc3,
+    only: "RSTESTEXECKILL",
+};
+
+/// A launch killed outright still gives back the scope it leased: the lease
+/// is the socket exec holds, and a dead process holds nothing.
+#[test]
+fn a_launch_killed_outright_still_gives_back_the_scope_it_leased() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let root = std::env::temp_dir().join(format!("danstick-execkill-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let mut daemon = Daemon::start(&root, EXECKILL);
+    daemon.wait_for("state", |_| true, 5.0).expect("a greeting");
+
+    daemon.events.clear();
+    let mut exec = exec_under(
+        &root,
+        EXECKILL,
+        &[
+            "--console",
+            "n64",
+            "--game",
+            "n64/dk64",
+            "--",
+            "sleep",
+            "30",
+        ],
+    );
+    daemon
+        .wait_for(
+            "state",
+            |e| e["scope"]["console"] == "n64" && e["scope"]["game"] == "n64/dk64",
+            20.0,
+        )
+        .expect("exec never leased the scope");
+    exec.kill().expect("kill the launch");
+    let _ = exec.wait();
+    let after = daemon
+        .wait_for("state", |e| e["scope"]["console"] == "", 20.0)
+        .expect("a killed launch left its scope behind");
+    assert_eq!(after["scope"]["game"], "", "{after}");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+const TWINPAD: PadId = PadId {
+    name: "DANSTICK RSTESTTWINPAD",
+    pid: 0x0fc4,
+    only: "RSTESTTWINPAD",
+};
+
+/// A pad whose A has one input by default and a second one when playing SNES.
+fn write_twinpad_profile(dir: &Path) {
+    let button = |index: u32| serde_json::json!({"kind": "button", "index": index});
+    let profile = serde_json::json!({
+        "signature": signature(TWINPAD),
+        "seeding": "generic",
+        "mappings": {
+            "": {"layout": "generic", "buttons": {"a": button(0), "b": button(1)}},
+            "console:snes": {
+                "layout": "generic",
+                "buttons": {"a": [button(0), button(2)], "b": button(1)}
+            },
+        },
+    });
+    std::fs::create_dir_all(dir).expect("profiles dir");
+    std::fs::write(
+        dir.join(profile_filename(TWINPAD)),
+        serde_json::to_string_pretty(&profile).expect("json"),
+    )
+    .expect("a profile");
+}
+
+/// Under the danstick identity there is no translator: a control's second
+/// input reaches the clone through its twins, which `scope` rebuilds in place.
+#[test]
+fn a_second_input_reaches_the_clone_once_its_scope_is_in_play_under_the_danstick_identity() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let root = std::env::temp_dir().join(format!("danstick-twinpad-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    write_twinpad_profile(&root.join("devices"));
+    let mut pad = TestPad::new(TWINPAD);
+    let mut daemon = Daemon::start_with_env(
+        &root,
+        TWINPAD,
+        &[],
+        &[
+            ("DANSTICK_PAD_IDENTITY", "danstick"),
+            ("DANSTICK_NO_AUTOATTACH", "1"),
+        ],
+    );
+    daemon.pump(0.5);
+    daemon.seat_by_hold_as(&mut pad, 1);
+    pad.emit(EventType::KEY.0, FIRST_KEY, 0);
+    let added = daemon
+        .wait_for(
+            "controller",
+            |e| e["action"] == "added" && e["player"] == 1,
+            5.0,
+        )
+        .expect("player 1 announced");
+    let node = added["changed"]["virtual"]["node"]
+        .as_str()
+        .expect("the clone's node")
+        .to_owned();
+    let mut clone = Watcher::open(&node);
+    daemon.pump(0.3);
+
+    pad.emit(EventType::KEY.0, FIRST_KEY + 2, 1);
+    assert!(
+        !clone.sees_press(&mut daemon, FIRST_KEY, 1.0),
+        "the second input answered for A before its scope was in play"
+    );
+    pad.emit(EventType::KEY.0, FIRST_KEY + 2, 0);
+    daemon.pump(0.3);
+
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "scope", "console": "snes"}));
+    daemon
+        .wait_for("state", |e| e["scope"]["console"] == "snes", 5.0)
+        .expect("the scope never took");
+    daemon.pump(0.5);
+    pad.emit(EventType::KEY.0, FIRST_KEY + 2, 1);
+    assert!(
+        clone.sees_press(&mut daemon, FIRST_KEY, 3.0),
+        "A's second input under console:snes never reached the clone"
+    );
+    pad.emit(EventType::KEY.0, FIRST_KEY + 2, 0);
+    daemon.pump(0.3);
+
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "scope"}));
+    daemon
+        .wait_for("state", |e| e["scope"]["console"] == "", 5.0)
+        .expect("the scope never went back");
+    daemon.pump(0.5);
+    pad.emit(EventType::KEY.0, FIRST_KEY + 2, 1);
+    assert!(
+        !clone.sees_press(&mut daemon, FIRST_KEY, 1.0),
+        "the SNES twins outlived the scope that made them"
+    );
+    pad.emit(EventType::KEY.0, FIRST_KEY + 2, 0);
+    let _ = std::fs::remove_dir_all(&root);
+}

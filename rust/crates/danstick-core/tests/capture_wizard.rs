@@ -2323,3 +2323,73 @@ fn a_stick_direction_held_through_the_gap_cannot_answer_the_opposite_one() {
         Outcome::Ignored
     );
 }
+
+#[test]
+fn two_controls_seeded_onto_one_button_share_it_and_a_third_is_told_one_of_them() {
+    let (a, b, c) = (control_at(0), control_at(1), control_at(2));
+    let mut run = seeded_run(&[(a, Binding::button(0)), (b, Binding::button(0))]);
+    let clock = skip_to(&mut run, 2);
+    assert_eq!(run.current(), Some(c));
+    assert_eq!(recorded(&tap(&mut run, 0x130, clock)).0, c);
+    let told = run.conflict().expect("a third holder is told");
+    assert!(told == a || told == b, "{told:?}");
+}
+
+#[test]
+fn moving_one_of_two_shared_holders_off_leaves_the_button_with_the_other() {
+    let (a, b) = (control_at(0), control_at(1));
+    let mut run = seeded_run(&[(a, Binding::button(0)), (b, Binding::button(0))]);
+    assert_eq!(recorded(&tap(&mut run, 0x135, 0.0)).0, a);
+    assert_eq!(run.bindings()[&b], Binding::button(0));
+    assert!(matches!(
+        hold(&mut run, SKIP_BUTTON, TAP + AFTER_GAP),
+        Outcome::Skipped { .. }
+    ));
+    let clock = TAP + AFTER_GAP + SKIP_HOLD_SECONDS + 0.01 + AFTER_GAP;
+    assert_eq!(recorded(&tap(&mut run, 0x130, clock)).0, control_at(2));
+    assert_eq!(run.conflict(), Some(b), "button 0 is B's alone now");
+}
+
+#[test]
+fn a_single_control_bind_shares_a_seeded_input_unless_strict() {
+    let (a, b) = (control_at(0), control_at(1));
+    let seeded: BTreeMap<Control, Binding> = [(a, Binding::button(0))].into_iter().collect();
+    let bind = |strict: bool| {
+        snes_run(joystick_keys(), BTreeMap::new(), BTreeSet::new())
+            .seeded(&seeded)
+            .only(b)
+            .expect("the snes layout has this control")
+            .strict(strict)
+    };
+    let mut shared = bind(false);
+    assert_eq!(recorded(&tap(&mut shared, 0x130, 0.0)).0, b);
+    assert_eq!(shared.conflict(), Some(a));
+    assert!(
+        shared.finished(),
+        "one press, one control, done, even shared"
+    );
+
+    let mut strict = bind(true);
+    assert_eq!(
+        tap(&mut strict, 0x130, 0.0),
+        Outcome::Refused {
+            claim: Claim::Button { code: 0x130 },
+            held_by: a
+        }
+    );
+    assert_eq!(
+        strict.bindings().len(),
+        1,
+        "only the seed, nothing new taken"
+    );
+}
+
+#[test]
+fn a_seeded_hat_is_shared_by_default_and_the_share_is_named() {
+    let first_dpad = first_dpad();
+    let up = layout::get("snes").controls[first_dpad].canonical;
+    let mut run = seeded_run(&[(up, Binding::hat(0, HAT_UP))]);
+    let clock = skip_to(&mut run, first_dpad + 1);
+    assert!(run.feed(Event::abs(ABS_HAT0Y, -1), clock).advanced());
+    assert_eq!(run.conflict(), Some(up));
+}

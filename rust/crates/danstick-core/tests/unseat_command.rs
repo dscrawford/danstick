@@ -143,3 +143,49 @@ fn a_scope_or_game_name_ends_no_line_of_a_file_it_is_written_into() {
         Command::parse(&json!({"cmd": "scope", "console": "n64", "game": "n64/dk 64"})).is_ok()
     );
 }
+
+#[test]
+fn a_flag_refuses_a_number_and_an_explicit_null_alike() {
+    assert!(matches!(
+        Command::parse(&json!({"cmd": "bind", "player": 1, "control": "a", "strict": 1})),
+        Err(Refused::NotANumber { field: "strict" })
+    ));
+    assert!(
+        matches!(
+            Command::parse(&json!({"cmd": "bind", "player": 1, "control": "a", "strict": null})),
+            Err(Refused::NotANumber { field: "strict" })
+        ),
+        "an explicit null is not leaving it out"
+    );
+    assert!(matches!(
+        Command::parse(&json!({"cmd": "scope", "lease": []})),
+        Err(Refused::NotANumber { field: "lease" })
+    ));
+}
+
+#[test]
+fn a_console_or_game_that_is_not_a_string_is_the_default_not_a_refusal() {
+    assert_eq!(
+        Command::parse(&json!({"cmd": "scope", "console": 5, "game": null})),
+        Ok(Command::Scope {
+            console: String::new(),
+            game: String::new(),
+            lease: false,
+        })
+    );
+}
+
+#[test]
+fn a_name_at_the_byte_limit_is_fine_and_one_byte_over_is_not() {
+    assert!(Command::parse(&json!({"cmd": "map", "player": 1, "scope": "x".repeat(256)})).is_ok());
+    assert!(matches!(
+        Command::parse(&json!({"cmd": "map", "player": 1, "scope": "x".repeat(257)})),
+        Err(Refused::NotAName { field: "scope" })
+    ));
+    // Bytes, not characters: "é" is two.
+    assert!(Command::parse(&json!({"cmd": "scope", "console": "é".repeat(128)})).is_ok());
+    assert!(matches!(
+        Command::parse(&json!({"cmd": "scope", "console": "é".repeat(129)})),
+        Err(Refused::NotAName { field: "console" })
+    ));
+}

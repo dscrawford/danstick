@@ -1432,6 +1432,40 @@ mod exec_tests {
     }
 
     #[test]
+    fn exec_takes_an_empty_value_as_the_flag_left_out_and_the_last_repeat_wins() {
+        assert_eq!(
+            exec_args(words("--console= --game= -- game")),
+            Ok((ExecFlags::default(), words("game")))
+        );
+        assert_eq!(
+            exec_args(words("--console n64 --console snes -- game")),
+            Ok((
+                ExecFlags {
+                    console: "snes".to_owned(),
+                    ..ExecFlags::default()
+                },
+                words("game")
+            ))
+        );
+    }
+
+    #[test]
+    fn a_flag_is_no_value_for_another_and_after_the_separator_it_is_the_programs() {
+        assert!(exec_args(words("--console --game n64 -- game")).is_err());
+        assert!(exec_args(words("--game -- game")).is_err());
+        assert_eq!(
+            exec_args(words("--console n64 -- game --console snes")),
+            Ok((
+                ExecFlags {
+                    console: "n64".to_owned(),
+                    ..ExecFlags::default()
+                },
+                words("game --console snes")
+            ))
+        );
+    }
+
+    #[test]
     fn exec_refuses_a_reserve_it_cannot_read() {
         assert!(exec_args(words("--reserve -- game")).is_err());
         assert!(exec_args(words("--reserve two -- game")).is_err());
