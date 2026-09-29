@@ -84,8 +84,8 @@ fn map_and_bind_share_an_input_unless_told_to_be_strict() {
 #[test]
 fn identity_names_the_mode_and_slots_was_appended_after_it() {
     assert_eq!(
-        COMMANDS[COMMANDS.len() - 5..],
-        ["identity", "slots", "scope", "focus", "move"],
+        COMMANDS[COMMANDS.len() - 6..],
+        ["identity", "slots", "scope", "focus", "move", "native"],
         "commands are only appended"
     );
     assert_eq!(
@@ -197,14 +197,16 @@ fn focus_opens_unless_told_to_close_and_move_names_both_seats() {
         Command::parse(&json!({"cmd": "focus", "player": 2})),
         Ok(Command::Focus {
             player: 2,
-            open: true
+            open: true,
+            scope: String::new(),
         })
     );
     assert_eq!(
         Command::parse(&json!({"cmd": "focus", "player": 2, "open": false})),
         Ok(Command::Focus {
             player: 2,
-            open: false
+            open: false,
+            scope: String::new(),
         })
     );
     assert!(matches!(
@@ -227,7 +229,8 @@ fn focus_and_move_default_a_missing_player_or_seat_to_zero() {
         Command::parse(&json!({"cmd": "focus"})),
         Ok(Command::Focus {
             player: 0,
-            open: true
+            open: true,
+            scope: String::new(),
         }),
         "no player named is player 0, refused by the daemon and not the parser"
     );
@@ -235,4 +238,55 @@ fn focus_and_move_default_a_missing_player_or_seat_to_zero() {
         Command::parse(&json!({"cmd": "move", "player": 1})),
         Ok(Command::Move { player: 1, to: 0 })
     );
+}
+
+#[test]
+fn native_opens_unless_told_to_close() {
+    for (message, open) in [
+        (json!({"cmd": "native"}), true),
+        (json!({"cmd": "native", "open": true}), true),
+        (json!({"cmd": "native", "open": false}), false),
+        (json!({"cmd": "native", "extra": "ignored"}), true),
+    ] {
+        assert_eq!(
+            Command::parse(&message),
+            Ok(Command::Native {
+                open,
+                scope: String::new()
+            }),
+            "{message}"
+        );
+    }
+    for open in [json!(1), json!("true"), json!(null), json!([]), json!({})] {
+        assert!(
+            matches!(
+                Command::parse(&json!({"cmd": "native", "open": open})),
+                Err(Refused::NotANumber { field: "open" })
+            ),
+            "{open} was taken for a bool"
+        );
+    }
+}
+
+#[test]
+fn focus_and_native_may_name_the_level_a_pad_is_heard_through() {
+    assert_eq!(
+        Command::parse(&json!({"cmd": "native", "scope": "level:ui"})),
+        Ok(Command::Native {
+            open: true,
+            scope: "level:ui".to_owned(),
+        })
+    );
+    assert_eq!(
+        Command::parse(&json!({"cmd": "focus", "player": 1, "scope": "level:ui"})),
+        Ok(Command::Focus {
+            player: 1,
+            open: true,
+            scope: "level:ui".to_owned(),
+        })
+    );
+    assert!(matches!(
+        Command::parse(&json!({"cmd": "native", "scope": "a\nb"})),
+        Err(Refused::NotAName { field: "scope" })
+    ));
 }

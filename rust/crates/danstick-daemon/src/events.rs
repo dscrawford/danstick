@@ -28,11 +28,13 @@ pub fn state(
     policy: danstick_core::slots::Policy,
     playing: danstick_core::state::Playing,
     focus: Option<u32>,
+    native: bool,
 ) -> Value {
     let mut event = StateEvent::new(state, slots, players, build, std::process::id(), identity)
         .with_slots(policy);
     event.scope = playing;
     event.focus = focus;
+    event.native = native;
     event.following = following;
     event.seating = seating;
     event.hold = hold;
@@ -65,6 +67,11 @@ pub fn input(player: u32, pressed: danstick_core::capture::Pressed) -> Value {
 /// A control a focused player pressed or let go of, as a menu hears it.
 pub fn focus_control(player: u32, control: &str, down: bool) -> Value {
     json!({"event": "focus", "player": player, "control": control, "down": down})
+}
+
+/// One of a seated pad's own controls pressed or let go of, as a watcher hears it.
+pub fn native(player: u32, control: &str, down: bool) -> Value {
+    json!({"event": "native", "player": player, "control": control, "down": down})
 }
 
 /// Where a focused player's stick sits, -1..1 each way, as a menu hears it.

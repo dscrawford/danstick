@@ -789,8 +789,16 @@ A menu over the game -- GOTG's overlay -- needs one player's presses to reach
 it and **not the game**: A on "exit" must not also jump. `focus` holds that
 player's pad back from its clone, which goes to rest (every button up, the
 sticks centred, as a `stay` leave leaves it) and stays there; everyone else
-plays on. While held, each change on the pad is said as a control, after the
-pad's walk for the scope in play, so `a` is whatever that player bound as A:
+plays on. While held, each change on the pad is said as a control -- **the
+pad's own control**, not the game's walk: `a` is the bottom face button and
+`leftshoulder` the left bumper on every pad, by the pad's generic walk where
+it has one and else by the kernel's gamepad convention. UI is the pad's own;
+a walk for a game changes the game's controls only, so a rebind that moves
+A in the game does not move the menu's A. A front-end that wants its own
+level of controls names it: `"scope": "level:ui"` hears the pad through the
+walk stored under that scope (`map` with the same `scope` makes one), and a
+pad with no walk there is heard as its own. Levels are scopes; a project
+keeps as many as it likes, and the clone follows the one in play:
 
 ```json
 {"event": "focus", "player": 2, "control": "a", "down": true}
@@ -812,6 +820,29 @@ player hears the pad for its run and hands it back to the focus when it
 ends. Refused with an `error` for a player with no published clone, and while
 a session is open. One player is focused at a time; opening on another moves
 it.
+
+## Every pad's own controls, for a chord: `native`
+
+```json
+{"cmd": "native"}
+{"cmd": "native", "open": false}
+```
+
+The overlay has to see a chord start on any pad while everybody is playing:
+L + R + A held to open its menu. `native` says, for every seated pad, each
+change of a few of the pad's own controls -- `a`, `b`, `start`, `back`,
+`leftshoulder`, `rightshoulder`, and the triggers past half their travel,
+for a pad whose shoulders are triggers -- by the same names and the same
+rule as `focus`, through the same optional `scope`, holding nobody:
+
+```json
+{"event": "native", "player": 2, "control": "leftshoulder", "down": true}
+```
+
+The game keeps getting every press exactly as it does; this only lets a
+client watch. It lasts as long as the connection that opened it, or until
+`open: false`, and `state` carries `"native": true` while it does. One
+watcher at a time; opening again moves it.
 
 ## A controller in another seat: `move`
 

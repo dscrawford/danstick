@@ -38,6 +38,9 @@ pub struct Republisher {
     frame: Vec<InputEvent>,
     pending: Vec<InputEvent>,
     started: Instant,
+    /// Whether every event read is kept aside for a watcher, as well as forwarded.
+    tap: bool,
+    tapped: Vec<InputEvent>,
 }
 
 impl Republisher {
@@ -49,6 +52,29 @@ impl Republisher {
             frame: Vec::with_capacity(FRAME_HINT),
             pending: Vec::with_capacity(FRAME_HINT),
             started: Instant::now(),
+            tap: false,
+            tapped: Vec::new(),
+        }
+    }
+
+    /// Keep every event read aside for [`take_tapped`](Self::take_tapped), or stop.
+    pub fn tap(&mut self, on: bool) {
+        self.tap = on;
+        if !on {
+            self.tapped = Vec::new();
+        }
+    }
+
+    /// What was read since the last take, when tapped; given back with [`Self::return_tapped`].
+    pub fn take_tapped(&mut self) -> Vec<InputEvent> {
+        std::mem::take(&mut self.tapped)
+    }
+
+    /// Hand a taken buffer back, so the next read does not allocate one.
+    pub fn return_tapped(&mut self, mut buffer: Vec<InputEvent>) {
+        buffer.clear();
+        if self.tap && self.tapped.is_empty() {
+            self.tapped = buffer;
         }
     }
 
@@ -156,6 +182,9 @@ impl Republisher {
             }
         }
         out.events = self.pending.len() - before;
+        if self.tap {
+            self.tapped.extend_from_slice(&self.pending[before..]);
+        }
         out.pressed = self.pending[before..]
             .iter()
             .find(|event| is_press(event))
@@ -355,6 +384,51 @@ impl Republisher {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_tap_keeps_nothing_until_opened_and_forgets_all_when_closed() {
+        let mut republisher = Republisher::new(Vec::new());
+        assert!(!republisher.tap);
+        republisher.tap(true);
+        republisher
+            .tapped
+            .push(InputEvent::new(EventType::KEY.0, 0x130, 1));
+        republisher.tap(true);
+        assert_eq!(
+            republisher.take_tapped().len(),
+            1,
+            "opening again lost what was kept"
+        );
+        assert!(republisher.take_tapped().is_empty(), "taken once is taken");
+        republisher
+            .tapped
+            .push(InputEvent::new(EventType::KEY.0, 0x130, 0));
+        republisher.tap(false);
+        assert!(
+            republisher.take_tapped().is_empty(),
+            "closing kept something"
+        );
+    }
+
+    #[test]
+    fn a_buffer_handed_back_is_the_next_one_used_only_while_tapping() {
+        let mut republisher = Republisher::new(Vec::new());
+        republisher.tap(true);
+        let mut taken = republisher.take_tapped();
+        taken.push(InputEvent::new(EventType::KEY.0, 0x130, 1));
+        republisher.return_tapped(taken);
+        assert!(
+            republisher.take_tapped().is_empty(),
+            "a returned buffer came back full"
+        );
+        republisher.tap(false);
+        republisher.return_tapped(Vec::with_capacity(8));
+        assert_eq!(
+            republisher.tapped.capacity(),
+            0,
+            "a closed tap took a buffer"
+        );
+    }
 
     #[test]
     fn a_frame_is_everything_up_to_and_including_its_terminator() {

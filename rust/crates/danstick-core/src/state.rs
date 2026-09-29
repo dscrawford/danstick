@@ -72,6 +72,9 @@ pub struct StateEvent {
     /// The player whose pad a menu holds and hears, when one does.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub focus: Option<u32>,
+    /// Whether a client is watching every seated pad's own controls.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub native: bool,
 }
 
 /// The console and game in play, as `scope` set them; empty is the default scope.
@@ -125,6 +128,7 @@ impl StateEvent {
             layout: crate::slots::Layout::Position.as_str().to_owned(),
             scope: Playing::default(),
             focus: None,
+            native: false,
         }
     }
 

@@ -4837,3 +4837,280 @@ fn a_move_under_on_demand_slots_swaps_the_seats() {
     assert_eq!(swapped["state"], "ready", "{swapped}");
     let _ = std::fs::remove_dir_all(&root);
 }
+
+const OWN: PadId = PadId {
+    name: "DANSTICK RSTESTOWN",
+    pid: 0x1030,
+    only: "RSTESTOWN",
+};
+
+/// The first pad's generic walk names the first key A; its N64 walk moves A
+/// to the third key, which is the game's business only.
+fn write_own_profile(dir: &Path) {
+    let button = |index: u32| serde_json::json!({"kind": "button", "index": index});
+    let profile = serde_json::json!({
+        "signature": format!("{PAD_VID:04x}:{:04x}:DANSTICK {} a", OWN.pid, OWN.only),
+        "seeding": "generic",
+        "mappings": {
+            "": {"layout": "generic", "buttons": {"a": button(0), "b": button(1)}},
+            "console:n64": {"layout": "n64", "buttons": {"a": button(2), "b": button(1)}},
+            "level:ui": {"layout": "generic", "buttons": {"a": button(3), "b": button(1)}},
+        },
+    });
+    std::fs::create_dir_all(dir).expect("profiles dir");
+    let filename = profile_filename(PadId {
+        name: "DANSTICK RSTESTOWN a",
+        pid: OWN.pid,
+        only: OWN.only,
+    });
+    std::fs::write(
+        dir.join(filename),
+        serde_json::to_string_pretty(&profile).expect("json"),
+    )
+    .expect("a profile");
+}
+
+/// The menu hears the pad's own A, not the walk's, and a watcher hears every
+/// seated pad's chord controls while the game still gets every press.
+#[test]
+fn the_menu_hears_the_pads_own_controls_and_a_watcher_hears_every_pad() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let root = std::env::temp_dir().join(format!("danstick-own-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    write_own_profile(&root.join("devices"));
+    let (mut daemon, mut pads, mut slots) =
+        two_seated(&root, OWN, &[("DANSTICK_NO_AUTOATTACH", "1")]);
+    const A: u16 = 0x130;
+
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "scope", "console": "n64"}));
+    daemon
+        .wait_for("state", |e| e["scope"]["console"] == "n64", 5.0)
+        .expect("the scope never took");
+    daemon.pump(0.5);
+    // The game reads the walk: the third key is A there.
+    pads[0].emit(EventType::KEY.0, FIRST_KEY + 2, 1);
+    assert!(
+        slots[0].sees_press(&mut daemon, A, 3.0),
+        "the N64 walk is not what the game reads"
+    );
+    pads[0].emit(EventType::KEY.0, FIRST_KEY + 2, 0);
+    daemon.pump(0.3);
+
+    let _menu = ask_on_a_connection(
+        &daemon,
+        serde_json::json!({"cmd": "focus", "player": 1}),
+        |state| state["focus"] == 1,
+    );
+    daemon
+        .wait_for("state", |e| e["focus"] == 1, 5.0)
+        .expect("the focus never opened");
+    daemon.pump(0.3);
+    daemon.events.clear();
+    pads[0].emit(EventType::KEY.0, FIRST_KEY + 2, 1);
+    assert!(
+        daemon
+            .wait_for("focus", |e| e["control"] == "a", 1.0)
+            .is_none(),
+        "the menu heard the game's A as its own"
+    );
+    pads[0].emit(EventType::KEY.0, FIRST_KEY + 2, 0);
+    daemon.pump(0.3);
+    pads[0].emit(EventType::KEY.0, FIRST_KEY, 1);
+    daemon
+        .wait_for("focus", |e| e["control"] == "a" && e["down"] == true, 3.0)
+        .expect("the menu did not hear the pad's own A");
+    pads[0].emit(EventType::KEY.0, FIRST_KEY, 0);
+    daemon.pump(0.3);
+    daemon.send(serde_json::json!({"cmd": "focus", "player": 1, "open": false}));
+    daemon
+        .wait_for("state", |e| e["focus"].is_null(), 5.0)
+        .expect("the focus never closed");
+
+    // A watcher hears player 2's chord controls while the game gets them.
+    let watcher = ask_on_a_connection(&daemon, serde_json::json!({"cmd": "native"}), |state| {
+        state["native"] == true
+    });
+    daemon
+        .wait_for("state", |e| e["native"] == true, 5.0)
+        .expect("the watch never opened");
+    daemon.pump(0.3);
+    daemon.events.clear();
+    pads[1].emit(EventType::KEY.0, FIRST_KEY, 1);
+    let heard = daemon
+        .wait_for("native", |e| e["control"] == "a" && e["down"] == true, 3.0)
+        .expect("the watcher did not hear player 2's A");
+    assert_eq!(heard["player"], 2, "{heard}");
+    assert!(
+        slots[1].sees_press(&mut daemon, A, 3.0),
+        "watching took player 2's A from the game"
+    );
+    pads[1].emit(EventType::KEY.0, FIRST_KEY, 0);
+    daemon
+        .wait_for("native", |e| e["control"] == "a" && e["down"] == false, 3.0)
+        .expect("the watcher did not hear A let go");
+    daemon.events.clear();
+    pads[1].emit(EventType::KEY.0, FIRST_KEY + 3, 1);
+    assert!(
+        daemon.wait_for("native", |_| true, 1.0).is_none(),
+        "a control no chord uses was said"
+    );
+    pads[1].emit(EventType::KEY.0, FIRST_KEY + 3, 0);
+    drop(watcher);
+    daemon
+        .wait_for("state", |e| e["native"].is_null(), 5.0)
+        .expect("the watcher's death did not end the watch");
+
+    // A level named on the watch: player 1 is heard through its walk there,
+    // and player 2, with no walk at that level, as its own.
+    let levelled = ask_on_a_connection(
+        &daemon,
+        serde_json::json!({"cmd": "native", "scope": "level:ui"}),
+        |state| state["native"] == true,
+    );
+    daemon
+        .wait_for("state", |e| e["native"] == true, 5.0)
+        .expect("the levelled watch never opened");
+    daemon.pump(0.3);
+    daemon.events.clear();
+    pads[0].emit(EventType::KEY.0, FIRST_KEY + 3, 1);
+    let heard = daemon
+        .wait_for("native", |e| e["control"] == "a" && e["down"] == true, 3.0)
+        .expect("the level's A was not heard");
+    assert_eq!(heard["player"], 1, "{heard}");
+    pads[0].emit(EventType::KEY.0, FIRST_KEY + 3, 0);
+    daemon.pump(0.3);
+    daemon.events.clear();
+    pads[1].emit(EventType::KEY.0, FIRST_KEY, 1);
+    let own = daemon
+        .wait_for("native", |e| e["control"] == "a" && e["down"] == true, 3.0)
+        .expect("a pad with no walk at the level was not heard as its own");
+    assert_eq!(own["player"], 2, "{own}");
+    pads[1].emit(EventType::KEY.0, FIRST_KEY, 0);
+    drop(levelled);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+const NATIVEMORE: PadId = PadId {
+    name: "DANSTICK RSTESTNATIVEMORE",
+    pid: 0x1050,
+    only: "RSTESTNATIVEMORE",
+};
+
+/// A watch moves to a second opener, hears a pad seated after it opened and a
+/// focused pad alongside the menu, and a seat that changes pads with A held
+/// is heard afresh from the new pad.
+#[test]
+fn a_watch_moves_to_its_newest_opener_and_hears_every_pad_that_comes() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let root = std::env::temp_dir().join(format!("danstick-nativemore-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let mut pads = four_pads(NATIVEMORE);
+    pads.truncate(2);
+    let mut daemon = Daemon::start_with_env(&root, NATIVEMORE, &[], &[("DANSTICK_SLOTS", "fixed")]);
+    daemon
+        .wait_for("state", |e| standing(e).len() == 4, 8.0)
+        .expect("four slots never stood");
+    daemon.seat_by_hold_as(&mut pads[0], 1);
+    pads[0].emit(EventType::KEY.0, FIRST_KEY, 0);
+    daemon.pump(0.3);
+
+    let first = ask_on_a_connection(&daemon, serde_json::json!({"cmd": "native"}), |state| {
+        state["native"] == true
+    });
+    daemon
+        .wait_for("state", |e| e["native"] == true, 5.0)
+        .expect("the watch never opened");
+    let second = ask_on_a_connection(&daemon, serde_json::json!({"cmd": "native"}), |state| {
+        state["native"] == true
+    });
+    drop(first);
+    daemon.pump(0.5);
+    daemon.events.clear();
+    pads[0].emit(EventType::KEY.0, FIRST_KEY, 1);
+    daemon
+        .wait_for("native", |e| e["control"] == "a" && e["down"] == true, 3.0)
+        .expect("the first opener's death ended a watch it no longer held");
+    pads[0].emit(EventType::KEY.0, FIRST_KEY, 0);
+    daemon.pump(0.3);
+
+    // Seated after the watch opened, player 2 is heard without anybody re-arming it.
+    daemon.seat_by_hold_as(&mut pads[1], 2);
+    pads[1].emit(EventType::KEY.0, FIRST_KEY, 0);
+    daemon.pump(0.5);
+    daemon.events.clear();
+    pads[1].emit(EventType::KEY.0, FIRST_KEY, 1);
+    let heard = daemon
+        .wait_for("native", |e| e["control"] == "a" && e["down"] == true, 3.0)
+        .expect("a pad seated after the watch opened was never heard");
+    assert_eq!(heard["player"], 2, "{heard}");
+    pads[1].emit(EventType::KEY.0, FIRST_KEY, 0);
+    daemon.pump(0.3);
+
+    // The menu and the watcher both hear the focused pad.
+    let menu = ask_on_a_connection(
+        &daemon,
+        serde_json::json!({"cmd": "focus", "player": 1}),
+        |state| state["focus"] == 1,
+    );
+    daemon
+        .wait_for("state", |e| e["focus"] == 1, 5.0)
+        .expect("the focus never opened");
+    daemon.pump(0.3);
+    daemon.events.clear();
+    pads[0].emit(EventType::KEY.0, FIRST_KEY, 1);
+    daemon
+        .wait_for("focus", |e| e["control"] == "a" && e["down"] == true, 3.0)
+        .expect("the menu did not hear A");
+    daemon
+        .wait_for("native", |e| e["control"] == "a" && e["down"] == true, 3.0)
+        .expect("the watcher did not hear the focused pad's A");
+    pads[0].emit(EventType::KEY.0, FIRST_KEY, 0);
+    drop(menu);
+    daemon
+        .wait_for("state", |e| e["focus"].is_null(), 5.0)
+        .expect("the focus never closed");
+
+    // A held as the seats swap: seat 1's new pad pressing A is a fresh press.
+    daemon.events.clear();
+    pads[0].emit(EventType::KEY.0, FIRST_KEY, 1);
+    daemon
+        .wait_for("native", |e| e["player"] == 1 && e["down"] == true, 3.0)
+        .expect("player 1's A was not heard before the move");
+    daemon.send(serde_json::json!({"cmd": "move", "player": 1, "to": 2}));
+    daemon
+        .wait_for(
+            "state",
+            |e| e["players"].as_array().is_some_and(|p| p.len() == 2),
+            8.0,
+        )
+        .expect("no state after the move");
+    daemon.pump(0.5);
+    daemon.events.clear();
+    pads[1].emit(EventType::KEY.0, FIRST_KEY, 1);
+    assert!(
+        daemon
+            .wait_for(
+                "native",
+                |e| e["player"] == 1 && e["control"] == "a" && e["down"] == true,
+                3.0
+            )
+            .is_some(),
+        "the new pad in seat 1 pressing A was swallowed by what the old one held"
+    );
+    pads[0].emit(EventType::KEY.0, FIRST_KEY, 0);
+    pads[1].emit(EventType::KEY.0, FIRST_KEY, 0);
+    drop(second);
+    daemon
+        .wait_for("state", |e| e["native"].is_null(), 5.0)
+        .expect("the newest opener's death did not end the watch");
+    let _ = std::fs::remove_dir_all(&root);
+}

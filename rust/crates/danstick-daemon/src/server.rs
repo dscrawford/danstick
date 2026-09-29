@@ -164,6 +164,8 @@ pub struct Server {
     scope_leases: Vec<(i32, danstick_core::state::Playing)>,
     /// The player a menu holds and hears, for as long as the client that opened it.
     focus: Option<Focus>,
+    /// A watcher of every seated pad's own controls, for as long as its client.
+    native: Option<Native>,
 
     prompted: BTreeSet<String>,
     prompted_stamp: i128,
@@ -205,6 +207,8 @@ struct Focus {
     player: u32,
     /// The pad held, by its node: a seat that changes hands ends the focus.
     pad: PathBuf,
+    /// The level the pad is heard through: a scope's walk, or empty for its own controls.
+    level: String,
     /// The client that opened it; the focus ends with it.
     fd: i32,
     /// The pad's events onto the 360 layout, after its walk for the scope in play.
@@ -219,6 +223,25 @@ impl std::fmt::Debug for Focus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Focus")
             .field("player", &self.player)
+            .field("fd", &self.fd)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Every seated pad's own controls, heard by one client without holding anybody.
+struct Native {
+    fd: i32,
+    /// The level every pad is heard through, as for a focus.
+    level: String,
+    /// Each seated pad's events onto the 360 layout by its own controls, by player and node.
+    translators: BTreeMap<u32, (PathBuf, danstick_core::xbox::Translator)>,
+    /// Each watched control as last said, per player.
+    down: BTreeMap<(u32, &'static str), bool>,
+}
+
+impl std::fmt::Debug for Native {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Native")
             .field("fd", &self.fd)
             .finish_non_exhaustive()
     }
@@ -383,6 +406,7 @@ impl Server {
             playing: danstick_core::state::Playing::default(),
             scope_leases: Vec::new(),
             focus: None,
+            native: None,
             prompted,
             prompted_stamp,
             last_scan_signature: None,
@@ -703,6 +727,9 @@ impl Server {
             info!("the client that focused a player has gone; it is live again");
             self.close_focus(None);
         }
+        if self.native.as_ref().is_some_and(|native| native.fd == fd) {
+            self.close_native();
+        }
         // A session holds every pad and a modal flow holds one; neither may outlive its client.
         if self.clients.is_empty() && (self.session.is_some() || self.modal_open()) {
             info!("last client disconnected mid-session; releasing pads");
@@ -874,14 +901,25 @@ impl Server {
                 }
                 self.set_scope(console, game);
             }
-            Command::Focus { player, open } => {
+            Command::Focus {
+                player,
+                open,
+                scope,
+            } => {
                 if open {
-                    self.open_focus(fd, as_player(player));
+                    self.open_focus(fd, as_player(player), scope);
                 } else {
                     self.close_focus(Some(as_player(player)));
                 }
             }
             Command::Move { player, to } => self.move_seat(as_player(player), as_player(to)),
+            Command::Native { open, scope } => {
+                if open {
+                    self.open_native(fd, scope);
+                } else {
+                    self.close_native();
+                }
+            }
             Command::Bind {
                 player,
                 control,
@@ -2312,6 +2350,23 @@ impl Server {
         // Before the write, so Steam's repeat of the clone never looks earlier than it.
         let clock = now();
         let pumped = republisher.forward(index);
+        if self.native.is_some() {
+            let tapped = republisher.take_tapped();
+            let player = republisher.pads.get(index).map(|vpad| vpad.player);
+            if let Some(player) = player {
+                self.hear_natively(index, player, &tapped);
+                if pumped.gone {
+                    self.forget_natively(player);
+                }
+            }
+            if let Some(republisher) = self.republisher.as_mut() {
+                republisher.return_tapped(tapped);
+            }
+        }
+        let Some(republisher) = self.republisher.as_mut() else {
+            return;
+        };
+        let pumped_gone = pumped.gone;
         if let Some(vpad) = republisher.pads.get(index) {
             let player = vpad.player;
             if let Some(age) = pumped.pressed {
@@ -2323,14 +2378,132 @@ impl Server {
                 self.seating.note(Origin::Clone { player }, clock);
             }
         }
-        let gone = pumped.gone;
-        if gone {
+        if pumped_gone {
             if let Some(vpad) = republisher.pads.get(index) {
                 let _ = self.reactor.unwatch(vpad.source.as_fd());
             }
-        }
-        if !gone {
+        } else {
             self.publish_motion();
+        }
+    }
+
+    /// Watch every seated pad's own controls for `fd`, holding nobody.
+    fn open_native(&mut self, fd: i32, level: String) {
+        self.native = Some(Native {
+            fd,
+            level,
+            translators: BTreeMap::new(),
+            down: BTreeMap::new(),
+        });
+        if let Some(republisher) = self.republisher.as_mut() {
+            republisher.tap(true);
+        }
+        info!("every seated pad's own controls are watched");
+        let state = self.state_event();
+        self.broadcast(&state);
+    }
+
+    fn close_native(&mut self) {
+        if self.native.take().is_none() {
+            return;
+        }
+        if let Some(republisher) = self.republisher.as_mut() {
+            republisher.tap(false);
+        }
+        info!("nobody watches the pads' own controls any more");
+        let state = self.state_event();
+        self.broadcast(&state);
+    }
+
+    /// A pad that went: what the watcher heard down of it is up, and its translator goes.
+    fn forget_natively(&mut self, player: u32) {
+        let Some(native) = self.native.as_mut() else {
+            return;
+        };
+        native.translators.remove(&player);
+        let ups: Vec<Value> = native
+            .down
+            .iter()
+            .filter(|((seat, _), down)| *seat == player && **down)
+            .map(|((seat, name), _)| events::native(*seat, name, false))
+            .collect();
+        native.down.retain(|(seat, _), _| *seat != player);
+        for up in ups {
+            self.broadcast(&up);
+        }
+    }
+
+    /// Say which of `player`'s own watched controls `events` changed.
+    fn hear_natively(&mut self, index: usize, player: u32, events: &[evdev::InputEvent]) {
+        if events.is_empty() || self.native.is_none() {
+            return;
+        }
+        // The translator is the pad's; a seat that changed pads gets a new one.
+        let stale = {
+            let known = self
+                .native
+                .as_ref()
+                .and_then(|native| native.translators.get(&player))
+                .map(|(path, _)| path);
+            let now = self
+                .republisher
+                .as_ref()
+                .and_then(|republisher| republisher.pads.get(index))
+                .map(|vpad| &vpad.pad.path);
+            match (known, now) {
+                (Some(known), Some(now)) => known != now,
+                (_, None) => return,
+                (None, Some(_)) => true,
+            }
+        };
+        if stale {
+            // A seat with another pad in it: what the old one held is up.
+            self.forget_natively(player);
+            let path = self
+                .republisher
+                .as_ref()
+                .and_then(|republisher| republisher.pads.get(index))
+                .map(|vpad| vpad.pad.path.clone());
+            let level = self
+                .native
+                .as_ref()
+                .map(|native| native.level.clone())
+                .unwrap_or_default();
+            let Some((path, translator)) = path.zip(self.own_translator(player, &level)) else {
+                return;
+            };
+            if let Some(native) = self.native.as_mut() {
+                native.translators.insert(player, (path, translator));
+            }
+        }
+        let Some(native) = self.native.as_mut() else {
+            return;
+        };
+        let Some((_, translator)) = native.translators.get_mut(&player) else {
+            return;
+        };
+        let mut said = Vec::new();
+        for event in events {
+            let (kind, code) = (event.event_type().0, event.code());
+            if !translator.may_watch(kind, code) {
+                continue;
+            }
+            for out in translator.translate(kind, code, event.value()) {
+                for heard in danstick_core::xbox::heard(out) {
+                    let danstick_core::xbox::Heard::Control { name, down } = heard else {
+                        continue;
+                    };
+                    if !danstick_core::xbox::WATCHED.contains(&name) {
+                        continue;
+                    }
+                    if native.down.insert((player, name), down) != Some(down) {
+                        said.push(events::native(player, name, down));
+                    }
+                }
+            }
+        }
+        for event in said {
+            self.broadcast(&event);
         }
     }
 
@@ -2754,12 +2927,21 @@ impl Server {
         }) {
             vpad.remap(&mapping, &faces);
         }
+        // A generic walk just stored is the pad's own now, for the menu and the watcher.
+        if let Some(native) = self.native.as_mut() {
+            native.translators.remove(&player);
+        }
         if self
             .focus
             .as_ref()
             .is_some_and(|focus| focus.player == player)
         {
-            if let Some(translator) = self.focus_translator(player) {
+            let level = self
+                .focus
+                .as_ref()
+                .map(|focus| focus.level.clone())
+                .unwrap_or_default();
+            if let Some(translator) = self.own_translator(player, &level) {
                 if let Some(focus) = self.focus.as_mut() {
                     focus.translator = translator;
                 }
@@ -2783,36 +2965,50 @@ impl Server {
             .is_some_and(|vpad| self.modal_reads(&vpad.pad.path))
     }
 
-    /// A translator from a published pad onto the 360 layout, after its walk in play.
-    fn focus_translator(&mut self, player: u32) -> Option<danstick_core::xbox::Translator> {
-        let pad = self.pad_for_player(player)?;
-        let mapping = self.mapping_in_play(&pad);
-        let faces = self.faces_for(&pad, &mapping);
+    /// A published pad's events onto the 360 layout by its own controls, never a game's walk.
+    fn own_translator(&self, player: u32, level: &str) -> Option<danstick_core::xbox::Translator> {
         let vpad = self
             .republisher
             .as_ref()?
             .pads
             .iter()
             .find(|vpad| vpad.player == player && !vpad.gone)?;
+        // The level's walk where the pad has one, else the pad's own controls.
+        let own = profiles::load(&vpad.pad, None)
+            .and_then(|profile| {
+                profile
+                    .mappings
+                    .get(level)
+                    .filter(|walk| !walk.buttons.is_empty())
+                    .or_else(|| profile.mappings.get(scope::UNIVERSAL))
+                    .cloned()
+            })
+            .unwrap_or_default();
         let (keys, _) = vpad.source.capabilities();
-        let mut translator = danstick_core::xbox::Translator::new(
+        Some(danstick_core::xbox::Translator::new(
             &keys,
             &vpad.source.axis_spans(),
-            &mapping.resolved(),
-            &mapping.resolved_extra(),
-        );
-        translator.relabel(&faces);
-        Some(translator)
+            &own.resolved(),
+            &own.resolved_extra(),
+        ))
+    }
+
+    fn focus_translator(
+        &self,
+        player: u32,
+        level: &str,
+    ) -> Option<danstick_core::xbox::Translator> {
+        self.own_translator(player, level)
     }
 
     /// Hold `player`'s pad back from its clone, at rest, and hear it for `fd`.
-    fn open_focus(&mut self, fd: i32, player: u32) {
+    fn open_focus(&mut self, fd: i32, player: u32, level: String) {
         if self.session.is_some() {
             self.broadcast(&events::error("a session is open; cancel it first"));
             return;
         }
         let Some((translator, pad)) = self
-            .focus_translator(player)
+            .focus_translator(player, &level)
             .zip(self.pad_for_player(player).map(|pad| pad.path))
         else {
             self.broadcast(&events::error(format!(
@@ -2830,6 +3026,7 @@ impl Server {
         self.focus = Some(Focus {
             player,
             pad,
+            level,
             fd,
             translator,
             controls: BTreeMap::new(),
@@ -2910,8 +3107,10 @@ impl Server {
                     vpad.player
                 );
                 vpad.gone = true;
+                let player = vpad.player;
                 let _ = self.reactor.unwatch(vpad.source.as_fd());
                 self.close_focus(None);
+                self.forget_natively(player);
                 return;
             }
         }
@@ -2924,6 +3123,11 @@ impl Server {
                 Origin::Seated { player, steam },
                 clock - clone::event_age(press),
             );
+        }
+        if self.native.is_some() {
+            let events = std::mem::take(&mut self.scratch);
+            self.hear_natively(index, player, &events);
+            self.scratch = events;
         }
         let Some(focus) = self.focus.as_mut() else {
             return;
@@ -3029,6 +3233,16 @@ impl Server {
             .collect();
         if let Some(focus) = self.focus.as_mut() {
             focus.player = swap(focus.player);
+        }
+        if let Some(native) = self.native.as_mut() {
+            native.down = std::mem::take(&mut native.down)
+                .into_iter()
+                .map(|((seat, name), down)| ((swap(seat), name), down))
+                .collect();
+            native.translators = std::mem::take(&mut native.translators)
+                .into_iter()
+                .map(|(seat, entry)| (swap(seat), entry))
+                .collect();
         }
         info!("player {player} moved to seat {to}; whoever sat there is player {player}");
         self.stop_republisher();
@@ -3316,6 +3530,9 @@ impl Server {
                 .collect::<Vec<_>>()
         );
         self.republisher = Some(republisher);
+        if let (Some(republisher), true) = (self.republisher.as_mut(), self.native.is_some()) {
+            republisher.tap(true);
+        }
         self.sync_republish_pause();
         Ok(virtual_paths)
     }
@@ -4159,6 +4376,7 @@ impl Server {
             self.slot_policy,
             self.playing.clone(),
             self.focus.as_ref().map(|focus| focus.player),
+            self.native.is_some(),
         )
     }
 

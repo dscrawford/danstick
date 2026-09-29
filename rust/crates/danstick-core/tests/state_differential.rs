@@ -89,3 +89,16 @@ fn a_player_with_no_mappings_says_so_rather_than_omitting_them() {
     // `configured` means mapped, not merely known: calibration writes a profile too.
     assert_eq!(value["configured"], false);
 }
+
+#[test]
+fn native_is_omitted_when_nobody_watches_and_said_when_somebody_does() {
+    let mut event = StateEvent::new("idle", 4, Vec::new(), "x".to_owned(), 1, "mirror");
+    let off = serde_json::to_value(&event).expect("serialises");
+    assert!(off.get("native").is_none(), "{off}");
+    assert!(off.get("focus").is_none(), "{off}");
+    event.native = true;
+    event.focus = Some(2);
+    let on = serde_json::to_value(&event).expect("serialises");
+    assert_eq!(on["native"], true, "{on}");
+    assert_eq!(on["focus"], 2, "{on}");
+}

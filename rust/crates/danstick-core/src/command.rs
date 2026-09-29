@@ -3,7 +3,7 @@
 use serde_json::Value;
 
 /// Every command the socket accepts.
-pub const COMMANDS: [&str; 25] = [
+pub const COMMANDS: [&str; 26] = [
     "begin",
     "reset",
     "accept",
@@ -29,6 +29,7 @@ pub const COMMANDS: [&str; 25] = [
     "scope",
     "focus",
     "move",
+    "native",
 ];
 
 /// A parsed command, with its arguments already coerced.
@@ -121,11 +122,18 @@ pub enum Command {
     Focus {
         player: i64,
         open: bool,
+        /// The scope whose walk the pad is heard through; empty is the pad's own controls.
+        scope: String,
     },
     /// Move a seated pad to another seat, swapping with whoever is there.
     Move {
         player: i64,
         to: i64,
+    },
+    /// Watch a few of every seated pad's own controls, for as long as the connection.
+    Native {
+        open: bool,
+        scope: String,
     },
     /// Change how slots are published; a field left out keeps what is in force.
     Slots(crate::slots::Change),
@@ -303,10 +311,19 @@ impl Command {
                     None => true,
                     Some(_) => return Err(Refused::NotANumber { field: "open" }),
                 },
+                scope: label("scope")?,
             },
             "move" => Command::Move {
                 player: number("player", 0)?,
                 to: number("to", 0)?,
+            },
+            "native" => Command::Native {
+                open: match message.get("open") {
+                    Some(Value::Bool(value)) => *value,
+                    None => true,
+                    Some(_) => return Err(Refused::NotANumber { field: "open" }),
+                },
+                scope: label("scope")?,
             },
             other => return Err(Refused::Unknown(other.to_owned())),
         })

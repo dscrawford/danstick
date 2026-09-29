@@ -710,7 +710,9 @@ the game opened them
 (`a_moved_pad_drives_the_seat_it_was_dropped_on_without_the_game_noticing`).
 A menu over the game holds one player's pad and hears it as controls while
 everyone else plays on (`focus`,
-`a_focused_pad_is_heard_by_the_menu_and_not_by_the_game`).
+`a_focused_pad_is_heard_by_the_menu_and_not_by_the_game`), and what it hears
+are the pad's own controls, never the game's walk (`native` too,
+`the_menu_hears_the_pads_own_controls_and_a_watcher_hears_every_pad`).
 
 **Expected outcome.** `{1: index, 2: index}`, two profiles, two SDL lines, and
 ports 3-16 emptied.

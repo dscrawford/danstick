@@ -128,6 +128,30 @@ pub const KEY_NAMES: [&str; 11] = [
     "rightstick",
 ];
 
+/// The controls a watcher of every pad is told about: enough for a chord.
+pub const WATCHED: [&str; 8] = [
+    "a",
+    "b",
+    "start",
+    "back",
+    "leftshoulder",
+    "rightshoulder",
+    "lefttrigger",
+    "righttrigger",
+];
+
+/// The controls behind [`WATCHED`], for a translator to say what can move one.
+const WATCHED_CONTROLS: [Control; 8] = [
+    Control::A,
+    Control::B,
+    Control::Start,
+    Control::Back,
+    Control::LeftShoulder,
+    Control::RightShoulder,
+    Control::LeftTrigger,
+    Control::RightTrigger,
+];
+
 /// What an event for the clone says, in a control's own name.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Heard {
@@ -525,6 +549,21 @@ impl Translator {
             return;
         }
         out.push(Out { kind, code, value });
+    }
+
+    /// Whether a source event on `code` can move a [`WATCHED`] control at all.
+    pub fn may_watch(&self, kind: u16, code: u16) -> bool {
+        match kind {
+            EV_KEY => self
+                .keys
+                .get(&code)
+                .is_some_and(|controls| controls.iter().any(|c| WATCHED_CONTROLS.contains(c))),
+            EV_ABS => self
+                .axes
+                .get(&code)
+                .is_some_and(|axes| axes.iter().any(|(c, _)| WATCHED_CONTROLS.contains(c))),
+            _ => false,
+        }
     }
 
     /// Press, for every control in `faces`, the control it names instead: a
@@ -1004,6 +1043,36 @@ mod tests {
             }]
         );
         assert!(heard(abs(0x20, 5)).is_empty(), "an axis the clone has not");
+    }
+
+    #[test]
+    fn the_watched_names_and_controls_are_one_list() {
+        let names: Vec<&str> = WATCHED_CONTROLS.iter().map(|c| c.as_str()).collect();
+        assert_eq!(names, WATCHED);
+    }
+
+    #[test]
+    fn only_an_event_that_can_move_a_watched_control_is_worth_translating() {
+        let t = captured();
+        assert!(t.may_watch(EV_KEY, 0x120), "bound to A");
+        assert!(!t.may_watch(EV_KEY, 0x122), "bound to a C button");
+        assert!(t.may_watch(EV_ABS, ABS_Z), "bound to the left trigger");
+        assert!(!t.may_watch(EV_ABS, ABS_X), "a stick is never a chord");
+        assert!(!t.may_watch(EV_KEY, 0x1ff), "not bound at all");
+        let mut spans = BTreeMap::new();
+        spans.insert(ABS_X, stick());
+        spans.insert(ABS_Z, trigger());
+        let bare = Translator::new(&[0x130, 0x133], &spans, &BTreeMap::new(), &BTreeMap::new());
+        assert!(bare.may_watch(EV_KEY, 0x130), "carried across by code as A");
+        assert!(!bare.may_watch(EV_KEY, 0x133), "carried across as X");
+        assert!(
+            bare.may_watch(EV_ABS, ABS_Z),
+            "a trigger by the kernel's convention"
+        );
+        assert!(
+            !bare.may_watch(EV_ABS, ABS_X),
+            "a stick by the kernel's convention"
+        );
     }
 
     #[test]
