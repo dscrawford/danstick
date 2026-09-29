@@ -84,8 +84,8 @@ fn map_and_bind_share_an_input_unless_told_to_be_strict() {
 #[test]
 fn identity_names_the_mode_and_slots_was_appended_after_it() {
     assert_eq!(
-        COMMANDS[COMMANDS.len() - 6..],
-        ["identity", "slots", "scope", "focus", "move", "native"],
+        COMMANDS[COMMANDS.len() - 7..],
+        ["identity", "slots", "scope", "focus", "move", "native", "port"],
         "commands are only appended"
     );
     assert_eq!(
@@ -288,5 +288,40 @@ fn focus_and_native_may_name_the_level_a_pad_is_heard_through() {
     assert!(matches!(
         Command::parse(&json!({"cmd": "native", "scope": "a\nb"})),
         Err(Refused::NotAName { field: "scope" })
+    ));
+}
+
+#[test]
+fn port_names_a_seat_and_switches_it_on_unless_told_off() {
+    for (message, player, open) in [
+        (json!({"cmd": "port", "player": 3, "open": false}), 3, false),
+        (json!({"cmd": "port", "player": 3, "open": true}), 3, true),
+        (json!({"cmd": "port", "player": 3}), 3, true),
+        (json!({"cmd": "port"}), 0, true),
+        (
+            json!({"cmd": "port", "player": "3", "open": false}),
+            3,
+            false,
+        ),
+        (json!({"cmd": "port", "player": 3.9, "extra": 1}), 3, true),
+    ] {
+        assert_eq!(
+            Command::parse(&message),
+            Ok(Command::Port { player, open }),
+            "{message}"
+        );
+    }
+    for open in [json!(1), json!("off"), json!(null), json!([])] {
+        assert!(
+            matches!(
+                Command::parse(&json!({"cmd": "port", "player": 3, "open": open})),
+                Err(Refused::NotANumber { field: "open" })
+            ),
+            "{open} was taken for a bool"
+        );
+    }
+    assert!(matches!(
+        Command::parse(&json!({"cmd": "port", "player": "three"})),
+        Err(Refused::NotANumber { field: "player" })
     ));
 }

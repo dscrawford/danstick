@@ -102,3 +102,17 @@ fn native_is_omitted_when_nobody_watches_and_said_when_somebody_does() {
     assert_eq!(on["native"], true, "{on}");
     assert_eq!(on["focus"], 2, "{on}");
 }
+
+#[test]
+fn ports_off_is_omitted_when_every_seat_is_heard() {
+    let mut event = StateEvent::new("idle", 4, Vec::new(), "x".to_owned(), 1, "mirror");
+    assert!(serde_json::to_value(&event)
+        .expect("serialises")
+        .get("ports_off")
+        .is_none());
+    event.ports_off = vec![3];
+    assert_eq!(
+        serde_json::to_value(&event).expect("serialises")["ports_off"],
+        serde_json::json!([3])
+    );
+}

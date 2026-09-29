@@ -29,12 +29,14 @@ pub fn state(
     playing: danstick_core::state::Playing,
     focus: Option<u32>,
     native: bool,
+    ports_off: Vec<u32>,
 ) -> Value {
     let mut event = StateEvent::new(state, slots, players, build, std::process::id(), identity)
         .with_slots(policy);
     event.scope = playing;
     event.focus = focus;
     event.native = native;
+    event.ports_off = ports_off;
     event.following = following;
     event.seating = seating;
     event.hold = hold;

@@ -712,7 +712,9 @@ A menu over the game holds one player's pad and hears it as controls while
 everyone else plays on (`focus`,
 `a_focused_pad_is_heard_by_the_menu_and_not_by_the_game`), and what it hears
 are the pad's own controls, never the game's walk (`native` too,
-`the_menu_hears_the_pads_own_controls_and_a_watcher_hears_every_pad`).
+`the_menu_hears_the_pads_own_controls_and_a_watcher_hears_every_pad`). A
+seat the game should not hear for a while is switched off and on by `port`
+(`a_seat_switched_off_does_nothing_in_the_game_until_it_is_switched_on`).
 
 **Expected outcome.** `{1: index, 2: index}`, two profiles, two SDL lines, and
 ports 3-16 emptied.

@@ -5114,3 +5114,227 @@ fn a_watch_moves_to_its_newest_opener_and_hears_every_pad_that_comes() {
         .expect("the newest opener's death did not end the watch");
     let _ = std::fs::remove_dir_all(&root);
 }
+
+const PORT: PadId = PadId {
+    name: "DANSTICK RSTESTPORT",
+    pid: 0x1090,
+    only: "RSTESTPORT",
+};
+
+/// A seat switched off does nothing in the game while its player can still
+/// reach the menu; on again from its next change; and the connection that
+/// switched it off going switches it on.
+#[test]
+fn a_seat_switched_off_does_nothing_in_the_game_until_it_is_switched_on() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let root = std::env::temp_dir().join(format!("danstick-port-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let (mut daemon, mut pads, mut slots) = two_seated(&root, PORT, &[]);
+    const A: u16 = 0x130;
+    const B: u16 = 0x131;
+    let _watcher = ask_on_a_connection(&daemon, serde_json::json!({"cmd": "native"}), |state| {
+        state["native"] == true
+    });
+    daemon
+        .wait_for("state", |e| e["native"] == true, 5.0)
+        .expect("the watch never opened");
+
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "port", "player": 2, "open": false}));
+    let off = daemon
+        .wait_for("state", |e| e["ports_off"] == serde_json::json!([2]), 5.0)
+        .expect("seat 2 never went off");
+    assert!(off["focus"].is_null(), "{off}");
+    daemon.pump(0.3);
+    daemon.events.clear();
+    pads[1].emit(EventType::KEY.0, FIRST_KEY, 1);
+    let heard = daemon
+        .wait_for(
+            "native",
+            |e| e["player"] == 2 && e["control"] == "a" && e["down"] == true,
+            3.0,
+        )
+        .expect("a seat off is no longer heard by the watcher");
+    assert_eq!(heard["player"], 2, "{heard}");
+    assert!(
+        !slots[1].sees_press(&mut daemon, A, 1.0),
+        "the game heard a seat that is off"
+    );
+    pads[1].emit(EventType::KEY.0, FIRST_KEY, 0);
+    pads[0].emit(EventType::KEY.0, FIRST_KEY, 1);
+    assert!(
+        slots[0].sees_press(&mut daemon, A, 3.0),
+        "player 1 stopped reaching the game"
+    );
+    pads[0].emit(EventType::KEY.0, FIRST_KEY, 0);
+    daemon.pump(0.3);
+
+    // A focus on the seat hears it, and closing leaves the seat off.
+    let menu = ask_on_a_connection(
+        &daemon,
+        serde_json::json!({"cmd": "focus", "player": 2}),
+        |state| state["focus"] == 2,
+    );
+    daemon
+        .wait_for("state", |e| e["focus"] == 2, 5.0)
+        .expect("the focus never opened on the seat that is off");
+    daemon.pump(0.3);
+    daemon.events.clear();
+    pads[1].emit(EventType::KEY.0, FIRST_KEY, 1);
+    daemon
+        .wait_for("focus", |e| e["control"] == "a" && e["down"] == true, 3.0)
+        .expect("the menu did not hear the seat that is off");
+    pads[1].emit(EventType::KEY.0, FIRST_KEY, 0);
+    drop(menu);
+    let closed = daemon
+        .wait_for("state", |e| e["focus"].is_null(), 5.0)
+        .expect("the focus never closed");
+    assert_eq!(closed["ports_off"], serde_json::json!([2]), "{closed}");
+
+    // On with B held: B is not pressed into the game; the next press is.
+    pads[1].emit(EventType::KEY.0, FIRST_KEY + 1, 1);
+    daemon.pump(0.3);
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "port", "player": 2}));
+    daemon
+        .wait_for("state", |e| e["ports_off"].is_null(), 5.0)
+        .expect("seat 2 never came on");
+    assert!(
+        !slots[1].sees_press(&mut daemon, B, 1.0),
+        "a button held as the seat came on was pressed into the game"
+    );
+    pads[1].emit(EventType::KEY.0, FIRST_KEY + 1, 0);
+    daemon.pump(0.3);
+    pads[1].emit(EventType::KEY.0, FIRST_KEY, 1);
+    assert!(
+        slots[1].sees_press(&mut daemon, A, 3.0),
+        "seat 2 is not live again"
+    );
+    pads[1].emit(EventType::KEY.0, FIRST_KEY, 0);
+    daemon.pump(0.3);
+
+    // Off from a connection that then dies: on again.
+    let overlay = ask_on_a_connection(
+        &daemon,
+        serde_json::json!({"cmd": "port", "player": 2, "open": false}),
+        |state| state["ports_off"] == serde_json::json!([2]),
+    );
+    daemon
+        .wait_for("state", |e| e["ports_off"] == serde_json::json!([2]), 5.0)
+        .expect("seat 2 never went off again");
+    drop(overlay);
+    daemon
+        .wait_for("state", |e| e["ports_off"].is_null(), 5.0)
+        .expect("the overlay's death left seat 2 off");
+    daemon.pump(0.3);
+    pads[1].emit(EventType::KEY.0, FIRST_KEY, 1);
+    assert!(
+        slots[1].sees_press(&mut daemon, A, 3.0),
+        "seat 2 was left dead in the game"
+    );
+    pads[1].emit(EventType::KEY.0, FIRST_KEY, 0);
+
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "port", "player": 9, "open": false}));
+    assert!(
+        daemon.wait_for("error", |_| true, 3.0).is_some(),
+        "seat 9 went off"
+    );
+    daemon.send(serde_json::json!({"cmd": "port", "player": 3, "open": false}));
+    assert!(
+        daemon.wait_for("error", |_| true, 3.0).is_some(),
+        "an empty seat went off"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+const PORTTWO: PadId = PadId {
+    name: "DANSTICK RSTESTPORTTWO",
+    pid: 0x1092,
+    only: "RSTESTPORTTWO",
+};
+
+/// Two connections switch different seats off; one dying turns only its own
+/// seat on, and a seat's pad unplugged and plugged back stays off.
+#[test]
+fn seats_switched_off_by_two_connections_are_each_their_own_and_survive_a_replug() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let root = std::env::temp_dir().join(format!("danstick-porttwo-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let (mut daemon, mut pads, mut slots) = two_seated(&root, PORTTWO, &[]);
+    const A: u16 = 0x130;
+
+    let overlay_a = ask_on_a_connection(
+        &daemon,
+        serde_json::json!({"cmd": "port", "player": 1, "open": false}),
+        |state| state["ports_off"] == serde_json::json!([1]),
+    );
+    let overlay_b = ask_on_a_connection(
+        &daemon,
+        serde_json::json!({"cmd": "port", "player": 2, "open": false}),
+        |state| state["ports_off"] == serde_json::json!([1, 2]),
+    );
+    daemon
+        .wait_for(
+            "state",
+            |e| e["ports_off"] == serde_json::json!([1, 2]),
+            5.0,
+        )
+        .expect("both seats never went off");
+    drop(overlay_a);
+    daemon
+        .wait_for("state", |e| e["ports_off"] == serde_json::json!([2]), 5.0)
+        .expect("seat 1 never came on when its connection died");
+    daemon.pump(0.3);
+    pads[0].emit(EventType::KEY.0, FIRST_KEY, 1);
+    assert!(
+        slots[0].sees_press(&mut daemon, A, 3.0),
+        "player 1 is not live after its overlay died"
+    );
+    pads[0].emit(EventType::KEY.0, FIRST_KEY, 0);
+    pads[1].emit(EventType::KEY.0, FIRST_KEY, 1);
+    assert!(
+        !slots[1].sees_press(&mut daemon, A, 1.0),
+        "player 2 came on although its connection lives"
+    );
+    pads[1].emit(EventType::KEY.0, FIRST_KEY, 0);
+
+    // Unplugged and plugged back at a new node, seat 2 is still off.
+    let gone = pads.remove(1);
+    drop(gone);
+    daemon.pump(2.5);
+    let mut replugged = TestPad::with_id(
+        &format!("DANSTICK {} b", PORTTWO.only),
+        0x1209,
+        PORTTWO.pid + 1,
+    );
+    daemon.pump(3.5);
+    let after = daemon.last("state").cloned().expect("a state");
+    assert_eq!(after["ports_off"], serde_json::json!([2]), "{after}");
+    let seated = after["players"]
+        .as_array()
+        .is_some_and(|players| players.iter().any(|p| p["player"] == 2));
+    assert!(
+        seated,
+        "the replugged pad did not take seat 2 back: {after}"
+    );
+    replugged.emit(EventType::KEY.0, FIRST_KEY, 1);
+    assert!(
+        !slots[1].sees_press(&mut daemon, A, 2.0),
+        "the replugged pad reached the game though its seat is off"
+    );
+    replugged.emit(EventType::KEY.0, FIRST_KEY, 0);
+    drop(overlay_b);
+    daemon
+        .wait_for("state", |e| e["ports_off"].is_null(), 5.0)
+        .expect("seat 2 never came on when its connection died");
+    let _ = std::fs::remove_dir_all(&root);
+}

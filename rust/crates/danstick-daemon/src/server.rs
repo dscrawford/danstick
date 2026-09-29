@@ -166,6 +166,8 @@ pub struct Server {
     focus: Option<Focus>,
     /// A watcher of every seated pad's own controls, for as long as its client.
     native: Option<Native>,
+    /// Seats the game does not hear, each with the client that switched it off.
+    ports_off: BTreeMap<u32, i32>,
 
     prompted: BTreeSet<String>,
     prompted_stamp: i128,
@@ -407,6 +409,7 @@ impl Server {
             scope_leases: Vec::new(),
             focus: None,
             native: None,
+            ports_off: BTreeMap::new(),
             prompted,
             prompted_stamp,
             last_scan_signature: None,
@@ -710,6 +713,10 @@ impl Server {
             None => return,
         };
         for message in messages {
+            // A command's answer can drop the client; what it sent after is nobody's.
+            if !self.clients.contains_key(&fd) {
+                break;
+            }
             self.handle_command(fd, Value::Object(message));
         }
     }
@@ -729,6 +736,19 @@ impl Server {
         }
         if self.native.as_ref().is_some_and(|native| native.fd == fd) {
             self.close_native();
+        }
+        let left_off: Vec<u32> = self
+            .ports_off
+            .iter()
+            .filter(|(_, holder)| **holder == fd)
+            .map(|(seat, _)| *seat)
+            .collect();
+        if !left_off.is_empty() {
+            info!("the client that switched seats {left_off:?} off has gone; they are on");
+            self.ports_off.retain(|_, holder| *holder != fd);
+            self.sync_republish_pause();
+            let state = self.state_event();
+            self.broadcast(&state);
         }
         // A session holds every pad and a modal flow holds one; neither may outlive its client.
         if self.clients.is_empty() && (self.session.is_some() || self.modal_open()) {
@@ -920,6 +940,7 @@ impl Server {
                     self.close_native();
                 }
             }
+            Command::Port { player, open } => self.switch_port(fd, as_player(player), open),
             Command::Bind {
                 player,
                 control,
@@ -1171,6 +1192,8 @@ impl Server {
             return;
         }
         self.slots_assigned = claims;
+        // A new roster is every seat changing hands.
+        self.ports_off.clear();
         self.end_session();
         self.save_assignments();
         if let Err(error) = self.start_republisher() {
@@ -2340,6 +2363,7 @@ impl Server {
             .republisher
             .as_ref()
             .is_some_and(|republisher| republisher.held_back(index))
+            && self.modal_open_on(index)
         {
             self.read_published_for_modal(index);
             return;
@@ -3087,6 +3111,43 @@ impl Server {
             info!("the focused seat changed hands; its player is live again");
             self.close_focus(None);
         }
+        self.ports_off.retain(|seat, _| !seats.contains(seat));
+    }
+
+    /// Switch whether the game hears `player`: off rests the clone until on, or
+    /// until `fd` goes.
+    fn switch_port(&mut self, fd: i32, player: u32, open: bool) {
+        if self.session.is_some() {
+            self.broadcast(&events::error("a session is open; cancel it first"));
+            return;
+        }
+        if player == 0 || player > self.slots {
+            self.broadcast(&events::error(format!(
+                "seat {player} is not one of the {} seats",
+                self.slots
+            )));
+            return;
+        }
+        if open {
+            if self.ports_off.remove(&player).is_some() {
+                info!("player {player}: the game hears it again");
+            }
+        } else {
+            if self.pad_for_player(player).is_none() {
+                self.broadcast(&events::error(format!(
+                    "no controller assigned to player {player}"
+                )));
+                return;
+            }
+            // The first to switch it off holds it: a second, briefer client does not take it.
+            if !self.ports_off.contains_key(&player) {
+                info!("player {player}: the game does not hear it until it is switched on");
+            }
+            self.ports_off.entry(player).or_insert(fd);
+        }
+        self.sync_republish_pause();
+        let state = self.state_event();
+        self.broadcast(&state);
     }
 
     /// What the focused pad just did, said as controls to every client.
@@ -3234,6 +3295,10 @@ impl Server {
         if let Some(focus) = self.focus.as_mut() {
             focus.player = swap(focus.player);
         }
+        self.ports_off = std::mem::take(&mut self.ports_off)
+            .into_iter()
+            .map(|(seat, held)| (swap(seat), held))
+            .collect();
         if let Some(native) = self.native.as_mut() {
             native.down = std::mem::take(&mut native.down)
                 .into_iter()
@@ -3627,6 +3692,7 @@ impl Server {
                             || focused.as_ref().is_some_and(|(player, pad)| {
                                 *player == vpad.player && *pad == vpad.pad.path
                             })
+                            || self.ports_off.contains_key(&vpad.player)
                     })
                     .collect()
             })
@@ -4377,6 +4443,7 @@ impl Server {
             self.playing.clone(),
             self.focus.as_ref().map(|focus| focus.player),
             self.native.is_some(),
+            self.ports_off.keys().copied().collect(),
         )
     }
 

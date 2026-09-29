@@ -844,6 +844,30 @@ client watch. It lasts as long as the connection that opened it, or until
 `open: false`, and `state` carries `"native": true` while it does. One
 watcher at a time; opening again moves it.
 
+## A seat the game does not hear: `port`
+
+```json
+{"cmd": "port", "player": 3, "open": false}
+{"cmd": "port", "player": 3, "open": true}
+```
+
+The overlay decides, per seat, whether the game hears that controller: off
+while its player is in the menu, and off or on from the menu for anybody
+else -- a controller left on the sofa, a younger sibling's pad during a
+boss. **Off** rests the clone (as a `stay` leave does) without touching the
+seat, pad or node, so the game still has player 3, who does nothing;
+`native` and `focus` keep hearing the pad as usual, and a focus closing
+leaves the seat off. **On** resumes the clone from the pad's next change, as
+`focus` does. Any number of seats may be off at once, each switched on its
+own.
+
+A connection's death switches its off seats on again, as `focus`'s does;
+of two connections that switched one seat off, the first holds it. The
+switch follows the seat: a `move` carries it with the pad, an unseat or a
+new roster clears it, and a pad that reconnects into its seat stays off. `state` lists off seats as `"ports_off": [3]`, omitted when none
+are. Refused with an `error` for a seat outside the slots, one with nobody
+in it, or while a session is open.
+
 ## A controller in another seat: `move`
 
 ```json

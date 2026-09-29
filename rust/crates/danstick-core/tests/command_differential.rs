@@ -66,6 +66,7 @@ fn as_fields(command: &Command) -> Value {
         }
         Command::Move { player, to } => json!({"cmd": "move", "player": player, "to": to}),
         Command::Native { open, .. } => json!({"cmd": "native", "open": open}),
+        Command::Port { player, open } => json!({"cmd": "port", "player": player, "open": open}),
         Command::Slots(change) => json!({
             "cmd": "slots", "mode": change.mode, "count": change.count, "on_leave": change.on_leave,
             "layout": change.layout
