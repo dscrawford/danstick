@@ -2314,8 +2314,11 @@ fn a_seated_pad_is_rebound_and_finished_from_the_pad_with_no_session() {
     pad.tap(FIRST_KEY + 5);
     let conflict = daemon
         .wait_for("mapping", |e| e["conflict"] != "", 6.0)
-        .expect("the second control's stored input is defended across runs");
-    assert_eq!(conflict["index"], 0, "a refused press does not advance");
+        .expect("the second control's stored input is named across runs");
+    assert_eq!(
+        conflict["index"], 1,
+        "a shared press is a capture and advances"
+    );
     daemon.send(serde_json::json!({"cmd": "cancel"}));
     daemon
         .wait_for("mapping", |e| e["done"] == true, 6.0)

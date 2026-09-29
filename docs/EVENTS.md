@@ -403,11 +403,17 @@ key: no button leaves the wizard from a keyboard the person at the television
 does not have.
 
 A run does **not** start empty. It is seeded from the capture already stored
-for that pad and scope, so the conflict guard -- which refuses an input another
-control holds and names the holder -- holds across runs. A partial remap
-followed by an early finish therefore leaves a whole mapping: the controls not
-touched keep their stored bindings, and no two controls end up sharing an
-input. `forget` is still the way to start from nothing.
+for that pad and scope, so a partial remap followed by an early finish leaves
+a whole mapping: the controls not touched keep their stored bindings.
+`forget` is still the way to start from nothing.
+
+**One input may drive several controls.** A press an earlier control already
+holds -- in this run, or stored -- is taken for the current one as well, and
+the `mapping` event for the step after names that other control in
+`conflict`, so a front-end can say "also A" beside it. The clone presses both
+from the one input. To have the old refusal, where the step
+waits for a different input and `conflict` names the holder while it waits,
+send `"strict": true` on `map` or `bind`.
 
 **An axis answers a step only by leaving rest.** Rest is the axis's calibrated
 centre when the pad has been calibrated, not wherever it sat when the pad was
@@ -632,6 +638,7 @@ not have, and for a name no control answers to.
 
 The pad's own layout is used, so the front-end does not have to know it.
 Legal with no session open, like `map`; it opens only that player's pad.
+`"strict": true` refuses an input another control holds, as `map` does.
 
 **On disk.** A control with one input is the object it always was; a control
 with more is a list whose first entry is that same object:

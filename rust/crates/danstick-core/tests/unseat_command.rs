@@ -39,6 +39,7 @@ fn bind_names_a_control_and_says_whether_it_replaces_or_adds() {
             control: "righttrigger".to_owned(),
             scope: String::new(),
             add: false,
+            strict: false,
         })
     );
     assert_eq!(
@@ -51,11 +52,32 @@ fn bind_names_a_control_and_says_whether_it_replaces_or_adds() {
             control: "a".to_owned(),
             scope: "console:gamecube".to_owned(),
             add: true,
+            strict: false,
         })
     );
     assert!(matches!(
         Command::parse(&json!({"cmd": "bind", "control": "a", "add": "yes"})),
         Err(Refused::NotANumber { .. })
+    ));
+}
+
+#[test]
+fn map_and_bind_share_an_input_unless_told_to_be_strict() {
+    assert!(matches!(
+        Command::parse(&json!({"cmd": "map", "player": 1})),
+        Ok(Command::Map { strict: false, .. })
+    ));
+    assert!(matches!(
+        Command::parse(&json!({"cmd": "map", "player": 1, "strict": true})),
+        Ok(Command::Map { strict: true, .. })
+    ));
+    assert!(matches!(
+        Command::parse(&json!({"cmd": "bind", "player": 1, "control": "a", "strict": true})),
+        Ok(Command::Bind { strict: true, .. })
+    ));
+    assert!(matches!(
+        Command::parse(&json!({"cmd": "map", "strict": "no"})),
+        Err(Refused::NotANumber { field: "strict" })
     ));
 }
 

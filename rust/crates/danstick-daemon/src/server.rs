@@ -768,7 +768,8 @@ impl Server {
                 player,
                 layout,
                 scope,
-            } => self.begin_mapping(as_player(player), &layout, &scope),
+                strict,
+            } => self.begin_mapping(as_player(player), &layout, &scope, strict),
             Command::ChooseLayout { player } => self.begin_layout_choice(as_player(player)),
             Command::ChooseScope { player } => self.begin_scope_choice(as_player(player)),
             Command::MapForGame {
@@ -830,7 +831,8 @@ impl Server {
                 control,
                 scope,
                 add,
-            } => self.begin_bind(as_player(player), &control, &scope, add),
+                strict,
+            } => self.begin_bind(as_player(player), &control, &scope, add, strict),
             Command::Status => {
                 let state = self.state_event();
                 self.send(fd, &state);
@@ -1496,14 +1498,14 @@ impl Server {
 
         if kind == capture::ChoiceKind::Layout {
             let scope = std::mem::take(&mut self.pending_scope);
-            self.begin_mapping(player, &chosen, &scope);
+            self.begin_mapping(player, &chosen, &scope, false);
             return;
         }
         self.pending_scope = chosen.clone();
         if chosen == scope::UNIVERSAL {
             self.begin_layout_choice(player);
         } else {
-            self.begin_mapping(player, &layout, &chosen);
+            self.begin_mapping(player, &layout, &chosen, false);
         }
     }
 
@@ -1540,7 +1542,7 @@ impl Server {
         self.begin_layout_choice(player);
     }
 
-    fn begin_mapping(&mut self, player: u32, layout_id: &str, scope: &str) {
+    fn begin_mapping(&mut self, player: u32, layout_id: &str, scope: &str, strict: bool) {
         let (pad, opened) = match self.modal_pad(player, "mapping") {
             Ok(found) => found,
             Err(event) => {
@@ -1565,7 +1567,8 @@ impl Server {
         let stored = publish::stored_mapping(&pad, scope, &layout.id);
         let run = MappingRun::new(player, layout, keys, scope.to_owned(), axes, held)
             .seeded(&stored)
-            .opened_at(&values);
+            .opened_at(&values)
+            .strict(strict);
         self.pending_scope.clear();
         self.confirm.clear();
         self.last_finish = 0.0;
@@ -1602,7 +1605,7 @@ impl Server {
     /// Capture the next press onto one control of the pad's own layout, as a
     /// replacement for its binding or, with `add`, a second input beside it.
     /// The same events the wizard sends, for one step.
-    fn begin_bind(&mut self, player: u32, control: &str, scope: &str, add: bool) {
+    fn begin_bind(&mut self, player: u32, control: &str, scope: &str, add: bool, strict: bool) {
         let Ok(wanted) = control.parse::<danstick_core::Control>() else {
             self.broadcast(&events::error(format!("no control called {control:?}")));
             return;
@@ -1632,7 +1635,8 @@ impl Server {
         let stored = publish::stored_mapping(&pad, scope, &layout.id);
         let run = MappingRun::new(player, layout, keys, scope.to_owned(), axes, held)
             .seeded(&stored)
-            .opened_at(&values);
+            .opened_at(&values)
+            .strict(strict);
         let Some(mut run) = run.only(wanted) else {
             self.release_solo();
             self.broadcast(&events::error(format!(

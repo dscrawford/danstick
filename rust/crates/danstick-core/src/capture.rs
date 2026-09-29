@@ -166,7 +166,9 @@ pub struct MappingRun {
 
     index: usize,
     bindings: BTreeMap<Control, Binding>,
-    claimed: BTreeMap<Claim, Control>,
+    claimed: BTreeMap<Claim, Vec<Control>>,
+    /// Refuse an input another control holds, instead of sharing it and saying so.
+    strict: bool,
     opening_held: BTreeSet<u16>,
     down: BTreeSet<u16>,
     down_at: BTreeMap<u16, f64>,
@@ -200,6 +202,7 @@ impl MappingRun {
             index: 0,
             bindings: BTreeMap::new(),
             claimed: BTreeMap::new(),
+            strict: false,
             down: held.clone(),
             opening_held: held,
             down_at: BTreeMap::new(),
@@ -234,6 +237,12 @@ impl MappingRun {
         self
     }
 
+    /// Refuse an input another control already holds, as every run once did.
+    pub fn strict(mut self, strict: bool) -> Self {
+        self.strict = strict;
+        self
+    }
+
     /// The press captured adds an input to the control rather than replacing it.
     pub fn adding(mut self) -> Self {
         self.add = true;
@@ -252,7 +261,7 @@ impl MappingRun {
     pub fn seeded(mut self, stored: &BTreeMap<Control, Binding>) -> Self {
         for (control, binding) in stored {
             if let Some(claim) = self.claim_of(*binding) {
-                self.claimed.insert(claim, *control);
+                self.claimed.entry(claim).or_default().push(*control);
             }
             self.bindings.insert(*control, *binding);
         }
@@ -331,9 +340,23 @@ impl MappingRun {
     /// Who else holds this input; the control being asked for may re-take its own.
     fn taken_by_other(&self, claim: Claim) -> Option<Control> {
         self.claimed
-            .get(&claim)
+            .get(&claim)?
+            .iter()
             .copied()
-            .filter(|holder| Some(*holder) != self.current())
+            .find(|holder| Some(*holder) != self.current())
+    }
+
+    /// Take `claim` for the current control, sharing it with whoever holds it unless `strict`.
+    fn take(&mut self, binding: Binding, claim: Claim, now: f64) -> Outcome {
+        let holder = self.taken_by_other(claim);
+        match holder {
+            Some(holder) if self.strict => self.refuse(claim, holder),
+            _ => {
+                let outcome = self.record(binding, claim, now);
+                self.conflict = holder;
+                outcome
+            }
+        }
     }
 
     pub fn index(&self) -> usize {
@@ -372,9 +395,12 @@ impl MappingRun {
         let Some(control) = self.current() else {
             return Outcome::Ignored;
         };
-        self.claimed.retain(|_, holder| *holder != control);
+        for holders in self.claimed.values_mut() {
+            holders.retain(|holder| *holder != control);
+        }
+        self.claimed.retain(|_, holders| !holders.is_empty());
         self.bindings.insert(control, binding);
-        self.claimed.insert(claim, control);
+        self.claimed.entry(claim).or_default().push(control);
         self.index += 1;
         self.disarm_displaced();
         self.conflict = None;
@@ -484,16 +510,12 @@ impl MappingRun {
         }
 
         let claim = Claim::Button { code: event.code };
-        if let Some(holder) = self.taken_by_other(claim) {
-            return self.refuse(claim, holder);
-        }
-
         let Some(index) = sdl_button_index(&self.keys, event.code) else {
             return Outcome::Ignored;
         };
         let binding =
             Binding::button(index).with_ra_index(retroarch_button_index(&self.keys, event.code));
-        self.record(binding, claim, now)
+        self.take(binding, claim, now)
     }
 
     fn rearm(&mut self, event: Event) {
@@ -595,11 +617,13 @@ impl MappingRun {
                 index: 0,
                 value: bit,
             };
-            if let Some(holder) = self.taken_by_other(claim) {
-                return self.refuse(claim, holder);
+            if self.strict {
+                if let Some(holder) = self.taken_by_other(claim) {
+                    return self.refuse(claim, holder);
+                }
             }
             self.axis_armed.insert(event.code, false);
-            return self.record(Binding::hat(0, bit), claim, now);
+            return self.take(Binding::hat(0, bit), claim, now);
         }
 
         let Some(span) = self.axes.get(&event.code).copied() else {
@@ -618,15 +642,17 @@ impl MappingRun {
             code: event.code,
             sign,
         };
-        if let Some(holder) = self.taken_by_other(claim) {
-            return self.refuse(claim, holder);
+        if self.strict {
+            if let Some(holder) = self.taken_by_other(claim) {
+                return self.refuse(claim, holder);
+            }
         }
         let codes: Vec<u16> = self.axes.keys().copied().collect();
         let Some(index) = axis_index(&codes, event.code) else {
             return Outcome::Ignored;
         };
         self.axis_armed.insert(event.code, false);
-        self.record(Binding::axis(index, sign), claim, now)
+        self.take(Binding::axis(index, sign), claim, now)
     }
 }
 
@@ -982,8 +1008,29 @@ mod tests {
     }
 
     #[test]
-    fn one_button_cannot_answer_two_prompts() {
+    fn one_button_may_answer_two_prompts_and_the_second_says_so() {
         let mut run = run();
+        run.feed(Event::key(0x130, 1), 0.0);
+        let first = run.current().expect("a first prompt");
+        run.feed(Event::key(0x130, 0), 0.05);
+        let second = run.current().expect("a second prompt");
+        run.feed(Event::key(0x130, 1), 1.0);
+        let outcome = run.feed(Event::key(0x130, 0), 1.05);
+        assert!(
+            matches!(outcome, Outcome::Recorded { control, .. } if control == second),
+            "{outcome:?}"
+        );
+        assert_eq!(
+            run.conflict(),
+            Some(first),
+            "the share names its other holder"
+        );
+        assert_eq!(run.bindings()[&first], run.bindings()[&second]);
+    }
+
+    #[test]
+    fn a_strict_run_refuses_a_button_another_control_holds() {
+        let mut run = run().strict(true);
         run.feed(Event::key(0x130, 1), 0.0);
         let first = run.current().expect("a first prompt");
         run.feed(Event::key(0x130, 0), 0.05);
@@ -996,11 +1043,7 @@ mod tests {
                 held_by: first
             }
         );
-        assert_eq!(
-            run.conflict(),
-            Some(first),
-            "the refusal must name its holder"
-        );
+        assert_eq!(run.conflict(), Some(first), "the refusal names its holder");
     }
 
     #[test]

@@ -23,6 +23,7 @@ fn as_fields(command: &Command) -> Value {
             player,
             layout,
             scope,
+            ..
         } => {
             json!({"cmd": "map", "player": player, "layout": layout, "scope": scope})
         }
@@ -66,6 +67,7 @@ fn as_fields(command: &Command) -> Value {
             control,
             scope,
             add,
+            ..
         } => {
             json!({"cmd": "bind", "player": player, "control": control, "scope": scope, "add": add})
         }
@@ -197,6 +199,7 @@ fn the_shapes_python_accepts_are_accepted_too() {
                 player: 0,
                 layout: String::new(),
                 scope: String::new(),
+                strict: false,
             },
         ),
         (

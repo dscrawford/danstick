@@ -532,8 +532,31 @@ fn an_autorepeat_is_not_mistaken_for_a_release_and_does_not_end_settling() {
 }
 
 #[test]
-fn one_button_cannot_answer_two_prompts() {
+fn one_button_may_answer_two_prompts_and_the_share_is_said() {
     let mut run = run();
+    let first = run.current().expect("a first prompt");
+    tap(&mut run, 0x130, 0.0);
+    let second = run.current().expect("a second prompt");
+
+    let outcome = tap(&mut run, 0x130, 1.0);
+
+    assert_eq!(recorded(&outcome).0, second);
+    assert_eq!(
+        run.conflict(),
+        Some(first),
+        "the share names its other holder"
+    );
+    assert_eq!(run.bindings()[&first], run.bindings()[&second]);
+    assert_eq!(run.bindings().len(), 2);
+    // A third control on the same button is told about one of them.
+    let third = run.current().expect("a third prompt");
+    assert_eq!(recorded(&tap(&mut run, 0x130, 2.0)).0, third);
+    assert!(run.conflict().is_some());
+}
+
+#[test]
+fn a_strict_run_refuses_a_button_another_control_holds() {
+    let mut run = run().strict(true);
     let first = run.current().expect("a first prompt");
     tap(&mut run, 0x130, 0.0);
     let second = run.current().expect("a second prompt");
@@ -548,59 +571,68 @@ fn one_button_cannot_answer_two_prompts() {
         }
     );
     assert!(!outcome.advanced());
-    assert_eq!(
-        run.conflict(),
-        Some(first),
-        "the refusal must name its holder"
-    );
+    assert_eq!(run.conflict(), Some(first), "the refusal names its holder");
     assert_eq!(run.current(), Some(second), "a refusal does not advance");
     assert_eq!(run.bindings().len(), 1);
 }
 
 #[test]
-fn one_hat_direction_cannot_answer_two_prompts() {
-    let mut run = snes_run(Vec::new(), BTreeMap::new(), BTreeSet::new());
-    let clock = skip_to(&mut run, first_dpad());
-    let first = run.current().expect("a d-pad prompt");
+fn one_hat_direction_may_answer_two_prompts_and_a_strict_run_refuses_it() {
+    for strict in [false, true] {
+        let mut run = snes_run(Vec::new(), BTreeMap::new(), BTreeSet::new()).strict(strict);
+        let clock = skip_to(&mut run, first_dpad());
+        let first = run.current().expect("a d-pad prompt");
 
-    run.feed(Event::abs(ABS_HAT0X, 1), clock);
-    run.feed(Event::abs(ABS_HAT0X, 0), clock + 0.05);
-    let outcome = run.feed(Event::abs(ABS_HAT0X, 1), clock + AFTER_GAP);
+        run.feed(Event::abs(ABS_HAT0X, 1), clock);
+        run.feed(Event::abs(ABS_HAT0X, 0), clock + 0.05);
+        let outcome = run.feed(Event::abs(ABS_HAT0X, 1), clock + AFTER_GAP);
 
-    assert_eq!(
-        outcome,
-        Outcome::Refused {
-            claim: Claim::Hat {
-                index: 0,
-                value: HAT_RIGHT
-            },
-            held_by: first
+        if strict {
+            assert_eq!(
+                outcome,
+                Outcome::Refused {
+                    claim: Claim::Hat {
+                        index: 0,
+                        value: HAT_RIGHT
+                    },
+                    held_by: first
+                }
+            );
+        } else {
+            assert!(outcome.advanced(), "{outcome:?}");
         }
-    );
-    assert_eq!(run.conflict(), Some(first));
+        assert_eq!(run.conflict(), Some(first));
+    }
 }
 
 #[test]
-fn one_axis_half_cannot_answer_two_prompts() {
-    let mut run = snes_run(Vec::new(), axes(&[(ABS_X, stick())]), BTreeSet::new());
-    let clock = skip_to(&mut run, first_dpad());
-    let first = run.current().expect("a d-pad prompt");
+fn one_axis_half_may_answer_two_prompts_and_a_strict_run_refuses_it() {
+    for strict in [false, true] {
+        let mut run =
+            snes_run(Vec::new(), axes(&[(ABS_X, stick())]), BTreeSet::new()).strict(strict);
+        let clock = skip_to(&mut run, first_dpad());
+        let first = run.current().expect("a d-pad prompt");
 
-    run.feed(Event::abs(ABS_X, -100), clock);
-    run.feed(Event::abs(ABS_X, 0), clock + 0.05);
-    let outcome = run.feed(Event::abs(ABS_X, -100), clock + AFTER_GAP);
+        run.feed(Event::abs(ABS_X, -100), clock);
+        run.feed(Event::abs(ABS_X, 0), clock + 0.05);
+        let outcome = run.feed(Event::abs(ABS_X, -100), clock + AFTER_GAP);
 
-    assert_eq!(
-        outcome,
-        Outcome::Refused {
-            claim: Claim::Axis {
-                code: ABS_X,
-                sign: -1
-            },
-            held_by: first
+        if strict {
+            assert_eq!(
+                outcome,
+                Outcome::Refused {
+                    claim: Claim::Axis {
+                        code: ABS_X,
+                        sign: -1
+                    },
+                    held_by: first
+                }
+            );
+        } else {
+            assert!(outcome.advanced(), "{outcome:?}");
         }
-    );
-    assert_eq!(run.conflict(), Some(first));
+        assert_eq!(run.conflict(), Some(first));
+    }
 }
 
 #[test]
@@ -712,10 +744,11 @@ fn a_trigger_resting_at_its_minimum_still_re_arms_after_it_is_let_go() {
 
     assert_eq!(first, Binding::axis(0, 1), "a trigger only travels one way");
     assert!(
-        matches!(again, Outcome::Refused { .. }),
+        again.advanced() && run.conflict().is_some(),
         "the trigger went dead after one press: {again:?}"
     );
-    let (_, second) = recorded(&run.feed(Event::abs(0x05, 255), clock + AFTER_GAP + 0.1));
+    // The share is a capture too, so the other trigger waits out its gap.
+    let (_, second) = recorded(&run.feed(Event::abs(0x05, 255), clock + 2.0 * AFTER_GAP));
     assert_eq!(second, Binding::axis(1, 1));
 }
 
@@ -1899,13 +1932,9 @@ fn a_seeded_run_starts_with_the_stored_capture_and_guards_it() {
     );
 
     let clash = tap(&mut run, 0x130, TAP + AFTER_GAP);
-    assert_eq!(
-        clash,
-        Outcome::Refused {
-            claim: Claim::Button { code: 0x130 },
-            held_by: a,
-        },
-        "an input a stored control holds is refused, naming the holder"
+    assert!(
+        clash.advanced(),
+        "an input a stored control holds is shared, naming the holder: {clash:?}"
     );
     assert_eq!(run.conflict(), Some(a));
 }
@@ -1970,7 +1999,8 @@ fn seeded_hats_and_axes_are_guarded_too() {
     let mut run = seeded_run(&[
         (up, Binding::hat(0, HAT_UP)),
         (control_at(0), Binding::axis(0, 1)),
-    ]);
+    ])
+    .strict(true);
     let clock = skip_to(&mut run, first_dpad + 1);
     assert_eq!(
         run.feed(Event::abs(ABS_HAT0Y, -1), clock),

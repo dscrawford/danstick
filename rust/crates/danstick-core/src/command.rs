@@ -41,6 +41,8 @@ pub enum Command {
         player: i64,
         layout: String,
         scope: String,
+        /// Refuse an input another control holds, rather than share it.
+        strict: bool,
     },
     ChooseLayout {
         player: i64,
@@ -93,6 +95,7 @@ pub enum Command {
         control: String,
         scope: String,
         add: bool,
+        strict: bool,
     },
     /// Publish a clone per seat a launch allows, so the seats exist before the
     /// people do and a game bound to them can be joined mid-play.
@@ -143,6 +146,14 @@ impl Command {
                 Some(_) => Err(Refused::NotANumber { field }),
             }
         };
+        // A bool or nothing; anything else is refused as a number would be.
+        let flag = |field: &'static str| -> Result<bool, Refused> {
+            match message.get(field) {
+                Some(Value::Bool(value)) => Ok(*value),
+                None => Ok(false),
+                Some(_) => Err(Refused::NotANumber { field }),
+            }
+        };
         // Strings only; anything else (including bools/nulls) becomes empty, not rendered.
         let text = |field: &str| -> String {
             match message.get(field) {
@@ -162,6 +173,7 @@ impl Command {
                 player: number("player", 0)?,
                 layout: text("layout"),
                 scope: text("scope"),
+                strict: flag("strict")?,
             },
             "choose_layout" => Command::ChooseLayout {
                 player: number("player", 0)?,
@@ -241,11 +253,8 @@ impl Command {
                 player: number("player", 0)?,
                 control: text("control"),
                 scope: text("scope"),
-                add: match message.get("add") {
-                    Some(Value::Bool(value)) => *value,
-                    None => false,
-                    Some(_) => return Err(Refused::NotANumber { field: "add" }),
-                },
+                add: flag("add")?,
+                strict: flag("strict")?,
             },
             other => return Err(Refused::Unknown(other.to_owned())),
         })

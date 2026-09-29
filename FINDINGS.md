@@ -3743,3 +3743,23 @@ console-layout default that is now no default.
 **Worth generalising.** When something records where it came from, believe
 the record over a comparison with what it might have come from.
 
+## The conflict guard stopped a person doing what they meant
+
+A walk refused any input another control already held, in the run or
+stored, and named the holder while the step waited for something else. It
+was there for a stray capture: a press that bounced, a trigger read twice.
+9112fb7 stopped those at the source, an axis answering only by leaving rest,
+and what the guard still stopped was a choice -- one button for A and Start
+on a pad with few buttons, one trigger for Z and R -- with no way past it
+from the sofa.
+
+The guard is a warning now. The input is taken for the current control too,
+`conflict` on the next step's `mapping` names the other holder, and the
+clone presses both from it, which the 360 translator already did for any
+code bound twice. A claim holds a list of controls rather than one, so a
+third control on the same input is still told. `strict` on `map` and `bind`
+keeps the refusal for a front-end that wants it.
+
+**Worth generalising.** A guard against accidents becomes a wall once the
+accident is caught earlier. Turn it into a warning, or somebody who means it
+cannot finish.
