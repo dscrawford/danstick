@@ -209,18 +209,13 @@ impl Profile {
         }
     }
 
-    /// Drop a universal that is only a copy of a console's walk, as seeding once made.
+    /// Drop a universal walked as a console's layout: before `seeding` was
+    /// written, the only way one came to be was a copy of that console's walk.
     fn unseed_console_copy(&mut self) {
-        let Some(universal) = self.mappings.get(scope::UNIVERSAL) else {
-            return;
-        };
-        // By what it binds: a second input added to the console since is still the copy.
-        let copied = !means_generic(universal)
-            && self.mappings.iter().any(|(key, mapping)| {
-                key != scope::UNIVERSAL
-                    && mapping.layout == universal.layout
-                    && mapping.buttons == universal.buttons
-            });
+        let copied = self
+            .mappings
+            .get(scope::UNIVERSAL)
+            .is_some_and(|universal| !means_generic(universal));
         if copied {
             self.mappings.remove(scope::UNIVERSAL);
         }
@@ -314,7 +309,13 @@ impl Profile {
                 "layout": object.get("layout").cloned().unwrap_or(Value::Null),
             }));
             if !legacy.buttons.is_empty() || !legacy.layout.is_empty() {
-                mappings.insert(scope::UNIVERSAL.to_owned(), legacy);
+                // A walk from before scopes done as a console's layout was that console's.
+                let key = if means_generic(&legacy) {
+                    scope::UNIVERSAL.to_owned()
+                } else {
+                    scope::console(&legacy.layout)
+                };
+                mappings.entry(key).or_insert(legacy);
             }
         }
 
@@ -641,37 +642,60 @@ mod tests {
     }
 
     #[test]
-    fn an_old_seeded_default_is_dropped_though_its_console_gained_an_input_since() {
-        let mut gamecube = walked("gamecube", "leftshoulder", 2);
+    fn an_old_seeded_default_is_dropped_whatever_its_console_binds_now() {
+        // The GameCube walk was redone with four more controls; the copy
+        // made from the first walk matches nothing and is still a copy.
         let mut seeded = Profile::default();
-        seeded
-            .mappings
-            .insert(scope::UNIVERSAL.to_owned(), gamecube.clone());
-        gamecube.add("leftshoulder", Binding::button(9));
-        seeded
-            .mappings
-            .insert("console:gamecube".to_owned(), gamecube);
+        seeded.mappings.insert(
+            scope::UNIVERSAL.to_owned(),
+            walked("gamecube", "leftshoulder", 2),
+        );
+        seeded.mappings.insert(
+            "console:gamecube".to_owned(),
+            walked("gamecube", "leftstick_up", 7),
+        );
         let mut old = seeded.to_value();
         old.as_object_mut().map(|file| file.remove("seeding"));
         let (read, _) = Profile::from_value(&old);
         assert!(!read.mappings.contains_key(scope::UNIVERSAL), "{read:?}");
+        assert!(read.mappings.contains_key("console:gamecube"));
+        // Nor does an old default walked as a console need any console scope at all.
+        let mut alone = Profile::default();
+        alone.mappings.insert(
+            scope::UNIVERSAL.to_owned(),
+            walked("n64", "leftshoulder", 2),
+        );
+        let mut old = alone.to_value();
+        old.as_object_mut().map(|file| file.remove("seeding"));
+        assert!(Profile::from_value(&old).0.mappings.is_empty());
+        // A generic one from the same era is somebody's own walk.
+        let mut generic = Profile::default();
+        generic.mappings.insert(
+            scope::UNIVERSAL.to_owned(),
+            walked("generic", "leftshoulder", 2),
+        );
+        let mut old = generic.to_value();
+        old.as_object_mut().map(|file| file.remove("seeding"));
+        assert_eq!(
+            Profile::from_value(&old).0.buttons()["leftshoulder"],
+            Binding::button(2)
+        );
     }
 
     #[test]
-    fn a_default_from_before_scopes_is_dropped_only_when_a_scope_repeats_it() {
+    fn a_default_from_before_scopes_is_kept_only_as_a_generic_walk() {
         let leftshoulder = serde_json::json!({"leftshoulder": {"kind": "button", "index": 2}});
-        let repeated = serde_json::json!({
-            "buttons": leftshoulder,
-            "layout": "gamecube",
-            "mappings": {"console:gamecube": {"buttons": leftshoulder, "layout": "gamecube"}},
-        });
-        let (profile, _) = Profile::from_value(&repeated);
+        let console = serde_json::json!({"buttons": leftshoulder, "layout": "gamecube"});
+        let (profile, _) = Profile::from_value(&console);
         assert!(
             !profile.mappings.contains_key(scope::UNIVERSAL),
             "{profile:?}"
         );
-        let alone = serde_json::json!({"buttons": leftshoulder, "layout": "gamecube"});
-        let (profile, _) = Profile::from_value(&alone);
+        let generic = serde_json::json!({"buttons": leftshoulder, "layout": "generic"});
+        let (profile, _) = Profile::from_value(&generic);
+        assert_eq!(profile.buttons()["leftshoulder"], Binding::button(2));
+        let unsaid = serde_json::json!({"buttons": leftshoulder});
+        let (profile, _) = Profile::from_value(&unsaid);
         assert_eq!(profile.buttons()["leftshoulder"], Binding::button(2));
     }
 
@@ -769,8 +793,12 @@ mod tests {
             "buttons": {"a": {"kind": "button", "index": 1}},
         });
         let (profile, _) = Profile::from_value(&raw);
-        assert_eq!(profile.layout(), "n64");
-        assert_eq!(profile.buttons()["a"], Binding::button(1));
+        // Walked as an N64 pad before there were scopes: it is the N64's walk.
+        assert_eq!(profile.layout(), "");
+        assert!(profile.buttons().is_empty());
+        let (scope, mapping) = profile.resolve("n64", "");
+        assert_eq!(scope, "console:n64");
+        assert_eq!(mapping.buttons["a"], Binding::button(1));
         assert_eq!(profile.resolve("", "").0, scope::UNIVERSAL);
     }
 

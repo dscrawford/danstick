@@ -143,18 +143,11 @@
    "has_bindings": true,
    "json": {
     "axes": {},
-    "buttons": {
-     "a": {
-      "index": 1,
-      "kind": "button",
-      "ra_index": null,
-      "value": 0
-     }
-    },
+    "buttons": {},
     "icon": "",
-    "layout": "n64",
+    "layout": "",
     "mappings": {
-     "": {
+     "console:n64": {
       "buttons": {
        "a": {
         "index": 1,
@@ -171,10 +164,10 @@
     "seeding": "generic",
     "signature": "s"
    },
-   "layout": "n64",
+   "layout": "",
    "resolved": {
-    "n64|": "",
-    "n64|n64/mario": "",
+    "n64|": "console:n64",
+    "n64|n64/mario": "console:n64",
     "snes|": "",
     "|": "",
     "|n64/mario": ""
@@ -262,38 +255,18 @@
    "signature": "s"
   },
   "out": {
-   "has_bindings": true,
+   "has_bindings": false,
    "json": {
     "axes": {},
-    "buttons": {
-     "b": {
-      "index": 1,
-      "kind": "button",
-      "ra_index": null,
-      "value": 0
-     }
-    },
+    "buttons": {},
     "icon": "",
-    "layout": "n64",
-    "mappings": {
-     "": {
-      "buttons": {
-       "b": {
-        "index": 1,
-        "kind": "button",
-        "ra_index": null,
-        "value": 0
-       }
-      },
-      "layout": "n64",
-      "name": ""
-     }
-    },
+    "layout": "",
+    "mappings": {},
     "name": "",
     "seeding": "generic",
     "signature": "s"
    },
-   "layout": "n64",
+   "layout": "",
    "resolved": {
     "n64|": "",
     "n64|n64/mario": "",
@@ -397,29 +370,10 @@
    "has_bindings": true,
    "json": {
     "axes": {},
-    "buttons": {
-     "a": {
-      "index": 1,
-      "kind": "button",
-      "ra_index": null,
-      "value": 0
-     }
-    },
+    "buttons": {},
     "icon": "",
-    "layout": "gamecube",
+    "layout": "",
     "mappings": {
-     "": {
-      "buttons": {
-       "a": {
-        "index": 1,
-        "kind": "button",
-        "ra_index": null,
-        "value": 0
-       }
-      },
-      "layout": "gamecube",
-      "name": ""
-     },
      "console:n64": {
       "buttons": {
        "b": {
@@ -449,7 +403,7 @@
     "seeding": "generic",
     "signature": "s"
    },
-   "layout": "gamecube",
+   "layout": "",
    "resolved": {
     "n64|": "console:n64",
     "n64|n64/mario": "game:n64/mario",
@@ -481,32 +435,13 @@
    "signature": "s"
   },
   "out": {
-   "has_bindings": true,
+   "has_bindings": false,
    "json": {
     "axes": {},
-    "buttons": {
-     "a": {
-      "index": 1,
-      "kind": "button",
-      "ra_index": null,
-      "value": 0
-     }
-    },
+    "buttons": {},
     "icon": "",
-    "layout": "gamecube",
+    "layout": "",
     "mappings": {
-     "": {
-      "buttons": {
-       "a": {
-        "index": 1,
-        "kind": "button",
-        "ra_index": null,
-        "value": 0
-       }
-      },
-      "layout": "gamecube",
-      "name": ""
-     },
      "console:n64": {
       "buttons": {},
       "layout": "n64",
@@ -517,7 +452,7 @@
     "seeding": "generic",
     "signature": "s"
    },
-   "layout": "gamecube",
+   "layout": "",
    "resolved": {
     "n64|": "",
     "n64|n64/mario": "",

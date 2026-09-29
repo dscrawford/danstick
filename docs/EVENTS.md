@@ -421,8 +421,11 @@ threshold without meaning to.
 becomes the pad's default (`""`) whatever scope it was filed under; a walk of a
 console's layout never does, because a console's L can be the pad's trigger.
 With no default, a console nobody walked falls through to the pad's own
-mapping (SDL's, or the guess). A default that was only ever a copy of a
-console's walk, as danstick once made, is dropped when the profile is read.
+mapping (SDL's, or the guess). A default walked as a console's layout in a
+profile from before `"seeding": "generic"` was written is dropped when the
+profile is read, whatever it binds: danstick only ever made one as a copy of
+that console's walk. A profile from before scopes whose one walk was a
+console's is filed under that console.
 
 ## Mapping, choosing a layout, and calibrating without a session
 

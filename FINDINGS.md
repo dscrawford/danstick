@@ -3723,3 +3723,23 @@ only pushed to its stop.
 **Worth generalising.** A copy made for convenience carries the meaning of
 where it came from. Seed only from something that means the same thing.
 
+## The repair of a copied default missed the copy that mattered
+
+9112fb7 dropped an old default only when it bound exactly what some console
+scope bound. On the desktop the Xbox pad's GameCube walk had been redone
+since with the left stick added, so the copy from the first walk matched
+nothing and stayed; the Steam Controller's would have gone only if sixteen
+bindings equalled the scope's to the last value. DK64's clone was built from
+that copy: no Back, no left trigger.
+
+A default that says it was walked as a GameCube, N64 or Switch layout says
+by its own word it was a copy: before `seeding` was written, nothing else
+made one. So a profile without the marker loses any default whose layout is
+not the generic one, whatever it binds. The one walk a profile from before
+scopes had, done as a console's layout, is filed under that console instead
+of being thrown away. Four frozen corpus answers moved with this, each a
+console-layout default that is now no default.
+
+**Worth generalising.** When something records where it came from, believe
+the record over a comparison with what it might have come from.
+
