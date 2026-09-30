@@ -917,8 +917,55 @@ fn the_generic_control_set_is_the_plain_retropad() {
             Control::RightShoulder,
             Control::LeftTrigger,
             Control::RightTrigger,
+            Control::LeftStickUp,
+            Control::LeftStickDown,
+            Control::LeftStickLeft,
+            Control::LeftStickRight,
+            Control::RightStickUp,
+            Control::RightStickDown,
+            Control::RightStickLeft,
+            Control::RightStickRight,
         ]
     );
+}
+
+#[test]
+fn the_generic_pads_stick_halves_sit_on_its_stick_circles() {
+    let generic = layout::get("generic");
+    let circles: Vec<(f64, f64, f64)> = generic
+        .shapes
+        .iter()
+        .filter(|shape| shape.kind == "circle")
+        .map(|shape| (shape.points[0], shape.points[1], shape.radius))
+        .collect();
+    let sticks: Vec<_> = generic
+        .controls
+        .iter()
+        .filter(|c| c.kind == "stick")
+        .collect();
+    assert_eq!(sticks.len(), 8);
+    for (control, side) in sticks.iter().zip([
+        "Left", "Left", "Left", "Left", "Right", "Right", "Right", "Right",
+    ]) {
+        assert!(
+            control.label.starts_with(&format!("{side} stick ")),
+            "{}",
+            control.label
+        );
+        let (x, y, radius) = if side == "Left" {
+            circles[0]
+        } else {
+            circles[1]
+        };
+        let off = ((control.x - x).powi(2) + (control.y - y).powi(2)).sqrt();
+        assert!(
+            off + control.radius <= radius,
+            "{} is off its circle at ({}, {})",
+            control.canonical,
+            control.x,
+            control.y
+        );
+    }
 }
 
 #[test]
@@ -1048,7 +1095,13 @@ fn a_gamecube_pad_has_a_c_stick_a_z_button_and_no_select() {
 
 #[test]
 fn a_ps2_pad_is_the_plain_retropad_with_its_own_words() {
-    assert_eq!(layout::get("ps2").order(), layout::get("generic").order());
+    let generic = layout::get("generic").order();
+    let ps2 = layout::get("ps2").order();
+    assert_eq!(
+        ps2,
+        generic[..ps2.len()],
+        "the generic pad's buttons, before its sticks"
+    );
     let labels: Vec<&str> = layout::get("ps2")
         .controls
         .iter()
@@ -1060,26 +1113,10 @@ fn a_ps2_pad_is_the_plain_retropad_with_its_own_words() {
 
 #[test]
 fn a_switch_pro_pad_is_the_plain_retropad_with_its_own_words_and_two_sticks() {
-    let order = layout::get("switch").order();
-    let generic = layout::get("generic").order();
     assert_eq!(
-        order[..generic.len()],
-        generic,
-        "everything the generic pad asks for, in the same order"
-    );
-    assert_eq!(
-        &order[generic.len()..],
-        [
-            Control::LeftStickUp,
-            Control::LeftStickDown,
-            Control::LeftStickLeft,
-            Control::LeftStickRight,
-            Control::RightStickUp,
-            Control::RightStickDown,
-            Control::RightStickLeft,
-            Control::RightStickRight,
-        ],
-        "a Pro controller has two sticks and the generic pad lists neither"
+        layout::get("switch").order(),
+        layout::get("generic").order(),
+        "everything the generic pad asks for, sticks included, in the same order"
     );
     let labels: Vec<&str> = layout::get("switch")
         .controls
@@ -1114,14 +1151,15 @@ fn a_genesis_pad_is_six_buttons_in_two_rows_with_mode_for_select() {
 }
 
 #[test]
-fn the_right_stick_halves_are_a_c_cluster_on_two_pads_and_a_stick_on_two_more() {
+fn the_right_stick_halves_are_a_c_cluster_on_two_pads_and_a_stick_on_three_more() {
     let with_right: Vec<&str> = shipped_ids()
         .into_iter()
         .filter(|id| layout::get(id).order().contains(&Control::RightStickUp))
         .collect();
-    assert_eq!(with_right, ["n64", "gamecube", "switch", "wiiu"]);
+    assert_eq!(with_right, ["generic", "n64", "gamecube", "switch", "wiiu"]);
     // Which of the two it is, is in the label and nowhere else.
     for (id, word) in [
+        ("generic", "Right stick up"),
         ("n64", "C-up"),
         ("gamecube", "C-stick up"),
         ("switch", "Right stick up"),
@@ -1142,7 +1180,7 @@ fn every_pad_with_an_analog_stick_asks_about_all_four_of_its_halves() {
         .into_iter()
         .filter(|id| layout::get(id).order().contains(&Control::LeftStickUp))
         .collect();
-    assert_eq!(with_left, ["n64", "gamecube", "switch", "wiiu"]);
+    assert_eq!(with_left, ["generic", "n64", "gamecube", "switch", "wiiu"]);
     for id in &with_left {
         let order = layout::get(id).order();
         for half in [

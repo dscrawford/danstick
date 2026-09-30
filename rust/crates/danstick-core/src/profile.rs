@@ -597,6 +597,29 @@ mod tests {
     }
 
     #[test]
+    fn a_generic_walk_with_both_sticks_still_seeds_the_default_and_keeps_them() {
+        let mut walk = walked("generic", "a", 0);
+        for (control, index, value) in [
+            ("leftstick_up", 1, -1),
+            ("leftstick_down", 1, 1),
+            ("rightstick_left", 3, -1),
+            ("rightstick_right", 3, 1),
+        ] {
+            walk.buttons
+                .insert(control.to_owned(), Binding::axis(index, value));
+        }
+        let mut profile = Profile::default();
+        profile.record("console:snes", walk.clone());
+        let (read, _) = Profile::from_value(&profile.to_value());
+        assert_eq!(read.resolve("n64", "").0, scope::UNIVERSAL);
+        assert_eq!(
+            read.buttons(),
+            walk.buttons,
+            "the sticks did not survive the file"
+        );
+    }
+
+    #[test]
     fn a_consoles_walk_is_that_consoles_and_never_the_default() {
         let mut profile = Profile::default();
         profile.record("console:gamecube", walked("gamecube", "leftshoulder", 2));

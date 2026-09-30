@@ -2184,6 +2184,140 @@ fn generic_run() -> MappingRun {
 
 const ABS_Z: u16 = 0x02;
 
+const STICK_HALVES: [Control; 8] = [
+    Control::LeftStickUp,
+    Control::LeftStickDown,
+    Control::LeftStickLeft,
+    Control::LeftStickRight,
+    Control::RightStickUp,
+    Control::RightStickDown,
+    Control::RightStickLeft,
+    Control::RightStickRight,
+];
+
+fn two_stick_generic_run() -> MappingRun {
+    MappingRun::new(
+        1,
+        layout::get("generic"),
+        joystick_keys(),
+        String::new(),
+        axes(&[
+            (ABS_X, stick()),
+            (ABS_Y, stick()),
+            (ABS_Z, trigger()),
+            (ABS_RX, stick()),
+            (ABS_RY, stick()),
+        ]),
+        BTreeSet::new(),
+    )
+}
+
+/// Push each stick direction to its stop and back, one prompt at a time.
+fn push_sticks(
+    run: &mut MappingRun,
+    pushes: &[(u16, i32)],
+    mut clock: f64,
+) -> Vec<(Control, Binding)> {
+    let mut bound = Vec::new();
+    for &(code, value) in pushes {
+        bound.push(recorded(&run.feed(Event::abs(code, value), clock)));
+        run.feed(Event::abs(code, 0), clock + TAP);
+        clock += AFTER_GAP;
+    }
+    bound
+}
+
+#[test]
+fn a_generic_walk_asks_every_button_before_either_stick() {
+    let order = layout::get("generic").order();
+    let first_stick = order.len() - STICK_HALVES.len();
+    assert_eq!(order[first_stick..], STICK_HALVES, "the sticks come last");
+    assert!(
+        order[..first_stick]
+            .iter()
+            .all(|c| !STICK_HALVES.contains(c)),
+        "a stick among the buttons: {order:?}"
+    );
+}
+
+#[test]
+fn a_generic_capture_ends_with_both_sticks_whole_on_their_axes() {
+    let mut run = two_stick_generic_run();
+    let clock = skip_to(&mut run, position_of("generic", Control::LeftStickUp));
+    let pushes = [
+        (ABS_Y, -100),
+        (ABS_Y, 100),
+        (ABS_X, -100),
+        (ABS_X, 100),
+        (ABS_RY, -100),
+        (ABS_RY, 100),
+        (ABS_RX, -100),
+        (ABS_RX, 100),
+    ];
+
+    let bound = push_sticks(&mut run, &pushes, clock);
+
+    assert_eq!(
+        bound,
+        vec![
+            (Control::LeftStickUp, Binding::axis(1, -1)),
+            (Control::LeftStickDown, Binding::axis(1, 1)),
+            (Control::LeftStickLeft, Binding::axis(0, -1)),
+            (Control::LeftStickRight, Binding::axis(0, 1)),
+            (Control::RightStickUp, Binding::axis(4, -1)),
+            (Control::RightStickDown, Binding::axis(4, 1)),
+            (Control::RightStickLeft, Binding::axis(3, -1)),
+            (Control::RightStickRight, Binding::axis(3, 1)),
+        ]
+    );
+    assert_eq!(
+        run.current(),
+        None,
+        "the right stick's last half ends the walk"
+    );
+    for (control, binding) in &bound {
+        assert_eq!(
+            run.bindings().get(control),
+            Some(binding),
+            "{control} was not kept"
+        );
+    }
+}
+
+#[test]
+fn a_trigger_captured_on_the_left_stick_leaves_the_stick_still_walkable() {
+    let mut run = generic_run();
+    let mut clock = skip_to(&mut run, position_of("generic", Control::LeftTrigger));
+    let trigger = recorded(&run.feed(Event::abs(ABS_Y, 98), clock));
+    assert_eq!(trigger, (Control::LeftTrigger, Binding::axis(1, 1)));
+    run.feed(Event::abs(ABS_Y, 0), clock + TAP);
+    clock += AFTER_GAP;
+    let target = position_of("generic", Control::LeftStickUp);
+    while run.index() < target {
+        hold(&mut run, SKIP_BUTTON, clock);
+        clock += SKIP_HOLD_SECONDS + 0.01 + AFTER_GAP;
+    }
+
+    let bound = push_sticks(&mut run, &[(ABS_Y, -100), (ABS_Y, 100)], clock);
+
+    assert_eq!(
+        bound,
+        vec![
+            (Control::LeftStickUp, Binding::axis(1, -1)),
+            (Control::LeftStickDown, Binding::axis(1, 1)),
+        ]
+    );
+    assert_eq!(
+        run.conflict(),
+        Some(Control::LeftTrigger),
+        "the share is said"
+    );
+    assert_eq!(
+        run.bindings().get(&Control::LeftTrigger),
+        Some(&Binding::axis(1, 1))
+    );
+}
+
 #[test]
 fn a_stick_nudged_while_a_shoulder_is_asked_for_is_not_that_shoulder() {
     let mut run = generic_run();

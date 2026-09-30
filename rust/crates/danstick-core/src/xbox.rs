@@ -700,6 +700,80 @@ mod tests {
         );
     }
 
+    /// Both sticks as a generic walk captures them: each direction a half of one axis.
+    fn walked_sticks() -> BTreeMap<Control, Binding> {
+        [
+            (Control::LeftStickUp, Binding::axis(1, -1)),
+            (Control::LeftStickDown, Binding::axis(1, 1)),
+            (Control::LeftStickLeft, Binding::axis(0, -1)),
+            (Control::LeftStickRight, Binding::axis(0, 1)),
+            (Control::RightStickUp, Binding::axis(4, -1)),
+            (Control::RightStickDown, Binding::axis(4, 1)),
+            (Control::RightStickLeft, Binding::axis(3, -1)),
+            (Control::RightStickRight, Binding::axis(3, 1)),
+        ]
+        .into_iter()
+        .collect()
+    }
+
+    #[test]
+    fn a_stick_walked_in_halves_keeps_its_analogue_range_on_the_clone() {
+        let spans: BTreeMap<u16, AxisSpan> = [ABS_X, ABS_Y, ABS_Z, ABS_RX, ABS_RY]
+            .into_iter()
+            .map(|code| (code, if code == ABS_Z { trigger() } else { stick() }))
+            .collect();
+        let mut t = Translator::new(&[], &spans, &walked_sticks(), &BTreeMap::new());
+        for code in [ABS_X, ABS_Y, ABS_RX, ABS_RY] {
+            let part = t.translate(EV_ABS, code, 192);
+            assert_eq!(part.len(), 1, "{code:#x}: {part:?}");
+            assert_eq!(part[0].code, code, "{code:#x} landed elsewhere");
+            assert!(
+                part[0].value > STICK_MAX / 4 && part[0].value < STICK_MAX * 3 / 4,
+                "{code:#x} part-way read {} rather than part-way",
+                part[0].value
+            );
+            let back = t.translate(EV_ABS, code, 64);
+            assert!(back[0].value < -STICK_MAX / 4, "{code:#x}: {back:?}");
+            assert_eq!(
+                t.translate(EV_ABS, code, 255)[0].value,
+                STICK_MAX,
+                "{code:#x}"
+            );
+            assert_eq!(
+                t.translate(EV_ABS, code, 0)[0].value,
+                -STICK_MAX,
+                "{code:#x}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_trigger_sharing_the_left_sticks_axis_leaves_the_walked_stick_whole() {
+        let spans: BTreeMap<u16, AxisSpan> =
+            [(ABS_X, stick()), (ABS_Y, stick())].into_iter().collect();
+        let mut bindings = walked_sticks();
+        bindings.insert(Control::LeftTrigger, Binding::axis(1, 1));
+        let mut t = Translator::new(&[], &spans, &bindings, &BTreeMap::new());
+        let up = t.translate(EV_ABS, ABS_Y, 0);
+        assert!(
+            up.contains(&Out {
+                kind: EV_ABS,
+                code: ABS_Y,
+                value: -STICK_MAX
+            }),
+            "{up:?}"
+        );
+        let down = t.translate(EV_ABS, ABS_Y, 255);
+        assert!(
+            down.contains(&Out {
+                kind: EV_ABS,
+                code: ABS_Y,
+                value: STICK_MAX
+            }),
+            "{down:?}"
+        );
+    }
+
     #[test]
     fn a_stick_nobody_captured_still_rides_across_untouched() {
         let keys = [0x120];

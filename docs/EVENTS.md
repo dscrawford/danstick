@@ -433,6 +433,13 @@ profile is read, whatever it binds: danstick only ever made one as a copy of
 that console's walk. A profile from before scopes whose one walk was a
 console's is filed under that console.
 
+**The generic walk ends with both sticks.** After the buttons it asks the eight
+stick halves, `leftstick_up` to `rightstick_right`, each a push to the stop. A
+stick walked as the two halves of one axis keeps its analogue range on the
+clone and in SDL. A stick skipped is left to the pad's own codes: the clone
+carries the left stick across but not the right, since an adapter's `ABS_RX`
+can be a trigger.
+
 ## Mapping, choosing a layout, and calibrating without a session
 
 `map`, `choose_layout`, `choose_scope`, `map_for_game` and `calibrate` are legal

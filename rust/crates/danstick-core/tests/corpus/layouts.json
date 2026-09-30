@@ -128,6 +128,78 @@
      "retroarch": "",
      "x": 0.66,
      "y": 0.12
+    },
+    {
+     "canonical": "leftstick_up",
+     "kind": "stick",
+     "label": "Left stick up",
+     "radius": 0.032,
+     "retroarch": "",
+     "x": 0.28,
+     "y": 0.63
+    },
+    {
+     "canonical": "leftstick_down",
+     "kind": "stick",
+     "label": "Left stick down",
+     "radius": 0.032,
+     "retroarch": "",
+     "x": 0.28,
+     "y": 0.77
+    },
+    {
+     "canonical": "leftstick_left",
+     "kind": "stick",
+     "label": "Left stick left",
+     "radius": 0.032,
+     "retroarch": "",
+     "x": 0.21,
+     "y": 0.7
+    },
+    {
+     "canonical": "leftstick_right",
+     "kind": "stick",
+     "label": "Left stick right",
+     "radius": 0.032,
+     "retroarch": "",
+     "x": 0.35,
+     "y": 0.7
+    },
+    {
+     "canonical": "rightstick_up",
+     "kind": "stick",
+     "label": "Right stick up",
+     "radius": 0.032,
+     "retroarch": "",
+     "x": 0.72,
+     "y": 0.63
+    },
+    {
+     "canonical": "rightstick_down",
+     "kind": "stick",
+     "label": "Right stick down",
+     "radius": 0.032,
+     "retroarch": "",
+     "x": 0.72,
+     "y": 0.77
+    },
+    {
+     "canonical": "rightstick_left",
+     "kind": "stick",
+     "label": "Right stick left",
+     "radius": 0.032,
+     "retroarch": "",
+     "x": 0.65,
+     "y": 0.7
+    },
+    {
+     "canonical": "rightstick_right",
+     "kind": "stick",
+     "label": "Right stick right",
+     "radius": 0.032,
+     "retroarch": "",
+     "x": 0.79,
+     "y": 0.7
     }
    ],
    "id": "generic",

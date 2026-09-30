@@ -438,6 +438,26 @@ mod tests {
     }
 
     #[test]
+    fn a_stick_walked_on_the_axis_a_trigger_took_is_written_in_halves() {
+        let codes = [0x00_u16, 0x01, 0x03, 0x04];
+        let bindings: BTreeMap<Control, Binding> = [
+            (Control::LeftTrigger, Binding::axis(1, 1)),
+            (Control::LeftStickUp, Binding::axis(1, -1)),
+            (Control::LeftStickDown, Binding::axis(1, 1)),
+        ]
+        .into_iter()
+        .collect();
+        let sticks = stick_fields(&codes, &bindings, None);
+        let line = mapping_line(&"0".repeat(32), "pad", &bindings, "Linux", Some(&sticks));
+        for field in ["-lefty:-a1", "+lefty:+a1", "lefttrigger:+a1", "leftx:a0"] {
+            assert!(
+                line.contains(&format!(",{field},")),
+                "{field} missing from {line}"
+            );
+        }
+    }
+
+    #[test]
     fn an_n64_c_cluster_does_not_also_claim_the_whole_right_stick() {
         let codes = [0x00_u16, 0x01, 0x03, 0x04];
         let bindings: BTreeMap<Control, Binding> = [

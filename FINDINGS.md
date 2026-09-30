@@ -3785,3 +3785,20 @@ land. The consumers' files are worked out for the same scope.
 **Worth generalising.** A resolution order is only as good as what is passed
 to it. When every caller passes the empty case, the order is decoration.
 
+## A generic walk could not bind a stick
+
+A Switch Pro pad walked over Donkey Kong 64, a PC port and so the generic
+scope, was asked fourteen controls and neither stick. The generic layout had
+none. A pad whose sticks sat on other codes, or whose trigger had been
+captured on a stick's axis (one Steam Controller walk here has `lefttrigger`
+on axis 1, its left stick's Y), left that stick dead in the game. The right
+stick was dead after any generic walk: the clone carries only the left stick
+by code, because an adapter's `ABS_RX` can be its trigger.
+
+The generic walk now ends with the eight stick halves, after the buttons. A
+stick walked in halves on one axis drives the clone and SDL across its whole
+range, as under `switch`.
+
+**Worth generalising.** The layout asked about is the only way a person can
+repair what a guess got wrong. A control the walk leaves out is one nobody
+can fix.
