@@ -124,7 +124,13 @@ not from when danstick got round to reading it. A claim just before can keep
 danstick busy for a good part of a second, and a hold that started counting
 only afterwards made the next person's `claim` late by that much. So a seat
 lands its hold's length after the button went down, whoever claimed just
-before; the same holds for a held space bar.
+before; the same holds for a held space bar. The stamp is believed only when
+it can be right: one at the epoch, in the future or more than two seconds old
+dates the press at the read that found it, and no press is dated before
+danstick began watching its pad. **A hold is never shorter than its length.**
+A Steam Controller's presses, made by danstick rather than read from the
+kernel, were stamped at the epoch and taken as two seconds old, so a first
+press was a finished hold.
 
 ### `progress`: who is filling, and where they would sit
 

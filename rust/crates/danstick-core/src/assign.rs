@@ -28,6 +28,11 @@ pub fn is_press(kind: u16, code: u16, value: i32) -> bool {
     kind == crate::capture::EV_KEY && code >= BTN_FIRST && value == 1
 }
 
+/// When a press happened: `age` before `now`, but not before its pad was `watched` nor after now.
+pub fn press_at(now: f64, age: f64, watched: f64) -> f64 {
+    (now - age).max(watched).min(now)
+}
+
 /// One pad's claim on a player slot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Assignment {
@@ -257,6 +262,48 @@ mod tests {
 
     const A: u16 = 0x130;
     const B: u16 = 0x131;
+
+    #[test]
+    fn a_press_is_dated_no_earlier_than_its_pad_was_watched_and_no_later_than_now() {
+        assert_eq!(
+            press_at(10.0, 0.3, 5.0),
+            9.7,
+            "a believed stamp dates the press"
+        );
+        assert_eq!(
+            press_at(10.0, 1.9, 9.0),
+            9.0,
+            "not before the pad was watched"
+        );
+        assert_eq!(
+            press_at(10.0, -0.5, 5.0),
+            10.0,
+            "not after the read that found it"
+        );
+        assert_eq!(
+            press_at(10.0, 0.0, 12.0),
+            10.0,
+            "a watch dated in the future is now"
+        );
+    }
+
+    #[test]
+    fn a_hold_on_a_pad_just_watched_takes_its_whole_length() {
+        let mut assigner = Assigner::default();
+        let watched = 100.0;
+        assigner.feed(0, EV_KEY, A, 1, press_at(watched, 2.0, watched));
+        assert!(
+            assigner
+                .tick(watched + HOLD_SECONDS - 0.01)
+                .claimed
+                .is_empty(),
+            "short"
+        );
+        assert_eq!(
+            assigner.tick(watched + HOLD_SECONDS + 0.01).claimed.len(),
+            1
+        );
+    }
 
     #[test]
     fn a_held_button_claims_the_first_free_slot() {

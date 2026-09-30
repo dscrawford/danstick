@@ -353,6 +353,27 @@ fn a_press_becomes_a_key_down_and_a_sync() {
 }
 
 #[test]
+fn a_press_is_dated_when_it_was_read_and_not_at_the_epoch() {
+    let mut fake = needs_pty!();
+    let mut source = triton::Source::open(fake.slave.as_path()).expect("open");
+    fake.push(REPORT_STATE, &state(BIT_A, 0, 0, 0, 0, 0, 0));
+
+    let events = fetch(&mut source).expect("a report arrived");
+    assert!(!events.is_empty());
+    for event in &events {
+        let age = danstick_input::clone::event_age(event);
+        assert!(
+            age < 0.1,
+            "{event:?} is dated {age} s ago; a hold would be that much shorter"
+        );
+        assert!(
+            event.timestamp() > std::time::UNIX_EPOCH + Duration::from_secs(1),
+            "{event:?} is stamped at the epoch"
+        );
+    }
+}
+
+#[test]
 fn an_unchanged_report_is_read_but_emits_nothing() {
     // Ok with an empty frame, *not* WouldBlock.
     let mut fake = needs_pty!();

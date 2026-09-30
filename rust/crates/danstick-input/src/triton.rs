@@ -431,7 +431,7 @@ impl Source {
             return Err(io::Error::from(io::ErrorKind::WouldBlock));
         }
         if out.len() > before {
-            out.push(InputEvent::new(EventType::SYNCHRONIZATION.0, 0, 0));
+            out.push(InputEvent::new_now(EventType::SYNCHRONIZATION.0, 0, 0));
         }
         Ok(())
     }
@@ -467,7 +467,7 @@ impl Source {
         }
         for (&code, &value) in &self.buttons {
             if value != 0 {
-                out.push(InputEvent::new(EventType::KEY.0, code, 0));
+                out.push(InputEvent::new_now(EventType::KEY.0, code, 0));
             }
         }
         self.buttons.clear();
@@ -481,21 +481,21 @@ impl Source {
             let value = i32::from(state.buttons & bit != 0);
             let previous = self.buttons.insert(key.code(), value).unwrap_or(0);
             if previous != value {
-                out.push(InputEvent::new(EventType::KEY.0, key.code(), value));
+                out.push(InputEvent::new_now(EventType::KEY.0, key.code(), value));
             }
         }
 
         let hat = hat_for(state.buttons);
         if hat != self.hat {
             if hat.0 != self.hat.0 {
-                out.push(InputEvent::new(
+                out.push(InputEvent::new_now(
                     EventType::ABSOLUTE.0,
                     AbsoluteAxisCode::ABS_HAT0X.0,
                     hat.0,
                 ));
             }
             if hat.1 != self.hat.1 {
-                out.push(InputEvent::new(
+                out.push(InputEvent::new_now(
                     EventType::ABSOLUTE.0,
                     AbsoluteAxisCode::ABS_HAT0Y.0,
                     hat.1,
@@ -515,7 +515,7 @@ impl Source {
         for (axis, reading) in readings {
             let value = reading.clamp(STICK_MIN, STICK_MAX);
             if self.axes.insert(axis.0, value) != Some(value) {
-                out.push(InputEvent::new(EventType::ABSOLUTE.0, axis.0, value));
+                out.push(InputEvent::new_now(EventType::ABSOLUTE.0, axis.0, value));
             }
         }
     }

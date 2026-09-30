@@ -967,7 +967,7 @@ impl Server {
         for source in self.seating.sources() {
             let _ = self.reactor.unwatch(source.as_fd());
         }
-        self.seating.refresh(Vec::new());
+        self.seating.refresh(Vec::new(), now());
         let session = match Session::open(pads) {
             Ok(session) => session,
             Err(error) => {
@@ -2173,7 +2173,7 @@ impl Server {
                 for source in self.seating.sources() {
                     let _ = self.reactor.unwatch(source.as_fd());
                 }
-                self.seating.refresh(Vec::new());
+                self.seating.refresh(Vec::new(), now());
             }
             return;
         }
@@ -2208,7 +2208,7 @@ impl Server {
         for source in self.seating.sources() {
             let _ = self.reactor.unwatch(source.as_fd());
         }
-        self.seating.refresh(wanted);
+        self.seating.refresh(wanted, now());
         for (index, source) in self.seating.sources().iter().enumerate() {
             if let Err(error) = self.reactor.watch(source.as_fd(), Watched::Seating(index)) {
                 warn!("seating: could not watch pad {index}: {error}");

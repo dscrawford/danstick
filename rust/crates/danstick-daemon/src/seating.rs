@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use danstick_core::assign::{is_press, Assigner, Gate, Tick};
+use danstick_core::assign::{is_press, press_at, Assigner, Gate, Tick};
 use danstick_core::echo::{Echoes, Origin, Verdict};
 use danstick_input::clone::{self, Source};
 use danstick_input::pad::{self, Pad};
@@ -14,6 +14,8 @@ pub struct Seating {
     open: bool,
     pads: Vec<Pad>,
     sources: Vec<Source>,
+    /// When each source began being watched; no press is dated before it.
+    watched: Vec<f64>,
     /// The pads last asked for, opened or not.
     wanted: Vec<PathBuf>,
     assigner: Assigner,
@@ -82,6 +84,7 @@ impl Seating {
         self.open = false;
         self.pads.clear();
         self.sources.clear();
+        self.watched.clear();
         self.wanted.clear();
         self.assigner.reset();
         self.echoes.clear();
@@ -113,7 +116,7 @@ impl Seating {
                 .any(|(current, next)| *current != next.path)
     }
 
-    pub fn refresh(&mut self, wanted: Vec<Pad>) -> bool {
+    pub fn refresh(&mut self, wanted: Vec<Pad>, now: f64) -> bool {
         if !self.would_change(&wanted) {
             return false;
         }
@@ -121,8 +124,9 @@ impl Seating {
         // Pads as watched before the rebuild, so holds can follow to their new index.
         let before: Vec<Identity> = self.pads.iter().map(identity).collect();
         // A pad that stays watched keeps its source, so queued input is not lost.
-        let mut kept: Vec<Option<Source>> = std::mem::take(&mut self.sources)
+        let mut kept: Vec<Option<(Source, f64)>> = std::mem::take(&mut self.sources)
             .into_iter()
+            .zip(std::mem::take(&mut self.watched))
             .map(Some)
             .collect();
         self.pads.clear();
@@ -131,15 +135,15 @@ impl Seating {
                 .iter()
                 .position(|was| *was == identity(&pad))
                 .and_then(|at| kept[at].take());
-            let source = match reused {
-                Some(source) => source,
+            let (source, since) = match reused {
+                Some(kept) => kept,
                 None => match clone::open_source(&pad, false) {
                     Ok(source) => {
                         // Ask SDL about it now, off the loop, so the answer is ready by claim time.
                         if let Some(guid) = source.physical_guid() {
                             danstick_input::sdlprobe::shared().prefetch(&guid);
                         }
-                        source
+                        (source, now)
                     }
                     Err(error) => {
                         warn!("seating: {} cannot be watched ({error})", pad.name);
@@ -149,6 +153,7 @@ impl Seating {
             };
             self.pads.push(pad);
             self.sources.push(source);
+            self.watched.push(since);
         }
         // Whatever is left in `kept` has stopped being watched and closes here.
         let after: Vec<Identity> = self.pads.iter().map(identity).collect();
@@ -177,9 +182,10 @@ impl Seating {
             return;
         }
         let steam = self.pads.get(index).is_some_and(pad::is_steam_virtual);
+        let watched = self.watched.get(index).copied().unwrap_or(now);
         for event in &self.buffer {
             // When it happened, not when this got read: a claim can hold the loop a while.
-            let at = now - clone::event_age(event);
+            let at = press_at(now, clone::event_age(event), watched);
             let (kind, code, value) = (event.event_type().0, event.code(), event.value());
             if is_press(kind, code, value) {
                 self.echoes.press(Origin::Watched { pad: index, steam }, at);
@@ -328,7 +334,7 @@ mod tests {
             seating.would_change(&present),
             "an empty seating must open the present pads"
         );
-        seating.refresh(present.to_vec());
+        seating.refresh(present.to_vec(), 0.0);
         assert!(
             !seating.would_change(&present),
             "the same set must not churn the watch list every tick"
@@ -342,7 +348,7 @@ mod tests {
             "these nodes do not exist, so none of them opened"
         );
         assert!(
-            !seating.refresh(present.to_vec()),
+            !seating.refresh(present.to_vec(), 0.0),
             "a pad that cannot be opened must not be reopened every tick"
         );
     }

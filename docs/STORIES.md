@@ -169,7 +169,11 @@ handed out in order, so the hold in flight always belongs to
 opened the screen does not claim one**: `Assigner.__enter__` calls `_drain()`,
 so only a rising edge seen *after* the session opened starts a hold, and the
 lone release of an already-held button is discarded. **A tap does not claim
-one either**: `_consume` deletes the pending hold on `value == 0`.
+one either**: `_consume` deletes the pending hold on `value == 0`. Nor can a
+stamp shorten it: a press is dated by its event's stamp only when that can be
+right, and never before its pad was watched
+(`a_press_is_dated_when_it_was_read_and_not_at_the_epoch`,
+`a_hold_on_a_pad_just_watched_takes_its_whole_length`).
 
 **What has gone wrong here before.** `assign.py`'s own docstring records it:
 an empty adapter port registered a stray press that a first-edge scheme would

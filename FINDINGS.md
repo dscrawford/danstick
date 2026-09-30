@@ -3802,3 +3802,23 @@ range, as under `switch`.
 **Worth generalising.** The layout asked about is the only way a person can
 repair what a guess got wrong. A control the walk leaves out is one nobody
 can fix.
+
+## A Steam Controller took a seat on the first press
+
+A Steam Controller sat down the moment a button went down: no 1.5 s hold, no
+bar. Seating dates a press by its event's stamp, so a hold counts from the
+press and not from a busy loop's read. The stamp is capped at two seconds,
+and past the cap the event was taken as two seconds old. A Triton source
+makes its events rather than reading them from the kernel, and a made event
+is stamped at the epoch, so every press from it was two seconds old on
+arrival: older than any hold, and a finished one at its first read. The
+Switch Pro source over hidraw was the same.
+
+Three guards now hold the invariant from three sides. Events danstick makes
+are stamped when they are made. A stamp that cannot be right, at the epoch,
+in the future or past the cap, dates the press at its read rather than two
+seconds back. And no press is dated before seating began watching its pad.
+
+**Worth generalising.** A cap is not a refusal. Clamping a value nobody
+believes to the edge of belief keeps the wrong answer and just makes it
+smaller.

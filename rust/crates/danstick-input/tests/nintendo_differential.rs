@@ -97,6 +97,27 @@ fn want(case: &Value) -> Vec<[i32; 3]> {
 }
 
 #[test]
+fn a_decoded_report_is_dated_when_it_was_read_and_not_at_the_epoch() {
+    let mut decoder = decoder!();
+    let mut got = Vec::new();
+    decoder
+        .0
+        .decode_for_test(&report(0x08, 0, 0, 2048, 2048, 2048, 2048), &mut got);
+    assert!(!got.is_empty());
+    for event in &got {
+        let age = danstick_input::clone::event_age(event);
+        assert!(
+            age < 0.1,
+            "{event:?} is dated {age} s ago; a hold would be that much shorter"
+        );
+        assert!(
+            event.timestamp() > std::time::UNIX_EPOCH + std::time::Duration::from_secs(1),
+            "{event:?} is stamped at the epoch"
+        );
+    }
+}
+
+#[test]
 fn every_recorded_report_decodes_to_the_same_events() {
     for case in corpus("switch_decode") {
         let mut decoder = decoder!();

@@ -215,7 +215,7 @@ impl Source {
             return Err(io::Error::from(io::ErrorKind::WouldBlock));
         }
         if out.len() > before {
-            out.push(InputEvent::new(EventType::SYNCHRONIZATION.0, 0, 0));
+            out.push(InputEvent::new_now(EventType::SYNCHRONIZATION.0, 0, 0));
         }
         Ok(())
     }
@@ -232,7 +232,7 @@ impl Source {
             for &(mask, key) in table {
                 let value = i32::from(byte & mask != 0);
                 if self.buttons.insert(key.code(), value).unwrap_or(0) != value {
-                    out.push(InputEvent::new(EventType::KEY.0, key.code(), value));
+                    out.push(InputEvent::new_now(EventType::KEY.0, key.code(), value));
                 }
             }
         }
@@ -240,14 +240,14 @@ impl Source {
         let hat = hat_for(state.left);
         if hat != self.hat {
             if hat.0 != self.hat.0 {
-                out.push(InputEvent::new(
+                out.push(InputEvent::new_now(
                     EventType::ABSOLUTE.0,
                     AbsoluteAxisCode::ABS_HAT0X.0,
                     hat.0,
                 ));
             }
             if hat.1 != self.hat.1 {
-                out.push(InputEvent::new(
+                out.push(InputEvent::new_now(
                     EventType::ABSOLUTE.0,
                     AbsoluteAxisCode::ABS_HAT0Y.0,
                     hat.1,
@@ -268,7 +268,7 @@ impl Source {
             };
             if changed {
                 self.axes.insert(axis.0, value);
-                out.push(InputEvent::new(EventType::ABSOLUTE.0, axis.0, value));
+                out.push(InputEvent::new_now(EventType::ABSOLUTE.0, axis.0, value));
             }
         }
     }

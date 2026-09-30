@@ -167,12 +167,17 @@ impl Identity {
 /// Past this an event's stamp is not believed: the wall clock stepped.
 const MAX_EVENT_AGE: f64 = 2.0;
 
-/// How long ago the kernel saw `event`, so a hold counts from the press and
-/// not from whenever a busy event loop got round to reading it.
+/// How long ago the kernel saw `event`, or 0 when its stamp cannot be right.
 pub fn event_age(event: &evdev::InputEvent) -> f64 {
-    std::time::SystemTime::now()
-        .duration_since(event.timestamp())
-        .map(|age| age.as_secs_f64().min(MAX_EVENT_AGE))
+    age_of(event.timestamp(), std::time::SystemTime::now())
+}
+
+/// Seconds from `stamp` to `now`; a stamp in the future or past the cap is not believed.
+pub fn age_of(stamp: std::time::SystemTime, now: std::time::SystemTime) -> f64 {
+    now.duration_since(stamp)
+        .ok()
+        .map(|age| age.as_secs_f64())
+        .filter(|age| *age <= MAX_EVENT_AGE)
         .unwrap_or(0.0)
 }
 
@@ -982,11 +987,26 @@ mod tests {
 
     #[test]
     fn an_event_is_as_old_as_its_stamp_and_a_wild_stamp_is_not_believed() {
+        use std::time::{Duration, SystemTime};
         let fresh = evdev::InputEvent::new_now(EventType::KEY.0, 0x130, 1);
         assert!(event_age(&fresh) < 0.05, "{}", event_age(&fresh));
-        // Stamped at the epoch: a clock that stepped, not a 56-year hold.
+        // Stamped at the epoch: a clock that stepped, not a 56-year hold, and not a 2 s one.
         let ancient = evdev::InputEvent::new(EventType::KEY.0, 0x130, 1);
-        assert_eq!(event_age(&ancient), MAX_EVENT_AGE);
+        assert_eq!(event_age(&ancient), 0.0);
+        let now = SystemTime::now();
+        let ago = |seconds: f64| age_of(now - Duration::from_secs_f64(seconds), now);
+        assert_eq!(ago(1.0), 1.0, "a believed stamp dates the press");
+        assert_eq!(
+            ago(MAX_EVENT_AGE),
+            MAX_EVENT_AGE,
+            "the cap itself is believed"
+        );
+        assert_eq!(ago(MAX_EVENT_AGE + 0.01), 0.0, "past the cap is not");
+        assert_eq!(
+            age_of(now + Duration::from_secs(5), now),
+            0.0,
+            "nor is the future"
+        );
     }
 
     #[test]
