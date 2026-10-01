@@ -234,6 +234,43 @@ pub fn rewrite_ares_settings(existing: &str, blocks: &BTreeMap<u32, String>) -> 
     out
 }
 
+pub fn retroarch_config_dir() -> PathBuf {
+    env_path("DANSTICK_RETROARCH_DIR").unwrap_or_else(|| config_home().join("retroarch"))
+}
+
+/// Refuses if RetroArch has never run; danstick's stale profiles are cleared so they cannot match.
+pub fn write_retroarch(
+    profiles: &BTreeMap<u32, String>,
+    pinning: &str,
+    dir: Option<&Path>,
+) -> Result<Vec<PathBuf>, WriteError> {
+    let base = or_default(dir, retroarch_config_dir);
+    std::fs::read_dir(&base).map_err(io_at(&base))?;
+    let autoconfig = base.join("autoconfig").join("udev");
+    std::fs::create_dir_all(&autoconfig).map_err(io_at(&autoconfig))?;
+    for entry in std::fs::read_dir(&autoconfig)
+        .into_iter()
+        .flatten()
+        .flatten()
+    {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.starts_with(emit::VIRTUAL_PREFIX) && name.ends_with(".cfg") {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+    let mut written = Vec::new();
+    for (player, text) in profiles {
+        let path = autoconfig.join(format!("{}.cfg", emit::virtual_name(*player)));
+        std::fs::write(&path, text).map_err(io_at(&path))?;
+        written.push(path);
+    }
+    let path = base.join("danstick.cfg");
+    std::fs::write(&path, pinning).map_err(io_at(&path))?;
+    written.push(path);
+    Ok(written)
+}
+
 /// Refuses if ares has never run: settings.bml holds every other setting too.
 pub fn write_ares_settings(
     blocks: &BTreeMap<u32, String>,

@@ -14,31 +14,36 @@
       "canonical": "x",
       "label": "Top-left button",
       "x": 0.5,
-      "y": 0.4
+      "y": 0.4,
+      "retroarch": "input_a_btn"
     },
     {
       "canonical": "y",
       "label": "Top-middle button",
       "x": 0.61,
-      "y": 0.38
+      "y": 0.38,
+      "retroarch": "input_b_btn"
     },
     {
       "canonical": "leftshoulder",
       "label": "Top-right button",
       "x": 0.72,
-      "y": 0.4
+      "y": 0.4,
+      "retroarch": "input_x_btn"
     },
     {
       "canonical": "a",
       "label": "Bottom-left button",
       "x": 0.5,
-      "y": 0.58
+      "y": 0.58,
+      "retroarch": "input_y_btn"
     },
     {
       "canonical": "b",
       "label": "Bottom-middle button",
       "x": 0.61,
-      "y": 0.56
+      "y": 0.56,
+      "retroarch": "input_l_btn"
     },
     {
       "canonical": "rightshoulder",

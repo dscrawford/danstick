@@ -21,9 +21,10 @@ disagree, the code is right and this file is a bug.
 > reachable from a terminal as `danstick map`. What has gone with the front-end
 > is the library browser and the collection exporter -- stories S22 and S23,
 > deleted rather than rewritten, because their subject does not exist.
-> S15, S16 and S21 went the same way with RetroArch support: they promised a
-> RetroArch launch through `danstick-play`, its port reservations, and
-> `clean-config`, none of which danstick has any more.
+> S15, S16 and S21 went the same way with danstick's RetroArch launcher: they
+> promised a launch through `danstick-play`, its per-launch port indices, and
+> `clean-config`. danstick launches nothing any more; it still writes
+> RetroArch's profiles and `danstick.cfg` like any other emulator's config.
 >
 > danstick is a virtual gamepad. What draws a setup screen on top of it is
 > whatever the user points at the socket.
@@ -608,7 +609,7 @@ the length of the launch. Each seated pad's clone is then driven, at the node
 it already has, by the most specific walk stored for it: `game:<console>/<key>`,
 then `console:<id>`, then `""`
 (`a_clone_is_driven_by_the_walk_for_the_console_being_played`). The SDL line
-and the Cemu, Dolphin, ares and Ryujinx configs are written for the same
+and the Cemu, Dolphin, ares, Ryujinx and RetroArch configs are written for the same
 scope. When the leasing connection goes, what it found in play is put back
 (`scope_leases_nest_and_each_puts_back_what_it_found`,
 `a_launch_killed_outright_still_gives_back_the_scope_it_leased`).
@@ -640,7 +641,7 @@ stealing the other's inputs.
 **Keys and commands.** Two claims (S3), one confirm (S4). Each clone is
 driven from that pad's own scopes; one SDL line is written per player, keyed on
 the *physical* pad's GUID because the virtual pad mirrors its identity by
-default; Cemu, Dolphin, ares and Ryujinx bind port N to `danstick Player N`.
+default; Cemu, Dolphin, ares, Ryujinx and RetroArch bind port N to `danstick Player N`.
 
 **Preconditions.** The udev rules must cover both adapters.
 

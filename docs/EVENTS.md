@@ -692,7 +692,7 @@ emulator's config at launch rather than only the seats already taken. A seat
 leaves `reserved` when somebody claims it; the device does not change.
 
 danstick writes the reserved seats into everything it writes: the SDL
-database and `env.sh`, and Cemu, Dolphin, ares and Ryujinx.
+database and `env.sh`, and Cemu, Dolphin, ares, Ryujinx and RetroArch.
 
 **`players: 0` gives them all back**, which is how a launch ends. Reserved
 seats are also adopted by a rebuild, so restoring or accepting a session does

@@ -3981,6 +3981,9 @@ fn a_clone_is_driven_by_the_walk_for_the_console_being_played() {
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).expect("mkdir");
     write_played_profile(&root.join("devices"));
+    let retroarch = root.join("config").join("retroarch");
+    std::fs::create_dir_all(&retroarch).expect("RetroArch has run here");
+    let profile = retroarch.join("autoconfig/udev/danstick Player 1.cfg");
 
     let mut pad = TestPad::new(PLAYED);
     // A pad with a stored walk seats itself on attach; the hold below is the seat here.
@@ -4004,6 +4007,9 @@ fn a_clone_is_driven_by_the_walk_for_the_console_being_played() {
         slot_one.sees_press(&mut daemon, A, 3.0),
         "by default the first key is A"
     );
+    // A fixed slot is a 360 clone, so RetroArch reads the 360's buttons whatever the scope.
+    let as_360 = std::fs::read_to_string(&profile).expect("a RetroArch profile");
+    assert!(as_360.contains("input_b_btn = \"0\""), "{as_360}");
     pad.emit(EventType::KEY.0, FIRST_KEY, 0);
     daemon.pump(0.3);
 
@@ -4018,6 +4024,16 @@ fn a_clone_is_driven_by_the_walk_for_the_console_being_played() {
     assert!(
         slot_one.sees_press(&mut daemon, B, 3.0),
         "playing N64 the first key is B, on the node the game already reads"
+    );
+    let text = std::fs::read_to_string(&profile).expect("a RetroArch profile");
+    assert_eq!(
+        text, as_360,
+        "the clone remaps; RetroArch's profile must not"
+    );
+    let pinning = std::fs::read_to_string(retroarch.join("danstick.cfg")).expect("pinning");
+    assert!(
+        pinning.contains("input_player1_reserved_device = \"danstick Player 1\""),
+        "{pinning}"
     );
     pad.emit(EventType::KEY.0, FIRST_KEY, 0);
     daemon.pump(0.3);

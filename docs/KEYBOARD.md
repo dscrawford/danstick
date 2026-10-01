@@ -4,10 +4,9 @@
 exists. Confidence: high for all five emulators; a few file-format details
 are marked UNVERIFIED inline.*
 
-> **RetroArch support has since been removed** from danstick, which no longer
-> writes any RetroArch file. The summary, RetroArch's defaults and the prior
-> art below are kept as research, as of the report's date; sections 1 and
-> "What was built" describe the four writers that remain.
+> danstick's RetroArch launcher has since been removed; what it appended is
+> now `danstick.cfg` beside `retroarch.cfg`, which a launcher passes with
+> `--appendconfig`. `retroarch::keyboard_config` and the nul loop are in it.
 
 ## Executive summary
 
@@ -32,12 +31,13 @@ own default table, so seating a pad never silently unbinds the keyboard.
 
 | emulator | keyboard default exists? | after danstick seats player 1 |
 |---|---|---|
+| RetroArch | yes, player 1 only | **kept**: danstick nulls only `_btn`/`_axis`; the suffix-less keyboard keys stay, so keyboard and pad both drive port 1 |
 | Dolphin (GameCube) | yes, `[GCPad1]` is keyboard by design | **lost**: `[GCPad1..4]` are rewritten and unmanaged ports set to `SIDEVICE_NONE` |
 | Ryujinx | yes, Player1 keyboard | **lost**: `merge` replaces the entry sharing `player_index`; a keyboard on another player index would survive |
 | ares | none | nothing to lose; `VirtualPadN` written only for seated players |
 | Cemu | none: with no profile there is no controller at all | nothing to lose; `controller0.xml` is written for player 1 |
 
-Code: `dolphin.rs` (`replace_pad_sections`, `SIDevice`), `ryujinx.rs` (`merge`), `ares.rs` (`virtual_pad`), `cemu.rs` (`profile_filename`). Keyboard handling elsewhere: `assign.rs` `BTN_FIRST`, `isolate.rs` (keyboard and mouse kept in the sandbox).
+Code: `retroarch.rs` (nul loop), `dolphin.rs` (`replace_pad_sections`, `SIDevice`), `ryujinx.rs` (`merge`), `ares.rs` (`virtual_pad`), `cemu.rs` (`profile_filename`). Keyboard handling elsewhere: `assign.rs` `BTN_FIRST`, `isolate.rs` (keyboard and mouse kept in the sandbox).
 
 ## 2. Defaults per emulator
 
@@ -223,7 +223,8 @@ undoing it.
 ## What was built
 
 Option A, on 2026-09-21: `danstick_core::keyboard::first_free` is the rule, and
-each writer carries its table -- `dolphin::keyboard_section`, `ryujinx::keyboard_entry` (inside `merge`),
+each writer carries its table -- `retroarch::keyboard_config`,
+`dolphin::keyboard_section`, `ryujinx::keyboard_entry` (inside `merge`),
 `ares::keyboard_pad`, `cemu::keyboard_profile`. ares' key indices were
 re-read from `xlib.cpp` and differ from RetroBat's: those are Windows numbers
 (Space is 90 on Linux, not 92). Consumer-facing summary in `docs/EMULATORS.md`.

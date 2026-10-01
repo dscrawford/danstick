@@ -11,6 +11,7 @@ never opens its input settings.
 | Cemu | `controllerProfiles/controllerN.xml` | **SDL GUID** | **yes, and only via the environment** |
 | Ryujinx | `Config.json` → `input_config` | a GUID with the name CRC blanked | yes |
 | ares | `settings.bml` → `VirtualPadN` | SDL GUID, raw joystick indices | **no** |
+| RetroArch | `autoconfig/udev/danstick Player N.cfg`, and `danstick.cfg` beside `retroarch.cfg` | device name, evdev button numbers | **no** |
 
 ## The three surprises
 
@@ -21,6 +22,18 @@ device*. Those positions are the ordinal in ascending evdev code order, with
 `ABS_HAT0X`/`Y` pulled out as a hat. Measured, not assumed: a uinput device
 declaring eleven keys and six non-hat axes came back from SDL 3 as
 `axes=6 hats=1 buttons=11`.
+
+**RetroArch's udev driver reads no SDL mapping either.** It numbers a pad's
+buttons from `BTN_MISC` (0x100) up, where SDL numbers from `BTN_JOYSTICK`
+(0x120), so a capture keeps both numbers and the profile spells the binding
+RetroArch's way; a button below `BTN_MISC` it cannot see at all, and that
+control is left out of the profile. A pad with no mapping gets no profile, so
+RetroArch's own database matches the clone by its vendor and product. The
+profile is matched by name, and `danstick.cfg` pins each player to their clone
+by name too, sets their binds in `retroarch.cfg` to `nul` so the profile is the
+one RetroArch reads, seats the keyboard, and turns off `config_save_on_exit`
+so none of it is saved into `retroarch.cfg`. A launcher passes it with
+`--appendconfig`; danstick launches nothing.
 
 **Cemu reads no controller database.** It only lists devices SDL already
 recognises as gamepads, and it never loads a `gamecontrollerdb.txt`. So the
@@ -125,15 +138,17 @@ that emulator's own keys where it has them:
 | Ryujinx | the existing `WindowKeyboard` entry moved to `Player{N}`, or Ryujinx's default seeded there | the user's own if there is one, else Ryujinx's: WASD/IJKL, Z/X/C/V, E/U, Q/O |
 | ares | `VirtualPad{N}` as `0x1/0/<key index>` | danstick's layout (below) |
 | Cemu | `controller{N-1}.xml` with `<api>Keyboard</api>`, marked as danstick's | danstick's layout (below) |
+| RetroArch | `input_player{N}_*` in `danstick.cfg`, player 1's compiled-in keys cleared when a pad holds port 1 | RetroArch's own: Z/X/A/S, Q/W, Enter, right Shift, arrows |
 
 And the mouse, per emulator -- there is no common answer, because two of
-the four have no per-port pointer at all:
+the five have no per-port pointer at all:
 
 | | where the mouse goes |
 |---|---|
 | Dolphin | Wii Remote `N` on `XInput2/0/Virtual core pointer` with `IR` on the cursor -- the section Dolphin writes for remote 1 itself, moved to the seat that owns the mouse. A pad's remote points with its right stick and reads no cursor |
 | ares | `VirtualMouse{N}` on `0x2` -- its generic mouse -- axes in group 0, buttons in group 1. A port device ares maps through a virtual port (N64 Mouse, SNES Mouse) reads it, so there is no per-system table to keep. Every other port's mouse block is cleared |
 | Cemu | **nothing to bind.** `InputAPI::Type` has no mouse: Keyboard, SDLController, XInput, DirectInput, DSUClient, GameCube, Wiimote and the WGI pair, and that is all. Cemu's mouse-to-touch is window-level, in `InputManager`, not something a controller profile can carry |
+| RetroArch | `input_player{N}_mouse_index` in `danstick.cfg`: the desk's mouse (index 0) on the keyboard's seat, and index 16 -- past the end of the pointer list, the only way a cfg says none -- on every other port |
 | Ryujinx | **nothing to bind.** The touchscreen is the handheld screen, always player 1's, and not per-port. The one mouse setting, `enable_mouse`, is global and its own comment says "Independent from controllers binding" -- it hands games the mouse as an HID pointing device rather than seating it, and danstick leaves it as the user set it |
 
 danstick's layout, for the two that have none: arrows for direction -- the d-pad
@@ -236,9 +251,10 @@ daemon calls it from `danstick_daemon::publish::write_all`, and `danstick-rs
 emit` and `run` call the same function.
 
 Every write is best-effort and reported rather than propagated. ares and
-Ryujinx each keep all of their settings in one file, so danstick refuses to
-invent one for an emulator that has never run; on most machines at least one of
-the three is absent, and that has to read as an ordinary skip rather than as
+Ryujinx each keep all of their settings in one file, and RetroArch's
+directory holds its whole configuration, so danstick refuses to invent any of
+them for an emulator that has never run; on most machines at least one is
+absent, and that has to read as an ordinary skip rather than as
 the mapping files having failed.
 
 ## Writing somewhere other than the user's home
@@ -251,6 +267,7 @@ danstick emit \
   --dolphin-dir   "$STATE/config/dolphin-emu" \
   --ares-settings "$STATE/config/ares/settings.bml" \
   --ryujinx-config "$STATE/config/Ryujinx/Config.json" \
+  --retroarch-dir "$STATE/config/retroarch" \
   --env-file      "$STATE/danstick-env.sh"   < pads.json
 ```
 

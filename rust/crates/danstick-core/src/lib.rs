@@ -25,6 +25,7 @@ pub mod keyboard;
 pub mod layout;
 pub mod motion;
 pub mod profile;
+pub mod retroarch;
 pub mod ryujinx;
 pub mod scope;
 pub mod sdl;

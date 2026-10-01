@@ -115,7 +115,7 @@ fn usage() {
          serve [--fresh] [--follow PID] [--slots fixed|on-demand] [--slot-count N] [--on-leave stay|destroy] [--layout position|label] | \
          hide | ensure-daemon [--check] [--fresh] [--follow PID] | \
          emit [--keyboard N] [--cemu-dir D] [--dolphin-dir D] [--ares-settings F] \
-         [--ryujinx-config F] \
+         [--ryujinx-config F] [--retroarch-dir D] \
          [--env-file F] | \
          exec -- <program> [args...] | sdl-mapping <guid>"
     );
@@ -188,6 +188,7 @@ fn cmd_emit(args: &[String]) -> Result<()> {
         dolphin_dir: flag_value(args, &["--dolphin-dir"]).map(PathBuf::from),
         ares_settings: flag_value(args, &["--ares-settings"]).map(PathBuf::from),
         ryujinx_config: flag_value(args, &["--ryujinx-config"]).map(PathBuf::from),
+        retroarch_dir: flag_value(args, &["--retroarch-dir"]).map(PathBuf::from),
         env_file: flag_value(args, &["--env-file"]).map(PathBuf::from),
     };
     let seat =
@@ -745,6 +746,19 @@ fn publish_artefacts(vpads: &[danstick_input::VirtualPad], keyboard: Option<u32>
             keys,
             axes,
             sdl_line: line.clone(),
+            retroarch_profile: if bindings.is_empty() {
+                String::new()
+            } else {
+                emit::retroarch_profile(
+                    vpad.player,
+                    identity,
+                    &bindings,
+                    "",
+                    &mapping.layout,
+                    "",
+                    "",
+                )
+            },
         });
 
         sdl_lines.insert(vpad.player, line);

@@ -28,7 +28,7 @@ Controller assignment for Linux, as stable virtual gamepads.
 
 - Virtual pads: `/dev/input/event*`, named `danstick Player N`
 - SDL database: `~/.config/danstick/sdl_controllers.txt`
-- Emulator configs: Cemu, Dolphin, ares, Ryujinx ([docs/EMULATORS.md](docs/EMULATORS.md))
+- Emulator configs: Cemu, Dolphin, ares, Ryujinx, RetroArch ([docs/EMULATORS.md](docs/EMULATORS.md))
 - Control socket: `$XDG_RUNTIME_DIR/danstick/danstick.sock` ([docs/EVENTS.md](docs/EVENTS.md))
 - Learned profiles: `~/.local/share/danstick/devices/`
 

@@ -34,7 +34,8 @@
       "canonical": "b",
       "label": "B",
       "x": 0.685,
-      "y": 0.5
+      "y": 0.5,
+      "retroarch": "input_y_btn"
     },
     {
       "canonical": "start",

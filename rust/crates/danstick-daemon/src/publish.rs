@@ -109,6 +109,39 @@ pub fn resolved(pad: &Pad, console: &str, game: &str) -> (String, danstick_core:
         .unwrap_or_default()
 }
 
+/// The clone's RetroArch profile for the scope in play; empty for a pad with no mapping.
+pub fn retroarch_profile(
+    pad: &Pad,
+    player: u32,
+    identity: Identity,
+    xbox: bool,
+    console: &str,
+    game: &str,
+) -> String {
+    if xbox {
+        return xbox_retroarch_profile(player, identity);
+    }
+    let (scope, mapping) = resolved(pad, console, game);
+    let bindings = mapping.resolved();
+    if bindings.is_empty() {
+        return String::new();
+    }
+    emit::retroarch_profile(player, identity, &bindings, "", &mapping.layout, &scope, "")
+}
+
+/// A 360 clone's RetroArch profile, whatever pad is behind it.
+fn xbox_retroarch_profile(player: u32, identity: Identity) -> String {
+    emit::retroarch_profile(
+        player,
+        identity,
+        &danstick_core::xbox::bindings(),
+        "",
+        danstick_core::layout::default_id(),
+        "",
+        "",
+    )
+}
+
 pub fn has_mapping(pad: &Pad) -> bool {
     profiles::load(pad, None).is_some_and(|profile| profile.has_bindings())
 }
@@ -321,6 +354,7 @@ fn derive(
         keys: facts.keys.clone(),
         axes: facts.axes.clone(),
         sdl_line: line.clone(),
+        retroarch_profile: retroarch_profile(&slot.pad, slot.player, identity, xbox, console, game),
     };
     Derived {
         from,
@@ -417,6 +451,7 @@ pub fn write_all(
             keys: facts.keys.clone(),
             axes: facts.axes.clone(),
             sdl_line: line,
+            retroarch_profile: xbox_retroarch_profile(*player, identity),
         });
     }
 

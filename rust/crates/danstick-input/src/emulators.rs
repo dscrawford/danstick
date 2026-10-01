@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use danstick_core::{ares, emit, ryujinx};
+use danstick_core::{ares, emit, retroarch, ryujinx};
 use serde::{Deserialize, Serialize};
 
 use crate::artefacts;
@@ -21,6 +21,9 @@ pub struct Published {
     /// The pad's line for the SDL database, or empty if it has no mapping.
     #[serde(default)]
     pub sdl_line: String,
+    /// The pad's RetroArch autoconfig profile, or empty to leave the pad to RetroArch's own.
+    #[serde(default)]
+    pub retroarch_profile: String,
 }
 
 /// Output paths (None = real location).
@@ -30,6 +33,7 @@ pub struct Destinations {
     pub dolphin_dir: Option<PathBuf>,
     pub ares_settings: Option<PathBuf>,
     pub ryujinx_config: Option<PathBuf>,
+    pub retroarch_dir: Option<PathBuf>,
     pub env_file: Option<PathBuf>,
 }
 
@@ -163,6 +167,17 @@ pub fn publish(pads: &[Published], dirs: &Destinations, seat: Option<u32>) -> Wr
         artefacts::write_ryujinx_config(entries, seat, dirs.ryujinx_config.as_deref()),
     );
 
+    let profiles: BTreeMap<u32, String> = by_player
+        .values()
+        .filter(|pad| !pad.retroarch_profile.is_empty())
+        .map(|pad| (pad.player, pad.retroarch_profile.clone()))
+        .collect();
+    let pinning = retroarch::appended_config(&players, seat, emit::virtual_name);
+    match artefacts::write_retroarch(&profiles, &pinning, dirs.retroarch_dir.as_deref()) {
+        Ok(paths) => written.paths.extend(paths),
+        Err(error) => written.skipped.push(("retroarch", error.to_string())),
+    }
+
     // The only way into Cemu, and any SDL program that loads its controller database once.
     let lines: BTreeMap<u32, String> = by_player
         .values()
@@ -206,6 +221,7 @@ mod tests {
             keys: vec![0x130, 0x131, 0x133, 0x134],
             axes: vec![0x00, 0x01, 0x10, 0x11],
             sdl_line: format!("guid{player},danstick Player {player},a:b0,"),
+            retroarch_profile: format!("input_device = \"danstick Player {player}\"\n"),
         }
     }
 
@@ -215,6 +231,7 @@ mod tests {
             dolphin_dir: Some(dir.join("dolphin-emu")),
             ares_settings: Some(dir.join("ares.bml")),
             ryujinx_config: Some(dir.join("Config.json")),
+            retroarch_dir: Some(dir.join("retroarch")),
             env_file: Some(dir.join("env.sh")),
         }
     }
@@ -227,6 +244,11 @@ mod tests {
         let skipped: Vec<&str> = written.skipped.iter().map(|(what, _)| *what).collect();
         assert!(skipped.contains(&"ares"), "{written:?}");
         assert!(skipped.contains(&"ryujinx"), "{written:?}");
+        assert!(skipped.contains(&"retroarch"), "{written:?}");
+        assert!(
+            !dir.join("retroarch").exists(),
+            "RetroArch's directory was invented"
+        );
         assert!(!skipped.contains(&"dolphin"), "{written:?}");
         assert!(dir.join("dolphin-emu/GCPadNew.ini").exists());
         assert!(dir.join("dolphin-emu/Dolphin.ini").exists());
@@ -243,6 +265,7 @@ mod tests {
     fn a_skip_never_stops_the_other_emulators() {
         let dir = scratch("partial");
         std::fs::write(dir.join("ares.bml"), "Video\n  Driver: OpenGL\n").expect("seed");
+        std::fs::create_dir_all(dir.join("retroarch")).expect("mkdir");
         let written = publish(&[pad(1), pad(2)], &only(&dir), None);
 
         let text = std::fs::read_to_string(dir.join("ares.bml")).expect("read");
@@ -252,6 +275,52 @@ mod tests {
             written.skipped.len(),
             1,
             "only Ryujinx should be missing: {written:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn retroarch_gets_a_profile_per_mapped_pad_and_the_pinning_beside_its_config() {
+        let dir = scratch("retroarch");
+        let udev = dir.join("retroarch/autoconfig/udev");
+        std::fs::create_dir_all(&udev).expect("mkdir");
+        std::fs::write(udev.join("danstick Player 4.cfg"), "stale").expect("seed");
+        std::fs::write(udev.join("Someone Else.cfg"), "theirs").expect("seed");
+        let mut unmapped = pad(2);
+        unmapped.retroarch_profile.clear();
+
+        let written = publish(&[pad(1), unmapped], &only(&dir), Some(3));
+
+        assert!(
+            !written.skipped.iter().any(|(what, _)| *what == "retroarch"),
+            "{written:?}"
+        );
+        let profile = std::fs::read_to_string(udev.join("danstick Player 1.cfg")).expect("read");
+        assert!(profile.contains("danstick Player 1"), "{profile}");
+        assert!(
+            !udev.join("danstick Player 2.cfg").exists(),
+            "an unmapped pad is RetroArch's own database's to match"
+        );
+        assert!(
+            !udev.join("danstick Player 4.cfg").exists(),
+            "a stale slot survived"
+        );
+        assert!(
+            udev.join("Someone Else.cfg").exists(),
+            "someone else's file was eaten"
+        );
+        let pinning = std::fs::read_to_string(dir.join("retroarch/danstick.cfg")).expect("read");
+        for line in [
+            "input_player1_reserved_device = \"danstick Player 1\"",
+            "input_player2_reserved_device = \"danstick Player 2\"",
+            "input_player3_reserved_device = \"\"",
+            "input_player3_mouse_index = \"0\"",
+        ] {
+            assert!(pinning.contains(line), "{line} missing:\n{pinning}");
+        }
+        assert!(
+            !pinning.contains("joypad_index"),
+            "pad indices are a launcher's business"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }

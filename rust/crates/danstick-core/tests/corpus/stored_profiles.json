@@ -152,6 +152,7 @@
        "a": {
         "index": 1,
         "kind": "button",
+        "ra_index": null,
         "value": 0
        }
       },
@@ -193,6 +194,7 @@
      "a": {
       "index": 1,
       "kind": "button",
+      "ra_index": null,
       "value": 0
      }
     },
@@ -204,6 +206,7 @@
        "a": {
         "index": 1,
         "kind": "button",
+        "ra_index": null,
         "value": 0
        }
       },
@@ -376,6 +379,7 @@
        "b": {
         "index": 1,
         "kind": "button",
+        "ra_index": null,
         "value": 0
        }
       },
@@ -387,6 +391,7 @@
        "x": {
         "index": 1,
         "kind": "button",
+        "ra_index": null,
         "value": 0
        }
       },
@@ -488,11 +493,13 @@
      "a": {
       "index": 1,
       "kind": "button",
+      "ra_index": null,
       "value": 0
      },
      "guide": {
       "index": 1,
       "kind": "button",
+      "ra_index": null,
       "value": 0
      }
     },
@@ -504,11 +511,13 @@
        "a": {
         "index": 1,
         "kind": "button",
+        "ra_index": null,
         "value": 0
        },
        "guide": {
         "index": 1,
         "kind": "button",
+        "ra_index": null,
         "value": 0
        }
       },

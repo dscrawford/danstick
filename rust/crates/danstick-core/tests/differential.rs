@@ -5,14 +5,14 @@ mod common;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use danstick_core::binding::{axis_index, sdl_button_index, Binding};
+use danstick_core::binding::{axis_index, retroarch_button_index, sdl_button_index, Binding};
 use danstick_core::calibration::AxisCalibration;
 use danstick_core::control::Control;
 use danstick_core::emit::{self, Identity};
 use danstick_core::fields::Fields;
 use danstick_core::hide::{self, Hideable};
 use danstick_core::sdl::AxisSpan;
-use danstick_core::{guess, icons, layout, profile, scope, sdl, standard};
+use danstick_core::{guess, icons, layout, profile, retroarch, scope, sdl, standard};
 use serde_json::Value;
 
 fn corpus(name: &str) -> Vec<Value> {
@@ -112,7 +112,7 @@ fn expect_fallible(recorded: &Value, actual: Result<String, impl std::fmt::Displ
 }
 
 #[test]
-fn bindings_spell_the_same_thing_to_sdl() {
+fn bindings_spell_the_same_thing_to_both_consumers() {
     let cases = corpus("bindings");
     assert!(!cases.is_empty());
     for case in &cases {
@@ -124,20 +124,36 @@ fn bindings_spell_the_same_thing_to_sdl() {
             out["sdl_visible"],
             "sdl_visible for {what}"
         );
+        assert_eq!(
+            binding.retroarch_visible(),
+            out["retroarch_visible"],
+            "retroarch_visible for {what}"
+        );
         expect_fallible(&out["sdl"], binding.sdl(), &format!("sdl() for {what}"));
+        expect_fallible(
+            &out["retroarch"],
+            binding.retroarch(),
+            &format!("retroarch() for {what}"),
+        );
     }
 }
 
 #[test]
-fn sdl_numbers_buttons_the_way_the_python_did() {
+fn both_consumers_number_buttons_the_way_the_python_did() {
     for case in corpus("button_indices") {
         let keys = u16s(&case["in"]["keys"]);
         let code = u16_at(&case["in"], "code");
         let expected_sdl = case["out"]["sdl"].as_i64().map(|value| value as i32);
+        let expected_ra = case["out"]["retroarch"].as_i64().map(|value| value as i32);
         assert_eq!(
             sdl_button_index(&keys, code),
             expected_sdl,
             "sdl {code:#x} in {keys:x?}"
+        );
+        assert_eq!(
+            retroarch_button_index(&keys, code),
+            expected_ra,
+            "retroarch {code:#x} in {keys:x?}"
         );
     }
 }
@@ -254,6 +270,42 @@ fn the_same_axes_are_called_sticks() {
 }
 
 #[test]
+fn a_capture_becomes_the_same_autoconfig() {
+    for case in corpus("retroarch_lines") {
+        let input = &case["in"];
+        let bindings = bindings_from(&input["bindings"]);
+        let overrides: BTreeMap<Control, String> = input["overrides"]
+            .as_object()
+            .expect("overrides")
+            .iter()
+            .map(|(name, value)| {
+                (
+                    name.parse::<Control>().expect("a control name"),
+                    value.as_str().expect("a key").to_owned(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            retroarch::lines(&bindings, &overrides),
+            strings(&case["out"]),
+            "for {input}"
+        );
+    }
+}
+
+#[test]
+fn the_shadowed_axis_rule_drops_the_same_lines() {
+    for case in corpus("shadowed_axis_halves") {
+        let input = strings(&case["in"]);
+        assert_eq!(
+            retroarch::drop_shadowed_axis_halves(input.clone()),
+            strings(&case["out"]),
+            "for {input:?}"
+        );
+    }
+}
+
+#[test]
 fn every_recorded_axis_reading_rescales_to_the_same_count() {
     let cases = corpus("calibration");
     let mut checked = 0usize;
@@ -314,7 +366,17 @@ fn scope_precedence_is_unchanged() {
 }
 
 #[test]
-fn every_layout_carries_the_same_coordinates_and_labels() {
+fn every_core_resolves_to_the_same_console() {
+    let cases = corpus("cores");
+    assert!(cases.len() > 50);
+    for case in &cases {
+        let core = str_at(case, "in");
+        assert_eq!(layout::for_core(core), str_at(case, "out"), "{core:?}");
+    }
+}
+
+#[test]
+fn every_layout_carries_the_same_coordinates_labels_and_overrides() {
     for case in corpus("layouts") {
         let id = str_at(&case, "in");
         let wanted = &case["out"];
@@ -366,6 +428,11 @@ fn every_layout_carries_the_same_coordinates_and_labels() {
                 control.radius,
                 wanted["radius"].as_f64().expect("radius"),
                 "{id}/{name}"
+            );
+            assert_eq!(
+                control.retroarch,
+                str_at(wanted, "retroarch"),
+                "{id}/{name}: the console's own key wiring"
             );
         }
     }
@@ -537,6 +604,25 @@ fn a_virtual_pads_guid_is_the_one_the_python_computed() {
             str_at(&case, "out"),
             "player {player}"
         );
+    }
+}
+
+#[test]
+fn every_autoconfig_profile_is_what_the_python_wrote() {
+    let cases = corpus("retroarch_profiles");
+    assert!(cases.len() > 50);
+    for case in &cases {
+        let input = &case["in"];
+        let built = emit::retroarch_profile(
+            input["player"].as_u64().expect("player") as u32,
+            DANSTICK_IDENTITY,
+            &bindings_from(&input["bindings"]),
+            str_at(input, "source"),
+            str_at(input, "layout"),
+            str_at(input, "scope"),
+            str_at(input, "context"),
+        );
+        assert_eq!(built, str_at(case, "out"), "for {input}");
     }
 }
 

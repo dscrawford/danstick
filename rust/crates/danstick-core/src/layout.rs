@@ -34,6 +34,8 @@ pub struct LayoutControl {
     pub kind: String,
     #[serde(default = "default_radius")]
     pub radius: f64,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub retroarch: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -50,6 +52,14 @@ pub struct Layout {
 }
 
 impl Layout {
+    pub fn retroarch_keys(&self) -> BTreeMap<Control, String> {
+        self.controls
+            .iter()
+            .filter(|control| !control.retroarch.is_empty())
+            .map(|control| (control.canonical, control.retroarch.clone()))
+            .collect()
+    }
+
     pub fn order(&self) -> Vec<Control> {
         self.controls
             .iter()
@@ -62,6 +72,7 @@ impl Layout {
 struct Manifest {
     order: Vec<String>,
     default: String,
+    cores: BTreeMap<String, String>,
 }
 
 const MANIFEST_JSON: &str = include_str!("../data/layouts.json");
@@ -197,6 +208,31 @@ pub fn label_faces(layout_id: &str) -> BTreeMap<Control, Control> {
         return BTreeMap::new();
     }
     moved.into_iter().filter(|(from, to)| from != to).collect()
+}
+
+pub fn for_core(core: &str) -> &'static str {
+    if core.is_empty() {
+        return "";
+    }
+    let mut name = core.trim_end_matches('/').rsplit('/').next().unwrap_or("");
+    for suffix in [".so", ".dll", ".dylib"] {
+        if let Some(stripped) = name.strip_suffix(suffix) {
+            name = stripped;
+            break;
+        }
+    }
+    for marker in ["_libretro", "-libretro"] {
+        if let Some(stripped) = name.strip_suffix(marker) {
+            name = stripped;
+            break;
+        }
+    }
+    catalogue()
+        .manifest
+        .cores
+        .get(&name.to_lowercase())
+        .map(String::as_str)
+        .unwrap_or("")
 }
 
 #[cfg(test)]
@@ -336,6 +372,65 @@ mod tests {
     }
 
     #[test]
+    fn a_core_resolves_to_its_console_through_every_spelling() {
+        for core in [
+            "mupen64plus_next",
+            "mupen64plus_next_libretro",
+            "mupen64plus_next_libretro.so",
+            "mupen64plus_next-libretro.dll",
+            "/nix/store/abc-cores/mupen64plus_next_libretro.so",
+            "Mupen64plus_Next_libretro.so",
+        ] {
+            assert_eq!(for_core(core), "n64", "{core} did not resolve");
+        }
+    }
+
+    #[test]
+    fn a_trailing_separator_does_not_lose_the_core_name() {
+        assert_eq!(for_core("mame/"), "arcade");
+        assert_eq!(for_core("/usr/lib/libretro/mame/"), "arcade");
+        assert_eq!(for_core("/"), "");
+    }
+
+    #[test]
+    fn the_library_suffix_is_matched_case_sensitively() {
+        assert_eq!(for_core("MUPEN64PLUS_NEXT_LIBRETRO.SO"), "");
+        assert_eq!(for_core("mupen64plus_next_libretro.SO"), "");
+    }
+
+    #[test]
+    fn an_unknown_core_gives_no_console_rather_than_the_generic_one() {
+        assert_eq!(for_core(""), "");
+        assert_eq!(for_core("some_core_libretro.so"), "");
+        assert_ne!(for_core("some_core_libretro.so"), default_id());
+    }
+
+    #[test]
+    fn every_core_in_the_manifest_names_a_layout_that_exists() {
+        for (core, layout_id) in &catalogue().manifest.cores {
+            assert!(
+                exists(layout_id),
+                "core {core} names missing layout {layout_id}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_n64_layout_carries_the_override_its_core_needs() {
+        let keys = get("n64").retroarch_keys();
+        assert_eq!(
+            keys.get(&Control::B).map(String::as_str),
+            Some("input_y_btn")
+        );
+    }
+
+    #[test]
+    fn a_console_whose_core_needs_no_overrides_carries_none() {
+        assert!(get("snes").retroarch_keys().is_empty());
+        assert!(get("ps2").retroarch_keys().is_empty());
+    }
+
+    #[test]
     fn the_n64_c_cluster_is_right_stick_halves_not_invented_face_buttons() {
         let order = get("n64").order();
         for control in [
@@ -351,10 +446,11 @@ mod tests {
     }
 
     #[test]
-    fn every_layout_can_produce_an_sdl_mapping() {
+    fn every_layout_can_produce_a_mapping_for_both_consumers() {
         for layout in all() {
             for control in layout.order() {
                 assert!(!control.sdl_field().is_empty());
+                assert!(!control.retroarch_key().is_empty());
             }
         }
     }
