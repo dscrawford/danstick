@@ -82,7 +82,27 @@
         # Everything a crate that opens a device node needs to link -- and
         # SDL3, for the one question only SDL can answer: what its built-in
         # database says about a GUID. See danstick-input/src/sdlprobe.rs.
-        rustBuildInputs = [ pkgs.udev pkgs.sdl3 ];
+        rustBuildInputs = [ pkgs.udev sdl3Gamepad ];
+
+        # SDL3 with nothing but its joystick subsystem: the probe never opens a
+        # window or a sound device, and the stock build's closure is ~940MiB.
+        sdl3Gamepad = (pkgs.sdl3.override {
+          alsaSupport = false;
+          dbusSupport = false;
+          drmSupport = false;
+          ibusSupport = false;
+          jackSupport = false;
+          libdecorSupport = false;
+          libusbSupport = false;
+          openglSupport = false;
+          pipewireSupport = false;
+          pulseaudioSupport = false;
+          traySupport = false;
+          vulkanSupport = false;
+          waylandSupport = false;
+          x11Support = false;
+          # Its suite inits the subsystems switched off above.
+        }).overrideAttrs { doCheck = false; };
         rustNativeBuildInputs = [ pkgs.pkg-config ];
 
         # The whole workspace, built and tested in the sandbox.
@@ -115,7 +135,7 @@
             autoconfig
             pkgs.evsieve # reference implementation of evdev republishing
             pkgs.udev # udevadm, for inspecting ID_INPUT_JOYSTICK
-            pkgs.sdl3 # linked by danstick-rs for `sdl-mapping`
+            sdl3Gamepad # linked by danstick-rs for `sdl-mapping`
             pkgs.evemu # replay a recorded device, for latency measurement
             pkgs.linuxPackages.perf # where the forwarding path actually goes
             devDanstick # `danstick ...`, built from the working tree
@@ -161,7 +181,6 @@
 
         packages.danstick = pkgs.writeShellApplication {
           name = "danstick";
-          runtimeInputs = [ pkgs.udev pkgs.retroarch ];
           text = ''
             # Identity of the code being run. The store path changes with
             # every source edit, which is what lets a client notice that a
@@ -169,9 +188,6 @@
             # something nothing else about it reveals.
             export DANSTICK_BUILD_ID="${danstick-rs}"
             export DANSTICK_AUTOCONFIG_DIRS="${autoconfigDir}"
-            # Absolute, so generated launch commands work from a front-end
-            # that has neither danstick nor RetroArch on its PATH.
-            export DANSTICK_PLAY="${self.packages.${system}.danstick-play}/bin/danstick-play"
             exec ${danstick-rs}/bin/danstick-rs "$@"
           '';
         };
@@ -325,6 +341,7 @@
         # Tests run in a pod, not on a desk: see k8s/tests/README.md.
         packages.test-image = import ./nix/test-image.nix {
           inherit pkgs;
+          sdl3 = sdl3Gamepad;
           cargoLock = ./rust/Cargo.lock;
         };
 

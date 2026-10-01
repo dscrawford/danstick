@@ -2,6 +2,7 @@
 # changes with `Cargo.lock`, and `tools/cluster-test` streams the tree in.
 {
   pkgs,
+  sdl3,
   cargoLock,
 }:
 let
@@ -40,7 +41,7 @@ let
   # Linked by danstick-input, and loaded again by every binary a test runs.
   libraries = [
     pkgs.udev
-    pkgs.sdl3
+    sdl3
   ];
 in
 pkgs.dockerTools.buildLayeredImage {
