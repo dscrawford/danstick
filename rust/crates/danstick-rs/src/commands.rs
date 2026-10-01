@@ -8,7 +8,6 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use danstick_core::capture::{self, MappingRun};
 use danstick_core::emit;
-use danstick_core::launch;
 use danstick_daemon::publish;
 use danstick_input::clone::{self, IdentityMode};
 use danstick_input::pad::{self, Pad};
@@ -32,7 +31,7 @@ fn controller_json(pad: &Pad) -> serde_json::Value {
         "signature": profiles::signature_of(pad),
         "configured": publish::has_mapping(pad),
         "autobound": danstick_core::standard::is_standard(&facts.keys),
-        "retroarch_visible": pad.retroarch_visible,
+        "visible": pad.visible,
         "motion": pad.motion.is_some(),
         "motion_node": pad.motion.as_ref().map(|path| path.display().to_string()),
         "tuning": serde_json::to_value(publish::tuning_for(pad)).unwrap_or(serde_json::json!({})),
@@ -47,7 +46,6 @@ pub fn cmd_list_json() -> Result<()> {
     let pads = &found.pads;
     let clones = pad::clone_nodes();
     let saved = assignments::load(&runtime::assignments_path()).unwrap_or_default();
-    let order = publish::visible_order();
     let mode = IdentityMode::from_env();
 
     let mut entries = Vec::new();
@@ -67,11 +65,6 @@ pub fn cmd_list_json() -> Result<()> {
                 "vid": format!("{:04x}", identity.vendor),
                 "pid": format!("{:04x}", identity.product),
                 "bustype": identity.bustype,
-                "index": node
-                    .as_ref()
-                    .and_then(|node| {
-                        order.iter().find(|(_, path)| *path == node).map(|(index, _)| *index)
-                    }),
             })
         });
         entries.push(json!({
@@ -95,77 +88,6 @@ pub fn cmd_list_json() -> Result<()> {
         }));
     }
     println!("{}", serde_json::to_string_pretty(&entries)?);
-    Ok(())
-}
-
-/// Resolve each controller's mapping for the game about to start.
-pub fn cmd_play(argv: Vec<String>) -> Result<()> {
-    let argv: Vec<String> = argv.into_iter().skip_while(|arg| arg == "--").collect();
-    let (core, rom) = launch::split_args(&argv, |path| Path::new(path).exists());
-    let console = danstick_core::layout::for_core(&core);
-    let key = if rom.is_empty() {
-        String::new()
-    } else {
-        danstick_core::scope::game_key(console, &rom)
-    };
-    let title = if rom.is_empty() {
-        String::new()
-    } else {
-        launch::title_for(&rom)
-    };
-
-    if !key.is_empty() {
-        let game = runtime::Game {
-            console: console.to_owned(),
-            key: key.clone(),
-            title: title.clone(),
-        };
-        if let Err(error) = runtime::write_last_game(&game) {
-            eprintln!("danstick: could not record the launch ({error})");
-        }
-    }
-
-    let saved = assignments::load(&runtime::assignments_path()).unwrap_or_default();
-    let pads = discover().unwrap_or_default();
-    let (found, _missing) = assignments::resolve(&saved, &pads);
-    if found.is_empty() {
-        eprintln!("danstick: no assigned controllers; leaving autoconfig alone");
-        return Ok(());
-    }
-    let context = if title.is_empty() {
-        Path::new(&rom)
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("an unidentified game")
-            .to_owned()
-    } else {
-        title
-    };
-    let mode = IdentityMode::from_env();
-    let mut profiles_out = BTreeMap::new();
-    for (player, pad) in &found {
-        let identity = publish::identity_of(pad, *player, mode);
-        profiles_out.insert(
-            *player,
-            publish::profile_text(pad, *player, identity, console, &key, &context),
-        );
-        let (scope, _) = publish::resolved(pad, console, &key);
-        eprintln!(
-            "danstick: player {player} using the {} mapping{}",
-            if scope.is_empty() { "default" } else { &scope },
-            if console.is_empty() {
-                " (unknown console)".to_owned()
-            } else {
-                format!(" (console {console})")
-            }
-        );
-    }
-    match artefacts::write_autoconfig(&profiles_out, None) {
-        Ok(written) => eprintln!("danstick: wrote {} autoconfig profile(s)", written.len()),
-        Err(error) => {
-            eprintln!("danstick: could not write the profiles ({error}); using the default")
-        }
-    }
     Ok(())
 }
 
@@ -344,43 +266,6 @@ pub fn cmd_forget(all: bool) -> Result<()> {
         println!("  {}", database.display());
         println!("Delete that file to reset those too.");
     }
-    Ok(())
-}
-
-pub fn cmd_clean_config(config: Option<String>, dry_run: bool) -> Result<()> {
-    let target = config
-        .map(PathBuf::from)
-        .unwrap_or_else(|| artefacts::retroarch_config_dir().join("retroarch.cfg"));
-    if !target.is_file() {
-        println!("No RetroArch config at {}", target.display());
-        std::process::exit(1);
-    }
-    let raw = std::fs::read(&target).with_context(|| format!("reading {}", target.display()))?;
-    let (changes, body) = danstick_core::userconfig::clean_bytes(&raw);
-    if changes.is_empty() {
-        println!("{} has no danstick leftovers.", target.display());
-        return Ok(());
-    }
-    println!(
-        "{} {} setting(s) in {}:\n",
-        if dry_run { "Would change" } else { "Changed" },
-        changes.len(),
-        target.display()
-    );
-    for change in &changes {
-        println!("  {change}");
-    }
-    if dry_run {
-        println!("\nDry run; nothing written. Re-run without --dry-run to apply.");
-        return Ok(());
-    }
-    let backup = target.with_extension(format!(
-        "{}.danstick-backup",
-        target.extension().unwrap_or_default().to_string_lossy()
-    ));
-    std::fs::write(&backup, &raw).with_context(|| format!("writing {}", backup.display()))?;
-    std::fs::write(&target, body).with_context(|| format!("writing {}", target.display()))?;
-    println!("\nOriginal saved to {}", backup.display());
     Ok(())
 }
 
@@ -1144,51 +1029,6 @@ fn udevadm(args: &[&str]) -> Result<(), String> {
         )),
         Err(error) => Err(format!("could not run udevadm: {error}")),
     }
-}
-
-pub fn cmd_launch(rest: Vec<String>, log: Option<Option<String>>) -> Result<i32> {
-    let saved = assignments::load(&runtime::assignments_path())?;
-    if saved.is_empty() {
-        println!("No assignments. Run `danstick setup` first.");
-        std::process::exit(1);
-    }
-    let running = runtime::daemon_pids(None);
-    if let Some(pid) = running.first() {
-        println!("the danstick daemon (pid {pid}) already holds the controllers.");
-        println!("This command republishes them itself, so the two cannot run at once.\n");
-        println!("To launch a game while the daemon runs, use the launcher that");
-        println!("resolves mappings against it:");
-        println!("  danstick-play -L <core.so> <rom>\n");
-        println!("To use this command instead, stop the daemon first:");
-        println!("  kill {pid}");
-        std::process::exit(1);
-    }
-    let log_path = log.map(|explicit| {
-        explicit
-            .map(PathBuf::from)
-            .unwrap_or_else(|| runtime::dir().join("retroarch.log"))
-    });
-    let argv: Vec<String> = rest.into_iter().skip_while(|arg| arg == "--").collect();
-    let config = runtime::dir().join("launch.cfg");
-    let mut command = std::process::Command::new("retroarch");
-    command.arg("--appendconfig").arg(&config);
-    if let Some(path) = &log_path {
-        if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        command.arg("--verbose").arg("--log-file").arg(path);
-        println!("logging RetroArch output to {}", path.display());
-    }
-    let args_file = runtime::dir().join("launch.args");
-    if let Ok(text) = std::fs::read_to_string(&args_file) {
-        for line in text.lines().filter(|line| !line.trim().is_empty()) {
-            command.arg(line);
-        }
-    }
-    command.args(&argv);
-    println!("launching retroarch\n");
-    let status = command.status().context("running retroarch")?;
-    Ok(status.code().unwrap_or(0))
 }
 
 fn pick_pad(pads: &[Pad], which: Option<&str>) -> Pad {

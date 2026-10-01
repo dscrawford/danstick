@@ -1,6 +1,6 @@
 //! Integration tests for scope and layout data.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use danstick_core::control::Control;
 use danstick_core::layout::{self, Layout, LayoutControl, Shape};
@@ -8,27 +8,6 @@ use danstick_core::scope::{self, Scope};
 
 fn shipped_ids() -> Vec<&'static str> {
     layout::all().iter().map(|l| l.id.as_str()).collect()
-}
-
-fn overrides_of(layout_id: &str) -> Vec<(Control, String)> {
-    layout::get(layout_id)
-        .retroarch_keys()
-        .into_iter()
-        .collect()
-}
-
-fn expected_overrides(pairs: &[(Control, &str)]) -> Vec<(Control, String)> {
-    pairs
-        .iter()
-        .map(|(c, key)| (*c, (*key).to_owned()))
-        .collect()
-}
-
-fn effective_key(overrides: &BTreeMap<Control, String>, control: Control) -> String {
-    overrides
-        .get(&control)
-        .cloned()
-        .unwrap_or_else(|| control.retroarch_key().to_owned())
 }
 
 #[test]
@@ -545,60 +524,12 @@ fn no_two_layouts_share_an_id() {
 }
 
 #[test]
-fn every_canonical_name_in_every_layout_is_spellable_by_both_consumers() {
+fn every_canonical_name_in_every_layout_is_spellable_to_sdl() {
     for layout in layout::all() {
         for control in layout.order() {
             assert!(
                 !control.sdl_field().is_empty(),
                 "{} / {control} has no SDL field",
-                layout.id
-            );
-            assert!(
-                !control.retroarch_key().is_empty(),
-                "{} / {control} has no RetroArch key",
-                layout.id
-            );
-        }
-    }
-}
-
-#[test]
-fn no_two_controls_on_one_console_end_up_under_the_same_retroarch_key() {
-    for layout in layout::all() {
-        let overrides = layout.retroarch_keys();
-        let mut seen = BTreeSet::new();
-        for control in layout.order() {
-            let key = effective_key(&overrides, control);
-            assert!(
-                seen.insert(key.clone()),
-                "{}: {control} collides on {key}",
-                layout.id
-            );
-        }
-    }
-}
-
-#[test]
-fn every_override_names_a_control_the_layout_actually_asks_about() {
-    for layout in layout::all() {
-        let asked: BTreeSet<Control> = layout.order().into_iter().collect();
-        for control in layout.retroarch_keys().keys() {
-            assert!(
-                asked.contains(control),
-                "{} overrides absent {control}",
-                layout.id
-            );
-        }
-    }
-}
-
-#[test]
-fn every_override_is_spelled_like_a_retroarch_autoconfig_key() {
-    for layout in layout::all() {
-        for (control, key) in layout.retroarch_keys() {
-            assert!(
-                key.starts_with("input_") && key.ends_with("_btn"),
-                "{}: {control} overrides to {key:?}",
                 layout.id
             );
         }
@@ -700,206 +631,7 @@ fn for_icon_is_get_by_another_name() {
 }
 
 #[test]
-fn a_core_resolves_to_its_console_through_every_spelling() {
-    for core in [
-        "mupen64plus_next",
-        "mupen64plus_next_libretro",
-        "mupen64plus_next_libretro.so",
-        "mupen64plus_next-libretro.so",
-        "mupen64plus_next_libretro.dll",
-        "mupen64plus_next_libretro.dylib",
-        "/nix/store/abc-cores/mupen64plus_next_libretro.so",
-        "/usr/lib/libretro/mupen64plus_next_libretro.so",
-    ] {
-        assert_eq!(layout::for_core(core), "n64", "{core} did not resolve");
-    }
-}
-
-#[test]
-fn the_core_name_is_matched_case_insensitively() {
-    for core in [
-        "Mupen64plus_Next_libretro.so",
-        "SNES9X",
-        "MAME2003_Plus",
-        "PCSX2",
-    ] {
-        assert!(!layout::for_core(core).is_empty(), "{core} did not resolve");
-    }
-    assert_eq!(layout::for_core("SNES9X"), "snes");
-    assert_eq!(layout::for_core("PCSX2"), "ps2");
-}
-
-#[test]
-fn the_library_suffix_is_matched_case_sensitively_as_the_python_does() {
-    // Pinning the quirk rather than improving on it: the suffix is stripped.
-    assert_eq!(layout::for_core("MUPEN64PLUS_NEXT_LIBRETRO.SO"), "");
-    assert_eq!(layout::for_core("mupen64plus_next_libretro.SO"), "");
-    assert_eq!(layout::for_core("mupen64plus_next_libretro.Dll"), "");
-}
-
-#[test]
-fn an_unknown_core_gives_no_console_rather_than_the_generic_one() {
-    // "" means "skip the console scope".
-    for core in [
-        "",
-        "some_core_libretro.so",
-        "vice_x64",
-        "/opt/cores/nestopia_libretro.so",
-    ] {
-        assert_eq!(layout::for_core(core), "", "{core:?} resolved to something");
-        assert_ne!(layout::for_core(core), layout::default_id());
-    }
-}
-
-#[test]
-fn a_core_that_is_nothing_but_a_suffix_resolves_to_nothing() {
-    for core in [
-        "_libretro.so",
-        "-libretro.so",
-        ".so",
-        ".dll",
-        ".dylib",
-        "_libretro",
-        "/",
-    ] {
-        assert_eq!(layout::for_core(core), "", "{core:?} resolved to something");
-    }
-}
-
-#[test]
-fn only_one_library_suffix_and_one_marker_are_stripped() {
-    // A versioned filename keeps its ".1", so the name never matches.
-    assert_eq!(layout::for_core("mupen64plus_next_libretro.so.1"), "");
-    assert_eq!(layout::for_core("mupen64plus_next_libretro_libretro"), "");
-}
-
-#[test]
-fn a_core_path_with_a_trailing_slash_keeps_its_core_name() {
-    assert_eq!(layout::for_core("mame/"), "arcade");
-    assert_eq!(layout::for_core("/usr/lib/libretro/mame/"), "arcade");
-    assert_eq!(layout::for_core("/"), "");
-    assert_eq!(layout::for_core("///"), "");
-}
-
-#[test]
-fn every_core_in_the_manifest_resolves_to_a_layout_that_exists() {
-    for core in [
-        "mupen64plus_next",
-        "mupen64plus",
-        "parallel_n64",
-        "snes9x",
-        "snes9x2010",
-        "snes9x2005",
-        "snes9x2002",
-        "bsnes",
-        "bsnes_mercury_accuracy",
-        "bsnes_mercury_balanced",
-        "bsnes_mercury_performance",
-        "mesen_s",
-        "mame2010",
-        "mame2003",
-        "mame2003_plus",
-        "mame2000",
-        "mame",
-        "fbalpha",
-        "fbalpha2012",
-        "fbneo",
-        "dolphin",
-        "pcsx2",
-        "play",
-        "genesis_plus_gx",
-        "picodrive",
-        "blastem",
-    ] {
-        let resolved = layout::for_core(core);
-        assert!(
-            layout::exists(resolved),
-            "core {core} resolved to missing layout {resolved:?}"
-        );
-        assert!(
-            layout::consoles().contains(&resolved),
-            "core {core} resolved to {resolved}, which is not a console"
-        );
-    }
-}
-
-#[test]
-fn a_resolved_core_can_be_turned_straight_into_a_console_scope() {
-    let console = layout::for_core("dolphin_libretro.so");
-    assert_eq!(console, "gamecube");
-    assert_eq!(scope::order(console, ""), ["console:gamecube", ""]);
-    assert_eq!(
-        Scope::parse(&scope::console(console)),
-        Scope::Console("gamecube")
-    );
-}
-
-#[test]
-fn the_n64_override_map_is_exactly_b_to_the_retropad_y_key() {
-    assert_eq!(
-        overrides_of("n64"),
-        expected_overrides(&[(Control::B, "input_y_btn")])
-    );
-}
-
-#[test]
-fn the_snes_layout_carries_no_overrides_at_all() {
-    assert!(overrides_of("snes").is_empty());
-}
-
-#[test]
-fn the_ps2_layout_carries_no_overrides_at_all() {
-    assert!(overrides_of("ps2").is_empty());
-}
-
-#[test]
-fn the_arcade_override_map_is_exactly_the_five_the_mame_reading_produced() {
-    assert_eq!(
-        overrides_of("arcade"),
-        expected_overrides(&[
-            (Control::A, "input_y_btn"),
-            (Control::B, "input_l_btn"),
-            (Control::X, "input_a_btn"),
-            (Control::Y, "input_b_btn"),
-            (Control::LeftShoulder, "input_x_btn"),
-        ])
-    );
-}
-
-#[test]
-fn the_gamecube_override_map_is_exactly_the_dolphin_reading() {
-    assert_eq!(
-        overrides_of("gamecube"),
-        expected_overrides(&[
-            (Control::A, "input_a_btn"),
-            (Control::B, "input_b_btn"),
-            (Control::X, "input_x_btn"),
-            (Control::Y, "input_y_btn"),
-            (Control::LeftShoulder, "input_l2_btn"),
-            (Control::RightShoulder, "input_r2_btn"),
-            (Control::RightTrigger, "input_r_btn"),
-        ])
-    );
-}
-
-#[test]
-fn the_generic_switch_and_genesis_layouts_carry_no_overrides() {
-    for id in ["generic", "switch", "genesis"] {
-        assert!(overrides_of(id).is_empty(), "{id} grew an override");
-    }
-}
-
-#[test]
-fn exactly_three_of_the_eight_layouts_override_anything() {
-    let overriding: Vec<&str> = shipped_ids()
-        .into_iter()
-        .filter(|id| !layout::get(id).retroarch_keys().is_empty())
-        .collect();
-    assert_eq!(overriding, ["n64", "arcade", "gamecube"]);
-}
-
-#[test]
-fn the_generic_control_set_is_the_plain_retropad() {
+fn the_generic_control_set_is_every_control() {
     assert_eq!(
         layout::get("generic").order(),
         [
@@ -1255,10 +987,6 @@ fn the_optional_layout_fields_default_to_what_keeps_the_data_files_short() {
         "a control with no kind is a face button"
     );
     assert_eq!(control.radius, 0.045, "the default dot size");
-    assert_eq!(
-        control.retroarch, "",
-        "no override means use the canonical key"
-    );
 }
 
 #[test]
@@ -1277,18 +1005,16 @@ fn the_empty_optional_fields_are_left_out_of_the_serialised_form() {
         "an empty console_label was written"
     );
     assert!(!json.contains("\"image\""), "an empty image was written");
-    assert!(!json.contains("retroarch"), "empty overrides were written");
     // The ones that are always present, because the front-end indexes them.
     assert!(json.contains("\"shapes\""));
     assert!(json.contains("\"controls\""));
 }
 
 #[test]
-fn a_console_label_and_an_override_do_survive_serialisation() {
+fn a_console_label_does_survive_serialisation() {
     // The skip is on emptiness, not on the field, so the layouts that do carry.
     let json = serde_json::to_string(layout::get("arcade")).expect("serialise");
     assert!(json.contains("\"console_label\":\"Arcade\""), "{json}");
-    assert!(json.contains("\"retroarch\":\"input_a_btn\""), "{json}");
 }
 
 #[test]
@@ -1300,7 +1026,6 @@ fn a_control_round_trips_through_json_on_its_own() {
         y: 0.29,
         kind: "stick".to_owned(),
         radius: 0.032,
-        retroarch: String::new(),
     };
     let json = serde_json::to_string(&control).expect("serialise");
     let back: LayoutControl = serde_json::from_str(&json).expect("deserialise");

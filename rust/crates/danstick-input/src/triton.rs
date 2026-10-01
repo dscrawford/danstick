@@ -284,7 +284,7 @@ pub fn slots_where(probe: bool, wanted: impl Fn(&str) -> bool) -> Vec<Pad> {
             vid,
             pid,
             syspath: dir.clone(),
-            retroarch_visible: false,
+            visible: false,
             motion: None,
         });
     }

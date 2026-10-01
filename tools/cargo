@@ -2,7 +2,7 @@
 # cargo, for a machine that has nix but no rustup.
 #
 # The flake's devShell carries the toolchain, but entering it evaluates the
-# whole flake -- which builds Pegasus and RetroArch. This pulls just what the
+# whole flake -- which builds its Python and test tooling. This pulls just what the
 # Rust build needs.
 #
 # PKG_CONFIG_PATH is set by hand because `nix shell` puts a package's *bin*

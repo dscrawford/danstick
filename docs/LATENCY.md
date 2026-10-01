@@ -36,9 +36,9 @@ The control matters as much as the two arms: a bridge cannot be faster than
     devices.discover():          596.5 ms   (33 input devices)
     retroarch.visible_order():   567.0 ms   (calls discover)
 
-`cli.cmd_run` calls `install_profiles`, `write_launch_config` and
-`write_launch_args` *after* `_start()` has created the uinput clone and *before*
-`republisher.run()` enters its loop; two of those call `visible_order()`. So for
+`cli.cmd_run` called `install_profiles`, `write_launch_config` and
+`write_launch_args` *after* `_start()` had created the uinput clone and *before*
+`republisher.run()` entered its loop; two of those called `visible_order()`. So for
 well over a second after the clone appeared, nothing read the controller, and
 every press in that window queued in the kernel and arrived in a burst.
 
@@ -51,9 +51,8 @@ Two things cost that 596 ms, and neither was the query:
 
 * **33 process spawns.** `udevadm info -q property` takes any number of devices
   and was being called once per device. Asking once costs **9.4 ms** against
-  596. Still udevadm, still the same question -- the authority on "does
-  RetroArch's udev driver consider this a joypad" is udev's own database as
-  udev presents it, so reading `/run/udev/data` by hand was not taken.
+  596. Still udevadm, still the same question -- the authority on "is this a
+  joypad" is udev's own database as udev presents it, so reading `/run/udev/data` by hand was not taken.
 * **Opening and closing every input node.** `_looks_like_joypad` opened each
   device to ask two questions, and releasing a USB HID descriptor takes about
   11 ms while the driver tears down its URB: 390 ms of a 400 ms scan, in 36

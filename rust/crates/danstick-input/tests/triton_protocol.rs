@@ -198,7 +198,7 @@ fn only_valve_ids_on_a_hidraw_node_are_ours() {
         vid: 0x28DE,
         pid: 0x1304,
         syspath: "/sys/x".into(),
-        retroarch_visible: false,
+        visible: false,
         motion: None,
     };
     assert!(triton::owns(&ours));
@@ -227,7 +227,7 @@ fn scanning_a_real_machine_does_not_fail() {
     assert!(live.len() <= all.len(), "a live slot is one of the slots");
     for pad in &all {
         assert!(triton::owns(pad), "{} is not ours", pad.path.display());
-        assert!(!pad.retroarch_visible, "nothing else can see a hidraw pad");
+        assert!(!pad.visible, "nothing else can see a hidraw pad");
     }
     // Two slots of one receiver must be distinguishable, or assignment cannot tell them apart.
     let mut uniqs: Vec<&String> = all.iter().map(|pad| &pad.uniq).collect();

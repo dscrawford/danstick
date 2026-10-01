@@ -673,19 +673,12 @@ fn a_session_claims_confirms_and_writes_what_a_launch_reads() {
     .expect("json");
     assert_eq!(assignments[0]["player"], 1);
     assert_eq!(assignments[0]["name"], JOURNEY.name);
-    let launch = std::fs::read_to_string(state_dir.join("launch.cfg")).expect("launch.cfg");
-    assert!(launch.contains("input_player16_joypad_index"), "{launch}");
-    assert!(launch.contains("config_save_on_exit = \"false\""));
-    assert!(state_dir.join("launch.args").is_file(), "no launch.args");
-    let autoconfig = state_dir
-        .join("autoconfig")
-        .join("udev")
-        .join("danstick Player 1.cfg");
-    let profile = std::fs::read_to_string(&autoconfig).expect("an autoconfig profile");
-    assert!(
-        profile.contains("input_device = \"danstick Player 1\""),
-        "{profile}"
-    );
+    for program_specific in ["launch.cfg", "launch.args", "autoconfig"] {
+        assert!(
+            !state_dir.join(program_specific).exists(),
+            "{program_specific} was written for one program"
+        );
+    }
     let sdl = std::fs::read_to_string(root.join("sdl_controllers.txt")).expect("the SDL database");
     assert!(sdl.contains("danstick Player 1"), "{sdl}");
     let mapping = daemon.last("sdl_mapping").expect("sdl_mapping");
@@ -1021,9 +1014,8 @@ fn a_pad_can_take_a_free_seat_without_a_session() {
     assert!(clones.contains("danstick Player 1"), "{clones:?}");
     let state_dir = daemon.runtime.join("danstick");
     assert!(state_dir.join("assignments.json").is_file());
-    assert!(state_dir
-        .join("autoconfig/udev/danstick Player 1.cfg")
-        .is_file());
+    let sdl = std::fs::read_to_string(root.join("sdl_controllers.txt")).expect("the SDL database");
+    assert!(sdl.contains("danstick Player 1"), "{sdl}");
 
     daemon.events.clear();
     pad.hold(FIRST_KEY + 1, 0.8);
@@ -2621,20 +2613,6 @@ fn the_keyboard_takes_a_seat_by_command_and_a_pad_sits_after_it() {
         ini.contains("[GCPad2]\nDevice = SDL/0/danstick Player 2\n"),
         "{ini}"
     );
-    let launch = std::fs::read_to_string(state_dir.join("launch.cfg")).expect("launch.cfg");
-    assert!(
-        !launch.contains("input_player1_b = \"nul\""),
-        "the keyboard is player 1, so RetroArch's own key defaults stand: {launch}"
-    );
-    // The mouse is the keyboard's seat's, and the pad on player 2 has none.
-    assert!(
-        launch.contains("input_player1_mouse_index = \"0\"\n"),
-        "the keyboard's seat has no mouse: {launch}"
-    );
-    assert!(
-        launch.contains("input_player2_mouse_index = \"16\"\n"),
-        "the pad's port kept the desk's mouse: {launch}"
-    );
 
     daemon.events.clear();
     daemon.send(serde_json::json!({"cmd": "unseat", "player": 1}));
@@ -4177,6 +4155,61 @@ fn scope_leases_nest_and_each_puts_back_what_it_found() {
         .wait_for("state", |e| e["scope"]["console"] == "", 5.0)
         .expect("the outer lease's end did not put the default back");
     assert_eq!(after_outer["scope"]["game"], "", "{after_outer}");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+const RECENT: PadId = PadId {
+    name: "DANSTICK RSTESTRECENT",
+    pid: 0x1093,
+    only: "RSTESTRECENT",
+};
+
+/// A game a client names in `scope` is what the scope picker offers as recently played.
+#[test]
+fn a_game_named_in_scope_is_remembered_as_recently_played() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let root = std::env::temp_dir().join(format!("danstick-recent-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let mut daemon = Daemon::start(&root, RECENT);
+    daemon.wait_for("state", |_| true, 5.0).expect("a greeting");
+    let recent = daemon.runtime.join("danstick").join("lastgame.json");
+
+    daemon.send(serde_json::json!({"cmd": "scope", "console": "n64"}));
+    daemon
+        .wait_for("state", |e| e["scope"]["console"] == "n64", 5.0)
+        .expect("the console scope never took");
+    assert!(!recent.exists(), "a console with no game was remembered");
+
+    daemon.send(serde_json::json!({"cmd": "scope", "console": "n64", "game": "n64/dk64"}));
+    daemon
+        .wait_for("state", |e| e["scope"]["game"] == "n64/dk64", 5.0)
+        .expect("the game scope never took");
+    let lease = lease_scope(&daemon, "snes", "snes/yoshi");
+    daemon
+        .wait_for("state", |e| e["scope"]["game"] == "snes/yoshi", 5.0)
+        .expect("the lease never took");
+    drop(lease);
+    daemon
+        .wait_for("state", |e| e["scope"]["game"] == "n64/dk64", 5.0)
+        .expect("the lease's end did not hand back");
+
+    let saved: Value =
+        serde_json::from_str(&std::fs::read_to_string(&recent).expect("lastgame")).expect("json");
+    let keys: Vec<&str> = saved["games"]
+        .as_array()
+        .expect("games")
+        .iter()
+        .map(|game| game["key"].as_str().expect("key"))
+        .collect();
+    assert_eq!(
+        keys,
+        ["snes/yoshi", "n64/dk64"],
+        "a lease's hand-back is not a game played: {saved}"
+    );
     let _ = std::fs::remove_dir_all(&root);
 }
 

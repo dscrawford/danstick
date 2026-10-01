@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Dump identity fields for every connected joypad and flag ambiguity.
 
-Answers three questions we need before patching RetroArch:
+Answers three questions about telling the pads on this machine apart:
 
-  1. Is phys+uniq actually unique across the pads on this machine?
-  2. What pad index will RetroArch's udev driver assign to each?
+  1. Is phys+uniq actually unique across them?
+  2. In what order does udev enumerate them?
   3. Does SDL's enumeration agree with that order?
 
 Stdlib only, so it runs without entering the nix shell. SDL comparison is
@@ -29,7 +29,7 @@ def read(path):
 
 
 def udev_props(devnode):
-    """Properties as udev sees them - this is what RetroArch filters on."""
+    """Properties as udev sees them - what joystick enumeration filters on."""
     try:
         out = subprocess.run(
             ["udevadm", "info", "-q", "property", "-n", devnode],
@@ -46,7 +46,7 @@ def udev_props(devnode):
 
 
 def collect():
-    """Every input device carrying ID_INPUT_JOYSTICK=1, as RetroArch sees them."""
+    """Every input device carrying ID_INPUT_JOYSTICK=1, as udev enumerates them."""
     pads = []
     for input_dir in glob.glob("/sys/class/input/input*"):
         event_names = [
@@ -77,17 +77,14 @@ def collect():
             "name": read(os.path.join(input_dir, "name")),
             "phys": phys,
             "uniq": uniq,
-            # udev_joypad.c:498-504 writes phys, then appends uniq at
-            # pad->phys+physlen with no separator. This is the exact string
-            # RetroArch stores and the one a reservation must match.
-            "ra_id": phys + uniq,
+            # phys and uniq with no separator: one string naming the unit.
+            "id": phys + uniq,
             "vid": read(os.path.join(input_dir, "id/vendor")),
             "pid": read(os.path.join(input_dir, "id/product")),
         })
 
-    # libudev returns enumerate results sorted by syspath, and RetroArch walks
-    # that list assigning each pad the first vacant slot. Note this is a string
-    # sort: event10 sorts before event9.
+    # libudev returns enumerate results sorted by syspath. Note this is a
+    # string sort: event10 sorts before event9.
     pads.sort(key=lambda p: p["syspath"])
     for i, p in enumerate(pads):
         p["predicted_index"] = i
@@ -151,18 +148,18 @@ def main():
         print(f"      vid:pid {p['vid']}:{p['pid']}")
         print(f"      phys    {p['phys'] or '(empty)'}")
         print(f"      uniq    {p['uniq'] or '(empty)'}")
-        print(f"      ra_id   {p['ra_id'] or '(EMPTY - unusable as an identifier)'}")
+        print(f"      id      {p['id'] or '(EMPTY - unusable as an identifier)'}")
         print(f"      syspath {p['syspath']}")
         print()
 
     print("=== uniqueness ===")
     ok_phys = collisions(pads, "phys", "phys alone      ")
-    ok_raid = collisions(pads, "ra_id", "phys+uniq (ra_id)")
+    ok_id = collisions(pads, "id", "phys+uniq (id)   ")
     collisions(pads, "name", "name            ")
     print()
 
-    print("=== predicted RetroArch udev pad order ===")
-    print("(libudev sorts by syspath; RetroArch assigns first vacant slot)")
+    print("=== udev pad order ===")
+    print("(libudev sorts by syspath)")
     for p in pads:
         print(f"  index {p['predicted_index']} -> {p['name']}  [{p['event']}]")
     print()
@@ -180,21 +177,12 @@ def main():
               "- SDL order vs predicted udev order")
     print()
 
-    print("=== proposed reservation config ===")
-    if ok_raid:
-        for p in pads:
-            print(f'input_player{p["predicted_index"]+1}_reserved_device = '
-                  f'"phys:{p["ra_id"]}"')
-            print(f'input_player{p["predicted_index"]+1}_device_reservation_type = "2"')
-        print("\n(order above is arbitrary - the real tool assigns by press order)")
-    else:
-        print("phys+uniq is NOT a usable key on this hardware; a reservation")
-        print("keyed on it would be ambiguous. Fall back to vid:pid+name, or")
-        print("republish through uinput where we control phys ourselves.")
-
-    if not ok_phys and ok_raid:
-        print("\nNote: phys alone collides but phys+uniq does not - confirms the")
-        print("matcher must compare the full concatenated string, not a prefix.")
+    if not ok_id:
+        print("phys+uniq is NOT a usable key on this hardware; tell these pads")
+        print("apart by vid:pid+name, or by the phys danstick's clones carry.")
+    elif not ok_phys:
+        print("phys alone collides but phys+uniq does not: compare the full")
+        print("concatenated string, not a prefix.")
     return 0
 
 

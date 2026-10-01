@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::OnceLock;
 
-use danstick_core::binding::{Binding, RA_INVISIBLE};
+use danstick_core::binding::Binding;
 use danstick_core::capture::{
     deflection, game_scope_options, layout_options, scope_options, ChoiceKind, Chooser, Claim,
     Event, MappingRun, Outcome, ABS_HAT0X, ABS_HAT0Y, ABS_RX, ABS_RY, ABS_X, ABS_Y,
@@ -129,7 +129,7 @@ fn a_tap_records_the_current_control_and_moves_on() {
     let (control, binding) = recorded(&outcome);
     assert_eq!(control, first);
     assert!(outcome.advanced());
-    assert_eq!(binding, Binding::button(0).with_ra_index(Some(0)));
+    assert_eq!(binding, Binding::button(0));
     assert_eq!(run.index(), 1);
     assert_eq!(run.bindings().len(), 1);
     assert_eq!(run.bindings().get(&first), Some(&binding));
@@ -146,10 +146,7 @@ fn a_whole_layout_can_be_walked_to_completion() {
         let (control, binding) = recorded(&outcome);
         assert_eq!(control, expected);
         assert_eq!(control, order[position]);
-        assert_eq!(
-            binding,
-            Binding::button(position as i32).with_ra_index(Some(position as i32))
-        );
+        assert_eq!(binding, Binding::button(position as i32));
     }
     assert!(run.finished());
     assert_eq!(run.current(), None, "a finished run asks nothing");
@@ -1029,7 +1026,7 @@ fn a_key_the_pad_never_declared_records_nothing() {
 }
 
 #[test]
-fn a_key_below_btn_misc_records_as_invisible_to_retroarch() {
+fn a_key_below_btn_misc_records_its_sdl_index_like_any_button() {
     let key_a: u16 = 0x1e;
     let mut run = snes_run(vec![key_a, 0x130, 0x131], BTreeMap::new(), BTreeSet::new());
 
@@ -1038,13 +1035,10 @@ fn a_key_below_btn_misc_records_as_invisible_to_retroarch() {
     let (_, binding) = recorded(&outcome);
     assert_eq!(
         binding,
-        Binding::button(2).with_ra_index(Some(RA_INVISIBLE))
+        Binding::button(2),
+        "SDL numbers it after the joystick buttons"
     );
-    assert!(binding.sdl_visible());
-    assert!(
-        !binding.retroarch_visible(),
-        "a button RetroArch cannot see was given a number"
-    );
+    assert_eq!(binding.sdl().expect("sdl"), "b2");
 }
 
 #[test]
@@ -1907,7 +1901,7 @@ fn a_seeded_run_starts_with_the_stored_capture_and_guards_it() {
         retaken,
         Outcome::Recorded {
             control: a,
-            binding: Binding::button(0).with_ra_index(Some(0)),
+            binding: Binding::button(0),
         },
         "the control being asked for may take its own stored input again"
     );

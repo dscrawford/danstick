@@ -53,10 +53,6 @@ fn every_runtime_path_is_where_the_python_puts_it() {
             want["prompted"].as_str().expect("prompted")
         );
         assert_eq!(
-            joined("playing"),
-            want["playing"].as_str().expect("playing")
-        );
-        assert_eq!(
             joined("lastgame.json"),
             want["last_game"].as_str().expect("last_game")
         );

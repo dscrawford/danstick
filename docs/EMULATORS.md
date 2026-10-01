@@ -8,7 +8,6 @@ never opens its input settings.
 
 | | config | binds by | needs danstick's SDL mapping? |
 |---|---|---|---|
-| RetroArch | autoconfig + `--appendconfig` | name and pad index | yes, via the autoconfig |
 | Cemu | `controllerProfiles/controllerN.xml` | **SDL GUID** | **yes, and only via the environment** |
 | Ryujinx | `Config.json` → `input_config` | a GUID with the name CRC blanked | yes |
 | ares | `settings.bml` → `VirtualPadN` | SDL GUID, raw joystick indices | **no** |
@@ -51,8 +50,7 @@ Measured, not assumed: two pads identical but for their version got distinct
 GUIDs and *both* were still matched to "Xbox 360 Controller" out of SDL's
 built-in database. So mirror mode keeps working — a controller nobody has
 mapped still behaves as it did before danstick existed — and nothing else keys
-on the field. RetroArch matches on name and vid/pid; a stored capture is filed
-under the *physical* pad's signature.
+on the field. A stored capture is filed under the *physical* pad's signature.
 
 This is the one field mirroring deliberately does not carry, and
 `virtual.version_for` says so.
@@ -92,8 +90,7 @@ quarter. The Nunchuk and the pointer a pad aims with its right stick are round
 for the same reason; the pointer's gate is the screen's square, which a round
 stick could otherwise never reach the corners of.
 
-Unmanaged ports are set to `SIDEVICE_NONE` rather than left alone, for the
-same reason danstick clears an unused RetroArch reservation: a port still
+Unmanaged ports are set to `SIDEVICE_NONE` rather than left alone: a port still
 declared from a session with more players is a phantom controller in the next
 game.
 
@@ -107,13 +104,12 @@ so bindings are worth having on the first run too.
 
 danstick binds pads, and the keyboard is not one -- but a person with no pad
 still has it, and every emulator above either binds it to port 1 by default
-(RetroArch, Dolphin, Ryujinx) or not at all (ares, Cemu). Seating a pad on
+(Dolphin, Ryujinx) or not at all (ares, Cemu). Seating a pad on
 port 1 used to take the keyboard's port with it, silently.
 
 **The seat is the keyboard and the mouse.** The person sitting there has
 the mouse under their other hand, and games want it: a PC port's camera,
-Dolphin's Wii pointer, the N64 and SNES mice in ares, a RetroArch core with
-a mouse or lightgun. So the seat is called "Keyboard and Mouse" on the
+Dolphin's Wii pointer, the N64 and SNES mice in ares. So the seat is called "Keyboard and Mouse" on the
 socket (`docs/EVENTS.md`), and the pointer goes to that player wherever an
 emulator has one for a port. Nothing is grabbed: the mouse stays the
 compositor's, exactly as the keyboard does. A seated *pad's* own mouse
@@ -125,18 +121,16 @@ that emulator's own keys where it has them:
 
 | | where it goes | which keys |
 |---|---|---|
-| RetroArch | `input_player{N}_*` suffix-less binds; player 1's are nulled when a pad sits there, and `input_all_users_control_menu` is set so the keyboard can still drive the menu | RetroArch's own: arrows, Z/X/A/S, Q/W, Enter, right Shift |
 | Dolphin | `[GCPad{N}]` on `XInput2/0/Virtual core pointer`, `SIDevice{N-1} = 6` | Dolphin's own: X/Z/C/S/D, Q/W, arrows + IJKL sticks, TGFH d-pad |
 | Ryujinx | the existing `WindowKeyboard` entry moved to `Player{N}`, or Ryujinx's default seeded there | the user's own if there is one, else Ryujinx's: WASD/IJKL, Z/X/C/V, E/U, Q/O |
 | ares | `VirtualPad{N}` as `0x1/0/<key index>` | danstick's layout (below) |
 | Cemu | `controller{N-1}.xml` with `<api>Keyboard</api>`, marked as danstick's | danstick's layout (below) |
 
 And the mouse, per emulator -- there is no common answer, because two of
-the five have no per-port pointer at all:
+the four have no per-port pointer at all:
 
 | | where the mouse goes |
 |---|---|
-| RetroArch | `input_player{N}_mouse_index = "0"`, the desk's pointer. Every other port is sent to index 16, past the end of `MAX_INPUT_DEVICES`, which is the only way a cfg says "no mouse": RetroArch otherwise seeds port *i* with mouse *i*, so port 1 held the pointer whoever sat there |
 | Dolphin | Wii Remote `N` on `XInput2/0/Virtual core pointer` with `IR` on the cursor -- the section Dolphin writes for remote 1 itself, moved to the seat that owns the mouse. A pad's remote points with its right stick and reads no cursor |
 | ares | `VirtualMouse{N}` on `0x2` -- its generic mouse -- axes in group 0, buttons in group 1. A port device ares maps through a virtual port (N64 Mouse, SNES Mouse) reads it, so there is no per-system table to keep. Every other port's mouse block is cleared |
 | Cemu | **nothing to bind.** `InputAPI::Type` has no mouse: Keyboard, SDLController, XInput, DirectInput, DSUClient, GameCube, Wiimote and the WGI pair, and that is all. Cemu's mouse-to-touch is window-level, in `InputManager`, not something a controller profile can carry |
@@ -236,18 +230,10 @@ it does not recognise, so a misspelling leaves the control dead and silent.
 
 ## When they are written
 
-On every republish, beside the SDL database and the RetroArch autoconfig — the
-same moment, from the same input. `danstick_input::emulators::publish` does the
-writing; the Rust daemon calls it directly from `publish_artefacts`, and the
-Python daemon, which is still the one that runs, calls it through
-`danstick_daemon::publish`, which calls it directly.
-
-The subprocess exists so there is one implementation of three file formats
-rather than two. Ryujinx's device id and ares' raw joystick indices are exactly
-the kind of thing that drifts when written twice, and only one of the two
-copies would be the one a user's emulator reads. The cost is a process per
-republish — a few an hour, off the forwarding path. When the daemon finishes
-moving to Rust the subprocess goes with it.
+On every republish, beside the SDL database and `env.sh` — the same moment,
+from the same input. `danstick_input::emulators::publish` does the writing; the
+daemon calls it from `danstick_daemon::publish::write_all`, and `danstick-rs
+emit` and `run` call the same function.
 
 Every write is best-effort and reported rather than propagated. ares and
 Ryujinx each keep all of their settings in one file, so danstick refuses to

@@ -229,11 +229,10 @@ pub fn mapping_done(run: Option<&MappingRun>, stored: bool) -> Value {
     })
 }
 
-pub fn accepted(players: Vec<PlayerState>, launch_config: &str) -> Value {
+pub fn accepted(players: Vec<PlayerState>) -> Value {
     json!({
         "event": "accepted",
         "players": players,
-        "launch_config": launch_config,
     })
 }
 

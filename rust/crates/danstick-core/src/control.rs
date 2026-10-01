@@ -119,34 +119,6 @@ impl Control {
             Control::LeftStickRight => "+leftx",
         }
     }
-
-    /// RetroArch autoconfig key: a/b are swapped vs SDL (Nintendo button positions).
-    pub const fn retroarch_key(self) -> &'static str {
-        match self {
-            Control::A => "input_b_btn",
-            Control::B => "input_a_btn",
-            Control::X => "input_y_btn",
-            Control::Y => "input_x_btn",
-            Control::Back => "input_select_btn",
-            Control::Start => "input_start_btn",
-            Control::LeftShoulder => "input_l_btn",
-            Control::RightShoulder => "input_r_btn",
-            Control::LeftTrigger => "input_l2_btn",
-            Control::RightTrigger => "input_r2_btn",
-            Control::DpadUp => "input_up_btn",
-            Control::DpadDown => "input_down_btn",
-            Control::DpadLeft => "input_left_btn",
-            Control::DpadRight => "input_right_btn",
-            Control::RightStickUp => "input_r_y_minus_btn",
-            Control::RightStickDown => "input_r_y_plus_btn",
-            Control::RightStickLeft => "input_r_x_minus_btn",
-            Control::RightStickRight => "input_r_x_plus_btn",
-            Control::LeftStickUp => "input_l_y_minus_btn",
-            Control::LeftStickDown => "input_l_y_plus_btn",
-            Control::LeftStickLeft => "input_l_x_minus_btn",
-            Control::LeftStickRight => "input_l_x_plus_btn",
-        }
-    }
 }
 
 /// A string that names no canonical control.
@@ -213,15 +185,6 @@ mod tests {
     }
 
     #[test]
-    fn retroarch_keys_are_unique() {
-        let mut keys: Vec<&str> = Control::ALL.iter().map(|c| c.retroarch_key()).collect();
-        keys.sort_unstable();
-        let before = keys.len();
-        keys.dedup();
-        assert_eq!(keys.len(), before, "two controls share a RetroArch key");
-    }
-
-    #[test]
     fn sdl_fields_are_unique() {
         let mut fields: Vec<&str> = Control::ALL.iter().map(|c| c.sdl_field()).collect();
         fields.sort_unstable();
@@ -241,22 +204,9 @@ mod tests {
     }
 
     #[test]
-    fn retroarch_and_sdl_disagree_about_a_and_b_deliberately() {
-        assert_eq!(Control::A.retroarch_key(), "input_b_btn");
-        assert_eq!(Control::B.retroarch_key(), "input_a_btn");
-        assert_eq!(Control::X.retroarch_key(), "input_y_btn");
-        assert_eq!(Control::Y.retroarch_key(), "input_x_btn");
-    }
-
-    #[test]
-    fn c_buttons_are_right_stick_halves_to_both_consumers() {
+    fn c_buttons_are_right_stick_halves() {
         assert_eq!(Control::RightStickUp.sdl_field(), "-righty");
         assert_eq!(Control::RightStickDown.sdl_field(), "+righty");
-        assert_eq!(Control::RightStickUp.retroarch_key(), "input_r_y_minus_btn");
-        assert_eq!(
-            Control::RightStickDown.retroarch_key(),
-            "input_r_y_plus_btn"
-        );
     }
 
     #[test]

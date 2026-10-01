@@ -1,7 +1,5 @@
 //! Controller event message: self-sufficient roster for live binding.
 
-use std::collections::BTreeMap;
-
 use serde_json::{json, Map, Value};
 
 pub const ACTION_ADDED: &str = "added";
@@ -23,7 +21,8 @@ pub struct Controller {
     pub phys: String,
     pub uniq: String,
     pub signature: String,
-    pub retroarch_visible: bool,
+    /// Not hidden from joystick enumeration by `danstick hide`.
+    pub visible: bool,
 }
 
 /// Clone identity (mirror mode: pad itself; danstick mode: 1209:0001).
@@ -39,21 +38,12 @@ pub struct Virtual {
     pub identity_mode: String,
 }
 
-/// RetroArch side: port, index, binds.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct Retroarch {
-    pub index: Option<usize>,
-    pub profile: String,
-    pub binds: BTreeMap<String, String>,
-}
-
 /// Controller and its clone.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Attached {
     pub player: u32,
     pub controller: Controller,
     pub virtual_pad: Option<Virtual>,
-    pub retroarch: Option<Retroarch>,
     pub sdl_mapping: String,
 }
 
@@ -88,7 +78,7 @@ fn controller_fields(controller: &Controller, configured: bool) -> Value {
         "uniq": controller.uniq,
         "signature": controller.signature,
         "configured": configured,
-        "retroarch_visible": controller.retroarch_visible,
+        "visible": controller.visible,
     })
 }
 
@@ -102,15 +92,6 @@ fn virtual_fields(virtual_pad: &Virtual) -> Value {
         "bustype": virtual_pad.bustype,
         "guid": virtual_pad.guid,
         "identity_mode": virtual_pad.identity_mode,
-    })
-}
-
-fn retroarch_fields(player: u32, retroarch: &Retroarch) -> Value {
-    json!({
-        "port": player, // 1-based, matches input_playerN_*
-        "index": retroarch.index.map(|index| index as i64).unwrap_or(-1),
-        "profile": retroarch.profile,
-        "binds": retroarch.binds,
     })
 }
 
@@ -130,14 +111,6 @@ pub fn entry_fields(entry: &Attached, configured: bool) -> Value {
             .virtual_pad
             .as_ref()
             .map(virtual_fields)
-            .unwrap_or(Value::Null),
-    );
-    fields.insert(
-        "retroarch".to_owned(),
-        entry
-            .retroarch
-            .as_ref()
-            .map(|retroarch| retroarch_fields(entry.player, retroarch))
             .unwrap_or(Value::Null),
     );
     fields.insert("sdl_mapping".to_owned(), json!(entry.sdl_mapping));
@@ -196,7 +169,7 @@ mod tests {
                 pid: 0x2009,
                 path: format!("/dev/input/event{player}"),
                 signature: format!("057e:2009:Test Pad {player}"),
-                retroarch_visible: true,
+                visible: true,
                 ..Controller::default()
             },
             virtual_pad: Some(Virtual {
@@ -208,13 +181,6 @@ mod tests {
                 guid: "guid".to_owned(),
                 identity_mode: "mirror".to_owned(),
                 ..Virtual::default()
-            }),
-            retroarch: Some(Retroarch {
-                index: Some((player as usize).saturating_sub(1)),
-                profile: "/run/danstick/autoconfig/udev/x.cfg".to_owned(),
-                binds: [("input_a_btn".to_owned(), "0".to_owned())]
-                    .into_iter()
-                    .collect(),
             }),
             sdl_mapping: "guid,danstick Player 1,a:b0,".to_owned(),
         }
@@ -252,15 +218,12 @@ mod tests {
         assert_eq!(event["build"], "build-1");
         assert!(event.get("reason").is_none(), "no reason unless given");
         assert_eq!(event["changed"]["virtual"]["vid"], "057e");
-        assert_eq!(event["changed"]["retroarch"]["port"], 2);
-        assert_eq!(event["changed"]["retroarch"]["index"], 1);
     }
 
     #[test]
-    fn an_unconfigured_controller_has_no_virtual_or_retroarch_half() {
+    fn an_unconfigured_controller_has_no_virtual_half() {
         let mut subject = attached(0);
         subject.virtual_pad = None;
-        subject.retroarch = None;
         let event = controller_event(
             ACTION_UNCONFIGURED,
             &subject,
@@ -272,17 +235,8 @@ mod tests {
         );
         let changed = event["changed"].as_object().expect("changed");
         assert!(!changed.contains_key("virtual"));
-        assert!(!changed.contains_key("retroarch"));
         assert!(!changed.contains_key("sdl_mapping"));
         assert_eq!(changed["controller"]["configured"], false);
         assert_eq!(event["reason"], "unmapped");
-    }
-
-    #[test]
-    fn a_player_retroarch_cannot_see_reports_minus_one() {
-        let mut subject = attached(1);
-        subject.retroarch.as_mut().expect("retroarch").index = None;
-        let event = controller_event(ACTION_ADDED, &subject, &[subject.clone()], "", "", "b", "");
-        assert_eq!(event["changed"]["retroarch"]["index"], -1);
     }
 }

@@ -10,7 +10,8 @@ which pins this repo as a flake input and files what it needs under
 ## Setup
 
 - `direnv allow` — enters the flake devShell via nix-direnv (first entry
-  evaluates the whole flake, which builds Pegasus and RetroArch; one-off).
+  evaluates the whole flake and fetches the Rust toolchain and a gamepad-only
+  SDL3; one-off).
 - Without the full devShell: `tools/cargo <args>` runs cargo from a `nix shell`
   of just the toolchain (it also sets `PKG_CONFIG_PATH` for `libudev.pc`).
 - Inside the devShell, `danstick` on `PATH` is built from the working tree.
@@ -29,7 +30,8 @@ Never `path:.`: a path flake copies the whole directory into the store,
 gitignored `rust/target` (14GB) included, and again whenever it changed -- it
 filled a disk. The git flake already builds uncommitted edits to tracked files.
 
-Other flake outputs: `danstick-play`, `paddump`, `icons`, `nixosModules.danstick`.
+Other flake outputs: `danstick-start`, `paddump`, `icons`, `test-image`,
+`nixosModules.danstick`.
 
 ## Test
 
@@ -109,7 +111,7 @@ ioctls deny it with targeted allows) and `missing_debug_implementations`.
     FINDINGS.md                 the incident record; every guard in the code has a wound written here
 
 Runtime state lives in `$XDG_RUNTIME_DIR/danstick/` (socket, `assignments.json`,
-`launch.cfg`, autoconfig, log); profiles under `$XDG_CONFIG_HOME/danstick/`.
+`env.sh`, `lastgame.json`, log); profiles under `$XDG_CONFIG_HOME/danstick/`.
 
 ## Boundaries / Do Not Touch
 

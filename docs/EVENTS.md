@@ -94,9 +94,9 @@ down. On one desk, `claim` to `state` is about a millisecond for the first
 seat and the fourth alike; the files follow some tens of milliseconds later.
 
 **Wait for `controller` `added` before reading the files.** It is the event
-that names them -- the clone's node, the RetroArch profile, the SDL line --
-and it is sent after they are written. A launch that reads `launch.cfg` or
-`env.sh` the moment it sees `state` can read the previous room's.
+that names them -- the clone's node, the SDL line -- and it is sent after
+they are written. A launch that reads `env.sh` the moment it sees `state` can
+read the previous room's.
 
 ### How long the hold is
 
@@ -261,7 +261,7 @@ can stop saying it the moment that is no longer true.
     "phys": "usb-0000:08:00.1-4/input0", "uniq": "...",
     "signature": "057e:2009:Nintendo Switch Pro Controller",
     "configured": true,
-    "retroarch_visible": false
+    "visible": false
   },
   "virtual": {
     "name": "danstick Player 2",
@@ -270,12 +270,6 @@ can stop saying it the moment that is no longer true.
     "vid": "057e", "pid": "2009", "bustype": 3,
     "guid": "030089a67e0500000920000001000000",
     "identity_mode": "mirror"
-  },
-  "retroarch": {
-    "port": 2,                // 1-based, as input_playerN_* counts
-    "index": 1,               // 0-based joypad index, or -1
-    "profile": "/run/user/1000/danstick/autoconfig/danstick Player 2.cfg",
-    "binds": {"input_a_btn": "97", ...}
   },
   "sdl_mapping": "030089a6...,danstick Player 2,a:b0,..."
 }
@@ -340,7 +334,7 @@ built with and needs no mapping handed to it. The source's inputs are
 translated onto that layout through its stored capture (or code for code for
 a pad that follows the kernel's convention); a control the source lacks is
 never pressed. Two clones share one GUID under it -- SDL tells them apart by
-index, ares by slot, RetroArch by name; Ryujinx, which blanks the name CRC,
+index, ares by slot; Ryujinx, which blanks the name CRC,
 cannot, and is the one consumer this identity does not suit.
 `DANSTICK_PAD_IDENTITY=xbox360-numbered` is the same pad with the player number
 in its version (`0x0001` for player 1, and so on), so every clone has a GUID of
@@ -349,14 +343,13 @@ when no database entry has the exact version it matches one with the version
 set aside. `identity_mode` says which is in force. Match on `guid`, which is
 computed from it.
 
-**`index` is not `port`.** RetroArch's `input_playerN_joypad_index` is a
-0-based position in its own enumeration, and hidden pads are not in it. `-1`
-means danstick could not place this player, and binding by index would point at
-someone else's pad.
+**`controller.visible` is false for a hidden pad.** `danstick hide`'s udev
+rules clear `ID_INPUT_JOYSTICK` on the physical pads, so a program enumerating
+joysticks sees only the clones. `list --json` carries the same field.
 
-**Binds are scoped.** `scope` says which console and game they were resolved
-for. A consumer caching them needs it, or it applies N64 binds to a SNES game
-and nothing says why the buttons moved.
+**`sdl_mapping` is scoped.** `scope` says which console and game it was
+resolved for. A consumer caching it needs that, or it applies N64 bindings to
+a SNES game and nothing says why the buttons moved.
 
 **`signature`, not `name`, identifies a controller.** Two identical pads share
 a name.
@@ -481,7 +474,7 @@ useful on its own.
 ```
 
 Drops that seat -- every seat, with no player named. The clone stops, the pad
-is released, consumers are rewritten for the seats that remain (a launch config
+is released, consumers are rewritten for the seats that remain (files
 naming nobody, when nobody is left), and the seat is gone from
 `assignments.json`, so a restart does not bring it back. A `controller` event
 with `action: "removed"` and `reason: "unseated"` is emitted per pad, then
@@ -536,12 +529,11 @@ then `state`, whose `players[]` entry for the seat is
 "configured": true, "published": false, "keyboard": true, "mouse": true}`.
 A pad seated after it takes the seat after: keyboard first then pad gives
 player 1 keyboard, player 2 pad, carried into ports that number by device
-(ares, RetroArch) as well as by seat.
+(ares) as well as by seat.
 
 **The seat is both devices.** The person at the keyboard has the mouse under
 their other hand, and some games want it -- a PC port's camera, Dolphin's
-Wii pointer, the N64 and SNES mice in ares, a RetroArch core with a mouse or
-lightgun. So the seat is named for both, and the mouse is bound to that
+Wii pointer, the N64 and SNES mice in ares. So the seat is named for both, and the mouse is bound to that
 player wherever an emulator has a pointer for a port (`docs/EMULATORS.md`,
 "The keyboard"). `keyboard` and `mouse` are both true on it; either one
 tells a front-end this seat has no pad behind it. Nothing is grabbed: the
@@ -699,12 +691,8 @@ The reply is a `state` carrying the seats nobody has taken yet:
 emulator's config at launch rather than only the seats already taken. A seat
 leaves `reserved` when somebody claims it; the device does not change.
 
-danstick writes the reserved seats into what it writes for anybody else: the SDL
-database and `env.sh`, and Cemu, Dolphin, ares and Ryujinx. **RetroArch's
-launch config is the exception** -- it reserves ports for *seated* players only,
-since its indices are worked out per launch from what is plugged in. A
-RetroArch game gets the joining player's pad at the index the launch config
-gave it, which is the seat they took.
+danstick writes the reserved seats into everything it writes: the SDL
+database and `env.sh`, and Cemu, Dolphin, ares and Ryujinx.
 
 **`players: 0` gives them all back**, which is how a launch ends. Reserved
 seats are also adopted by a rebuild, so restoring or accepting a session does
@@ -748,7 +736,7 @@ what it took: the reservation goes back to what it was, and the identity to
 the one it found. A launcher needs nothing else; `--reserve` only ever touches
 the daemon already running, and with none running the game still starts,
 with a warning, just without the extra seats. Past sixteen it asks for
-sixteen, RetroArch's limit.
+sixteen, danstick's limit (`slots::MAX_COUNT`).
 
 If `exec` is killed rather than let finish it cannot give anything back; a
 daemon started with `--follow` ends with the session anyway, and otherwise
@@ -764,9 +752,9 @@ daemon started with `--follow` ends with the session anyway, and otherwise
 
 Every clone is driven by a walk: the most specific scope stored for what is
 being played -- `game:<console>/<key>`, then `console:<id>`, then the
-default -- as `Profile::resolve` has always chosen for RetroArch's files.
-Until told, a daemon plays nothing in particular and every clone follows the
-default. `scope` says what is being played; each seated pad's clone is
+default, as `Profile::resolve` chooses. Until told, a daemon plays nothing
+in particular and every clone follows the default; it does not fall back to a
+game played before. `scope` says what is being played; each seated pad's clone is
 driven from that scope's walk **at the node it already has**, letting go of
 whatever the old walk held, so a game mid-read keeps its device. Both fields
 optional; sending neither is the default again. The consumers' files are
@@ -793,6 +781,16 @@ clone is driven from whatever resolves for it now.
 
 `danstick-rs exec --console ID [--game KEY]` leases it for a launch, on a
 connection it holds until the game ends, beside `--reserve`.
+
+**A lease is what "a game is running" means.** While any client holds one,
+a newly plugged controller is announced but the setup screen is not opened
+for it (`DANSTICK_NO_AUTOSETUP` is the other way to stop that).
+
+**A game named is a game played.** A `scope` naming both a console and a
+game puts that game at the front of `lastgame.json`, the recently played list
+`choose_scope` offers (five at most). A lease handing back what it found on
+disconnect does not count. The title is kept if the key was already listed,
+and is empty otherwise, so the picker shows the key.
 
 ## A menu holds one player: `focus`
 

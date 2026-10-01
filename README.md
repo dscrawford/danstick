@@ -21,7 +21,6 @@ Controller assignment for Linux, as stable virtual gamepads.
 | `forget` | drop what was learned about a controller |
 | `run` / `serve` | republish the pads (`serve` adds a socket) |
 | `ensure-daemon` | start the daemon, or replace a stale one |
-| `play` / `launch` | start a game bound to the assigned order |
 | `exec -- <program>` | run a program seeing only danstick's pads |
 | `hide` | udev rules hiding the physical pads |
 
@@ -29,7 +28,6 @@ Controller assignment for Linux, as stable virtual gamepads.
 
 - Virtual pads: `/dev/input/event*`, named `danstick Player N`
 - SDL database: `~/.config/danstick/sdl_controllers.txt`
-- RetroArch autoconfig: `$XDG_RUNTIME_DIR/danstick/autoconfig/udev/`
 - Emulator configs: Cemu, Dolphin, ares, Ryujinx ([docs/EMULATORS.md](docs/EMULATORS.md))
 - Control socket: `$XDG_RUNTIME_DIR/danstick/danstick.sock` ([docs/EVENTS.md](docs/EVENTS.md))
 - Learned profiles: `~/.local/share/danstick/devices/`

@@ -82,7 +82,7 @@ mod tests {
             vid: 0x0079,
             pid: 0x1879,
             syspath: PathBuf::from("/sys"),
-            retroarch_visible: true,
+            visible: true,
             motion: None,
         }
     }

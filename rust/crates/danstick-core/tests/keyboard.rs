@@ -1,112 +1,12 @@
 //! The keyboard takes the first free port in every emulator, in that emulator's own keys.
 
-use danstick_core::{ares, cemu, dolphin, retroarch, ryujinx, userconfig};
+use danstick_core::{ares, cemu, dolphin, ryujinx};
 use serde_json::{json, Value};
 
 const GUID: &str = "03000000120900000100000001000000";
 
-// ---- RetroArch ----
-
-#[test]
-fn retroarch_leaves_its_own_key_defaults_alone_when_player_one_is_free() {
-    for text in [
-        retroarch::keyboard_config(&[], None),
-        retroarch::keyboard_config(&[2, 3], None),
-    ] {
-        assert!(!text.contains(" = \"nul\""), "the keys moved: {text}");
-        assert!(!text.contains("input_player1_a"), "{text}");
-        assert!(
-            text.contains("input_player1_mouse_index = \"0\"\n"),
-            "{text}"
-        );
-    }
-}
-
-#[test]
-fn retroarch_moves_the_keyboard_off_a_seated_player_one() {
-    let text = retroarch::keyboard_config(&[1], None);
-    for bind in userconfig::PLAYER_BINDS {
-        assert!(
-            text.contains(&format!("input_player1_{bind} = \"nul\"\n")),
-            "{bind} still drives player 1"
-        );
-    }
-    assert!(text.contains("input_player2_b = \"z\"\n"), "{text}");
-    assert!(text.contains("input_player2_a = \"x\"\n"));
-    assert!(text.contains("input_player2_start = \"enter\"\n"));
-    assert!(text.contains("input_player2_select = \"rshift\"\n"));
-    assert!(text.contains("input_player2_up = \"up\"\n"));
-    assert!(text.contains("input_all_users_control_menu = \"true\"\n"));
-    assert!(
-        !text.contains("input_player2_b_btn"),
-        "a keyboard bind has no suffix"
-    );
-    assert!(
-        !text.contains("input_player3_a"),
-        "only the keyboard's own port gets keys: {text}"
-    );
-}
-
-#[test]
-fn retroarch_gives_the_desks_mouse_to_the_keyboards_player_and_to_nobody_else() {
-    let text = retroarch::keyboard_config(&[1], Some(2));
-    assert!(
-        text.contains("input_player2_mouse_index = \"0\"\n"),
-        "the keyboard's player has no mouse: {text}"
-    );
-    let none = format!("mouse_index = \"{}\"", retroarch::NO_MOUSE);
-    assert!(
-        text.contains(&format!("input_player1_{none}\n")),
-        "the pad's port kept the desk's mouse: {text}"
-    );
-    for player in [3, 16] {
-        assert!(
-            text.contains(&format!("input_player{player}_{none}\n")),
-            "player {player} kept a mouse: {text}"
-        );
-    }
-    assert!(
-        !text.contains("input_player17_mouse_index"),
-        "RetroArch has sixteen ports: {text}"
-    );
-
-    let text = retroarch::keyboard_config(&[1], None);
-    assert!(
-        text.contains("input_player2_mouse_index = \"0\"\n"),
-        "{text}"
-    );
-    assert!(text.contains(&format!("input_player1_{none}\n")), "{text}");
-
-    let all: Vec<u32> = (1..=retroarch::MAX_PLAYERS).collect();
-    let text = retroarch::keyboard_config(&all, None);
-    assert!(
-        !text.contains("mouse_index = \"0\""),
-        "nobody is at the keyboard, so nobody has the mouse: {text}"
-    );
-}
-
-#[test]
-fn retroarch_with_every_port_seated_gives_the_keyboard_nobody() {
-    let all: Vec<u32> = (1..=retroarch::MAX_PLAYERS).collect();
-    let text = retroarch::keyboard_config(&all, None);
-    assert!(text.contains("input_player1_a = \"nul\"\n"));
-    assert!(!text.contains("= \"x\""), "{text}");
-    assert!(!text.contains("all_users_control_menu"));
-}
-
 #[test]
 fn a_seated_keyboard_keeps_its_seat_ahead_of_pads_seated_later() {
-    let text = retroarch::keyboard_config(&[2], Some(1));
-    assert!(
-        !text.contains(" = \"nul\""),
-        "player 1's key defaults stand: {text}"
-    );
-    assert!(
-        text.contains("input_player1_mouse_index = \"0\"\n"),
-        "{text}"
-    );
-    let text = retroarch::keyboard_config(&[1, 2], Some(3));
-    assert!(text.contains("input_player3_a = \"x\"\n"), "{text}");
     let merged = ryujinx::merge(&Value::Null, vec![pad(2)], Some(1));
     assert_eq!(indices_of(&merged, "WindowKeyboard"), ["Player1"]);
     let merged = ryujinx::merge(&Value::Null, vec![pad(1)], Some(9));

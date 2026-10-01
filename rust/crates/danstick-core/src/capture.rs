@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::binding::{axis_index, retroarch_button_index, sdl_button_index, Binding, BindingKind};
+use crate::binding::{axis_index, sdl_button_index, Binding, BindingKind};
 use crate::control::Control;
 use crate::layout::Layout;
 use crate::sdl::AxisSpan;
@@ -507,9 +507,7 @@ impl MappingRun {
         let Some(index) = sdl_button_index(&self.keys, event.code) else {
             return Outcome::Ignored;
         };
-        let binding =
-            Binding::button(index).with_ra_index(retroarch_button_index(&self.keys, event.code));
-        self.take(binding, claim, now)
+        self.take(Binding::button(index), claim, now)
     }
 
     fn rearm(&mut self, event: Event) {

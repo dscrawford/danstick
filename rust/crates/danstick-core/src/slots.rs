@@ -4,8 +4,8 @@ use serde_json::{json, Value};
 
 /// The fewest slots a fixed daemon publishes.
 pub const MIN_COUNT: u32 = 1;
-/// The most: RetroArch's player limit.
-pub const MAX_COUNT: u32 = crate::retroarch::MAX_PLAYERS;
+/// The most seats a daemon publishes, slots or not.
+pub const MAX_COUNT: u32 = 16;
 /// How many a fixed daemon publishes when nobody says.
 pub const DEFAULT_COUNT: u32 = 4;
 

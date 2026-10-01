@@ -37,11 +37,6 @@ pub fn socket_path() -> PathBuf {
     dir().join("danstick.sock")
 }
 
-/// Holds the running game's pid, so a launcher killed outright cannot wedge it.
-pub fn playing_marker() -> PathBuf {
-    dir().join("playing")
-}
-
 pub fn daemon_log_path() -> PathBuf {
     dir().join("danstick.log")
 }
@@ -53,24 +48,6 @@ pub fn prompted_path() -> PathBuf {
 
 pub fn last_game_path() -> PathBuf {
     dir().join("lastgame.json")
-}
-
-pub fn game_is_running() -> bool {
-    game_is_running_at(&playing_marker())
-}
-
-pub fn game_is_running_at(marker: &Path) -> bool {
-    let Ok(text) = std::fs::read_to_string(marker) else {
-        return false;
-    };
-    let Ok(pid) = text.trim().parse::<u32>() else {
-        return false;
-    };
-    if PathBuf::from(format!("/proc/{pid}")).exists() {
-        return true;
-    }
-    let _ = std::fs::remove_file(marker);
-    false
 }
 
 /// Lossy: anything may have written this file, and a bad byte must not stop startup.
@@ -393,7 +370,7 @@ mod tests {
     #[test]
     fn every_path_hangs_off_one_directory() {
         let base = dir();
-        for path in [assignments_path(), socket_path(), playing_marker()] {
+        for path in [assignments_path(), socket_path(), last_game_path()] {
             assert_eq!(path.parent(), Some(base.as_path()), "{path:?}");
         }
     }
@@ -408,16 +385,6 @@ mod tests {
             socket_path().file_name().and_then(|n| n.to_str()),
             Some("danstick.sock")
         );
-        assert_eq!(
-            playing_marker().file_name().and_then(|n| n.to_str()),
-            Some("playing")
-        );
-    }
-
-    #[test]
-    fn a_missing_marker_is_not_a_running_game() {
-        let missing = dir_under(Some("/nonexistent-danstick-test")).join("playing");
-        assert!(!game_is_running_at(&missing));
     }
 
     #[test]

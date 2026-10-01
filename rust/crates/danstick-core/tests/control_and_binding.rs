@@ -3,8 +3,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use danstick_core::binding::{
-    axis_index, hat_direction, retroarch_button_index, sdl_button_index, Binding, BindingKind,
-    Unspellable, BTN_JOYSTICK, BTN_MISC, HAT_CODES, RA_INVISIBLE,
+    axis_index, hat_direction, sdl_button_index, Binding, BindingKind, Unspellable, BTN_JOYSTICK,
+    HAT_CODES,
 };
 use danstick_core::control::{Control, UnknownControl, CANONICAL_ORDER};
 
@@ -120,7 +120,7 @@ fn a_name_that_differs_only_in_case_or_whitespace_is_refused() {
 
 #[test]
 fn a_name_from_a_neighbouring_vocabulary_is_refused() {
-    // SDL field names, RetroArch keys and SDL controls danstick does not model.
+    // SDL field names and SDL controls danstick does not model.
     for name in [
         "guide",
         "leftstick",
@@ -133,7 +133,6 @@ fn a_name_from_a_neighbouring_vocabulary_is_refused() {
         "rightstickup",
         "-righty",
         "+rightx",
-        "input_b_btn",
         "",
     ] {
         assert!(
@@ -172,90 +171,29 @@ fn sdl_field_is_total_and_injective() {
 }
 
 #[test]
-fn retroarch_key_is_total_and_injective() {
-    let mut seen: BTreeMap<&str, Control> = BTreeMap::new();
-    for control in Control::ALL {
-        let key = control.retroarch_key();
-        assert!(
-            key.starts_with("input_"),
-            "{control} has a key RetroArch will not read: {key:?}"
-        );
-        assert!(
-            key.ends_with("_btn"),
-            "{control}'s key is not a button key: {key:?}"
-        );
-        if let Some(other) = seen.insert(key, control) {
-            panic!("{control} and {other} both write the RetroArch key {key:?}");
-        }
-    }
-    assert_eq!(seen.len(), 22);
-}
-
-#[test]
-fn retroarch_and_sdl_disagree_about_a_and_b_deliberately() {
-    assert_eq!(Control::A.retroarch_key(), "input_b_btn");
-    assert_eq!(Control::B.retroarch_key(), "input_a_btn");
-    assert_eq!(Control::X.retroarch_key(), "input_y_btn");
-    assert_eq!(Control::Y.retroarch_key(), "input_x_btn");
-    assert_eq!(Control::A.sdl_field(), "a");
-    assert_eq!(Control::B.sdl_field(), "b");
-    assert_eq!(Control::X.sdl_field(), "x");
-    assert_eq!(Control::Y.sdl_field(), "y");
-}
-
-#[test]
-fn the_face_buttons_are_the_only_controls_whose_two_spellings_cross() {
-    let crossed = [Control::A, Control::B, Control::X, Control::Y];
-    for control in Control::ALL {
-        let key_stem = control
-            .retroarch_key()
-            .trim_start_matches("input_")
-            .trim_end_matches("_btn");
-        if crossed.contains(&control) {
-            assert_ne!(key_stem, control.sdl_field(), "{control} should cross");
-        }
-    }
-    assert_eq!(Control::Back.retroarch_key(), "input_select_btn");
-    assert_eq!(Control::Start.retroarch_key(), "input_start_btn");
-    assert_eq!(Control::LeftShoulder.retroarch_key(), "input_l_btn");
-    assert_eq!(Control::RightShoulder.retroarch_key(), "input_r_btn");
-    assert_eq!(Control::LeftTrigger.retroarch_key(), "input_l2_btn");
-    assert_eq!(Control::RightTrigger.retroarch_key(), "input_r2_btn");
-    assert_eq!(Control::DpadUp.retroarch_key(), "input_up_btn");
-    assert_eq!(Control::DpadDown.retroarch_key(), "input_down_btn");
-    assert_eq!(Control::DpadLeft.retroarch_key(), "input_left_btn");
-    assert_eq!(Control::DpadRight.retroarch_key(), "input_right_btn");
-}
-
-#[test]
-fn the_four_right_stick_halves_spell_the_same_direction_to_both_consumers() {
+fn the_four_right_stick_halves_spell_a_signed_sdl_half_axis() {
     let halves = [
-        (Control::RightStickUp, "-righty", "input_r_y_minus_btn"),
-        (Control::RightStickDown, "+righty", "input_r_y_plus_btn"),
-        (Control::RightStickLeft, "-rightx", "input_r_x_minus_btn"),
-        (Control::RightStickRight, "+rightx", "input_r_x_plus_btn"),
+        (Control::RightStickUp, "-righty"),
+        (Control::RightStickDown, "+righty"),
+        (Control::RightStickLeft, "-rightx"),
+        (Control::RightStickRight, "+rightx"),
     ];
-    for (control, field, key) in halves {
+    for (control, field) in halves {
         assert_eq!(control.sdl_field(), field, "{control}'s SDL half-axis");
-        assert_eq!(control.retroarch_key(), key, "{control}'s RetroArch key");
     }
 }
 
 #[test]
-fn the_four_left_stick_halves_spell_the_same_direction_to_both_consumers() {
+fn the_four_left_stick_halves_spell_a_signed_sdl_half_axis() {
     let halves = [
-        (Control::LeftStickUp, "-lefty", "input_l_y_minus_btn"),
-        (Control::LeftStickDown, "+lefty", "input_l_y_plus_btn"),
-        (Control::LeftStickLeft, "-leftx", "input_l_x_minus_btn"),
-        (Control::LeftStickRight, "+leftx", "input_l_x_plus_btn"),
+        (Control::LeftStickUp, "-lefty"),
+        (Control::LeftStickDown, "+lefty"),
+        (Control::LeftStickLeft, "-leftx"),
+        (Control::LeftStickRight, "+leftx"),
     ];
-    for (control, field, key) in halves {
+    for (control, field) in halves {
         assert_eq!(control.sdl_field(), field, "{control}'s SDL half-axis");
-        assert_eq!(control.retroarch_key(), key, "{control}'s RetroArch key");
     }
-    // Not the shoulder or the trigger, which own the plain `input_l_*` keys.
-    assert_eq!(Control::LeftShoulder.retroarch_key(), "input_l_btn");
-    assert_eq!(Control::LeftTrigger.retroarch_key(), "input_l2_btn");
 }
 
 #[test]
@@ -342,7 +280,7 @@ fn hat_direction_names_the_four_single_bits_and_nothing_else() {
 }
 
 #[test]
-fn only_the_four_single_hat_bits_are_spellable_and_both_consumers_agree() {
+fn only_the_four_single_hat_bits_are_spellable() {
     for value in -8_i32..=16 {
         let binding = Binding::hat(0, value);
         let spellable = matches!(value, 1 | 2 | 4 | 8);
@@ -351,45 +289,25 @@ fn only_the_four_single_hat_bits_are_spellable_and_both_consumers_agree() {
             spellable,
             "sdl_visible for hat {value}"
         );
-        assert_eq!(
-            binding.retroarch_visible(),
-            spellable,
-            "retroarch_visible for hat {value}"
-        );
-        match (binding.sdl(), binding.retroarch()) {
-            (Ok(_), Ok(_)) => assert!(spellable, "hat {value} was spelled by both"),
-            (Err(from_sdl), Err(from_retroarch)) => {
-                assert!(!spellable, "hat {value} was refused by both");
-                assert_eq!(from_sdl, Unspellable::HatValue(value));
-                assert_eq!(from_retroarch, Unspellable::HatValue(value));
+        match binding.sdl() {
+            Ok(_) => assert!(spellable, "hat {value} was spelled"),
+            Err(error) => {
+                assert!(!spellable, "hat {value} was refused");
+                assert_eq!(error, Unspellable::HatValue(value));
             }
-            (from_sdl, from_retroarch) => panic!(
-                "hat {value} split the consumers: sdl {from_sdl:?}, retroarch {from_retroarch:?}"
-            ),
         }
     }
 }
 
 #[test]
-fn the_four_hat_directions_spell_a_bit_to_sdl_and_a_word_to_retroarch() {
-    for (value, word) in [(1, "up"), (2, "right"), (4, "down"), (8, "left")] {
+fn the_four_hat_directions_spell_their_bit_to_sdl() {
+    for value in [1, 2, 4, 8] {
         let binding = Binding::hat(2, value);
         assert_eq!(
             binding.sdl().expect("sdl spells a hat"),
             format!("h2.{value}")
         );
-        assert_eq!(
-            binding.retroarch().expect("retroarch spells a hat"),
-            format!("h2{word}")
-        );
     }
-}
-
-#[test]
-fn a_hat_ra_index_renumbers_retroarch_only() {
-    let binding = Binding::hat(1, 4).with_ra_index(Some(0));
-    assert_eq!(binding.sdl().expect("sdl"), "h1.4");
-    assert_eq!(binding.retroarch().expect("retroarch"), "h0down");
 }
 
 #[test]
@@ -397,86 +315,25 @@ fn a_hat_value_that_names_nothing_reports_the_value_it_was_given() {
     let error = Binding::hat(0, 3)
         .sdl()
         .expect_err("a diagonal is not a control");
+    assert_eq!(error, Unspellable::HatValue(3));
     assert_eq!(error.to_string(), "hat value 3 is not one direction bit");
-    assert_eq!(
-        Binding::hat(0, 3)
-            .retroarch()
-            .expect_err("same from retroarch"),
-        error
-    );
 }
 
 #[test]
-fn a_button_spells_a_bare_number_to_retroarch_and_a_prefixed_one_to_sdl() {
+fn a_button_spells_a_prefixed_number_to_sdl() {
     for index in [0, 1, 7, 13, 127, i32::MAX] {
         let binding = Binding::button(index);
+        assert!(binding.sdl_visible());
         assert_eq!(binding.sdl().expect("sdl"), format!("b{index}"));
-        assert_eq!(binding.retroarch().expect("retroarch"), index.to_string());
     }
 }
 
 #[test]
-fn a_split_index_spells_differently_to_each_consumer() {
-    let binding = Binding::button(13).with_ra_index(Some(11));
-    assert_eq!(binding.sdl().expect("sdl"), "b13");
-    assert_eq!(binding.retroarch().expect("retroarch"), "11");
-}
-
-#[test]
-fn an_ra_index_of_zero_is_not_the_same_as_an_absent_one() {
-    // Zero is a real button.
-    let overridden = Binding::button(5).with_ra_index(Some(0));
-    assert_eq!(overridden.retroarch().expect("retroarch"), "0");
-    let absent = Binding::button(5);
-    assert_eq!(absent.retroarch().expect("retroarch"), "5");
-}
-
-#[test]
-fn a_button_retroarch_cannot_see_is_refused_rather_than_numbered() {
-    let binding = Binding::button(13).with_ra_index(Some(RA_INVISIBLE));
-    assert!(binding.sdl_visible(), "SDL can still reach it");
-    assert_eq!(binding.sdl().expect("sdl"), "b13");
-    assert!(!binding.retroarch_visible());
-    assert_eq!(
-        binding.retroarch(),
-        Err(Unspellable::InvisibleToRetroarch),
-        "a negative index must never become a plausible button number"
-    );
-}
-
-#[test]
-fn any_negative_ra_index_is_refused_not_only_the_sentinel() {
-    for index in [-1, -2, -13, -99, i32::MIN, i32::MIN + 1] {
-        let binding = Binding::button(4).with_ra_index(Some(index));
-        assert!(
-            !binding.retroarch_visible(),
-            "ra_index {index} was accepted"
-        );
-        assert_eq!(binding.retroarch(), Err(Unspellable::InvisibleToRetroarch));
-        assert_eq!(binding.sdl().expect("sdl"), "b4");
-    }
-}
-
-#[test]
-fn the_invisible_sentinel_is_still_minus_one() {
-    assert_eq!(RA_INVISIBLE, -1);
-}
-
-#[test]
-fn a_button_with_a_negative_index_and_no_ra_index_is_visible_but_unspellable() {
-    // Documented, not endorsed.
+fn a_button_with_a_negative_index_is_still_spelled_to_sdl() {
+    // Documented, not endorsed: a corrupt profile is the only source.
     let binding = Binding::button(-3);
-    assert!(binding.retroarch_visible(), "the gap: visibility says yes");
-    assert_eq!(
-        binding.retroarch(),
-        Err(Unspellable::InvisibleToRetroarch),
-        "and spelling says no"
-    );
-    assert_eq!(
-        binding.sdl().expect("sdl"),
-        "b-3",
-        "SDL spells it regardless"
-    );
+    assert!(binding.sdl_visible());
+    assert_eq!(binding.sdl().expect("sdl"), "b-3");
 }
 
 #[test]
@@ -488,32 +345,14 @@ fn an_axis_carries_its_sign_and_zero_counts_as_positive() {
             format!("{sign}a2"),
             "axis value {value}"
         );
-        assert_eq!(binding.retroarch().expect("retroarch"), format!("{sign}2"));
     }
 }
 
 #[test]
-fn axis_zero_keeps_its_sign_even_though_retroarch_will_misparse_it() {
-    assert_eq!(Binding::axis(0, -1).retroarch().expect("retroarch"), "-0");
-    assert_eq!(Binding::axis(0, 1).retroarch().expect("retroarch"), "+0");
-    assert_eq!(Binding::axis(0, 0).retroarch().expect("retroarch"), "+0");
+fn axis_zero_keeps_its_sign() {
     assert_eq!(Binding::axis(0, -1).sdl().expect("sdl"), "-a0");
     assert_eq!(Binding::axis(0, 1).sdl().expect("sdl"), "+a0");
-}
-
-#[test]
-fn an_axis_ra_index_wins_over_the_sdl_one() {
-    let binding = Binding::axis(5, -1).with_ra_index(Some(2));
-    assert_eq!(binding.sdl().expect("sdl"), "-a5");
-    assert_eq!(binding.retroarch().expect("retroarch"), "-2");
-}
-
-#[test]
-fn an_axis_is_never_refused_for_a_negative_ra_index_the_way_a_button_is() {
-    // Deliberate: the negative-index guard is about evdev key codes, which an axis has none of.
-    let binding = Binding::axis(3, -1).with_ra_index(Some(RA_INVISIBLE));
-    assert!(binding.retroarch_visible());
-    assert_eq!(binding.retroarch().expect("retroarch"), "--1");
+    assert_eq!(Binding::axis(0, 0).sdl().expect("sdl"), "+a0");
 }
 
 #[test]
@@ -525,16 +364,8 @@ fn an_extreme_index_neither_panics_nor_wraps() {
             format!("+a{index}")
         );
         assert_eq!(
-            Binding::axis(index, 1).retroarch().expect("retroarch"),
-            format!("+{index}")
-        );
-        assert_eq!(
             Binding::hat(index, 8).sdl().expect("sdl"),
             format!("h{index}.8")
-        );
-        assert_eq!(
-            Binding::hat(index, 8).retroarch().expect("retroarch"),
-            format!("h{index}left")
         );
         assert_eq!(
             Binding::button(index).sdl().expect("sdl"),
@@ -542,42 +373,25 @@ fn an_extreme_index_neither_panics_nor_wraps() {
         );
     }
     assert_eq!(
-        Binding::button(i32::MAX).retroarch().expect("retroarch"),
-        "2147483647"
-    );
-    assert_eq!(
         Binding::hat(0, i32::MIN).sdl(),
         Err(Unspellable::HatValue(i32::MIN))
     );
     assert_eq!(
-        Binding::hat(0, i32::MAX).retroarch(),
+        Binding::hat(0, i32::MAX).sdl(),
         Err(Unspellable::HatValue(i32::MAX))
     );
 }
 
 #[test]
-fn the_constructors_leave_the_second_numbering_absent() {
-    assert_eq!(Binding::button(3).ra_index, None);
-    assert_eq!(Binding::hat(0, 1).ra_index, None);
-    assert_eq!(Binding::axis(2, -1).ra_index, None);
+fn the_constructors_build_the_kind_they_name() {
+    assert_eq!(Binding::button(3).kind, BindingKind::Button);
+    assert_eq!(Binding::hat(0, 1).kind, BindingKind::Hat);
+    assert_eq!(Binding::axis(2, -1).kind, BindingKind::Axis);
+    assert_eq!(Binding::axis(2, -1).value, -1);
     assert_eq!(
         Binding::button(3).value,
         0,
         "a button has no value to carry"
-    );
-}
-
-#[test]
-fn with_ra_index_returns_a_new_binding_rather_than_editing_the_old_one() {
-    let original = Binding::button(13);
-    let renumbered = original.with_ra_index(Some(11));
-    assert_eq!(original.ra_index, None, "the original was mutated");
-    assert_eq!(renumbered.ra_index, Some(11));
-    assert_eq!(renumbered.index, original.index);
-    assert_eq!(
-        renumbered.with_ra_index(None).ra_index,
-        None,
-        "an override can be cleared"
     );
 }
 
@@ -597,32 +411,16 @@ fn binding_kind_spells_itself_the_way_the_python_stored_it() {
     }
 }
 
-/// Every interesting `Binding` shape: kind x index x value x ra_index.
+/// Every interesting `Binding` shape: kind x index x value.
 fn every_shape() -> Vec<Binding> {
     let kinds = [BindingKind::Button, BindingKind::Hat, BindingKind::Axis];
     let indices = [i32::MIN, -7, -1, 0, 1, 2, 13, i32::MAX];
     let values = [i32::MIN, -2, -1, 0, 1, 2, 3, 4, 8, 15, 16, i32::MAX];
-    let ra_indices = [
-        None,
-        Some(i32::MIN),
-        Some(RA_INVISIBLE),
-        Some(0),
-        Some(1),
-        Some(11),
-        Some(i32::MAX),
-    ];
     let mut shapes = Vec::new();
     for kind in kinds {
         for index in indices {
             for value in values {
-                for ra_index in ra_indices {
-                    shapes.push(Binding {
-                        kind,
-                        index,
-                        value,
-                        ra_index,
-                    });
-                }
+                shapes.push(Binding { kind, index, value });
             }
         }
     }
@@ -631,7 +429,7 @@ fn every_shape() -> Vec<Binding> {
 
 #[test]
 fn the_cross_product_is_the_size_it_claims_to_be() {
-    assert_eq!(every_shape().len(), 3 * 8 * 12 * 7);
+    assert_eq!(every_shape().len(), 3 * 8 * 12);
 }
 
 #[test]
@@ -645,81 +443,23 @@ fn sdl_visibility_answers_exactly_whether_sdl_can_spell_it() {
     }
 }
 
-#[test]
-fn retroarch_visibility_answers_whether_retroarch_can_spell_it_except_for_one_gap() {
-    for binding in every_shape() {
-        let gap = binding.kind == BindingKind::Button
-            && binding.ra_index.is_none()
-            && binding.index < 0
-            && binding.sdl_visible();
-        if gap {
-            assert!(binding.retroarch_visible(), "{binding:?}");
-            assert!(binding.retroarch().is_err(), "{binding:?}");
-        } else {
-            assert_eq!(
-                binding.retroarch_visible(),
-                binding.retroarch().is_ok(),
-                "{binding:?}: asking and doing gave different answers"
-            );
-        }
-    }
-}
-
-#[test]
-fn a_binding_one_consumer_refuses_for_its_hat_value_is_refused_by_the_other_too() {
-    for binding in every_shape() {
-        if binding.kind != BindingKind::Hat {
-            continue;
-        }
-        let from_sdl = binding.sdl().is_err();
-        let from_retroarch = binding.retroarch().is_err();
-        assert_eq!(
-            from_sdl, from_retroarch,
-            "{binding:?}: a hat rendered by one consumer and refused by the other leaves the \
-             d-pad working in one place and dead in the other"
-        );
-    }
-}
-
-#[test]
-fn no_negative_number_ever_reaches_a_retroarch_button_value() {
-    for binding in every_shape() {
-        if binding.kind != BindingKind::Button {
-            continue;
-        }
-        if let Ok(spelled) = binding.retroarch() {
-            assert!(!spelled.starts_with('-'), "{binding:?} spelled {spelled:?}");
-            let parsed: i32 = spelled.parse().expect("a button is a plain number");
-            assert!(parsed >= 0, "{binding:?} spelled {spelled:?}");
-        }
-    }
-}
-
 fn plain_pad() -> Vec<u16> {
     (BTN_JOYSTICK..BTN_JOYSTICK + 12).collect()
 }
 
 #[test]
-fn the_two_numberings_are_defined_to_start_where_they_say_they_do() {
-    assert_eq!(BTN_MISC, 0x100);
+fn sdl_numbers_buttons_from_btn_joystick() {
     assert_eq!(BTN_JOYSTICK, 0x120);
-    assert_eq!(BTN_MISC.min(BTN_JOYSTICK), BTN_MISC);
 }
 
 #[test]
-fn a_pad_whose_codes_all_start_at_btn_joystick_numbers_the_same_for_both() {
+fn a_pad_whose_codes_all_start_at_btn_joystick_numbers_them_in_order() {
     let keys = plain_pad();
     for (expected, code) in keys.iter().copied().enumerate() {
-        let expected = expected as i32;
         assert_eq!(
             sdl_button_index(&keys, code),
-            Some(expected),
+            Some(expected as i32),
             "sdl for {code:#x}"
-        );
-        assert_eq!(
-            retroarch_button_index(&keys, code),
-            Some(expected),
-            "retroarch for {code:#x}"
         );
     }
     assert_eq!(sdl_button_index(&keys, 0x121), Some(1));
@@ -727,25 +467,14 @@ fn a_pad_whose_codes_all_start_at_btn_joystick_numbers_the_same_for_both() {
 }
 
 #[test]
-fn a_pad_carrying_btn_misc_codes_makes_the_two_numberings_disagree() {
+fn a_pad_carrying_btn_misc_codes_numbers_them_after_the_joystick_buttons() {
     // BTN_0..BTN_2 are 0x100..0x102 -- arcade encoders report them.
     let keys = [0x100_u16, 0x101, 0x102, 0x120, 0x121, 0x122];
-    assert_eq!(retroarch_button_index(&keys, 0x100), Some(0));
-    assert_eq!(retroarch_button_index(&keys, 0x101), Some(1));
-    assert_eq!(retroarch_button_index(&keys, 0x102), Some(2));
-    assert_eq!(retroarch_button_index(&keys, 0x120), Some(3));
-    assert_eq!(retroarch_button_index(&keys, 0x122), Some(5));
     assert_eq!(sdl_button_index(&keys, 0x120), Some(0));
     assert_eq!(sdl_button_index(&keys, 0x122), Some(2));
     assert_eq!(sdl_button_index(&keys, 0x100), Some(3));
+    assert_eq!(sdl_button_index(&keys, 0x101), Some(4));
     assert_eq!(sdl_button_index(&keys, 0x102), Some(5));
-    for code in keys {
-        assert_ne!(
-            sdl_button_index(&keys, code),
-            retroarch_button_index(&keys, code),
-            "{code:#x} happens to agree, which would weaken this test"
-        );
-    }
 }
 
 #[test]
@@ -758,36 +487,7 @@ fn a_keyboard_code_sorts_after_every_joystick_button_for_sdl() {
 }
 
 #[test]
-fn retroarch_answers_invisible_not_absent_for_a_reported_keyboard_code() {
-    let keys = [0x1e_u16, 0x120, 0x121, 0x122];
-    assert_eq!(retroarch_button_index(&keys, 0x1e), Some(RA_INVISIBLE));
-    assert_ne!(retroarch_button_index(&keys, 0x1e), None);
-    assert_eq!(
-        Binding::button(3)
-            .with_ra_index(retroarch_button_index(&keys, 0x1e))
-            .retroarch(),
-        Err(Unspellable::InvisibleToRetroarch),
-        "the sentinel has to survive all the way into the spelled line"
-    );
-    for code in [0x01_u16, 0x1e, 0x2c, 0x9e, 0xff] {
-        let keys = [code, 0x120, 0x121];
-        assert_eq!(
-            retroarch_button_index(&keys, code),
-            Some(RA_INVISIBLE),
-            "{code:#x}"
-        );
-    }
-    let at_boundary = [BTN_MISC, 0x120];
-    assert_eq!(retroarch_button_index(&at_boundary, BTN_MISC), Some(0));
-    let below_boundary = [BTN_MISC - 1, 0x120];
-    assert_eq!(
-        retroarch_button_index(&below_boundary, BTN_MISC - 1),
-        Some(RA_INVISIBLE)
-    );
-}
-
-#[test]
-fn a_code_the_pad_does_not_report_is_absent_from_both() {
+fn a_code_the_pad_does_not_report_is_absent() {
     let keys = plain_pad();
     for code in [0x00_u16, 0x1e, 0xff, 0x100, 0x11f, 0x12c, 0x2c0, u16::MAX] {
         assert_eq!(
@@ -795,24 +495,13 @@ fn a_code_the_pad_does_not_report_is_absent_from_both() {
             None,
             "sdl invented a number for {code:#x}"
         );
-        assert_eq!(
-            retroarch_button_index(&keys, code),
-            None,
-            "retroarch invented a number for {code:#x}"
-        );
     }
 }
 
 #[test]
-fn an_empty_key_list_numbers_nothing_not_even_an_invisible_code() {
+fn an_empty_key_list_numbers_nothing() {
     assert_eq!(sdl_button_index(&[], 0x120), None);
-    assert_eq!(retroarch_button_index(&[], 0x120), None);
     assert_eq!(sdl_button_index(&[], 0x1e), None);
-    assert_eq!(
-        retroarch_button_index(&[], 0x1e),
-        None,
-        "absent beats invisible"
-    );
 }
 
 #[test]
@@ -827,17 +516,12 @@ fn indices_do_not_depend_on_the_order_the_codes_arrive_in() {
                 sdl_button_index(other, code),
                 "sdl moved {code:#x}"
             );
-            assert_eq!(
-                retroarch_button_index(&sorted, code),
-                retroarch_button_index(other, code),
-                "retroarch moved {code:#x}"
-            );
         }
     }
 }
 
 #[test]
-fn a_duplicated_code_shifts_every_later_button_for_both_consumers() {
+fn a_duplicated_code_shifts_every_later_button() {
     let once = [0x120_u16, 0x121, 0x122];
     let twice = [0x120_u16, 0x120, 0x121, 0x122];
     assert_eq!(
@@ -847,33 +531,18 @@ fn a_duplicated_code_shifts_every_later_button_for_both_consumers() {
     );
     assert_eq!(sdl_button_index(&twice, 0x121), Some(2));
     assert_eq!(sdl_button_index(&once, 0x121), Some(1));
-    assert_eq!(retroarch_button_index(&twice, 0x120), Some(0));
-    assert_eq!(retroarch_button_index(&twice, 0x121), Some(2));
-    assert_eq!(retroarch_button_index(&once, 0x121), Some(1));
-    for code in twice {
-        assert_eq!(
-            sdl_button_index(&twice, code),
-            retroarch_button_index(&twice, code)
-        );
-    }
 }
 
 #[test]
-fn trigger_happy_codes_are_ordinary_buttons_to_both_consumers() {
+fn trigger_happy_codes_are_ordinary_buttons() {
     // BTN_TRIGGER_HAPPY1 is 0x2c0; arcade encoders with more than sixteen.
     let mut keys: Vec<u16> = (BTN_JOYSTICK..BTN_JOYSTICK + 4).collect();
     keys.extend(0x2c0_u16..0x2c8);
     for (expected, code) in keys.iter().copied().enumerate() {
-        let expected = expected as i32;
         assert_eq!(
             sdl_button_index(&keys, code),
-            Some(expected),
+            Some(expected as i32),
             "sdl for {code:#x}"
-        );
-        assert_eq!(
-            retroarch_button_index(&keys, code),
-            Some(expected),
-            "retroarch for {code:#x}"
         );
     }
     assert_eq!(sdl_button_index(&keys, 0x2c0), Some(4));
@@ -892,32 +561,13 @@ fn sdl_numbers_every_reported_code_exactly_once_from_zero() {
 }
 
 #[test]
-fn retroarch_numbers_the_visible_codes_densely_and_skips_the_rest() {
-    let keys = [0x1e_u16, 0x2c, 0x100, 0x110, 0x120, 0x13f, 0x2c0];
-    let visible: Vec<u16> = keys.iter().copied().filter(|c| *c >= BTN_MISC).collect();
-    let numbers: Vec<i32> = visible
-        .iter()
-        .map(|code| retroarch_button_index(&keys, *code).expect("a visible code has a number"))
-        .collect();
-    assert_eq!(numbers, (0..visible.len() as i32).collect::<Vec<_>>());
-    for code in keys.iter().copied().filter(|c| *c < BTN_MISC) {
-        assert_eq!(
-            retroarch_button_index(&keys, code),
-            Some(RA_INVISIBLE),
-            "{code:#x}"
-        );
-    }
-}
-
-#[test]
-fn a_pad_of_nothing_but_keyboard_codes_is_invisible_to_retroarch_end_to_end() {
+fn a_pad_of_nothing_but_keyboard_codes_is_numbered_from_zero_end_to_end() {
     let keys = [0x1e_u16, 0x1f, 0x20];
     for (expected, code) in keys.iter().copied().enumerate() {
-        assert_eq!(sdl_button_index(&keys, code), Some(expected as i32));
-        assert_eq!(retroarch_button_index(&keys, code), Some(RA_INVISIBLE));
-        let binding =
-            Binding::button(expected as i32).with_ra_index(retroarch_button_index(&keys, code));
-        assert!(binding.sdl_visible() && !binding.retroarch_visible());
+        let index = sdl_button_index(&keys, code).expect("a reported code has a number");
+        assert_eq!(index, expected as i32);
+        let binding = Binding::button(index);
+        assert_eq!(binding.sdl().expect("sdl"), format!("b{expected}"));
     }
 }
 
@@ -1022,16 +672,15 @@ fn a_duplicated_axis_code_shifts_every_later_axis() {
 
 #[test]
 fn a_binding_writes_the_python_field_names() {
-    let binding = Binding::hat(0, 4).with_ra_index(Some(RA_INVISIBLE));
+    let binding = Binding::hat(0, 4);
     let json = serde_json::to_value(binding).expect("serialize a binding");
     assert_eq!(json["kind"], "hat");
     assert_eq!(json["index"], 0);
     assert_eq!(json["value"], 4);
-    assert_eq!(json["ra_index"], -1);
     let object = json.as_object().expect("a binding is an object");
     assert_eq!(
         object.len(),
-        4,
+        3,
         "an extra field is one the Python's reader would ignore"
     );
     let back: Binding = serde_json::from_value(json).expect("deserialize a binding");
@@ -1039,20 +688,20 @@ fn a_binding_writes_the_python_field_names() {
 }
 
 #[test]
-fn an_absent_ra_index_reads_back_as_absent_not_as_zero() {
-    // Zero is button zero.
-    let raw = serde_json::json!({"kind": "button", "index": 7});
-    let binding: Binding = serde_json::from_value(raw).expect("deserialize");
-    assert_eq!(binding.ra_index, None);
-    assert_eq!(binding.retroarch().expect("retroarch"), "7");
-}
-
-#[test]
-fn an_explicit_null_ra_index_reads_the_same_as_an_absent_one() {
-    let raw = serde_json::json!({"kind": "button", "index": 7, "value": 0, "ra_index": null});
-    let binding: Binding = serde_json::from_value(raw).expect("deserialize");
-    assert_eq!(binding.ra_index, None);
-    assert_eq!(binding, Binding::button(7));
+fn a_stored_binding_carrying_an_ra_index_still_reads_and_drops_it_on_write() {
+    for ra_index in [
+        serde_json::Value::Null,
+        serde_json::json!(-1),
+        serde_json::json!(0),
+        serde_json::json!(11),
+    ] {
+        let raw =
+            serde_json::json!({"kind": "button", "index": 7, "value": 0, "ra_index": ra_index});
+        let binding: Binding = serde_json::from_value(raw).expect("deserialize");
+        assert_eq!(binding, Binding::button(7), "ra_index {ra_index}");
+        let json = serde_json::to_value(binding).expect("serialize");
+        assert!(json.get("ra_index").is_none(), "{json}");
+    }
 }
 
 #[test]
@@ -1065,20 +714,6 @@ fn an_absent_value_reads_as_zero() {
         "+a2",
         "zero is the positive half"
     );
-}
-
-#[test]
-fn a_stored_ra_index_of_zero_survives_the_round_trip_as_zero() {
-    let binding = Binding::button(5).with_ra_index(Some(0));
-    let json = serde_json::to_value(binding).expect("serialize");
-    assert_eq!(json["ra_index"], 0);
-    let back: Binding = serde_json::from_value(json).expect("deserialize");
-    assert_eq!(
-        back.ra_index,
-        Some(0),
-        "Some(0) must not collapse into None"
-    );
-    assert_eq!(back.retroarch().expect("retroarch"), "0");
 }
 
 #[test]
@@ -1120,6 +755,5 @@ fn every_shape_survives_a_json_round_trip_unchanged() {
         let back: Binding = serde_json::from_value(json).expect("deserialize");
         assert_eq!(back, binding);
         assert_eq!(back.sdl(), binding.sdl());
-        assert_eq!(back.retroarch(), binding.retroarch());
     }
 }

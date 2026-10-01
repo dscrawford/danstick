@@ -68,9 +68,8 @@ players, three of which never send an event.
 `/sys/class/input`, and with no `hid-steam` there is no joypad there to find
 -- only a mouse and a keyboard per slot. So Triton pads are *synthesised* and
 appended to the scan, with the hidraw node as their `path`. They are marked
-`retroarch_visible=False`, truthfully: nothing else on the machine can see
-them, which also keeps them out of RetroArch's pad-index arithmetic where they
-would shift every other player by one.
+`visible: false`, truthfully: nothing else on the machine enumerates them as a
+joystick.
 
 **A controller waking up changes nothing in `/dev/input`.** The receiver's
 hidraw nodes exist from the moment it is plugged in and never change. The

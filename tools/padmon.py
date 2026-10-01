@@ -4,11 +4,10 @@ Built because too much of this was guessed. When a pad "does not work in game"
 there are four separate places it can die, and no amount of reading code says
 which:
 
-    physical pad  --grab-->  danstick daemon  --write-->  virtual pad  --> RetroArch
+    physical pad  --grab-->  danstick daemon  --write-->  virtual pad  --> game
 
 This shows the two ends side by side. Press a button and you see whether the
-physical device emitted it, whether the clone emitted it, and which RetroArch
-bind that button resolves to in the profile danstick actually wrote. If the left
+physical device emitted it and whether the clone emitted it. If the left
 column moves and the right does not, the daemon is not forwarding. If both move
 and the game still does nothing, the fault is downstream of danstick.
 
@@ -47,42 +46,6 @@ def code_name(kind: int, code: int) -> str:
         return f"code {code}"
     name = table.get(code, f"code {code}")
     return name[0] if isinstance(name, (list, tuple)) else name
-
-
-def load_profile() -> dict[str, str]:
-    """button/axis -> RetroArch key, from the profile danstick last wrote.
-
-    Read rather than assumed: this is the file RetroArch is actually matching,
-    and a mapping that looks right in the store can still be absent here.
-    """
-    directory = protocol.runtime_dir() / "autoconfig" / "udev"
-    out: dict[str, str] = {}
-    for path in sorted(directory.glob("*.cfg")):
-        for line in path.read_text(errors="replace").splitlines():
-            if " = " not in line or line.startswith("#"):
-                continue
-            key, value = line.split(" = ", 1)
-            out.setdefault(value.strip().strip('"'), key.strip())
-    return out
-
-
-def retro_bind(profile: dict[str, str], kind: int, code: int,
-               index_of: dict[int, int]) -> str:
-    """What RetroArch would call this event, per the written profile."""
-    if kind == ecodes.EV_KEY:
-        index = index_of.get(code)
-        if index is None:
-            return "not a numbered button"
-        return profile.get(str(index), f"button {index}: unbound")
-    if kind == ecodes.EV_ABS:
-        return "(axis -- see +N/-N binds)"
-    return ""
-
-
-def button_indices(device: evdev.InputDevice) -> dict[int, int]:
-    """evdev code -> the index RetroArch numbers it as (contiguous from 0)."""
-    caps = device.capabilities().get(ecodes.EV_KEY, [])
-    return {code: i for i, code in enumerate(sorted(caps))}
 
 
 def find(names_contain: str) -> list[evdev.InputDevice]:
@@ -124,7 +87,6 @@ def main() -> int:
         print("The daemon is not republishing; nothing downstream can work.")
         return 1
 
-    profile = load_profile()
     print("watching:")
     watched: list[evdev.InputDevice] = []
     for device in virtual:
@@ -144,8 +106,6 @@ def main() -> int:
             watched.append(candidate)
 
     print()
-    print(f"profile binds loaded: {len(profile)} "
-          f"(from {protocol.runtime_dir()}/autoconfig/udev)")
     print(f"daemon: {daemon_state()}")
     print()
     print("Press buttons on the controller. Ctrl-C to stop.")
@@ -153,7 +113,6 @@ def main() -> int:
           "daemon is not forwarding.")
     print("-" * 78)
 
-    indices = {d.path: button_indices(d) for d in watched}
     selector = selectors.DefaultSelector()
     for device in watched:
         selector.register(device, selectors.EVENT_READ)
@@ -176,11 +135,9 @@ def main() -> int:
                     seen += 1
                     tag = ("CLONE   " if VIRTUAL_PREFIX in device.name
                            else "PHYSICAL")
-                    bind = retro_bind(profile, event.type, event.code,
-                                      indices[device.path])
                     print(f"{time.monotonic() - started:7.2f}  {tag}  "
                           f"{code_name(event.type, event.code):<16} "
-                          f"value={event.value:<7} {bind}")
+                          f"value={event.value}")
     except KeyboardInterrupt:
         print("-" * 78)
         print(f"{seen} event(s) seen.")

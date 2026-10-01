@@ -16,7 +16,7 @@ pub fn is_danstick_clone(name: &str, phys: &str) -> bool {
     phys.starts_with(VIRTUAL_PHYS_PREFIX) || name.starts_with(crate::clone::VIRTUAL_PREFIX)
 }
 
-/// A physical joypad node, as RetroArch's udev driver would see it.
+/// A physical joypad node, as udev enumerates it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Pad {
     pub path: PathBuf,
@@ -26,8 +26,8 @@ pub struct Pad {
     pub vid: u16,
     pub pid: u16,
     pub syspath: PathBuf,
-    /// Cleared by `danstick hide` udev rules so RetroArch cannot see it.
-    pub retroarch_visible: bool,
+    /// Not hidden from joystick enumeration by `danstick hide`'s udev rules.
+    pub visible: bool,
     /// The controller's motion sensor (separate node, not republished by danstick).
     pub motion: Option<PathBuf>,
 }
@@ -38,11 +38,6 @@ impl Pad {
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or("")
-    }
-
-    /// phys + uniq with no separator (matches udev_joypad.c:498-504).
-    pub fn retroarch_id(&self) -> String {
-        format!("{}{}", self.phys, self.uniq)
     }
 }
 
@@ -176,7 +171,6 @@ pub fn wanted_by(name: &str, only: Option<&str>) -> bool {
 #[derive(Debug, Clone, Copy)]
 pub struct Filter {
     pub include_virtual: bool,
-    pub retroarch_only: bool,
     pub include_undriven: bool,
 }
 
@@ -184,13 +178,12 @@ impl Default for Filter {
     fn default() -> Self {
         Filter {
             include_virtual: false,
-            retroarch_only: false,
             include_undriven: true,
         }
     }
 }
 
-/// Joypads in RetroArch enumeration order (libudev sorts by syspath).
+/// Joypads in udev enumeration order (libudev sorts by syspath).
 pub fn discover(filter: Filter) -> std::io::Result<Vec<Pad>> {
     discover_all(filter).map(|found| found.pads)
 }
@@ -224,9 +217,6 @@ pub fn discover_all(filter: Filter) -> std::io::Result<Discovery> {
         if !visible && !looks_like_joypad(&devnode) {
             continue;
         }
-        if filter.retroarch_only && !visible {
-            continue;
-        }
 
         let parent = device.parent();
         let owner = parent.as_ref().unwrap_or(&device);
@@ -253,7 +243,7 @@ pub fn discover_all(filter: Filter) -> std::io::Result<Discovery> {
             uniq: attribute(owner, "uniq").unwrap_or_default(),
             vid: hex_attribute(owner, "id/vendor"),
             pid: hex_attribute(owner, "id/product"),
-            retroarch_visible: visible,
+            visible,
             path: devnode,
             motion: None,
         });
@@ -265,7 +255,7 @@ pub fn discover_all(filter: Filter) -> std::io::Result<Discovery> {
 
     pads.sort_by(|left, right| left.syspath.cmp(&right.syspath));
 
-    if filter.include_undriven && !filter.retroarch_only {
+    if filter.include_undriven {
         pads.extend(crate::triton::slots(true));
     }
 
@@ -469,7 +459,7 @@ mod tests {
             vid,
             pid,
             syspath: PathBuf::from(format!("/sys/devices/{event}")),
-            retroarch_visible: true,
+            visible: true,
             motion: None,
         }
     }
@@ -484,12 +474,6 @@ mod tests {
         let mut orphan = pad("x", "", "", 0, 0, "event0");
         orphan.path = PathBuf::from("/");
         assert_eq!(orphan.event(), "");
-    }
-
-    #[test]
-    fn the_retroarch_id_concatenates_phys_and_uniq_with_no_separator() {
-        let pad = pad("x", "usb-0000:00:14.0-3/input0", "ab:cd", 0, 0, "event1");
-        assert_eq!(pad.retroarch_id(), "usb-0000:00:14.0-3/input0ab:cd");
     }
 
     #[test]

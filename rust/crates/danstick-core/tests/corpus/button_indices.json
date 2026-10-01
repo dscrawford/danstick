@@ -5,7 +5,6 @@
    "keys": []
   },
   "out": {
-   "retroarch": null,
    "sdl": null
   }
  },
@@ -15,7 +14,6 @@
    "keys": []
   },
   "out": {
-   "retroarch": null,
    "sdl": null
   }
  },
@@ -25,7 +23,6 @@
    "keys": []
   },
   "out": {
-   "retroarch": null,
    "sdl": null
   }
  },
@@ -35,7 +32,6 @@
    "keys": []
   },
   "out": {
-   "retroarch": null,
    "sdl": null
   }
  },
@@ -45,7 +41,6 @@
    "keys": []
   },
   "out": {
-   "retroarch": null,
    "sdl": null
   }
  },
@@ -68,7 +63,6 @@
    ]
   },
   "out": {
-   "retroarch": null,
    "sdl": null
   }
  },
@@ -91,7 +85,6 @@
    ]
   },
   "out": {
-   "retroarch": null,
    "sdl": null
   }
  },
@@ -114,7 +107,6 @@
    ]
   },
   "out": {
-   "retroarch": null,
    "sdl": null
   }
  },
@@ -137,7 +129,6 @@
    ]
   },
   "out": {
-   "retroarch": 0,
    "sdl": 0
   }
  },
@@ -160,7 +151,6 @@
    ]
   },
   "out": {
-   "retroarch": 1,
    "sdl": 1
   }
  },
@@ -183,7 +173,6 @@
    ]
   },
   "out": {
-   "retroarch": 2,
    "sdl": 2
   }
  },
@@ -206,7 +195,6 @@
    ]
   },
   "out": {
-   "retroarch": 3,
    "sdl": 3
   }
  },
@@ -229,7 +217,6 @@
    ]
   },
   "out": {
-   "retroarch": 4,
    "sdl": 4
   }
  },
@@ -252,7 +239,6 @@
    ]
   },
   "out": {
-   "retroarch": 5,
    "sdl": 5
   }
  },
@@ -275,7 +261,6 @@
    ]
   },
   "out": {
-   "retroarch": 6,
    "sdl": 6
   }
  },
@@ -298,7 +283,6 @@
    ]
   },
   "out": {
-   "retroarch": 7,
    "sdl": 7
   }
  },
@@ -321,7 +305,6 @@
    ]
   },
   "out": {
-   "retroarch": 8,
    "sdl": 8
   }
  },
@@ -344,7 +327,6 @@
    ]
   },
   "out": {
-   "retroarch": 9,
    "sdl": 9
   }
  },
@@ -367,7 +349,6 @@
    ]
   },
   "out": {
-   "retroarch": 10,
    "sdl": 10
   }
  },
@@ -390,7 +371,6 @@
    ]
   },
   "out": {
-   "retroarch": 11,
    "sdl": 11
   }
  },
@@ -413,7 +393,6 @@
    ]
   },
   "out": {
-   "retroarch": null,
    "sdl": null
   }
  },
@@ -427,7 +406,6 @@
    ]
   },
   "out": {
-   "retroarch": null,
    "sdl": null
   }
  },
@@ -441,7 +419,6 @@
    ]
   },
   "out": {
-   "retroarch": null,
    "sdl": null
   }
  },
@@ -455,7 +432,6 @@
    ]
   },
   "out": {
-   "retroarch": 0,
    "sdl": 2
   }
  },
@@ -469,7 +445,6 @@
    ]
   },
   "out": {
-   "retroarch": 1,
    "sdl": 0
   }
  },
@@ -483,7 +458,6 @@
    ]
   },
   "out": {
-   "retroarch": 2,
    "sdl": 1
   }
  },
@@ -497,7 +471,6 @@
    ]
   },
   "out": {
-   "retroarch": null,
    "sdl": null
   }
  },
@@ -513,7 +486,6 @@
    ]
   },
   "out": {
-   "retroarch": -1,
    "sdl": 3
   }
  },
@@ -529,7 +501,6 @@
    ]
   },
   "out": {
-   "retroarch": -1,
    "sdl": 4
   }
  },
@@ -545,7 +516,6 @@
    ]
   },
   "out": {
-   "retroarch": null,
    "sdl": null
   }
  },
@@ -561,7 +531,6 @@
    ]
   },
   "out": {
-   "retroarch": null,
    "sdl": null
   }
  },
@@ -577,7 +546,6 @@
    ]
   },
   "out": {
-   "retroarch": 0,
    "sdl": 0
   }
  },
@@ -593,7 +561,6 @@
    ]
   },
   "out": {
-   "retroarch": 1,
    "sdl": 1
   }
  },
@@ -609,7 +576,6 @@
    ]
   },
   "out": {
-   "retroarch": 2,
    "sdl": 2
   }
  },
@@ -625,7 +591,6 @@
    ]
   },
   "out": {
-   "retroarch": null,
    "sdl": null
   }
  },
@@ -639,7 +604,6 @@
    ]
   },
   "out": {
-   "retroarch": null,
    "sdl": null
   }
  },
@@ -653,7 +617,6 @@
    ]
   },
   "out": {
-   "retroarch": null,
    "sdl": null
   }
  },
@@ -667,7 +630,6 @@
    ]
   },
   "out": {
-   "retroarch": null,
    "sdl": null
   }
  },
@@ -681,7 +643,6 @@
    ]
   },
   "out": {
-   "retroarch": 0,
    "sdl": 0
   }
  },
@@ -695,7 +656,6 @@
    ]
   },
   "out": {
-   "retroarch": 1,
    "sdl": 1
   }
  },
@@ -709,7 +669,6 @@
    ]
   },
   "out": {
-   "retroarch": 2,
    "sdl": 2
   }
  },
@@ -723,7 +682,6 @@
    ]
   },
   "out": {
-   "retroarch": null,
    "sdl": null
   }
  },
@@ -746,7 +704,6 @@
    ]
   },
   "out": {
-   "retroarch": null,
    "sdl": null
   }
  },
@@ -769,7 +726,6 @@
    ]
   },
   "out": {
-   "retroarch": null,
    "sdl": null
   }
  },
@@ -792,7 +748,6 @@
    ]
   },
   "out": {
-   "retroarch": null,
    "sdl": null
   }
  },
@@ -815,7 +770,6 @@
    ]
   },
   "out": {
-   "retroarch": null,
    "sdl": null
   }
  },
@@ -838,7 +792,6 @@
    ]
   },
   "out": {
-   "retroarch": 0,
    "sdl": 0
   }
  },
@@ -861,7 +814,6 @@
    ]
   },
   "out": {
-   "retroarch": 1,
    "sdl": 1
   }
  },
@@ -884,7 +836,6 @@
    ]
   },
   "out": {
-   "retroarch": 2,
    "sdl": 2
   }
  },
@@ -907,7 +858,6 @@
    ]
   },
   "out": {
-   "retroarch": 3,
    "sdl": 3
   }
  },
@@ -930,7 +880,6 @@
    ]
   },
   "out": {
-   "retroarch": 4,
    "sdl": 4
   }
  },
@@ -953,7 +902,6 @@
    ]
   },
   "out": {
-   "retroarch": 5,
    "sdl": 5
   }
  },
@@ -976,7 +924,6 @@
    ]
   },
   "out": {
-   "retroarch": 6,
    "sdl": 6
   }
  },
@@ -999,7 +946,6 @@
    ]
   },
   "out": {
-   "retroarch": 7,
    "sdl": 7
   }
  },
@@ -1022,7 +968,6 @@
    ]
   },
   "out": {
-   "retroarch": 8,
    "sdl": 8
   }
  },
@@ -1045,7 +990,6 @@
    ]
   },
   "out": {
-   "retroarch": 9,
    "sdl": 9
   }
  },
@@ -1068,7 +1012,6 @@
    ]
   },
   "out": {
-   "retroarch": 10,
    "sdl": 10
   }
  },
@@ -1091,7 +1034,6 @@
    ]
   },
   "out": {
-   "retroarch": 11,
    "sdl": 11
   }
  }

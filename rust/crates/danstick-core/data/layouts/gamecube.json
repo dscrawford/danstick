@@ -24,29 +24,25 @@
       "label": "A (large centre)",
       "x": 0.72,
       "y": 0.46,
-      "radius": 0.07,
-      "retroarch": "input_a_btn"
+      "radius": 0.07
     },
     {
       "canonical": "b",
       "label": "B (small, lower left)",
       "x": 0.645,
-      "y": 0.57,
-      "retroarch": "input_b_btn"
+      "y": 0.57
     },
     {
       "canonical": "x",
       "label": "X (right)",
       "x": 0.8,
-      "y": 0.42,
-      "retroarch": "input_x_btn"
+      "y": 0.42
     },
     {
       "canonical": "y",
       "label": "Y (top)",
       "x": 0.71,
-      "y": 0.31,
-      "retroarch": "input_y_btn"
+      "y": 0.31
     },
     {
       "canonical": "start",
@@ -92,16 +88,14 @@
       "label": "L",
       "x": 0.26,
       "y": 0.2,
-      "kind": "shoulder",
-      "retroarch": "input_l2_btn"
+      "kind": "shoulder"
     },
     {
       "canonical": "rightshoulder",
       "label": "R",
       "x": 0.74,
       "y": 0.2,
-      "kind": "shoulder",
-      "retroarch": "input_r2_btn"
+      "kind": "shoulder"
     },
     {
       "canonical": "righttrigger",
@@ -109,8 +103,7 @@
       "x": 0.8,
       "y": 0.24,
       "kind": "shoulder",
-      "radius": 0.04,
-      "retroarch": "input_r_btn"
+      "radius": 0.04
     },
     {
       "canonical": "rightstick_up",

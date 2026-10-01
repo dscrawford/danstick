@@ -17,11 +17,6 @@
         pythonEnv = pkgs.python3.withPackages (ps: with ps; [
           evdev # create the uinput pads the fixtures press
         ]);
-        # Pinned explicitly: RetroArch's bundled joypad profiles are the source
-        # we copy button mappings from when renaming a pad for a virtual one.
-        autoconfig = pkgs.retroarch-joypad-autoconfig;
-        autoconfigDir = "${autoconfig}/share/libretro/autoconfig";
-
         # The Rust port, under rust/. Taken from nixpkgs rather than through
         # fenix or rust-overlay: the workspace pins an edition and a
         # rust-version that nixpkgs' stable toolchain already satisfies, and a
@@ -131,30 +126,18 @@
         devShells.default = pkgs.mkShell {
           buildInputs = [
             pythonEnv
-            pkgs.retroarch
-            autoconfig
             pkgs.evsieve # reference implementation of evdev republishing
             pkgs.udev # udevadm, for inspecting ID_INPUT_JOYSTICK
             sdl3Gamepad # linked by danstick-rs for `sdl-mapping`
             pkgs.evemu # replay a recorded device, for latency measurement
             pkgs.linuxPackages.perf # where the forwarding path actually goes
             devDanstick # `danstick ...`, built from the working tree
-            # The launch wrapper as the real thing, so a `danstick launch` from
-            # this shell takes the same path a packaged one does.
-            self.packages.${system}.danstick-play
           ] ++ rustToolchain ++ rustNativeBuildInputs;
-
-          # Without this the module falls back to globbing /nix/store, which
-          # can pick an older autoconfig package at random.
-          DANSTICK_AUTOCONFIG_DIRS = autoconfigDir;
 
           shellHook = ''
             # Pinned once, at entry. The wrappers read this instead of $PWD so
             # that `cd rust` does not change which danstick `danstick list` runs.
             export DANSTICK_DEV_ROOT="$PWD"
-            # Without it a launch from this shell invokes a bare `retroarch`,
-            # which looks like it worked.
-            export DANSTICK_PLAY="${self.packages.${system}.danstick-play}/bin/danstick-play"
             # cargo writes here; keeping it out of the source tree means a
             # `nix build` of the flake never sees a 2GB target/ in its source.
             export CARGO_HOME="''${CARGO_HOME:-$PWD/.cargo-home}"
@@ -163,9 +146,7 @@
             echo "  danstick setup         - assign player order"
             echo "  danstick run           - republish assigned pads"
             echo "  danstick map           - record which button is which"
-            echo "  danstick launch        - republish, then start RetroArch"
             echo "  danstick hide          - udev rules hiding the physical pads (root)"
-            echo "  danstick play          - resolve mappings for a game (danstick-play)"
             echo "  danstick exec -- CMD   - run CMD with danstick's mappings (Cemu, ...)"
             echo "  danstick --help        - the rest"
             echo "  (cd rust && cargo test)  - the tests"
@@ -187,93 +168,7 @@
             # long-running daemon is still on the previous version --
             # something nothing else about it reveals.
             export DANSTICK_BUILD_ID="${danstick-rs}"
-            export DANSTICK_AUTOCONFIG_DIRS="${autoconfigDir}"
             exec ${danstick-rs}/bin/danstick-rs "$@"
-          '';
-        };
-
-        packages.danstick-play = pkgs.writeShellApplication {
-          name = "danstick-play";
-          runtimeInputs = [ pkgs.retroarch ];
-          text = ''
-            state="''${XDG_RUNTIME_DIR:-/tmp}/danstick"
-            config="$state/launch.cfg"
-            argsfile="$state/launch.args"
-
-            # This wrapper is the only place that knows what is about to be
-            # played: it is handed `-L <core.so>` and the ROM path, and the
-            # daemon wrote its autoconfig profiles long before, when nothing
-            # could know either. So the mapping a controller uses for *this*
-            # console or *this* game is resolved here, rewriting the same
-            # autoconfig directory the launch override already points at.
-            #
-            # danstick itself rather than a second copy in shell. Deciding a
-            # console from a core name and a stable key from a ROM path are
-            # table lookups that already exist on the danstick side, and a
-            # shell copy would be a table with nothing to notice when it fell
-            # behind -- the failure this project has hit with the launcher
-            # path, the theme link and the daemon itself.
-            #
-            # Never fatal: the default profiles are already on disk, so the
-            # worst case is the mapping danstick wrote before scopes existed.
-            ${danstick-rs}/bin/danstick-rs play -- "$@" \
-              || echo "danstick: mapping resolution failed; using defaults" >&2
-
-            # Flags that cannot be expressed as config settings, one token
-            # per line. Emptying an unassigned core port is the only thing
-            # in here so far: RetroArch ignores input_libretro_device_pN
-            # from a config file and honours only --nodevice PORT.
-            args=()
-            if [ -f "$argsfile" ]; then
-              while IFS= read -r line; do
-                [ -n "$line" ] && args+=("$line")
-              done < "$argsfile"
-            fi
-
-            # Tell the daemon a game is running, so that plugging in a new
-            # controller mid-game does not open the setup screen -- which
-            # would stop republishing and grab every pad, leaving the player
-            # holding a controller that has quietly stopped working.
-            #
-            # This is why nothing here is exec'd any more: something has to
-            # outlive RetroArch to remove the marker. It holds our pid, so a
-            # danstick-play that is killed outright cannot disable the feature
-            # until the next reboot.
-            mkdir -p "$state"
-            marker="$state/playing"
-            printf '%s\n' "$$" > "$marker"
-            trap 'rm -f "$marker"' EXIT INT TERM
-
-            status=0
-
-            # Always leave a log behind.
-            #
-            # RetroArch was being run with no logging flags, so every launch
-            # was invisible: when a controller did not work in game there was
-            # nothing to read, and the only file with the right name was a
-            # stale one from a manual run days earlier -- which is worse than
-            # none, because it looks like evidence. The [Autoconf] lines here
-            # are the only place that says which pad RetroArch matched, in
-            # which port, and against which profile.
-            #
-            # Truncated per launch by --log-file, so this cannot grow without
-            # bound; the previous run is available until the next one starts.
-            logfile="$state/retroarch.log"
-
-            # Only pass the override if it exists: before the first
-            # assignment there is no file, and RetroArch treats a missing
-            # --appendconfig target as a fatal error.
-            if [ -f "$config" ]; then
-              retroarch --verbose --log-file "$logfile" \
-                   --appendconfig "$config" \
-                   ''${args[@]+"''${args[@]}"} "$@" || status=$?
-            else
-              echo "danstick: no launch config at $config;" \
-                   "controller order will be RetroArch's default" >&2
-              retroarch --verbose --log-file "$logfile" "$@" || status=$?
-            fi
-
-            exit "$status"
           '';
         };
 
@@ -413,12 +308,12 @@
               example = [ "0079:1879" "0079:1830" ];
               description = ''
                 USB `vendor:product` pairs, lowercase hex, to hide from
-                RetroArch's joypad enumeration by clearing ID_INPUT_JOYSTICK.
+                joystick enumeration by clearing ID_INPUT_JOYSTICK.
 
                 Get the list for the currently connected pads by running
                 `danstick hide`.
 
-                While a device is hidden it is invisible to RetroArch unless
+                While a device is hidden it is invisible to games unless
                 danstick is running and republishing it, so listing a controller
                 here is a commitment to launching games through danstick.
               '';
@@ -446,7 +341,7 @@
 
                 Same commitment as `hideDevices`: while the rules are active
                 and danstick is not running, the covered controllers are
-                invisible to RetroArch.
+                invisible to games.
               '';
             };
           };

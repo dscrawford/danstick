@@ -43,7 +43,6 @@ fn main() -> Result<()> {
         Some("emit") => cmd_emit(&rest),
         Some("exec") => cmd_exec(rest),
         Some("sdl-mapping") => cmd_sdl_mapping(rest.into_iter().next()),
-        Some("play") => commands::cmd_play(rest),
         Some("setup") => {
             let wanted = flag_value(&rest, &["-n", "--players"])
                 .map(|value| parse_number(&value, "--players"));
@@ -70,10 +69,6 @@ fn main() -> Result<()> {
             flag_value(&rest, &["--pad"]),
             flag_value(&rest, &["--scope"]).unwrap_or_default(),
         ),
-        Some("clean-config") => commands::cmd_clean_config(
-            flag_value(&rest, &["--config"]),
-            rest.iter().any(|arg| arg == "--dry-run"),
-        ),
         Some("ensure-daemon") => commands::cmd_ensure_daemon(
             rest.iter().any(|arg| arg == "--check"),
             flag_value(&rest, &["--timeout"])
@@ -81,16 +76,6 @@ fn main() -> Result<()> {
                 .unwrap_or(10.0),
             lifetime_flags(&rest),
         ),
-        Some("launch") => {
-            let log = rest.iter().position(|arg| arg == "--log").map(|at| {
-                rest.get(at + 1)
-                    .filter(|value| !value.starts_with('-'))
-                    .cloned()
-            });
-            let passthrough: Vec<String> =
-                rest.iter().filter(|arg| *arg != "--log").cloned().collect();
-            commands::cmd_launch(passthrough, log).map(|code| std::process::exit(code))
-        }
         Some(other) => {
             eprintln!("danstick: unknown command {other:?}");
             usage();
@@ -128,7 +113,7 @@ fn usage() {
     eprintln!(
         "usage: danstick list [--json] | setup | map | calibrate | tune | forget | run | \
          serve [--fresh] [--follow PID] [--slots fixed|on-demand] [--slot-count N] [--on-leave stay|destroy] [--layout position|label] | \
-         launch | play | hide | ensure-daemon [--check] [--fresh] [--follow PID] | clean-config | \
+         hide | ensure-daemon [--check] [--fresh] [--follow PID] | \
          emit [--keyboard N] [--cemu-dir D] [--dolphin-dir D] [--ares-settings F] \
          [--ryujinx-config F] \
          [--env-file F] | \
@@ -240,7 +225,7 @@ struct Borrowed {
 /// Makes seats 1..=`seats` exist before the game starts, reserving what is not already seated.
 fn borrow_seats(seats: u32) -> Borrowed {
     let mut borrowed = Borrowed::default();
-    let seats = seats.min(danstick_core::retroarch::MAX_PLAYERS);
+    let seats = seats.min(danstick_core::slots::MAX_COUNT);
     if seats == 0 {
         return borrowed;
     }
@@ -403,13 +388,13 @@ fn cmd_list() -> Result<()> {
     }
 
     println!(
-        "{} pad(s), in the order RetroArch would enumerate them:\n",
+        "{} pad(s), in the order udev enumerates them:\n",
         pads.len()
     );
     let mut index = 0;
     let mut hidden = 0;
     for pad in &pads {
-        let label = if pad.retroarch_visible {
+        let label = if pad.visible {
             let label = format!("[{index}]");
             index += 1;
             label
@@ -429,9 +414,9 @@ fn cmd_list() -> Result<()> {
         );
     }
     if hidden > 0 {
-        println!("\n{hidden} pad(s) marked -- are hidden from RetroArch by udev");
-        println!("rules (ID_INPUT_JOYSTICK cleared). danstick can still republish");
-        println!("them; RetroArch sees only the virtual pads.");
+        println!("\n{hidden} pad(s) marked -- are hidden from joystick enumeration by");
+        println!("udev rules (ID_INPUT_JOYSTICK cleared). danstick can still republish");
+        println!("them; games see only the virtual pads.");
     }
     report_dropped(&found.dropped);
 
@@ -707,7 +692,6 @@ fn cmd_run() -> Result<()> {
 
 fn publish_artefacts(vpads: &[danstick_input::VirtualPad], keyboard: Option<u32>) -> Result<()> {
     let mut sdl_lines = BTreeMap::new();
-    let mut profiles_out = BTreeMap::new();
     let mut identities = BTreeMap::new();
     let mut published: Vec<emulators::Published> = Vec::new();
 
@@ -764,18 +748,6 @@ fn publish_artefacts(vpads: &[danstick_input::VirtualPad], keyboard: Option<u32>
         });
 
         sdl_lines.insert(vpad.player, line);
-        profiles_out.insert(
-            vpad.player,
-            emit::retroarch_profile(
-                vpad.player,
-                identity,
-                &bindings,
-                "",
-                &mapping.layout,
-                "",
-                "",
-            ),
-        );
     }
 
     let fallback = Identity {
@@ -790,14 +762,8 @@ fn publish_artefacts(vpads: &[danstick_input::VirtualPad], keyboard: Option<u32>
         |player| identities.get(&player).copied().unwrap_or(fallback),
         None,
     )?;
-    let written = artefacts::write_autoconfig(&profiles_out, None)?;
 
     info!("SDL mappings: {}", database.display());
-    if let Some(first) = written.first() {
-        if let Some(dir) = first.parent() {
-            info!("RetroArch autoconfig: {}", dir.display());
-        }
-    }
 
     let emulators = emulators::publish(&published, &emulators::Destinations::default(), keyboard);
     for path in &emulators.paths {

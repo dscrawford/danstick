@@ -68,8 +68,7 @@ pub fn axis_codes() -> Vec<u16> {
 /// Where each control lives on the layout, in danstick's own binding terms.
 pub fn bindings() -> BTreeMap<Control, Binding> {
     let mut out = BTreeMap::new();
-    let button =
-        |control: Control, index: i32| (control, Binding::button(index).with_ra_index(Some(index)));
+    let button = |control: Control, index: i32| (control, Binding::button(index));
     for (control, binding) in [
         button(Control::A, 0),
         button(Control::B, 1),
@@ -1289,13 +1288,9 @@ mod tests {
     #[test]
     fn the_layouts_own_bindings_name_every_button_by_its_ordinal() {
         let b = bindings();
-        assert_eq!(b[&Control::A], Binding::button(0).with_ra_index(Some(0)));
-        assert_eq!(
-            b[&Control::X],
-            Binding::button(2).with_ra_index(Some(2)),
-            "SDL's x:b2 is 0x133"
-        );
-        assert_eq!(b[&Control::Y], Binding::button(3).with_ra_index(Some(3)));
+        assert_eq!(b[&Control::A], Binding::button(0));
+        assert_eq!(b[&Control::X], Binding::button(2), "SDL's x:b2 is 0x133");
+        assert_eq!(b[&Control::Y], Binding::button(3));
         assert_eq!(b[&Control::DpadUp], Binding::hat(0, 1));
         assert_eq!(b[&Control::LeftTrigger], Binding::axis(2, 1));
         assert_eq!(b[&Control::RightStickUp], Binding::axis(4, -1));

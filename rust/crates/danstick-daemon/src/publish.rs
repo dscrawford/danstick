@@ -1,17 +1,15 @@
 //! Everything written to disk when the roster changes.
 
 use std::collections::BTreeMap;
-use std::path::Path;
 
 use danstick_core::binding::Binding;
 use danstick_core::emit::{self, Identity};
 use danstick_core::fields::Fields;
 use danstick_core::profile::Profile;
-use danstick_core::retroarch::{self, LaunchFacts};
 use danstick_core::sdl::AxisSpan;
 use danstick_core::{guess, sdl, Control};
 use danstick_input::clone::{self, IdentityMode};
-use danstick_input::pad::{self, Pad};
+use danstick_input::pad::Pad;
 use danstick_input::{artefacts, emulators, profiles, runtime, sdlprobe, triton};
 use evdev::Device;
 use log::{info, warn};
@@ -225,77 +223,6 @@ fn carried(guid: Option<&str>) -> Carried {
     }
 }
 
-/// The autoconfig profile for one clone, as text.
-pub fn profile_text(
-    pad: &Pad,
-    player: u32,
-    identity: Identity,
-    console: &str,
-    game: &str,
-    context: &str,
-) -> String {
-    let source = artefacts::find_profile(&pad.name, pad.vid, pad.pid);
-    let (scope, mapping) = resolved(pad, console, game);
-    let bindings = mapping.resolved();
-    if !bindings.is_empty() {
-        log_unmapped(pad, &scope, &mapping.layout, &bindings);
-        return emit::retroarch_profile(
-            player,
-            identity,
-            &bindings,
-            source.as_ref().map(|(name, _)| name.as_str()).unwrap_or(""),
-            &mapping.layout,
-            &scope,
-            context,
-        );
-    }
-    retroarch::derive_profile(
-        source
-            .as_ref()
-            .map(|(name, values)| (name.as_str(), values.as_slice())),
-        player,
-        identity.vendor,
-        identity.product,
-        emit::virtual_name,
-    )
-}
-
-/// Log layout controls a mapping doesn't bind.
-fn log_unmapped(pad: &Pad, scope: &str, layout_id: &str, bindings: &BTreeMap<Control, Binding>) {
-    let layout = danstick_core::layout::get(layout_id);
-    let missing: Vec<&str> = layout
-        .controls
-        .iter()
-        .filter(|control| !bindings.contains_key(&control.canonical))
-        .map(|control| control.canonical.as_str())
-        .collect();
-    if !missing.is_empty() {
-        info!(
-            "{}: mapping for scope {:?} ({layout_id}) is missing {} of the layout's controls: {} -- remap this pad for that console to bind them",
-            pad.name,
-            if scope.is_empty() { "default" } else { scope },
-            missing.len(),
-            missing.join(", ")
-        );
-    }
-}
-
-/// Pad index to device path, in RetroArch's enumeration order.
-pub fn visible_order() -> BTreeMap<usize, String> {
-    pad::discover(pad::Filter {
-        include_virtual: true,
-        retroarch_only: true,
-        include_undriven: false,
-    })
-    .map(|pads| {
-        pads.into_iter()
-            .enumerate()
-            .map(|(index, pad)| (index, pad.path.display().to_string()))
-            .collect()
-    })
-    .unwrap_or_default()
-}
-
 /// What the writers produced.
 #[derive(Debug, Default, Clone)]
 pub struct Written {
@@ -312,7 +239,6 @@ struct Derived {
     sound: bool,
     /// Guessed while SDL was being asked about this pad.
     provisional: bool,
-    profile: String,
     line: String,
     note: Option<String>,
     published: emulators::Published,
@@ -326,7 +252,7 @@ struct Source {
     profile: Option<String>,
     identity: Identity,
     xbox: bool,
-    scope: (String, String, String),
+    scope: (String, String),
 }
 
 /// Each player's files as last written, so a join never works the rest of the room out again.
@@ -350,21 +276,7 @@ fn derive(
     xbox: bool,
     console: &str,
     game: &str,
-    context: &str,
 ) -> Derived {
-    let profile = if xbox {
-        emit::retroarch_profile(
-            slot.player,
-            identity,
-            &danstick_core::xbox::bindings(),
-            "",
-            danstick_core::layout::default_id(),
-            "",
-            context,
-        )
-    } else {
-        profile_text(&slot.pad, slot.player, identity, console, game, context)
-    };
     let facts = if xbox {
         xbox_facts()
     } else {
@@ -415,52 +327,37 @@ fn derive(
         // A guess made while SDL answers is not kept, so the next write redoes it.
         sound: (xbox || !facts.keys.is_empty()) && !provisional,
         provisional,
-        profile,
         line,
         note,
         published,
     }
 }
 
-/// Where a launch's two files go, and which seats it has waiting.
-#[derive(Debug, Clone, Copy)]
-pub struct Launch<'a> {
-    pub config: &'a Path,
-    pub args: &'a Path,
-    /// Seats published for the launch that nobody has taken.
-    pub reserved: &'a [u32],
-}
-
 /// Write every file the roster implies.
 pub fn write_all(
     slots: &[Slot],
-    virtual_paths: &BTreeMap<u32, String>,
     mode: IdentityMode,
-    launch: Launch<'_>,
+    reserved: &[u32],
     last: Option<&runtime::Game>,
     keyboard: Option<u32>,
     cache: &mut Cache,
 ) -> Written {
-    let (launch_config_path, launch_args_path) = (launch.config, launch.args);
     let seated: Vec<u32> = slots.iter().map(|slot| slot.player).collect();
-    let reserved: Vec<u32> = launch
-        .reserved
+    let reserved: Vec<u32> = reserved
         .iter()
         .copied()
         .filter(|player| !seated.contains(player))
         .collect();
     let console = last.map(|game| game.console.as_str()).unwrap_or("");
     let game = last.map(|game| game.key.as_str()).unwrap_or("");
-    let context = last.map(|game| game.title.as_str()).unwrap_or("");
     let identities: BTreeMap<u32, Identity> = slots
         .iter()
         .map(|slot| (slot.player, identity_of(&slot.pad, slot.player, mode)))
         .collect();
-    let players: Vec<u32> = slots.iter().map(|slot| slot.player).collect();
 
     // Under the 360 identity every consumer describes the clone's layout, not the pad's.
     let xbox = mode.is_xbox_layout();
-    let scope = (console.to_owned(), game.to_owned(), context.to_owned());
+    let scope = (console.to_owned(), game.to_owned());
     let mut previous = std::mem::take(&mut cache.players);
     let derived: BTreeMap<u32, Derived> = slots
         .iter()
@@ -485,44 +382,10 @@ pub fn write_all(
             }
             (
                 slot.player,
-                derive(slot, identity, from, xbox, console, game, context),
+                derive(slot, identity, from, xbox, console, game),
             )
         })
         .collect();
-    let profiles_out: BTreeMap<u32, String> = derived
-        .iter()
-        .map(|(player, one)| (*player, one.profile.clone()))
-        .collect();
-    match artefacts::write_autoconfig(&profiles_out, None) {
-        Ok(written) => info!("wrote {} autoconfig profile(s)", written.len()),
-        Err(error) => warn!("could not write the autoconfig profiles: {error}"),
-    }
-
-    let order = visible_order();
-    let managed = retroarch::managed_players(&players, virtual_paths, &order);
-    let all_calibrated = slots
-        .iter()
-        .filter(|slot| managed.contains_key(&slot.player))
-        .all(|slot| {
-            profiles::load(&slot.pad, None).is_some_and(|profile| !profile.axes.is_empty())
-        });
-    let facts = LaunchFacts {
-        all_calibrated,
-        autoconfig_dir: runtime::dir().join("autoconfig").display().to_string(),
-        verbose: false,
-    };
-    let mut config =
-        retroarch::launch_config(&players, virtual_paths, &order, &facts, emit::virtual_name);
-    let managed_sorted: Vec<u32> = managed.keys().copied().collect();
-    config.push_str(&retroarch::keyboard_config(&managed_sorted, keyboard));
-    if let Err(error) = artefacts::write_launch_config(launch_config_path, &config) {
-        warn!("could not write the launch config: {error}");
-    }
-    let args = retroarch::launch_args(&players, virtual_paths, &order);
-    if let Err(error) = artefacts::write_launch_args(launch_args_path, &args) {
-        warn!("could not write the launch flags: {error}");
-    }
-
     let mut lines: BTreeMap<u32, String> = BTreeMap::new();
     let mut notes: BTreeMap<u32, String> = BTreeMap::new();
     let mut published: Vec<emulators::Published> = Vec::new();
@@ -758,7 +621,7 @@ mod tests {
                 version: 1,
             },
             xbox: false,
-            scope: (String::new(), String::new(), String::new()),
+            scope: (String::new(), String::new()),
         }
     }
 

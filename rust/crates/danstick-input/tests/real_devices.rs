@@ -264,27 +264,24 @@ fn discovery_survives_a_machine_with_no_pads_at_all() {
 }
 
 #[test]
-fn undriven_controllers_are_included_by_default_but_never_for_retroarch() {
+fn undriven_controllers_are_included_by_default_and_only_when_asked() {
     // Filter's Default is written out because include_undriven defaults true, not false.
     let default = pad::Filter::default();
     assert!(!default.include_virtual);
-    assert!(!default.retroarch_only);
     assert!(
         default.include_undriven,
         "a controller danstick drives itself must be findable without an env var"
     );
 
-    // RetroArch cannot see a device with no evdev node, so retroarch_only must still exclude it.
     let filtered = pad::discover(pad::Filter {
         include_virtual: false,
-        retroarch_only: true,
-        include_undriven: true,
+        include_undriven: false,
     })
     .expect("discover must not error");
     for found in &filtered {
         assert!(
             !danstick_input::triton::owns(found),
-            "{} is driven by danstick but retroarch_only asked to exclude it",
+            "{} is driven by danstick but include_undriven asked to exclude it",
             found.path.display()
         );
     }
@@ -1116,7 +1113,7 @@ fn a_claim_that_cannot_open_its_pad_leaves_the_reserved_seat_alone() {
         vid: 1,
         pid: 2,
         syspath: std::path::PathBuf::from("/sys"),
-        retroarch_visible: true,
+        visible: true,
         motion: None,
     };
     let made = clone::create_on(

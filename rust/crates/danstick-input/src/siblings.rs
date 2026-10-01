@@ -151,7 +151,7 @@ mod tests {
             vid,
             pid: 0x028e,
             syspath: PathBuf::new(),
-            retroarch_visible: true,
+            visible: true,
             motion: None,
         }
     }

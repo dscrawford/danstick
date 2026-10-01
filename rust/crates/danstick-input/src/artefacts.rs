@@ -24,11 +24,6 @@ fn data_home() -> PathBuf {
     env_path("XDG_DATA_HOME").unwrap_or_else(|| home().join(".local").join("share"))
 }
 
-/// `<dir>/udev`: RetroArch looks in `<dir>/<driver>` before the base directory.
-pub fn autoconfig_dir() -> PathBuf {
-    crate::runtime::dir().join("autoconfig").join("udev")
-}
-
 #[derive(Debug, thiserror::Error)]
 pub enum WriteError {
     #[error(
@@ -95,29 +90,6 @@ pub fn write_sdl_database(
     let body = emit::rewrite_sdl_database(&existing, lines, notes, identity_for);
     std::fs::write(&target, body).map_err(io_at(&target))?;
     Ok(target)
-}
-
-/// One autoconfig profile per virtual pad; stale ones are cleared so they cannot match.
-pub fn write_autoconfig(
-    profiles: &BTreeMap<u32, String>,
-    dir: Option<&Path>,
-) -> Result<Vec<PathBuf>, WriteError> {
-    let target = or_default(dir, autoconfig_dir);
-    std::fs::create_dir_all(&target).map_err(io_at(&target))?;
-    for entry in std::fs::read_dir(&target).into_iter().flatten().flatten() {
-        let name = entry.file_name();
-        let name = name.to_string_lossy();
-        if name.starts_with(emit::VIRTUAL_PREFIX) && name.ends_with(".cfg") {
-            let _ = std::fs::remove_file(entry.path());
-        }
-    }
-    let mut written = Vec::new();
-    for (player, text) in profiles {
-        let path = target.join(format!("{}.cfg", emit::virtual_name(*player)));
-        std::fs::write(&path, text).map_err(io_at(&path))?;
-        written.push(path);
-    }
-    Ok(written)
 }
 
 pub fn cemu_profile_dir() -> PathBuf {
@@ -296,112 +268,6 @@ pub fn write_ryujinx_config(
     Ok(target)
 }
 
-pub fn retroarch_config_dir() -> PathBuf {
-    env_path("RETROARCH_CONFIG_DIR").unwrap_or_else(|| home().join(".config").join("retroarch"))
-}
-
-/// Existing joypad profile directories, most specific first.
-pub fn autoconfig_dirs() -> Vec<PathBuf> {
-    static DIRS: std::sync::OnceLock<Vec<PathBuf>> = std::sync::OnceLock::new();
-    DIRS.get_or_init(scan_autoconfig_dirs).clone()
-}
-
-fn scan_autoconfig_dirs() -> Vec<PathBuf> {
-    let mut dirs = env_paths("DANSTICK_AUTOCONFIG_DIRS");
-    dirs.push(retroarch_config_dir().join("autoconfig"));
-    dirs.push(PathBuf::from(
-        "/run/current-system/sw/share/libretro/autoconfig",
-    ));
-    if let Ok(entries) = std::fs::read_dir("/nix/store") {
-        let mut stores: Vec<PathBuf> = entries
-            .flatten()
-            .filter(|entry| {
-                entry
-                    .file_name()
-                    .to_str()
-                    .is_some_and(|name| name.contains("retroarch-joypad-autoconfig-"))
-            })
-            .map(|entry| entry.path().join("share/libretro/autoconfig"))
-            .collect();
-        stores.sort();
-        stores.reverse();
-        dirs.extend(stores);
-    }
-    dirs.into_iter().filter(|dir| dir.is_dir()).collect()
-}
-
-/// Every `.cfg` under a directory, sorted.
-fn profiles_under(base: &Path) -> Vec<PathBuf> {
-    let mut out = Vec::new();
-    let mut stack = vec![base.to_path_buf()];
-    while let Some(dir) = stack.pop() {
-        for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                stack.push(path);
-            } else if path.extension().is_some_and(|ext| ext == "cfg") {
-                out.push(path);
-            }
-        }
-    }
-    out.sort();
-    out
-}
-
-/// Best libretro profile for a pad: exact name first, vid/pid fallback.
-pub fn find_profile(name: &str, vid: u16, pid: u16) -> Option<(String, Vec<(String, String)>)> {
-    type Found = Option<(String, Vec<(String, String)>)>;
-    type Cache = std::sync::OnceLock<std::sync::Mutex<BTreeMap<(String, u16, u16), Found>>>;
-    static CACHE: Cache = std::sync::OnceLock::new();
-    let key = (name.to_owned(), vid, pid);
-    if let Ok(cache) = CACHE.get_or_init(Default::default).lock() {
-        if let Some(found) = cache.get(&key) {
-            return found.clone();
-        }
-    }
-    let found = scan_for_profile(name, vid, pid);
-    if let Ok(mut cache) = CACHE.get_or_init(Default::default).lock() {
-        cache.insert(key, found.clone());
-    }
-    found
-}
-
-fn scan_for_profile(name: &str, vid: u16, pid: u16) -> Option<(String, Vec<(String, String)>)> {
-    let mut by_ids: Option<(String, Vec<(String, String)>)> = None;
-    for base in autoconfig_dirs() {
-        for path in profiles_under(&base) {
-            let Ok(text) = read_lossy(&path) else {
-                continue;
-            };
-            let pairs = danstick_core::userconfig::parse_profile_pairs(&text);
-            let file = path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("")
-                .to_owned();
-            let value = |key: &str| {
-                pairs
-                    .iter()
-                    .find(|(k, _)| k == key)
-                    .map(|(_, v)| v.as_str())
-            };
-            if value("input_device") == Some(name) {
-                return Some((file, pairs));
-            }
-            if by_ids.is_none() && vid != 0 && pid != 0 {
-                let matches = value("input_vendor_id")
-                    .and_then(|v| v.parse::<u32>().ok())
-                    .zip(value("input_product_id").and_then(|v| v.parse::<u32>().ok()))
-                    .is_some_and(|(v, p)| v == u32::from(vid) && p == u32::from(pid));
-                if matches {
-                    by_ids = Some((file, pairs));
-                }
-            }
-        }
-    }
-    by_ids
-}
-
 /// Files SDL itself would read a mapping from, the user's own first, then the legacy location.
 pub fn sdl_database_paths() -> Vec<PathBuf> {
     let mut paths = vec![sdl_database_path()];
@@ -457,19 +323,6 @@ pub fn binding_fields(fields: &danstick_core::fields::Fields) -> danstick_core::
     out
 }
 
-pub fn write_launch_config(path: &Path, text: &str) -> Result<(), WriteError> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(io_at(parent))?;
-    }
-    std::fs::write(path, text).map_err(io_at(path))
-}
-
-/// One `--nodevice` token per line, for the launch wrapper.
-pub fn write_launch_args(path: &Path, args: &[String]) -> Result<(), WriteError> {
-    let body: String = args.iter().map(|arg| format!("{arg}\n")).collect();
-    write_launch_config(path, &body)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -491,64 +344,6 @@ mod tests {
         [(1, "aaa,danstick Player 1,a:b0,".to_owned())]
             .into_iter()
             .collect()
-    }
-
-    #[test]
-    fn a_libretro_profile_is_found_by_name_before_ids() {
-        let dir = scratch("find");
-        std::fs::create_dir_all(dir.join("udev")).expect("mkdir");
-        std::fs::write(
-            dir.join("udev").join("ids.cfg"),
-            "input_driver = \"udev\"\ninput_device = \"Other\"\ninput_vendor_id = \"4660\"\ninput_product_id = \"1\"\ninput_b_btn = \"1\"\n",
-        )
-        .expect("seed");
-        std::fs::write(
-            dir.join("udev").join("name.cfg"),
-            "input_device = \"Mine\"\ninput_vendor_id = \"0\"\ninput_product_id = \"0\"\ninput_a_btn = \"0\"\n",
-        )
-        .expect("seed");
-        let out = std::process::Command::new(std::env::current_exe().expect("exe"))
-            .args([
-                "--exact",
-                "artefacts::tests::find_profile_child",
-                "--nocapture",
-                "--quiet",
-            ])
-            .env("DANSTICK_AUTOCONFIG_DIRS", &dir)
-            .env("DANSTICK_FIND_CHILD", "1")
-            .output()
-            .expect("run");
-        let text = String::from_utf8_lossy(&out.stdout);
-        assert!(text.contains("by-name=name.cfg"), "{text}");
-        assert!(text.contains("by-ids=ids.cfg"), "{text}");
-        assert!(text.contains("none=-"), "{text}");
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// The child half of the test above; prints, and the parent checks.
-    #[test]
-    fn find_profile_child() {
-        if std::env::var("DANSTICK_FIND_CHILD").is_err() {
-            return;
-        }
-        println!(
-            "by-name={}",
-            find_profile("Mine", 0x1234, 1)
-                .map(|(f, _)| f)
-                .unwrap_or("-".into())
-        );
-        println!(
-            "by-ids={}",
-            find_profile("Nobody", 0x1234, 1)
-                .map(|(f, _)| f)
-                .unwrap_or("-".into())
-        );
-        println!(
-            "none={}",
-            find_profile("Nobody", 0, 0)
-                .map(|(f, _)| f)
-                .unwrap_or("-".into())
-        );
     }
 
     #[test]
@@ -615,32 +410,6 @@ mod tests {
     }
 
     #[test]
-    fn a_profile_for_a_player_who_no_longer_exists_is_cleared() {
-        let dir = scratch("autoconfig");
-        std::fs::create_dir_all(&dir).expect("mkdir");
-        std::fs::write(dir.join("danstick Player 4.cfg"), "stale").expect("seed");
-        std::fs::write(dir.join("Someone Else.cfg"), "theirs").expect("seed");
-
-        let profiles: BTreeMap<u32, String> = [(1, "fresh\n".to_owned())].into_iter().collect();
-        let written = write_autoconfig(&profiles, Some(&dir)).expect("write");
-
-        assert_eq!(written.len(), 1);
-        assert!(
-            !dir.join("danstick Player 4.cfg").exists(),
-            "a stale slot survived"
-        );
-        assert!(
-            dir.join("Someone Else.cfg").exists(),
-            "someone else's file was eaten"
-        );
-        assert_eq!(
-            std::fs::read_to_string(dir.join("danstick Player 1.cfg")).expect("read"),
-            "fresh\n"
-        );
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
     fn the_database_path_is_overridable_for_anything_that_wants_its_own() {
         let previous = std::env::var(ENV_SDL_DB).ok();
         std::env::set_var(ENV_SDL_DB, "/tmp/somewhere-else.txt");
@@ -652,10 +421,5 @@ mod tests {
             Some(value) => std::env::set_var(ENV_SDL_DB, value),
             None => std::env::remove_var(ENV_SDL_DB),
         }
-    }
-
-    #[test]
-    fn the_autoconfig_directory_is_the_one_retroarch_scans_first() {
-        assert!(autoconfig_dir().ends_with("autoconfig/udev"));
     }
 }

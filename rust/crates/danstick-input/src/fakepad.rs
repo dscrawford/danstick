@@ -386,7 +386,7 @@ impl Fixture {
             vid: self.vid,
             pid: self.pid,
             syspath: std::path::PathBuf::from(format!("/sys/devices/virtual/input/{event}")),
-            retroarch_visible: true,
+            visible: true,
             motion: None,
         }
     }

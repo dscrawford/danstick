@@ -23,7 +23,7 @@ use danstick_input::clone::{self, IdentityMode, Source};
 use danstick_input::pad::{self, Pad};
 use danstick_input::reactor::{Reactor, Watched};
 use danstick_input::republish::Republisher;
-use danstick_input::{artefacts, assignments, profiles, runtime, siblings, triton};
+use danstick_input::{assignments, profiles, runtime, siblings, triton};
 use log::{debug, info, warn};
 use serde_json::Value;
 
@@ -94,8 +94,6 @@ enum Opened {
 pub struct Server {
     pub socket_path: PathBuf,
     pub state_path: PathBuf,
-    pub launch_config_path: PathBuf,
-    pub launch_args_path: PathBuf,
     pub prompted_path: PathBuf,
 
     reactor: Reactor,
@@ -247,9 +245,9 @@ impl std::fmt::Debug for Native {
 #[derive(Debug)]
 enum ToWrite {
     /// The first seat: nothing derived yet worth keeping.
-    Afresh(BTreeMap<u32, String>),
+    Afresh,
     /// A join: everybody else's derivations still stand.
-    Reusing(BTreeMap<u32, String>),
+    Reusing,
     Nothing,
 }
 
@@ -331,32 +329,24 @@ fn to_input_assignment(slot: &Slot) -> assignments::Assignment {
 
 impl Server {
     pub fn new() -> Result<Server, StartError> {
-        let base = runtime::dir();
         Server::at(
             runtime::socket_path(),
             runtime::assignments_path(),
-            base.join("launch.cfg"),
+            runtime::prompted_path(),
         )
     }
 
     pub fn at(
         socket_path: PathBuf,
         state_path: PathBuf,
-        launch_config_path: PathBuf,
+        prompted_path: PathBuf,
     ) -> Result<Server, StartError> {
-        let launch_args_path = launch_config_path.with_extension("args");
-        let prompted_path = launch_config_path
-            .parent()
-            .map(|dir| dir.join("prompted"))
-            .unwrap_or_else(|| PathBuf::from("prompted"));
         let reactor = Reactor::new(crate::TICK).map_err(StartError::Reactor)?;
         let prompted = runtime::read_prompted(&prompted_path);
         let prompted_stamp = stamp_of(&prompted_path);
         Ok(Server {
             socket_path,
             state_path,
-            launch_config_path,
-            launch_args_path,
             prompted_path,
             reactor,
             listener: None,
@@ -470,8 +460,7 @@ impl Server {
             self.mode.as_str(),
             self.reserved.keys().collect::<Vec<_>>()
         );
-        let virtual_paths = self.virtual_paths();
-        self.rewrite_consumers(&virtual_paths);
+        self.rewrite_consumers();
     }
 
     fn start_motion(&mut self) {
@@ -910,6 +899,7 @@ impl Server {
                 if lease {
                     self.lease_scope(fd);
                 }
+                remember_game(&console, &game);
                 self.set_scope(console, game);
             }
             Command::Focus {
@@ -1119,12 +1109,7 @@ impl Server {
         self.replace_left_slots(&targets);
         if self.slots_assigned.is_empty() {
             // Fixed slots are still there to be bound, seated or not.
-            let virtual_paths = if self.slot_policy.standing() > 0 {
-                self.virtual_paths()
-            } else {
-                BTreeMap::new()
-            };
-            self.rewrite_consumers(&virtual_paths);
+            self.rewrite_consumers();
             self.state = STATE_IDLE;
         } else {
             if let Err(error) = self.start_republisher() {
@@ -1194,10 +1179,7 @@ impl Server {
         } else {
             STATE_IDLE
         };
-        let accepted = events::accepted(
-            self.players_payload(),
-            &self.launch_config_path.display().to_string(),
-        );
+        let accepted = events::accepted(self.players_payload());
         self.broadcast(&accepted);
         let state = self.state_event();
         self.broadcast(&state);
@@ -2756,8 +2738,7 @@ impl Server {
                     warn!("could not republish under {}: {error}", wanted.as_str());
                 }
             } else {
-                let virtual_paths = self.virtual_paths();
-                self.rewrite_consumers(&virtual_paths);
+                self.rewrite_consumers();
             }
         }
         let state = self.state_event();
@@ -2765,7 +2746,7 @@ impl Server {
     }
 
     fn reserve_seats(&mut self, players: i64) {
-        let wanted = players.clamp(0, i64::from(danstick_core::retroarch::MAX_PLAYERS)) as u32;
+        let wanted = players.clamp(0, i64::from(danstick_core::slots::MAX_COUNT)) as u32;
         if !self.mode.is_xbox_layout() {
             // Only the 360 identity's layout is known before the pad; mirror's is not.
             self.broadcast(&events::error(format!(
@@ -2785,8 +2766,7 @@ impl Server {
             self.reserved.len(),
             self.reserved.keys().collect::<Vec<_>>()
         );
-        let virtual_paths = self.virtual_paths();
-        self.rewrite_consumers(&virtual_paths);
+        self.rewrite_consumers();
         let state = self.state_event();
         self.broadcast(&state);
     }
@@ -2840,20 +2820,13 @@ impl Server {
 
     /// The game the consumers' files are worked out for.
     fn game_in_play(&self) -> Option<runtime::Game> {
-        let recent = runtime::read_recent_games();
         if self.playing.console.is_empty() && self.playing.game.is_empty() {
-            return recent.into_iter().next();
+            return None;
         }
-        // The launch record has the title, when this is the game it recorded.
-        let title = recent
-            .iter()
-            .find(|game| game.key == self.playing.game && !self.playing.game.is_empty())
-            .map(|game| game.title.clone())
-            .unwrap_or_default();
         Some(runtime::Game {
             console: self.playing.console.clone(),
             key: self.playing.game.clone(),
-            title,
+            title: String::new(),
         })
     }
 
@@ -2896,8 +2869,7 @@ impl Server {
             for player in players {
                 self.remap_clone(player);
             }
-            let virtual_paths = self.virtual_paths();
-            self.rewrite_consumers(&virtual_paths);
+            self.rewrite_consumers();
         }
         let state = self.state_event();
         self.broadcast(&state);
@@ -3280,8 +3252,7 @@ impl Server {
             self.broadcast(&events::error(format!(
                 "could not republish after the move: {error}"
             )));
-            let virtual_paths = self.virtual_paths();
-            self.rewrite_consumers(&virtual_paths);
+            self.rewrite_consumers();
         }
         self.state = if self.republisher.is_some() {
             STATE_READY
@@ -3357,8 +3328,7 @@ impl Server {
                 );
             }
         } else {
-            let virtual_paths = self.virtual_paths();
-            self.rewrite_consumers(&virtual_paths);
+            self.rewrite_consumers();
         }
         let state = self.state_event();
         self.broadcast(&state);
@@ -3368,7 +3338,7 @@ impl Server {
     fn join_republisher(&mut self, player: u32) -> Result<ToWrite, clone::CloneError> {
         // The first seat has nothing to add to.
         if self.republisher.is_none() {
-            return self.bring_up_republisher().map(ToWrite::Afresh);
+            return self.bring_up_republisher().map(|()| ToWrite::Afresh);
         }
         let already = self
             .republisher
@@ -3376,7 +3346,7 @@ impl Server {
             .is_some_and(|republisher| republisher.pads.iter().any(|pad| pad.player == player));
         // Already republished: rewrite the files, never rebuild -- a second clone is wrong.
         if already {
-            return Ok(ToWrite::Reusing(self.virtual_paths()));
+            return Ok(ToWrite::Reusing);
         }
         let Some(slot) = self
             .slots_assigned
@@ -3434,31 +3404,27 @@ impl Server {
             "player {player} joined; {} pad(s) republished, the rest untouched",
             self.slots_assigned.len()
         );
-        Ok(ToWrite::Reusing(self.virtual_paths()))
+        Ok(ToWrite::Reusing)
     }
 
     /// Write what a join left to write.
     fn write_after_join(&mut self, write: ToWrite) {
         match write {
-            ToWrite::Afresh(virtual_paths) => self.rewrite_consumers(&virtual_paths),
-            ToWrite::Reusing(virtual_paths) => self.rewrite_consumers_reusing(&virtual_paths),
+            ToWrite::Afresh => self.rewrite_consumers(),
+            ToWrite::Reusing => self.rewrite_consumers_reusing(),
             ToWrite::Nothing => {}
         }
     }
 
     fn start_republisher(&mut self) -> Result<(), clone::CloneError> {
-        let virtual_paths = self.bring_up_republisher()?;
-        self.rewrite_consumers(&virtual_paths);
-        info!(
-            "republishing {} pad(s); launch config at {}",
-            self.slots_assigned.len(),
-            self.launch_config_path.display()
-        );
+        self.bring_up_republisher()?;
+        self.rewrite_consumers();
+        info!("republishing {} pad(s)", self.slots_assigned.len());
         Ok(())
     }
 
     /// Everything `start_republisher` does but writing the consumers' files.
-    fn bring_up_republisher(&mut self) -> Result<BTreeMap<u32, String>, clone::CloneError> {
+    fn bring_up_republisher(&mut self) -> Result<(), clone::CloneError> {
         self.stop_republisher();
         let mut vpads = Vec::with_capacity(self.slots_assigned.len());
         let mut first_failure = None;
@@ -3504,17 +3470,6 @@ impl Server {
                 return Err(error);
             }
         }
-        // Seeded with waiting seats, since a rebuild must not drop bound ports.
-        let mut virtual_paths: BTreeMap<u32, String> = self
-            .reserved_nodes
-            .iter()
-            .map(|(player, node)| (*player, node.clone()))
-            .collect();
-        for vpad in &mut vpads {
-            if let Some(node) = vpad.node() {
-                virtual_paths.insert(vpad.player, node);
-            }
-        }
         let republisher = Republisher::new(vpads);
         for (index, vpad) in republisher.pads.iter().enumerate() {
             if let Err(error) = self
@@ -3554,28 +3509,23 @@ impl Server {
             republisher.tap(true);
         }
         self.sync_republish_pause();
-        Ok(virtual_paths)
+        Ok(())
     }
 
     /// Writes every consumer's config for the seats as they are now.
-    fn rewrite_consumers(&mut self, virtual_paths: &BTreeMap<u32, String>) {
+    fn rewrite_consumers(&mut self) {
         self.publish_cache.clear();
-        self.rewrite_consumers_reusing(virtual_paths);
+        self.rewrite_consumers_reusing();
     }
 
     /// The same for a join, which changes nothing about anybody already seated.
-    fn rewrite_consumers_reusing(&mut self, virtual_paths: &BTreeMap<u32, String>) {
+    fn rewrite_consumers_reusing(&mut self) {
         let reserved: Vec<u32> = self.reserved_nodes.keys().copied().collect();
         let last = self.game_in_play();
         let written = publish::write_all(
             &self.slots_assigned,
-            virtual_paths,
             self.mode,
-            publish::Launch {
-                config: &self.launch_config_path,
-                args: &self.launch_args_path,
-                reserved: &reserved,
-            },
+            &reserved,
             last.as_ref(),
             self.keyboard_seat,
             &mut self.publish_cache,
@@ -3838,8 +3788,7 @@ impl Server {
         self.sdl_answers = answers;
         // Most answers are for pads only being watched, with nothing guessed to upgrade.
         if self.awaiting_sdl && self.republisher.is_some() {
-            let virtual_paths = self.virtual_paths();
-            self.rewrite_consumers_reusing(&virtual_paths);
+            self.rewrite_consumers_reusing();
         }
     }
 
@@ -4021,7 +3970,7 @@ impl Server {
             return;
         }
         let player = announce::next_player(&self.taken_seats());
-        if player > danstick_core::retroarch::MAX_PLAYERS {
+        if player > danstick_core::slots::MAX_COUNT {
             warn!(
                 "{} attached but every player slot is taken",
                 clean(&pad.name)
@@ -4079,7 +4028,6 @@ impl Server {
         let last = self.game_in_play();
         let console = last.as_ref().map(|g| g.console.clone()).unwrap_or_default();
         let game = last.as_ref().map(|g| g.key.clone()).unwrap_or_default();
-        let title = last.as_ref().map(|g| g.title.clone()).unwrap_or_default();
 
         let mut live: BTreeMap<u32, (String, emit::Identity)> = BTreeMap::new();
         if let Some(republisher) = self.republisher.as_mut() {
@@ -4094,14 +4042,6 @@ impl Server {
                 live.insert(vpad.player, (node, identity));
             }
         }
-        let virtual_paths: BTreeMap<u32, String> = live
-            .iter()
-            .map(|(p, (node, _))| (*p, node.clone()))
-            .collect();
-        let indices = danstick_core::retroarch::compute_pad_indices(
-            &virtual_paths,
-            &publish::visible_order(),
-        );
 
         let attach = |player: u32, pad: &Pad| -> announce::Attached {
             let identity = live
@@ -4110,8 +4050,6 @@ impl Server {
                 .unwrap_or_else(|| publish::identity_of(pad, player, self.mode));
             let name = emit::virtual_name(player);
             let facts = publish::pad_facts(pad);
-            let profile_text =
-                publish::profile_text(pad, player, identity, &console, &game, &title);
             announce::Attached {
                 player,
                 controller: announce::Controller {
@@ -4122,7 +4060,7 @@ impl Server {
                     phys: pad.phys.clone(),
                     uniq: pad.uniq.clone(),
                     signature: profiles::signature_of(pad),
-                    retroarch_visible: pad.retroarch_visible,
+                    visible: pad.visible,
                 },
                 virtual_pad: Some(announce::Virtual {
                     node: live
@@ -4136,14 +4074,6 @@ impl Server {
                     guid: emit::virtual_guid(player, identity),
                     identity_mode: self.mode.as_str().to_owned(),
                     name: name.clone(),
-                }),
-                retroarch: Some(announce::Retroarch {
-                    index: indices.get(&player).copied(),
-                    profile: artefacts::autoconfig_dir()
-                        .join(format!("{name}.cfg"))
-                        .display()
-                        .to_string(),
-                    binds: danstick_core::userconfig::parse_profile_text(&profile_text),
                 }),
                 sdl_mapping: publish::stored_sdl_line(
                     player, pad, identity, &facts, &console, &game,
@@ -4191,7 +4121,7 @@ impl Server {
         {
             return Some("no front-end is connected");
         }
-        if runtime::game_is_running() {
+        if !self.scope_leases.is_empty() {
             return Some("a game is running");
         }
         None
@@ -4325,13 +4255,8 @@ impl Server {
         info!("seating: player {player} <- the keyboard");
         let state = danstick_core::keyboard::seat_state(player);
         self.broadcast(&events::claim(player, &state.name, "", &state.icon, true));
-        if self.republisher.is_some() {
-            // Consumers are rewritten for the seat change; the clones are untouched.
-            let paths = self.virtual_paths();
-            self.rewrite_consumers(&paths);
-        } else {
-            self.rewrite_consumers(&BTreeMap::new());
-        }
+        // Consumers are rewritten for the seat change; the clones are untouched.
+        self.rewrite_consumers();
         self.save_assignments();
         let state = self.state_event();
         self.broadcast(&state);
@@ -4457,6 +4382,26 @@ fn raw_events(events: &[evdev::InputEvent]) -> Vec<Raw> {
             value: event.value(),
         })
         .collect()
+}
+
+/// Puts a game a client says is being played at the front of the scope picker's recent list.
+fn remember_game(console: &str, key: &str) {
+    if console.is_empty() || key.is_empty() {
+        return;
+    }
+    let title = runtime::read_recent_games()
+        .into_iter()
+        .find(|game| game.key == key)
+        .map(|game| game.title)
+        .unwrap_or_default();
+    let game = runtime::Game {
+        console: console.to_owned(),
+        key: key.to_owned(),
+        title,
+    };
+    if let Err(error) = runtime::write_last_game(&game) {
+        warn!("could not remember {key:?} as played: {error}");
+    }
 }
 
 fn stamp_of(path: &Path) -> i128 {
