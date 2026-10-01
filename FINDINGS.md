@@ -3822,3 +3822,26 @@ seconds back. And no press is dated before seating began watching its pad.
 **Worth generalising.** A cap is not a refusal. Clamping a value nobody
 believes to the edge of belief keeps the wrong answer and just makes it
 smaller.
+
+## The menu heard a pad's left stick and never its right
+
+The overlay's menu, hearing a Steam Controller through `focus`, moved the
+left stick's dot and never the right's; the game had both. The pad's
+universal walk was from before the generic layout had sticks, so no walk
+named either. The translator carried a stick no walk names by code, but
+only the left: the right was left out because a GameCube adapter's `ABS_RX`
+is its analogue trigger, and carrying it would have published a trigger
+as a stick. That reason is about where the axis rests. A trigger rests at
+an end, a stick in the middle, and `rests_centred` already tells them apart
+for capture and for SDL.
+
+The translator now carries `ABS_RX` and `ABS_RY` by code where they rest
+centred and no walk names that stick, for the clone and the pad's own
+controls alike. The adapter's trigger rests at 24 of 255 and is still not
+taken for one. The line is `rests_centred`'s: a rest within a quarter of the
+span of the middle is a stick, so a trigger resting nearer the middle than
+that would be carried too. None has been seen.
+
+**Worth generalising.** An exception written for one device is a rule about
+a property of that device. Name the property and the exception stops
+excluding everything else.

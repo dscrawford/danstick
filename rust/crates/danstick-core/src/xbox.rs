@@ -245,7 +245,7 @@ pub struct Translator {
     spans: BTreeMap<u16, AxisSpan>,
     /// Source keys carried across by code: guide and the stick clicks, which no capture covers.
     carried_keys: BTreeSet<u16>,
-    /// Source axes carried across by code with rescaling: the left stick, which no capture covers.
+    /// Source axes carried across by code with rescaling: a stick no capture covers.
     carried_axes: BTreeSet<u16>,
     /// Per control, how far each of its sources (code, sign) is pressed; the control is the most.
     pressed: BTreeMap<Control, BTreeMap<(u16, i8), f64>>,
@@ -397,10 +397,15 @@ impl Translator {
         };
         let left_x = captured([Control::LeftStickLeft, Control::LeftStickRight]);
         let left_y = captured([Control::LeftStickUp, Control::LeftStickDown]);
-        for &code in spans.keys() {
+        let right_x = captured([Control::RightStickLeft, Control::RightStickRight]);
+        let right_y = captured([Control::RightStickUp, Control::RightStickDown]);
+        for (&code, span) in spans {
             let spoken_for = match code {
                 ABS_X => left_x,
                 ABS_Y => left_y,
+                // Only resting centred: an adapter's ABS_RX resting at an end is its trigger.
+                ABS_RX if span.rests_centred() => right_x,
+                ABS_RY if span.rests_centred() => right_y,
                 _ => continue,
             };
             if !spoken_for && !out.axes.contains_key(&code) {
@@ -771,6 +776,96 @@ mod tests {
                 value: STICK_MAX
             }),
             "{down:?}"
+        );
+    }
+
+    /// A generic walk from before the layout had sticks: buttons and triggers only.
+    fn fourteen_control_walk() -> BTreeMap<Control, Binding> {
+        [
+            (Control::A, Binding::button(0)),
+            (Control::B, Binding::button(1)),
+            (Control::LeftTrigger, Binding::axis(2, 1)),
+            (Control::RightTrigger, Binding::axis(5, 1)),
+        ]
+        .into_iter()
+        .collect()
+    }
+
+    fn buttons_only_walk() -> BTreeMap<Control, Binding> {
+        [
+            (Control::A, Binding::button(0)),
+            (Control::B, Binding::button(1)),
+        ]
+        .into_iter()
+        .collect()
+    }
+
+    #[test]
+    fn a_right_stick_nobody_captured_rides_across_where_it_rests_centred() {
+        let keys = [0x130, 0x131];
+        let spans: BTreeMap<u16, AxisSpan> = [ABS_X, ABS_Y, ABS_Z, ABS_RX, ABS_RY, ABS_RZ]
+            .into_iter()
+            .map(|code| {
+                let span = if code == ABS_Z || code == ABS_RZ {
+                    trigger()
+                } else {
+                    AxisSpan::new(-32768, 32767, 0)
+                };
+                (code, span)
+            })
+            .collect();
+        let mut t = Translator::new(&keys, &spans, &fourteen_control_walk(), &BTreeMap::new());
+        let out = t.translate(EV_ABS, ABS_RX, 32767);
+        assert_eq!(out.len(), 1, "{out:?}");
+        assert_eq!((out[0].code, out[0].value), (ABS_RX, STICK_MAX));
+        assert_eq!(
+            heard(out[0]),
+            vec![Heard::Stick {
+                side: "right",
+                vertical: false,
+                position: 1.0
+            }]
+        );
+        let out = t.translate(EV_ABS, ABS_RY, -32768);
+        assert_eq!((out[0].code, out[0].value), (ABS_RY, -STICK_MAX), "{out:?}");
+        let out = t.translate(EV_ABS, ABS_RZ, 255);
+        assert_eq!(
+            out[0].code, ABS_RZ,
+            "the walked trigger still lands as itself: {out:?}"
+        );
+    }
+
+    #[test]
+    fn a_right_axis_resting_at_an_end_is_an_adapters_trigger_and_is_not_carried() {
+        let mut spans = BTreeMap::new();
+        spans.insert(ABS_X, stick());
+        spans.insert(ABS_Y, stick());
+        spans.insert(ABS_RX, AxisSpan::new(0, 255, 24));
+        spans.insert(ABS_RY, AxisSpan::new(0, 255, 24));
+        let mut t = Translator::new(&[0x130], &spans, &buttons_only_walk(), &BTreeMap::new());
+        assert_eq!(t.translate(EV_ABS, ABS_RX, 255), Vec::new());
+        assert_eq!(t.translate(EV_ABS, ABS_RY, 255), Vec::new());
+    }
+
+    #[test]
+    fn a_right_stick_the_walk_put_elsewhere_is_not_also_carried_by_code() {
+        let spans: BTreeMap<u16, AxisSpan> = [ABS_X, ABS_Y, ABS_RX, ABS_RY]
+            .into_iter()
+            .map(|code| (code, stick()))
+            .collect();
+        let mut bindings = buttons_only_walk();
+        bindings.insert(Control::RightStickLeft, Binding::axis(0, -1));
+        bindings.insert(Control::RightStickRight, Binding::axis(0, 1));
+        let mut t = Translator::new(&[0x130], &spans, &bindings, &BTreeMap::new());
+        assert_eq!(
+            t.translate(EV_ABS, ABS_RX, 255),
+            Vec::new(),
+            "a second axis was driving the right stick"
+        );
+        assert_eq!(
+            t.translate(EV_ABS, ABS_RY, 255).first().map(|out| out.code),
+            Some(ABS_RY),
+            "the half nobody captured still rides"
         );
     }
 

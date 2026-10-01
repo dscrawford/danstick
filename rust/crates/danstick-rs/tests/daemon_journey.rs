@@ -354,6 +354,10 @@ impl TestPad {
             .expect("x")
             .with_absolute_axis(&UinputAbsSetup::new(AbsoluteAxisCode::ABS_Y, stick))
             .expect("y")
+            .with_absolute_axis(&UinputAbsSetup::new(AbsoluteAxisCode::ABS_RX, stick))
+            .expect("rx")
+            .with_absolute_axis(&UinputAbsSetup::new(AbsoluteAxisCode::ABS_RY, stick))
+            .expect("ry")
             .with_absolute_axis(&UinputAbsSetup::new(AbsoluteAxisCode::ABS_HAT0X, hat))
             .expect("hat x")
             .with_absolute_axis(&UinputAbsSetup::new(AbsoluteAxisCode::ABS_HAT0Y, hat))
@@ -4829,6 +4833,15 @@ fn the_menu_hears_the_pads_own_controls_and_a_watcher_hears_every_pad() {
         .wait_for("focus", |e| e["control"] == "a" && e["down"] == true, 3.0)
         .expect("the menu did not hear the pad's own A");
     pads[0].emit(EventType::KEY.0, FIRST_KEY, 0);
+    daemon.pump(0.3);
+    // The walk has no stick halves, so both sticks are the pad's own, the right included.
+    daemon.events.clear();
+    pads[0].emit(EventType::ABSOLUTE.0, AbsoluteAxisCode::ABS_RX.0, 255);
+    let right = daemon
+        .wait_for("focus", |e| e["stick"] == "right", 3.0)
+        .expect("the menu did not hear the pad's own right stick");
+    assert!(right["x"].as_f64().unwrap_or(0.0) > 0.9, "{right}");
+    pads[0].emit(EventType::ABSOLUTE.0, AbsoluteAxisCode::ABS_RX.0, 128);
     daemon.pump(0.3);
     daemon.send(serde_json::json!({"cmd": "focus", "player": 1, "open": false}));
     daemon

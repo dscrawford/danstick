@@ -443,8 +443,11 @@ console's is filed under that console.
 stick halves, `leftstick_up` to `rightstick_right`, each a push to the stop. A
 stick walked as the two halves of one axis keeps its analogue range on the
 clone and in SDL. A stick skipped is left to the pad's own codes: the clone
-carries the left stick across but not the right, since an adapter's `ABS_RX`
-can be a trigger.
+carries the left stick across, and the right where no walk names it and
+`ABS_RX` and `ABS_RY` rest centred, since an adapter's `ABS_RX` resting at an
+end is its trigger. The
+pad's own controls (`focus`, `native`) carry both the same way, so a pad
+walked before the generic layout had sticks is heard on both.
 
 ## Mapping, choosing a layout, and calibrating without a session
 
