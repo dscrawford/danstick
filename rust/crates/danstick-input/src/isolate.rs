@@ -10,6 +10,16 @@ pub fn is_clone(name: &str) -> bool {
     name.starts_with(CLONE_PREFIX)
 }
 
+/// One `/dev/input/event*` node as the plan sees it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Node {
+    pub path: PathBuf,
+    /// The name its device reports.
+    pub name: String,
+    /// Its device's vendor and product.
+    pub id: (u16, u16),
+}
+
 /// The bind plan for one launch.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Plan {
@@ -30,12 +40,13 @@ impl Plan {
     }
 }
 
-/// Pure: which nodes a game may see.
-pub fn plan(nodes: &[(PathBuf, String)], raw: &[PathBuf], hidraw: &[PathBuf]) -> Plan {
+/// Pure: which nodes a game may see; Steam's copies of pads never, since the game reads clones.
+pub fn plan(nodes: &[Node], raw: &[PathBuf], hidraw: &[PathBuf]) -> Plan {
     let mut keep: Vec<PathBuf> = Vec::new();
-    for (path, name) in nodes {
-        if is_clone(name) || !raw.iter().any(|pad| pad == path) {
-            keep.push(path.clone());
+    for node in nodes {
+        let pad = raw.contains(&node.path) || node.id == danstick_core::icons::STEAM_VIRTUAL_ID;
+        if is_clone(&node.name) || !pad {
+            keep.push(node.path.clone());
         }
     }
     keep.sort();
@@ -71,8 +82,8 @@ pub fn bwrap_argv(plan: &Plan, argv: &[String], bwrap: &str) -> Vec<String> {
     out
 }
 
-/// Every `/dev/input/event*` and the name its device reports.
-pub fn event_nodes() -> Vec<(PathBuf, String)> {
+/// Every `/dev/input/event*`, with the name and id its device reports.
+pub fn event_nodes() -> Vec<Node> {
     let Ok(entries) = std::fs::read_dir("/dev/input") else {
         return Vec::new();
     };
@@ -83,10 +94,14 @@ pub fn event_nodes() -> Vec<(PathBuf, String)> {
         if !node.starts_with("event") {
             continue;
         }
-        let reported =
-            std::fs::read_to_string(Path::new("/sys/class/input").join(node).join("device/name"))
-                .unwrap_or_default();
-        out.push((entry.path(), reported.trim().to_owned()));
+        let device = Path::new("/sys/class/input").join(node).join("device");
+        let read = |file: &str| std::fs::read_to_string(device.join(file)).unwrap_or_default();
+        let hex = |file: &str| u16::from_str_radix(read(file).trim(), 16).unwrap_or(0);
+        out.push(Node {
+            path: entry.path(),
+            name: read("name").trim().to_owned(),
+            id: (hex("id/vendor"), hex("id/product")),
+        });
     }
     out
 }
@@ -112,8 +127,38 @@ pub fn hidraw_nodes() -> Vec<PathBuf> {
 mod tests {
     use super::*;
 
-    fn node(path: &str, name: &str) -> (PathBuf, String) {
-        (PathBuf::from(path), name.to_owned())
+    fn node(path: &str, name: &str) -> Node {
+        Node {
+            path: PathBuf::from(path),
+            name: name.to_owned(),
+            id: (0x045e, 0x028e),
+        }
+    }
+
+    fn steams_copy(path: &str) -> Node {
+        Node {
+            path: PathBuf::from(path),
+            name: "Microsoft X-Box 360 pad 1".to_owned(),
+            id: danstick_core::icons::STEAM_VIRTUAL_ID,
+        }
+    }
+
+    #[test]
+    fn steams_copy_of_a_pad_is_never_the_games_to_open() {
+        let nodes = [
+            steams_copy("/dev/input/event256"),
+            node("/dev/input/event257", "danstick Player 1"),
+        ];
+        let plan = plan(&nodes, &[], &[PathBuf::from("/dev/hidraw3")]);
+        assert_eq!(plan.keep, vec![PathBuf::from("/dev/input/event257")]);
+    }
+
+    #[test]
+    fn a_clone_is_kept_whatever_identity_it_mirrors() {
+        let mut clone = steams_copy("/dev/input/event257");
+        clone.name = "danstick Player 1".to_owned();
+        let plan = plan(&[clone], &[], &[]);
+        assert_eq!(plan.keep, vec![PathBuf::from("/dev/input/event257")]);
     }
 
     #[test]
@@ -198,18 +243,9 @@ mod tests {
     #[test]
     fn a_seat_nobody_has_taken_is_still_bound_into_the_launch() {
         let nodes = vec![
-            (
-                PathBuf::from("/dev/input/event20"),
-                "danstick Player 1".to_owned(),
-            ),
-            (
-                PathBuf::from("/dev/input/event21"),
-                "danstick Player 2".to_owned(),
-            ),
-            (
-                PathBuf::from("/dev/input/event9"),
-                "Xbox 360 Controller".to_owned(),
-            ),
+            node("/dev/input/event20", "danstick Player 1"),
+            node("/dev/input/event21", "danstick Player 2"),
+            node("/dev/input/event9", "Xbox 360 Controller"),
         ];
         let raw = vec![PathBuf::from("/dev/input/event9")];
         let plan = plan(&nodes, &raw, &[]);

@@ -3278,6 +3278,56 @@ fn exec_under(root: &Path, id: PadId, args: &[&str]) -> std::process::Child {
         .expect("danstick-rs exec")
 }
 
+const STEAMCOPY: PadId = PadId {
+    name: "DANSTICK RSTESTSTEAMCOPY",
+    pid: 0x1094,
+    only: "RSTESTSTEAMCOPY",
+};
+
+/// A game under `exec` reads danstick's clones, never Steam's copy of a pad:
+/// a copy grabbed by a seat taken mid-game keeps whatever it last said.
+#[test]
+fn a_game_under_exec_cannot_open_steams_copy_of_a_pad() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let root = std::env::temp_dir().join(format!("danstick-steamcopy-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let seen = root.join("seen");
+
+    // A pad danstick reads itself makes discovery drop the copy, as a Steam Controller on hidraw does.
+    let _pad = TestPad::new(STEAMCOPY);
+    let mut copy = steam_pad(STEAMCOPY, 0);
+    let copy_node = copy.event();
+    let mut daemon = Daemon::start_with_env(&root, STEAMCOPY, &[], &[("DANSTICK_SLOTS", "fixed")]);
+    let state = daemon
+        .wait_for("state", |e| standing(e).len() == 4, 8.0)
+        .expect("four slots never stood");
+    let clone_node = Path::new(&standing(&state)[&1])
+        .file_name()
+        .and_then(|name| name.to_str())
+        .expect("slot 1's node")
+        .to_owned();
+
+    let probe = format!("ls /dev/input > {}", seen.display());
+    let mut exec = exec_under(&root, STEAMCOPY, &["--", "sh", "-c", &probe]);
+    let status = exec.wait().expect("exec ran");
+    assert!(status.success(), "the probe failed: {status}");
+    let visible = std::fs::read_to_string(&seen).expect("what the game saw");
+    let visible: Vec<&str> = visible.lines().collect();
+    assert!(
+        visible.contains(&clone_node.as_str()),
+        "the game cannot see slot 1's clone {clone_node}: {visible:?}"
+    );
+    assert!(
+        !visible.contains(&copy_node.as_str()),
+        "the game can open Steam's copy {copy_node}: {visible:?}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// A launch that wants N seats makes them exist before it builds its bind
 /// plan -- the seated player kept, the rest reserved, the daemon on the 360
 /// identity for it -- and gives all of it back when the game ends.

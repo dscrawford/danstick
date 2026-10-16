@@ -3845,3 +3845,24 @@ that would be carried too. None has been seen.
 **Worth generalising.** An exception written for one device is a rule about
 a property of that device. Name the property and the exception stops
 excluding everything else.
+
+## A held A reached the game from Steam's copy of the pad
+
+Paper Mario under `exec`, with a Steam Controller seated over the game: A
+would not jump, and closing the game's menu jumped once. The clone was clean.
+The game also had Steam's copy of the controller open (`28de:11ff`), and the
+hold that took the seat grabbed that copy while A was still down. The game's
+SDL never saw the release, so the copy said A was held for the rest of the
+session, ORed into the port with the clone. A game acting on the press edge
+never got one.
+
+`exec` hid the raw pads danstick seats, and nothing else. The copy was not
+one of them: the seat went to the hidraw, and discovery drops a mirror of a
+pad danstick reads. Now `exec` hides every Steam virtual pad by its id, always,
+and keeps every clone by name whatever id it mirrors. Whatever danstick seats
+through a Steam pad reaches the game as a clone, like everything else.
+`a_game_under_exec_cannot_open_steams_copy_of_a_pad` fails without it.
+
+**Worth generalising.** A filter defined as "the things we took" lets through
+whatever we took by another route. Name what the game should see and hide
+the rest.
