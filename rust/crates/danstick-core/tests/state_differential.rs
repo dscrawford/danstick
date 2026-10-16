@@ -115,3 +115,17 @@ fn ports_off_is_omitted_when_every_seat_is_heard() {
         serde_json::json!([3])
     );
 }
+
+#[test]
+fn held_is_omitted_unless_every_seat_is_held_back() {
+    let mut event = StateEvent::new("idle", 4, Vec::new(), "x".to_owned(), 1, "mirror");
+    let off = serde_json::to_value(&event).expect("serialises");
+    assert!(off.get("held").is_none(), "{off}");
+    event.held = true;
+    let on = serde_json::to_value(&event).expect("serialises");
+    assert_eq!(on["held"], true, "{on}");
+    assert!(
+        on["hold"].is_number(),
+        "seating's hold length is not the hold: {on}"
+    );
+}

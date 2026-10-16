@@ -161,6 +161,8 @@ pub struct Server {
     native: Option<Native>,
     /// Seats the game does not hear, each with the client that switched it off.
     ports_off: BTreeMap<u32, i32>,
+    /// The connection holding every seat back from the game, while one does.
+    held_by: Option<i32>,
 
     prompted: BTreeSet<String>,
     prompted_stamp: i128,
@@ -393,6 +395,7 @@ impl Server {
             focus: None,
             native: None,
             ports_off: BTreeMap::new(),
+            held_by: None,
             prompted,
             prompted_stamp,
             last_scan_signature: None,
@@ -723,6 +726,13 @@ impl Server {
             .filter(|(_, holder)| **holder == fd)
             .map(|(seat, _)| *seat)
             .collect();
+        if self.held_by == Some(fd) {
+            info!("the client that held every seat has gone; the game hears them again");
+            self.held_by = None;
+            self.sync_republish_pause();
+            let state = self.state_event();
+            self.broadcast(&state);
+        }
         if !left_off.is_empty() {
             info!("the client that switched seats {left_off:?} off has gone; they are on");
             self.ports_off.retain(|_, holder| *holder != fd);
@@ -922,6 +932,7 @@ impl Server {
                 }
             }
             Command::Port { player, open } => self.switch_port(fd, as_player(player), open),
+            Command::Hold { open } => self.switch_hold(fd, open),
             Command::Bind {
                 player,
                 control,
@@ -3088,6 +3099,25 @@ impl Server {
         self.broadcast(&state);
     }
 
+    /// Holds every seat's clone at rest until `fd` lets go or goes; the first to hold keeps it.
+    fn switch_hold(&mut self, fd: i32, open: bool) {
+        if self.session.is_some() {
+            self.broadcast(&events::error("a session is open; cancel it first"));
+            return;
+        }
+        if open {
+            if self.held_by.is_none() {
+                info!("every seat is held back from the game until the hold is let go");
+                self.held_by = Some(fd);
+            }
+        } else if self.held_by.take().is_some() {
+            info!("the hold is let go; the game hears every seat again");
+        }
+        self.sync_republish_pause();
+        let state = self.state_event();
+        self.broadcast(&state);
+    }
+
     /// What the focused pad just did, said as controls to every client.
     fn on_focus_read(&mut self, index: usize) {
         let Some(republisher) = self.republisher.as_mut() else {
@@ -3575,7 +3605,7 @@ impl Server {
         }
     }
 
-    /// Only the pad a modal flow is reading is held back from its clone; everyone else plays on.
+    /// Which pads are held back from their clones: a modal flow's, the focus's, a seat switched off, every one under a hold.
     fn sync_republish_pause(&mut self) {
         let focused = self
             .focus
@@ -3594,6 +3624,7 @@ impl Server {
                                 *player == vpad.player && *pad == vpad.pad.path
                             })
                             || self.ports_off.contains_key(&vpad.player)
+                            || self.held_by.is_some()
                     })
                     .collect()
             })
@@ -4302,6 +4333,7 @@ impl Server {
             self.focus.as_ref().map(|focus| focus.player),
             self.native.is_some(),
             self.ports_off.keys().copied().collect(),
+            self.held_by.is_some(),
         )
     }
 

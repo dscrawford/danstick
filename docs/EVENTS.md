@@ -882,6 +882,27 @@ new roster clears it, and a pad that reconnects into its seat stays off. `state`
 are. Refused with an `error` for a seat outside the slots, one with nobody
 in it, or while a session is open.
 
+## Every seat at rest: `hold`
+
+```json
+{"cmd": "hold"}
+{"cmd": "hold", "open": false}
+```
+
+Steam's overlay on a Deck takes the same presses the game would: with it up,
+every seat's clone rests (as a seat switched off by `port` does) and stays
+there until the hold is let go. Seats, pads and nodes are untouched, seating
+stays open, and a seat taken under the hold is held too; `native` and `focus`
+keep hearing the pads as usual. `open: false` lets every clone resume from its
+pad's next change, so a button still held as the overlay closes is not
+pressed into the game; seats switched off by `port` stay off.
+
+The connection that opened it going away lets it go, as `focus`'s does; of
+two connections that ask, the first holds it. `state` carries `"held": true`
+while it is on and no `held` at all otherwise -- not `hold`, which is
+seating's hold length in seconds. Refused with an `error` while a session is
+open. An older daemon answers `unknown command "hold"`.
+
 ## A controller in another seat: `move`
 
 ```json

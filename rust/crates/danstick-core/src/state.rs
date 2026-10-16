@@ -78,6 +78,9 @@ pub struct StateEvent {
     /// Seats the game does not hear, switched off by `port`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub ports_off: Vec<u32>,
+    /// Whether every seat is held back from the game by `hold`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub held: bool,
 }
 
 /// The console and game in play, as `scope` set them; empty is the default scope.
@@ -133,6 +136,7 @@ impl StateEvent {
             focus: None,
             native: false,
             ports_off: Vec::new(),
+            held: false,
         }
     }
 

@@ -5268,6 +5268,123 @@ fn a_seat_switched_off_does_nothing_in_the_game_until_it_is_switched_on() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+const HOLD: PadId = PadId {
+    name: "DANSTICK RSTESTHOLD",
+    pid: 0x1095,
+    only: "RSTESTHOLD",
+};
+
+/// A hold rests every seat's clone, one taken under it too, while `native`
+/// still hears the pads; let go, each resumes from its next change; and the
+/// connection that held going lets them all go.
+#[test]
+fn a_hold_keeps_every_seat_from_the_game_until_it_is_let_go() {
+    if !uinput_writable() {
+        eprintln!("skipped: /dev/uinput is not writable");
+        return;
+    }
+    let root = std::env::temp_dir().join(format!("danstick-hold-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("mkdir");
+    const A: u16 = 0x130;
+    const B: u16 = 0x131;
+    let mut pads = four_pads(HOLD);
+    pads.truncate(3);
+    let mut daemon = Daemon::start_with_env(&root, HOLD, &[], &[("DANSTICK_SLOTS", "fixed")]);
+    let before = daemon
+        .wait_for("state", |e| standing(e).len() == 4, 8.0)
+        .expect("four slots never stood");
+    let nodes = standing(&before);
+    let mut slots: Vec<Watcher> = (1..=3).map(|seat| Watcher::open(&nodes[&seat])).collect();
+    for (index, pad) in pads.iter_mut().take(2).enumerate() {
+        daemon.seat_by_hold_as(pad, index as u64 + 1);
+        pad.emit(EventType::KEY.0, FIRST_KEY, 0);
+    }
+    daemon.pump(0.5);
+    let _watcher = ask_on_a_connection(&daemon, serde_json::json!({"cmd": "native"}), |state| {
+        state["native"] == true
+    });
+    daemon
+        .wait_for("state", |e| e["native"] == true, 5.0)
+        .expect("the watch never opened");
+
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "hold"}));
+    let held = daemon
+        .wait_for("state", |e| e["held"] == true, 5.0)
+        .expect("the hold never took");
+    assert!(
+        held["hold"].is_number(),
+        "seating's hold length went: {held}"
+    );
+    daemon.seat_by_hold_as(&mut pads[2], 3);
+    pads[2].emit(EventType::KEY.0, FIRST_KEY, 0);
+    daemon.pump(0.5);
+    for seat in 0..3 {
+        daemon.events.clear();
+        pads[seat].emit(EventType::KEY.0, FIRST_KEY, 1);
+        daemon
+            .wait_for(
+                "native",
+                |e| e["player"] == seat + 1 && e["control"] == "a" && e["down"] == true,
+                3.0,
+            )
+            .expect("a held seat is no longer heard by the watcher");
+        assert!(
+            !slots[seat].sees_press(&mut daemon, A, 1.0),
+            "the game heard seat {} under the hold",
+            seat + 1
+        );
+        pads[seat].emit(EventType::KEY.0, FIRST_KEY, 0);
+    }
+    daemon.pump(0.3);
+
+    // Let go with B held: B is not pressed into the game; the next press is.
+    pads[0].emit(EventType::KEY.0, FIRST_KEY + 1, 1);
+    daemon.pump(0.3);
+    daemon.events.clear();
+    daemon.send(serde_json::json!({"cmd": "hold", "open": false}));
+    daemon
+        .wait_for("state", |e| e["held"].is_null(), 5.0)
+        .expect("the hold was never let go");
+    assert!(
+        !slots[0].sees_press(&mut daemon, B, 1.0),
+        "a button held as the hold let go was pressed into the game"
+    );
+    pads[0].emit(EventType::KEY.0, FIRST_KEY + 1, 0);
+    daemon.pump(0.3);
+    for seat in 0..3 {
+        pads[seat].emit(EventType::KEY.0, FIRST_KEY, 1);
+        assert!(
+            slots[seat].sees_press(&mut daemon, A, 3.0),
+            "seat {} is not live again",
+            seat + 1
+        );
+        pads[seat].emit(EventType::KEY.0, FIRST_KEY, 0);
+        daemon.pump(0.3);
+    }
+
+    // Held from a connection that then dies: every seat is let go.
+    let overlay = ask_on_a_connection(&daemon, serde_json::json!({"cmd": "hold"}), |state| {
+        state["held"] == true
+    });
+    daemon
+        .wait_for("state", |e| e["held"] == true, 5.0)
+        .expect("the overlay's hold never took");
+    drop(overlay);
+    daemon
+        .wait_for("state", |e| e["held"].is_null(), 5.0)
+        .expect("the overlay's death left every seat held");
+    daemon.pump(0.3);
+    pads[1].emit(EventType::KEY.0, FIRST_KEY, 1);
+    assert!(
+        slots[1].sees_press(&mut daemon, A, 3.0),
+        "seat 2 was left dead in the game"
+    );
+    pads[1].emit(EventType::KEY.0, FIRST_KEY, 0);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 const PORTTWO: PadId = PadId {
     name: "DANSTICK RSTESTPORTTWO",
     pid: 0x1092,

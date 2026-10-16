@@ -84,8 +84,8 @@ fn map_and_bind_share_an_input_unless_told_to_be_strict() {
 #[test]
 fn identity_names_the_mode_and_slots_was_appended_after_it() {
     assert_eq!(
-        COMMANDS[COMMANDS.len() - 7..],
-        ["identity", "slots", "scope", "focus", "move", "native", "port"],
+        COMMANDS[COMMANDS.len() - 8..],
+        ["identity", "slots", "scope", "focus", "move", "native", "port", "hold"],
         "commands are only appended"
     );
     assert_eq!(
@@ -321,4 +321,30 @@ fn port_names_a_seat_and_switches_it_on_unless_told_off() {
         Command::parse(&json!({"cmd": "port", "player": "three"})),
         Err(Refused::NotANumber { field: "player" })
     ));
+}
+
+#[test]
+fn hold_opens_unless_told_to_close() {
+    assert_eq!(COMMANDS.last(), Some(&"hold"), "a new command is appended");
+    for (message, open) in [
+        (json!({"cmd": "hold"}), true),
+        (json!({"cmd": "hold", "open": true}), true),
+        (json!({"cmd": "hold", "open": false}), false),
+        (json!({"cmd": "hold", "player": 2}), true),
+    ] {
+        assert_eq!(
+            Command::parse(&message),
+            Ok(Command::Hold { open }),
+            "{message}"
+        );
+    }
+    for open in [json!(1), json!("false"), json!(null)] {
+        assert!(
+            matches!(
+                Command::parse(&json!({"cmd": "hold", "open": open})),
+                Err(Refused::NotANumber { field: "open" })
+            ),
+            "{open} was taken for a bool"
+        );
+    }
 }

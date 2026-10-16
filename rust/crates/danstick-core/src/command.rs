@@ -3,7 +3,7 @@
 use serde_json::Value;
 
 /// Every command the socket accepts.
-pub const COMMANDS: [&str; 27] = [
+pub const COMMANDS: [&str; 28] = [
     "begin",
     "reset",
     "accept",
@@ -31,6 +31,7 @@ pub const COMMANDS: [&str; 27] = [
     "move",
     "native",
     "port",
+    "hold",
 ];
 
 /// A parsed command, with its arguments already coerced.
@@ -136,6 +137,10 @@ pub enum Command {
     /// Whether the game hears one seat: off puts its clone at rest until on.
     Port {
         player: i64,
+        open: bool,
+    },
+    /// Hold every seat's clone at rest, for as long as the connection, or let them all go.
+    Hold {
         open: bool,
     },
     /// Change how slots are published; a field left out keeps what is in force.
@@ -328,6 +333,13 @@ impl Command {
             },
             "port" => Command::Port {
                 player: number("player", 0)?,
+                open: match message.get("open") {
+                    Some(Value::Bool(value)) => *value,
+                    None => true,
+                    Some(_) => return Err(Refused::NotANumber { field: "open" }),
+                },
+            },
+            "hold" => Command::Hold {
                 open: match message.get("open") {
                     Some(Value::Bool(value)) => *value,
                     None => true,

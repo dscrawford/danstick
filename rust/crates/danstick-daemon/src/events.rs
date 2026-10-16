@@ -30,6 +30,7 @@ pub fn state(
     focus: Option<u32>,
     native: bool,
     ports_off: Vec<u32>,
+    held: bool,
 ) -> Value {
     let mut event = StateEvent::new(state, slots, players, build, std::process::id(), identity)
         .with_slots(policy);
@@ -37,6 +38,7 @@ pub fn state(
     event.focus = focus;
     event.native = native;
     event.ports_off = ports_off;
+    event.held = held;
     event.following = following;
     event.seating = seating;
     event.hold = hold;
