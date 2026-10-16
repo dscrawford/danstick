@@ -235,9 +235,7 @@ impl Twins {
     pub fn release_all(&mut self) -> Vec<Out> {
         let mut out = Vec::new();
         for g in 0..self.groups.len() {
-            for p in &mut self.groups[g].pressed {
-                *p = 0.0;
-            }
+            self.groups[g].pressed.fill(0.0);
             self.groups[g].raw_primary = match self.groups[g].members[0] {
                 Member::Axis(code, _) => self.spans.get(&code).map(|s| s.rest).unwrap_or(0),
                 _ => 0,
